@@ -33,12 +33,15 @@ Design notes:
 
 * Auth: these routes are NOT in the auth-exempt list, so the global gate in
   ``app.py`` requires a logged-in session. We additionally call ``require_user``
-  so a middleware misconfig can't open them up. The notification-center
+  so a middleware misconfig can't open them up. The aggregated pending feed
+  (``GET /pending``, ``GET /pending/count``) and the notification-center
   endpoints (``GET /notifications``, ``POST /notifications/{id}/seen``) are
-  gated more strictly by ``_require_notification_owner`` instead — the engine
-  inbox is single-tenant (no owner concept), so a plain "is someone logged in"
-  check would let any other workspace account read/dismiss the real owner's
-  job-search notifications (security, lens 10 #28).
+  gated more strictly by ``_require_notification_owner`` (the shared
+  ``src.auth_helpers.require_engine_owner``) instead — the engine is
+  single-tenant (no owner concept) for both the pending-actions feed and the
+  in-app inbox, so a plain "is someone logged in" check would let any other
+  workspace account read/dismiss the real owner's job-search data (security,
+  lens 10 #28; DISC-15).
 * Errors: a transport failure (engine down / timeout) → 503; an engine HTTP
   error is forwarded with its own status + detail (so e.g. a 409 confirm-gate
   passes through). No raw httpx escapes — the engine client guarantees a typed
@@ -64,7 +67,7 @@ from src.applicant_engine import (
     shared_engine_http_client,
     soft_degrade,
 )
-from src.auth_helpers import get_current_user, is_trusted_loopback, require_user
+from src.auth_helpers import require_engine_owner, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -120,40 +123,13 @@ def _require_notification_owner(request: Request) -> str:
     and dismiss that owner's job-search notifications (titles include role/
     company).
 
-    Mirrors ``applicant_admin_routes.py``'s ``_require_admin`` exactly — the
-    one place in this proxy layer that already distinguishes "the specific
-    owner" from "any authenticated user": in single-user / unconfigured mode
-    there is no admin distinction, so the lone owner passes (matching the rest
-    of the workspace); once the workspace is configured for MULTIPLE accounts,
-    only an admin may reach the notification center. Fails closed: any failure
-    resolving admin status denies rather than allows.
+    DISC-15: this is now a thin alias for the shared
+    :func:`src.auth_helpers.require_engine_owner` gate (factored out of this
+    exact implementation so the pending feed and the sibling campaigns/
+    tracker/activity proxies can reuse it too) — kept as a named wrapper here
+    so the inbox call sites read the same as before.
     """
-    owner = get_current_user(request)
-    auth_mgr = getattr(request.app.state, "auth_manager", None)
-    configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
-
-    if not configured:
-        # Single-user / first-run: no admin distinction, but only from a DIRECT
-        # loopback connection when there is no session at all (mirrors
-        # ``_require_admin``'s #228 hardening below).
-        if owner:
-            return owner
-        if is_trusted_loopback(request):
-            return ""
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    if not owner:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        is_admin = bool(auth_mgr.is_admin(owner))
-    except Exception:  # defensive: never fail open on the gate itself
-        is_admin = False
-    if not is_admin:
-        raise HTTPException(
-            status_code=403,
-            detail="Your account can't access this job search's notifications.",
-        )
-    return owner
+    return require_engine_owner(request)
 
 
 def _engine_http_error(exc: EngineError) -> HTTPException:
@@ -312,8 +288,14 @@ def setup_applicant_portal_routes() -> APIRouter:
         campaigns) returns an empty, well-formed payload with the reachability
         flag so the portal can distinguish "nothing pending" from "offline".
         A single campaign that errors is skipped, not fatal.
+
+        Owner-scoped (DISC-15, mirrors the notification inbox above): gated
+        by :func:`_require_notification_owner` (the shared
+        ``require_engine_owner``), not the plain auth-only ``_require_user``
+        -- the engine's pending actions are single-tenant, so any other
+        workspace account must not be able to read the real owner's feed.
         """
-        _require_user(request)
+        _require_notification_owner(request)
         # Proof-of-concept for perf lens #3 (shared httpx client): this is the
         # highest-traffic proxy route (the Portal badge poll + open), fanning
         # out over every campaign — ride the app-lifetime pooled connection
@@ -392,8 +374,11 @@ def setup_applicant_portal_routes() -> APIRouter:
         60s. A "finish your profile" gap (if any) still surfaces the moment the
         owner opens the full Portal via ``GET /pending``, so the badge undercounts
         by at most that one synthetic row while unconfigured, never after.
+
+        Owner-scoped (DISC-15): same gate as ``/pending`` above -- this is the
+        same single-tenant pending-actions data, just summed to a count.
         """
-        _require_user(request)
+        _require_notification_owner(request)
         async with ApplicantEngineClient() as engine:
             try:
                 campaigns = await engine.list_campaigns()

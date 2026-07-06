@@ -14,6 +14,15 @@ edit another owner's campaign (mirrors the Gallery proxy, #296). Reads degrade
 soft: an unreachable engine returns ``engine_available: false`` with an empty,
 well-formed body instead of a 5xx so the panel shows its offline state.
 
+Cross-account isolation (DISC-15): the engine itself is single-tenant (no owner
+concept), so the read/list endpoints below (``GET`` list, ``GET .../sources``,
+``GET .../audit-log/export.json``) are gated by
+``src.auth_helpers.require_engine_owner`` rather than the plain auth-only
+``require_user`` — otherwise ANY authenticated workspace account (not just the
+real owner) could read the one deployment owner's campaign config, discovery
+sources, and audit trail. Mirrors the fix already applied to the notification
+inbox and pending-actions feed in ``applicant_portal_routes.py``.
+
 Endpoints (all under ``/api/applicant/campaigns``):
 
 * ``GET  /api/applicant/campaigns``                       — campaigns + config.
@@ -42,7 +51,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +94,14 @@ def setup_applicant_campaigns_routes() -> APIRouter:
 
     @router.get("")
     async def list_campaigns(request: Request) -> dict:
-        """The owner's campaigns with full config (read-only, soft-degrades)."""
-        require_user(request)
+        """The owner's campaigns with full config (read-only, soft-degrades).
+
+        Owner-scoped (DISC-15): the engine has no owner concept of its own, so
+        this is gated by ``require_engine_owner`` rather than plain
+        ``require_user`` -- otherwise any other authenticated workspace
+        account could list the real owner's campaign config.
+        """
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             try:
                 campaigns = await engine.list_campaigns()
@@ -179,8 +194,13 @@ def setup_applicant_campaigns_routes() -> APIRouter:
         reachable only from an admin account. Owner-scoped exactly like
         ``delete_campaign``/``clone_campaign`` above: a caller can only
         export a campaign they own.
+
+        Owner-scoped (DISC-15): additionally gated by ``require_engine_owner``
+        -- this is a raw audit-log download of the deployment owner's own
+        action trail, so it must not be reachable by any other authenticated
+        workspace account either.
         """
-        require_user(request)
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:
@@ -208,8 +228,13 @@ def setup_applicant_campaigns_routes() -> APIRouter:
 
     @router.get("/{campaign_id}/sources")
     async def list_sources(request: Request, campaign_id: str) -> dict:
-        """The campaign's discovery sources + per-source yield stats (owner-scoped)."""
-        require_user(request)
+        """The campaign's discovery sources + per-source yield stats (owner-scoped).
+
+        Owner-scoped (DISC-15): gated by ``require_engine_owner`` -- a read of
+        the deployment owner's discovery-source config and yield stats, not
+        just any authenticated workspace account's.
+        """
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:

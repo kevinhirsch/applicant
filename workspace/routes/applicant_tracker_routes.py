@@ -118,7 +118,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,22 @@ logger = logging.getLogger(__name__)
 def _require_user(request: Request) -> str:
     """Require an authenticated owner (the global gate also enforces this)."""
     return require_user(request)
+
+
+def _require_owner(request: Request) -> str:
+    """Require the engine-owner account (DISC-15) for read/list endpoints.
+
+    The engine has no owner concept at all (single-tenant per deployment), so
+    the tracker board / stuck / blocked / pending-confirmation reads and their
+    per-application drill-downs below must be gated by
+    ``src.auth_helpers.require_engine_owner`` rather than the plain
+    auth-only ``_require_user`` — otherwise any other authenticated workspace
+    account (not just the real deployment owner) could read the owner's
+    application-tracking data. Mirrors the fix already applied to the
+    notification inbox / pending-actions feed in
+    ``applicant_portal_routes.py``.
+    """
+    return require_engine_owner(request)
 
 
 def _campaign_label(campaign: dict) -> str:
@@ -388,8 +404,13 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``engine_available: false``; a setup gate returns ``gated: true``; no
         campaign or no rows yet returns ``has_data: false`` with an empty,
         well-formed ``applications`` list.
+
+        Owner-scoped (DISC-15): gated by ``_require_owner`` (the shared
+        ``require_engine_owner``), not the plain auth-only ``_require_user``
+        -- the engine's tracker board is single-tenant, so any other
+        workspace account must not be able to read the real owner's board.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_tracker_rows(engine)
             if not isinstance(rows, list):
@@ -472,8 +493,10 @@ def setup_applicant_tracker_routes() -> APIRouter:
         unreachable engine returns ``engine_available: false``; a setup gate
         returns ``gated: true``; nothing pending returns ``has_data: false``
         with an empty, well-formed ``applications`` list.
+
+        Owner-scoped (DISC-15): same gate as ``tracker`` above.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_pending_confirmation_rows(engine)
             if not isinstance(rows, list):
@@ -595,8 +618,13 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``interview_invited`` gate itself from its own outcome trail (never a
         caller-supplied flag) -- this route only decides WHOSE application it is,
         the SAME company-research-backed brief either way.
+
+        Owner-scoped (DISC-15): additionally gated by ``_require_owner`` --
+        this route derives its own tracker-board fan-out from THIS request's
+        engine-owner identity, so it must not be reachable by any other
+        workspace account either.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_tracker_rows(engine)
             if not isinstance(rows, list):
@@ -633,8 +661,11 @@ def setup_applicant_tracker_routes() -> APIRouter:
         guard ``record_outcome``/``scan_email``/``interview_prep`` use above
         (never trust a caller-supplied id). The campaign id used for the engine
         call is this same fan-out's own row, never a caller-supplied one.
+
+        Owner-scoped (DISC-15): additionally gated by ``_require_owner`` --
+        same reasoning as ``interview_prep`` above.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_tracker_rows(engine)
             if not isinstance(rows, list):
@@ -673,8 +704,10 @@ def setup_applicant_tracker_routes() -> APIRouter:
         board above: an unreachable engine returns ``engine_available: false``;
         a setup gate returns ``gated: true``; no stuck applications returns
         ``has_data: false`` with an empty, well-formed ``applications`` list.
+
+        Owner-scoped (DISC-15): same gate as ``tracker`` above.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_stuck_rows(engine)
             if not isinstance(rows, list):
@@ -733,8 +766,13 @@ def setup_applicant_tracker_routes() -> APIRouter:
         extra fan-out); the Portal calls this right after resolving a blocker to
         phrase its confirmation honestly. Degrades to ``{"status":
         "not_blocked"}`` on an engine error rather than blocking the toast.
+
+        Owner-scoped (DISC-15): still gated by ``_require_owner`` (the
+        workspace-account gate, orthogonal to the application-id fan-out
+        question above) -- any other workspace account must not be able to
+        read the deployment owner's resume-backoff countdown either.
         """
-        _require_user(request)
+        _require_owner(request)
         try:
             async with ApplicantEngineClient() as engine:
                 result = await engine.admin_resume_status(application_id)
@@ -753,8 +791,10 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``engine_available: false``; a setup gate returns ``gated: true``; no
         blocked applications returns ``has_data: false`` with an empty,
         well-formed ``applications`` list.
+
+        Owner-scoped (DISC-15): same gate as ``tracker``/``stuck`` above.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             rows = await _owner_blocked_rows(engine)
             if not isinstance(rows, list):

@@ -28,6 +28,14 @@ returns the first/most-relevant one's feed. Both reads degrade *soft*: an
 unreachable engine (or no campaign yet) returns ``engine_available``/``has_activity``
 flags with an empty, well-formed body rather than a 5xx.
 
+Cross-account isolation (DISC-15): every endpoint here is gated by
+``src.auth_helpers.require_engine_owner`` rather than the plain auth-only
+``require_user`` — the engine is single-tenant (no owner concept), so a plain
+"is someone logged in" check would let any other workspace account read the
+real deployment owner's live status/intent/run-history feed. Mirrors the fix
+already applied to the notification inbox / pending-actions feed in
+``applicant_portal_routes.py``.
+
 Endpoints (all under one prefix, ``/api/applicant/activity``):
 
 * ``GET /api/applicant/activity/status`` — live status for the strip
@@ -49,7 +57,7 @@ from src.applicant_engine import (
     shared_engine_http_client,
     soft_degrade,
 )
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +65,20 @@ logger = logging.getLogger(__name__)
 # --- helpers ----------------------------------------------------------------
 
 
-def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
+def _require_owner(request: Request) -> str:
+    """Require the engine-owner account (DISC-15).
+
+    Every endpoint in this proxy is a read of the engine's single-tenant
+    status/intent/runs/snapshot feed, which has no owner concept of its own --
+    it belongs to the ONE person this Applicant instance was set up for, not
+    to whichever workspace account happens to be logged in. Plain
+    ``require_user`` (any authenticated user) would let a second, unrelated
+    workspace account read the real owner's agent-activity feed. Gated by
+    ``src.auth_helpers.require_engine_owner``, mirroring the fix already
+    applied to the notification inbox / pending-actions feed in
+    ``applicant_portal_routes.py``.
+    """
+    return require_engine_owner(request)
 
 
 def _campaign_label(campaign: dict) -> str:
@@ -113,7 +132,7 @@ def setup_applicant_activity_routes() -> APIRouter:
         ``engine_available: false``; no campaign yet returns ``has_activity:
         false`` — both keep the body well-formed so the strip just hides.
         """
-        _require_user(request)
+        _require_owner(request)
         # Proof-of-concept for perf lens #3 (shared httpx client): this is the
         # always-visible status strip's poll, one of the hottest reads in the
         # app — ride the app-lifetime pooled connection (workspace/app.py's
@@ -147,7 +166,7 @@ def setup_applicant_activity_routes() -> APIRouter:
         A lighter read than ``/status`` for surfaces that only want the sentence.
         Degrades soft the same way.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
@@ -180,7 +199,7 @@ def setup_applicant_activity_routes() -> APIRouter:
         returns ``has_activity: false`` with an empty ``items`` list so the page
         renders its empty state.
         """
-        _require_user(request)
+        _require_owner(request)
         # Proof-of-concept for perf lens #3 — see the note on ``/status`` above.
         async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             campaigns = await _owner_campaigns(engine)
@@ -223,7 +242,7 @@ def setup_applicant_activity_routes() -> APIRouter:
         error) returns ``has_activity: false`` with an empty, well-formed body so
         the panel renders its offline/empty state instead of throwing.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
