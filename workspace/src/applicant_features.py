@@ -160,7 +160,11 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "debug",
         "lane": None,
         "title": "Activity / debug",
-        "nav_ids": ["tool-debug-btn"],
+        # S1-6: `rail-debug` is the collapsed-rail twin applicantNav.js now emits
+        # for Run log (railId on the utilities group). Gate it alongside the
+        # sidebar `tool-debug-btn` so the rail door can't be clicked while the
+        # section is locked (a nav_id that resolves to nothing fails OPEN).
+        "nav_ids": ["tool-debug-btn", "rail-debug"],
         # #199: gate the launcher off the live operator surfaces it exposes — the
         # read-only observability (debug_surface) AND the tool-toggle registry whose
         # controls live inside this same Activity/debug panel. Both report ``live`` in
@@ -260,7 +264,11 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "compare",
         "lane": None,
         "title": "Compare",
-        "nav_ids": ["rail-compare", "tool-compare-btn"],
+        # rail-compare = the vendored (hidden) compare rail button; tool-compare-btn
+        # = the sidebar list-item; rail-applicant-compare = the collapsed-rail twin
+        # applicantNav.js emits (S1-6). All three are gated together so neither
+        # visible door can be clicked while Compare is locked.
+        "nav_ids": ["rail-compare", "tool-compare-btn", "rail-applicant-compare"],
         "dormant_keys": [],
         "requires": "llm_configured",
         "present_but_disabled": False,

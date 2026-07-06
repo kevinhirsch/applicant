@@ -41,6 +41,12 @@ let _lastToken = null;
 // closes) another surface opening over it, so it never becomes _activeToken.
 let _activeToken = null;
 
+// SR-S1-2 re-entrancy guard: true only while setHash is driving a surface's
+// open() (the navigation trigger below), so that open's own tail setHash can't
+// recurse into another trigger. (The hash-match short-circuit at the top of
+// setHash already stops the common case; this hard-stops any deeper re-entry.)
+let _triggeringOpen = false;
+
 /**
  * Register a surface under a hash token.
  * @param {string} token - e.g. 'portal' (the hash becomes '#portal').
@@ -63,12 +69,15 @@ export function hasRoute(token) {
  */
 export function setHash(token) {
   if (!token || _hashToken() === token) return;
-  // One-window-at-a-time: opening a new surface via the click path closes the
-  // previously-active one first (the hashchange path in _applyFromHash already
-  // does this for back/forward). 'chat' is exempt in BOTH directions — opening
-  // chat never closes the active surface, and chat is never the active surface
-  // that gets closed — so the native chat pane coexists with any modal.
-  if (token !== 'chat' && _activeToken && _activeToken !== token && _activeToken !== 'chat') {
+  // One-window-at-a-time: navigating to a new surface via the click path closes
+  // the previously-active one first (the hashchange path in _applyFromHash
+  // already does this for back/forward). 'chat' is exempt in BOTH directions —
+  // opening chat never closes the active surface, and chat is never the active
+  // surface that gets closed — so the native chat pane coexists with any modal.
+  // `crossNav` is a genuine surface→surface transition: there WAS an active
+  // surface and we're moving to a different one.
+  const crossNav = token !== 'chat' && !!_activeToken && _activeToken !== token && _activeToken !== 'chat';
+  if (crossNav) {
     const prev = _routes.get(_activeToken);
     if (prev && typeof prev.close === 'function') {
       try { prev.close(); } catch (_) { /* a surface's own close must not break routing */ }
@@ -81,6 +90,33 @@ export function setHash(token) {
   }
   _lastToken = token;
   if (token !== 'chat') _activeToken = token;
+  // SR-S1-2: `history.pushState` never fires `hashchange`, so a caller that only
+  // updates the hash to NAVIGATE — a CTA that hands off to another surface, e.g.
+  // Results' "See what I'm working on" → setHash('activity') — would leave the
+  // destination un-constructed: its registered open() never runs and the CTA is
+  // dead. Open it here. This fires ONLY on a real surface→surface transition
+  // (crossNav): a surface's OWN open() calls setHash(token) as its last step to
+  // sync the URL, but by then the hash already equals the token so the
+  // short-circuit at the top returns before here; and a first/only-surface open
+  // (no previously-active surface — the boot landing or a launcher from the
+  // welcome screen) is opened out-of-band by its launcher, so crossNav is false
+  // and we don't double it. Registered surfaces are idempotently re-openable
+  // (they reopen on every back/forward via _applyFromHash), so re-entering the
+  // just-navigated surface here is safe; `_triggeringOpen` hard-stops any deeper
+  // recursion.
+  if (crossNav && !_triggeringOpen) {
+    const route = _routes.get(token);
+    if (route && typeof route.open === 'function') {
+      _triggeringOpen = true;
+      try {
+        route.open();
+      } catch (_) {
+        /* a surface's own open must not break routing */
+      } finally {
+        _triggeringOpen = false;
+      }
+    }
+  }
 }
 
 /**
