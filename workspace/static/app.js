@@ -3470,9 +3470,15 @@ function startApplicantApp() {
   // Initialize document editor module
   if (documentModule) {
     documentModule.init(API_BASE);
-    // Restore document panel if it was open before refresh
+    // Restore document panel if it was open before refresh. Gated to
+    // non-mobile viewports (P0 mobile-nav-trap): the doc/email panel is a
+    // full-screen sheet on narrow screens, so auto-reopening it here — even
+    // from this same browser's own "it was open" flag — can strand a phone
+    // with no nav if the page was last left in doc-view. Never restore this
+    // kind of window state into a mobile viewport; the doc-indicator badge
+    // still shows so the user can open it deliberately.
     const _curSession = sessionModule && sessionModule.getCurrentSessionId();
-    if (_curSession && localStorage.getItem('applicant-doc-open-' + _curSession) === '1') {
+    if (_curSession && window.innerWidth > 768 && localStorage.getItem('applicant-doc-open-' + _curSession) === '1') {
       documentModule.loadSessionDocs(_curSession);
     }
   }  

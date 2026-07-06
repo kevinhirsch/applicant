@@ -5943,8 +5943,32 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         if (Modals.isRegistered('doc-panel')) Modals.unregister('doc-panel');
         return;
       }
-      // Always open when there are docs — the minimised branch above
-      // already returned for users who explicitly docked the panel.
+      // Mobile exception (P0 mobile-nav-trap / cross-device restore): the
+      // doc/email panel renders as a FULL-SCREEN sheet on narrow viewports
+      // (see the `.doc-editor-pane` mobile media query in style.css). A
+      // `restoreMode` load carries no explicit user intent here — it fires
+      // on every session-select, including the auto-select that runs at
+      // boot/login (sessions.js `loadSessions` picks the account's
+      // most-recently-active session, which is a SERVER-side, cross-device
+      // concept, not scoped to this browser). Forcing the sheet open there
+      // means a compose/email draft left open on a desktop reopens
+      // full-screen the instant a phone logs in, and (until the CSS fix
+      // alongside this one) with no nav left to escape it. Treat it like
+      // the "explicitly minimized" branch above instead: surface a dock
+      // chip so the user opts in by tapping it. Explicit opens (toolbar
+      // button, slash command, forceOpen) never pass restoreMode, so they
+      // still always open the panel on every viewport.
+      if (restoreMode && window.innerWidth <= 768) {
+        activeDocId = null;
+        _minimizedDocId = target.id;
+        _markDocVisibleState(sessionId, 'minimized');
+        _ensureDocChipRegistered();
+        Modals.minimize('doc-panel');
+        return;
+      }
+      // Always open when there are docs — the minimised branches above
+      // already returned for users who explicitly docked the panel, or
+      // whose viewport can't safely auto-restore a full-screen sheet.
       // The previous `if (!restoreMode || shouldRestoreOpen)` gate left
       // the panel closed on first entry to a chat with docs, which
       // hides the doc unless the user manually opens the panel.
