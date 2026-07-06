@@ -162,17 +162,24 @@ def test_overlay_states_progress_saves_automatically():
     assert "saves automatically" in body.lower()
 
 
-# ── onboarding wizard: skip-consequence hint on the required step (D16) ────
+# ── onboarding wizard: positive get-started hint on the required step (D16) ─
+#
+# Demo-tone pass: the hint used to read "Skipping this means Applicant can't
+# start yet." — a negative-capability framing. It now states the same fact
+# ("connect a model first") as a plain, positive next step.
 
 
-def test_nav_warns_what_skipping_the_required_step_costs():
+def test_nav_shows_a_positive_get_started_hint_on_the_required_step():
     body = _find_function(_read(ONBOARDING_JS), "_renderNav")
     assert "ao-skip-hint" in body
     assert re.search(r"cur\.required && !cur\.done\(_status\)", body), (
         "expected the hint to be conditioned on the current step being required "
         "and not yet done"
     )
-    assert "can" in body.lower() and "start" in body.lower()
+    assert "get started" in body.lower()
+    assert "can" not in body.lower(), (
+        "expected the negative-capability 'can't start yet' framing to be gone"
+    )
 
 
 # ── onboarding wizard: completion receipt + profile jump (D71/D73) ─────────

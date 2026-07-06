@@ -65,10 +65,12 @@ def test_docx_auto_on_when_soffice_present(monkeypatch):
 
 
 def test_default_lane_latex_stays_stub_without_tex(monkeypatch):
-    """With no TeX engine on PATH the default auto tailor uses the stub.
+    """With no TeX engine on PATH the default auto tailor uses the stub — HONESTLY.
 
     The PATH lookup is mocked so this stays deterministic whether or not the host
-    actually has a TeX engine installed (the deploy image does)."""
+    actually has a TeX engine installed (the deploy image does). Regression (the
+    product-honesty audit): "auto" with no engine used to return fidelity_ok=True
+    + "Looks like a faithful match." for a PDF that was NEVER built."""
     from applicant.core.ids import ResumeVariantId, new_id
 
     monkeypatch.setattr(latex_mod.shutil, "which", lambda _name: None)
@@ -79,6 +81,27 @@ def test_default_lane_latex_stays_stub_without_tex(monkeypatch):
     # Stub path: estimate-based page count, no "no TeX engine" soft error.
     assert result.page_count >= 1
     assert "no TeX engine available" not in result.notes
+    # HONESTY: no artifact was produced, so the result must say so — never a
+    # faithful-match claim for a nonexistent PDF.
+    assert result.artifact_available is False
+    assert result.fidelity_ok is False
+    assert "aren't available" in result.notes
+    assert "faithful match" not in result.notes
+    _assert_white_labeled(result.notes)
+
+
+def test_default_lane_docx_stub_without_soffice_is_honest(monkeypatch):
+    """Same honesty contract for the docx adapter: auto + no converter binary."""
+    from applicant.core.ids import ResumeVariantId, new_id
+
+    monkeypatch.setattr(docx_mod.shutil, "which", lambda _name: None)
+    tailor = DocxTailor()  # default render_mode="auto"
+    result = tailor.render_artifact(ResumeVariantId(new_id()), "Senior engineer resume")
+    assert result.artifact_available is False
+    assert result.fidelity_ok is False
+    assert "aren't available" in result.notes
+    assert "faithful match" not in result.notes
+    _assert_white_labeled(result.notes)
 
 
 # --- degradation messaging (the user-reported regression) -------------------

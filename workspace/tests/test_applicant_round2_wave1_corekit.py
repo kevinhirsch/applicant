@@ -207,31 +207,44 @@ def test_vault_uses_shared_loadinghtml_not_a_bespoke_span():
 # ── #24: Chat's open-panel catch distinguishes real errors from the gate ────
 
 def test_chat_open_catch_uses_errorhtml_wireretry_not_blanket_offline():
+    """Chat-unification recast of the original #24 contract: opening the Job
+    Assistant now means resolving its session and selecting it in the NATIVE
+    surface, so a thrown open failure surfaces as a kind-aware errText toast
+    (there is no modal body to render into); the errorHTML+wireRetry pair
+    moved to the job-search bar's own loader (_refreshBar), which is the
+    async panel that can genuinely fail after the surface is open. Neither
+    path may collapse a real error into the gated "connect a model" copy."""
     src = _read(CHAT_JS)
-    body = _async_top_level_fn(src, "openApplicantChat")
-    catch_m = re.search(r"catch\s*\(e\)\s*\{(.*?)\n  \}\n\}", body + "\n}", re.S)
+    open_body = _async_top_level_fn(src, "openApplicantChat")
+    catch_m = re.search(r"catch\s*\(e\)\s*\{(.*?)$", open_body, re.S)
     assert catch_m, "expected a catch(e) block in openApplicantChat"
     catch_body = catch_m.group(1)
-    assert re.search(r"errorHTML\(errText\(e\)\)", catch_body), (
-        "a genuinely thrown error must render via errorHTML(errText(e)) so 401 vs "
-        "network vs timeout read distinctly (errText is kind-aware)"
+    assert re.search(r"_toast\(errText\(e\)\)", catch_body), (
+        "a genuinely thrown open error must surface through the kind-aware errText"
     )
-    assert re.search(r"wireRetry\(body,\s*openApplicantChat\)", catch_body), (
-        "a genuinely thrown error must offer an inline Retry back into openApplicantChat"
+    assert "_renderOffline" not in catch_body
+
+    bar_body = _async_top_level_fn(src, "_refreshBar")
+    bar_catch = re.search(r"catch\s*\(e\)\s*\{(.*?)$", bar_body, re.S)
+    assert bar_catch, "expected a catch(e) block in _refreshBar"
+    assert re.search(r"errorHTML\(errText\(e\)\)", bar_catch.group(1)), (
+        "a genuinely thrown bar-load error must render via errorHTML(errText(e))"
     )
-    # The catch block itself must NOT fall back to the gated "connect a model"
-    # copy — that stays reserved for the real engine_available:false branch above.
-    assert "_renderOffline(body)" not in catch_body
+    assert re.search(r"wireRetry\(bar,\s*_refreshBar\)", bar_catch.group(1)), (
+        "a genuinely thrown bar-load error must offer an inline Retry"
+    )
+    assert "_renderOffline(bar)" not in bar_catch.group(1)
 
 
 def test_chat_engine_unavailable_gate_still_uses_renderoffline():
     """The one legitimate case for the "connect a model" gated copy — the
     `/campaigns` route's soft-degrade to `engine_available:false` — must be
-    untouched by the catch-block fix above."""
+    untouched by the catch-block fix above (it now lives in the job-search
+    bar's loader)."""
     src = _read(CHAT_JS)
-    body = _async_top_level_fn(src, "openApplicantChat")
+    body = _async_top_level_fn(src, "_refreshBar")
     assert re.search(
-        r"if\s*\(data\s*&&\s*data\.engine_available\s*===\s*false\)\s*\{\s*_renderOffline\(body\);\s*return;\s*\}",
+        r"if\s*\(data\s*&&\s*data\.engine_available\s*===\s*false\)\s*\{\s*_renderOffline\(bar\);\s*return;\s*\}",
         body,
     ), "the engine_available:false branch must still route to _renderOffline"
 

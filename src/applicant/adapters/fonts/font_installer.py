@@ -56,6 +56,33 @@ _FONT_PATTERNS = (
     re.compile(r"\\newfontfamily\\\w+(?:\[[^\]]*\])?\{([^}]+)\}"),
 )
 
+# SECURITY (Ledger #94): a font "name" is untrusted input from three places — a
+# resume's declared LaTeX/docx font-family text (``detect_required_fonts``), the
+# ``name`` form field on ``POST /api/fonts/install``, and a filename rescanned from
+# the confined install dir on restart. Without a shape check, any of those can
+# smuggle a path-traversal-looking string (e.g. ``../../../../tmp/pwned``) through
+# as a "font family name" — it never escapes the filesystem confinement below, but
+# it DOES get treated as ground truth and shown to the user as an "installed font"
+# (a dishonest/poisoned listing, not just an eyesore). This is the single gate a
+# name must pass before it is trusted anywhere in the flow: detection, install,
+# persisted/rescanned state, and the listed-fonts API.
+_FONT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._'()+-]{0,63}$")
+
+
+def _looks_like_font_name(name: str) -> bool:
+    """True if ``name`` is shaped like a plausible font-family name.
+
+    Rejects path separators, ``..`` traversal segments, control/whitespace-padded
+    strings, and anything not starting with an alphanumeric character (blocks a
+    leading ``.``/``-``/``_`` disguise) or over 64 chars. Legitimate family names
+    like ``Times New Roman``, ``Segoe UI``, or ``Lato-Lig`` all pass.
+    """
+    if not name or len(name) > 64 or name != name.strip():
+        return False
+    if "/" in name or "\\" in name or ".." in name:
+        return False
+    return bool(_FONT_NAME_RE.fullmatch(name))
+
 
 class FontInstaller:
     """FontInstallPort adapter — real copy into a confined dir; fc-cache stubbed."""
@@ -91,7 +118,11 @@ class FontInstaller:
 
         def _add(family: str) -> None:
             root = family.split("-")[0].strip()
-            if root and root not in found:
+            # SECURITY (Ledger #94): a "declared font" is untrusted resume content —
+            # never let a path-traversal-shaped string enter the required/missing
+            # list (it would later be echoed back as the ``name`` for /fonts/install
+            # and shown to the user as an "installed font").
+            if root and _looks_like_font_name(root) and root not in found:
                 found.append(root)
 
         path = Path(document_path)
@@ -125,13 +156,16 @@ class FontInstaller:
                     if member not in names:
                         continue
                     xml = zf.read(member).decode("utf-8", errors="ignore")
+                    # SECURITY (Ledger #94): filter at the source — a docx's font
+                    # table is untrusted content and must not smuggle a
+                    # traversal/garbage string in as a "declared font family".
                     for m in re.finditer(r'w:(?:ascii|hAnsi|cs)="([^"]+)"', xml):
                         fam = m.group(1).strip()
-                        if fam and fam not in found:
+                        if fam and _looks_like_font_name(fam) and fam not in found:
                             found.append(fam)
                     for m in re.finditer(r'<w:font w:name="([^"]+)"', xml):
                         fam = m.group(1).strip()
-                        if fam and fam not in found:
+                        if fam and _looks_like_font_name(fam) and fam not in found:
                             found.append(fam)
         except (OSError, zipfile.BadZipFile):
             return []
@@ -141,6 +175,12 @@ class FontInstaller:
         """Subset of ``required`` not yet installed (drives the upload prompt)."""
         missing: list[str] = []
         for name in required:
+            # SECURITY (Ledger #94): never prompt to "install" something that
+            # isn't shaped like a font name — a caller that bypasses detection
+            # and hands ``required`` straight in (e.g. ``report_for_fonts``)
+            # must not be able to smuggle a traversal string through either.
+            if not _looks_like_font_name(name):
+                continue
             root = name.split("-")[0].strip()
             if root in _SYSTEM_FONTS or name in _SYSTEM_FONTS:
                 continue
@@ -155,7 +195,18 @@ class FontInstaller:
         The font file is copied into the confined ``install_root`` (real FS op,
         never system-wide), then ``_refresh_font_cache`` is invoked so the
         conversion environment picks it up without a rebuild.
+
+        SECURITY (Ledger #94): ``name`` is untrusted (a form field on
+        ``POST /api/fonts/install``, ultimately possibly echoing a resume's own
+        declared font text). It is validated as a plausible font-family name
+        BEFORE anything is written to disk or recorded as installed — a
+        traversal/garbage string is rejected outright rather than silently
+        sanitized-and-accepted, so it can never become a "legitimately
+        installed" entry in ``list_fonts()``.
         """
+        name = name.strip()
+        if not _looks_like_font_name(name):
+            raise ValueError(f"Invalid font name: {name!r}")
         self._copy_into_confined_dir(font_path, name)
         self._refresh_font_cache()  # STAGE B boundary (fc-cache stubbed)
         status = FontStatus(name=name, installed=True, environment=self._install_root)
@@ -164,7 +215,12 @@ class FontInstaller:
         return status
 
     def list_fonts(self) -> list[FontStatus]:
-        return list(self._installed.values())
+        # SECURITY (Ledger #94): last-mile filter — the source of truth for
+        # "installed fonts" must only ever surface legitimate family names, never
+        # a raw filesystem path/traversal string, regardless of how an entry got
+        # into ``_installed`` (defense in depth alongside the entry-point checks
+        # in ``install_font``/``detect_required_fonts``/``_rescan_install_root``).
+        return [f for f in self._installed.values() if _looks_like_font_name(f.name)]
 
     @property
     def cache_refresh_count(self) -> int:
@@ -207,6 +263,15 @@ class FontInstaller:
         for f in root.iterdir():
             if f.is_file() and f.suffix.lower() in (".ttf", ".otf", ".ttc"):
                 name = f.stem
+                # SECURITY (Ledger #94): a stray/pre-existing file whose name isn't
+                # a plausible font family (e.g. a poisoned
+                # ``.._.._.._.._tmp_pwned_by_traversal.ttf`` left over from before
+                # this fix, or anything else dropped straight into the confined
+                # dir) must never resurface as a listed "installed font" just
+                # because it happens to sit in the fonts dir with a font suffix.
+                if not _looks_like_font_name(name):
+                    log.warning("font_rescan_skipped_invalid_name", file=str(f))
+                    continue
                 self._installed.setdefault(
                     name, FontStatus(name=name, installed=True, environment=self._install_root)
                 )

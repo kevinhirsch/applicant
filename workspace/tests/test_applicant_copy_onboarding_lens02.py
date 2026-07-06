@@ -9,16 +9,23 @@ spelling of "résumé" at the two sites the audit cites), and warmer
 error/status copy. No DOM/logic changes — see the git history for the paired
 source commit.
 
-Two audit items (#36's ``NEVER_DOES`` list, #51's Welcome step-desc) are
-DELIBERATELY left in their original third-person wording: both strings are
-duplicated verbatim into files outside this pass's file-ownership boundary
-(``static/landing.html``'s ``#trust`` section, ``static/js/models.js``'s
-welcome card) and are guarded by existing drift tests
-(``test_applicant_activation_funnel_09.py``,
-``test_applicant_round1_remainder_welcomecard.py``) that do exact-substring
-matches against this file's source. Rewriting them here without updating
-those sibling files in lockstep would silently break that guard, so they're
-tracked as a follow-up rather than changed in this pass.
+One audit item (#51's Welcome step-desc) is DELIBERATELY left in its original
+third-person wording: the string is duplicated verbatim into
+``static/js/models.js``'s welcome card (outside this pass's file-ownership
+boundary) and is guarded by an existing drift test
+(``test_applicant_round1_remainder_welcomecard.py``) that does an
+exact-substring match against this file's source. Rewriting it here without
+updating that sibling file in lockstep would silently break that guard, so
+it's tracked as a follow-up rather than changed in this pass.
+
+The other item (#36's ``NEVER_DOES`` list) WAS addressed, in a later
+demo-tone pass: the list was reframed from "never"/negative-capability
+phrasing to positive control statements, in lockstep with
+``static/landing.html``'s ``#trust`` section
+(``test_applicant_activation_funnel_09.py``). The wizard welcome step no
+longer renders that list at all — it shows a single positive line
+(``trustLine``) instead — so this file's own welcome-step assertions below
+were updated to match.
 
 Follows the established convention: every fact is read from the actual
 static file content via ``pathlib`` — no browser, no DOM, no real socket.
@@ -49,8 +56,11 @@ def test_welcome_hairline_and_trust_heading_are_first_person():
     assert "skip it and tell me in chat" in js
     assert "tell Applicant in chat" not in js
     assert "where I browse live in Settings any time" in js
-    assert "<summary>What I never do</summary>" in js
+    # Demo-tone pass: the collapsed "What I never do" disclosure was replaced
+    # with a single positive control statement — no <summary> disclosure left.
+    assert "<summary>What I never do</summary>" not in js
     assert "<summary>What Applicant never does</summary>" not in js
+    assert "ao-welcome-trust" in js
 
 
 # ── Connect a model / LLM save error ────────────────────────────────────────
@@ -198,7 +208,11 @@ def test_base_resume_step_is_first_person_and_says_resume_with_accent():
 
 def test_resume_parse_success_message_is_first_person():
     js = _read(ONBOARDING_JS)
-    assert "I read ${res.attribute_count || 0} details from your résumé and filled in the next steps" in js
+    # HONESTY (live audit): the count is the engine's per-parse field count
+    # (parsed_field_count), and the confident success line only renders for a
+    # real, non-trivial parse — never the attribute-cloud total.
+    assert "I read ${n} details from your résumé and filled in the next steps" in js
+    assert "res.attribute_count" not in js
     assert "we’ve filled in the next steps" not in js
 
 

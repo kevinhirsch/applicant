@@ -125,7 +125,11 @@ def fonts_embedded_no_emdash(p3ctx):
 # --- docx fallback engine fidelity (FR-RESUME-3/4) -------------------------
 @given("a campaign whose chosen material engine is docx")
 def docx_engine_campaign(p3ctx):
-    p3ctx["docx_engine"] = DocxTailor()
+    # render_mode="off" forces the deterministic stub (mirroring the `material`
+    # fixture above): the scenario asserts the SOURCE-level fidelity contract, and
+    # in "auto" with no converter installed the adapter now honestly reports the
+    # missing toolchain instead of claiming a faithful render.
+    p3ctx["docx_engine"] = DocxTailor(render_mode="off")
 
 
 @when("the docx engine renders the base resume artifact")

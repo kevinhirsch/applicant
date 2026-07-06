@@ -26,12 +26,22 @@ class RedlineResult:
 
 @dataclass(frozen=True)
 class RenderResult:
-    """A rendered, font-embedded artifact plus its fidelity verdict."""
+    """A rendered, font-embedded artifact plus its fidelity verdict.
+
+    HONESTY CONTRACT: ``artifact_available`` is True ONLY when a real PDF was
+    produced by an available toolchain (the file at ``storage_path`` exists).
+    When it is False, ``page_count`` is a source-based ESTIMATE used by the
+    internal page-fit modeling — no user-facing surface may present it as a
+    measured property of a document, and ``fidelity_ok`` must never be
+    presented as "faithful match" (no artifact was inspected). The default is
+    conservative (False) so a hand-rolled result can't claim an artifact.
+    """
 
     storage_path: str
     fidelity_ok: bool
     page_count: int
     notes: str = ""
+    artifact_available: bool = False
 
 
 @runtime_checkable

@@ -407,6 +407,17 @@ export function updateModelPicker() {
     if (wrap) { wrap.style.display = 'none'; }
     return;
   }
+  // Hide it for the Job Assistant's engine-backed session too — that chat
+  // has no swappable LLM endpoint (its replies come from the Applicant
+  // engine via the workspace proxy), so picking a model here would only
+  // corrupt the session's engine sentinel. Same seam the send path uses
+  // (see applicantChat.js isEngineSessionActive / chat.js dispatch).
+  if (window.applicantChatModule
+      && typeof window.applicantChatModule.isEngineSessionActive === 'function'
+      && window.applicantChatModule.isEngineSessionActive()) {
+    if (wrap) { wrap.style.display = 'none'; }
+    return;
+  }
   // Reset inline visibility (may have been hidden by typing in previous session)
   if (wrap) {
     wrap.style.display = '';

@@ -85,10 +85,16 @@ def test_build_cover_source_renders_one_page_cover_class():
     assert source.count("\\lettercontent{") == 2
     assert "\\lettercontent{I am writing to apply.}" in source
 
-    # And the builder feeds the fidelity check a clean one-page artifact.
-    result = tailor.render_artifact(ResumeVariantId(new_id()), source)
+    # And the builder feeds the fidelity check a clean one-page source. The
+    # explicit stub lane ("off") models the checks on the source; HONESTY: it
+    # never claims a real artifact or a faithful match for a PDF it didn't build.
+    stub = LatexTailor(render_mode="off")
+    result = stub.render_artifact(ResumeVariantId(new_id()), source)
     assert result.page_count == 1
-    assert result.fidelity_ok is True
+    assert result.fidelity_ok is True  # source-level checks all pass
+    assert result.artifact_available is False
+    assert "source-level check only" in result.notes
+    assert "faithful match" not in result.notes
 
 
 def test_build_cover_source_strips_emdash_in_every_field():
@@ -318,10 +324,13 @@ def test_real_compile_inspects_produced_pdf(monkeypatch, tmp_path):
     vid = ResumeVariantId(new_id())
     result = tailor.render_artifact(vid, "\\documentclass[]{cover}\n\\namesection{A}{B}{c}\nbody\n")
 
-    # Real compile path: storage path points at the produced PDF, fidelity passes.
+    # Real compile path: storage path points at the produced PDF, fidelity passes,
+    # and ONLY here may the result claim a real artifact / faithful match.
     assert result.storage_path.endswith("resume.pdf")
     assert result.page_count == 1
     assert result.fidelity_ok is True
+    assert result.artifact_available is True
+    assert result.notes == "Looks like a faithful match."
     assert "no TeX engine available" not in result.notes
 
 

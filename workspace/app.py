@@ -889,9 +889,12 @@ app.include_router(setup_applicant_documents_routes())
 # Lane B — Memory/Profile: attribute cloud + conversion-learning engine proxy.
 from routes.applicant_memory_routes import setup_applicant_memory_routes
 app.include_router(setup_applicant_memory_routes())
-# Lane C — Chat/Agent ↔ engine assistant + job actions (additive; auth-protected).
+# Lane C — Chat/Agent ↔ engine assistant + job actions (auth-protected).
+# session_manager powers the UNIFIED Job Assistant chat: the per-user
+# engine-backed session lives in the normal workspace Chats list, and each
+# proxied turn is persisted into it (chat-unification pass).
 from routes.applicant_chat_routes import setup_applicant_chat_routes
-app.include_router(setup_applicant_chat_routes())
+app.include_router(setup_applicant_chat_routes(session_manager=session_manager))
 # FR-MIND — "What the assistant remembers" + "Saved playbooks" + learning curation
 # approvals: thin owner-scoped proxy over the engine's /api/agent-memory/* surface.
 from routes.applicant_mind_routes import setup_applicant_mind_routes

@@ -3,8 +3,8 @@
 // Trust Center — "How Applicant protects you". A single, calm, plain-language
 // read that consolidates the safety facts this product already ships but that
 // were previously scattered one-per-surface: the irreversible-action gate on
-// applicantRemote.js's final-submit flow, the "what Applicant never does" list
-// from the OOBE wizard, the pre-submit snapshot + audit-log export from
+// applicantRemote.js's final-submit flow, the "what I promise" list from the
+// OOBE wizard, the pre-submit snapshot + audit-log export from
 // applicantDebug.js, and the owner-scoping/self-hosting story documented in
 // this repo's own CLAUDE.md.
 //
@@ -23,9 +23,12 @@
 //      dialog echoes the exact role/company, and the "Submitting in N…
 //      Cancel" hold window (`_holdBeforeAuthorize`, Top-25 #12) gives one more
 //      undoable pause after confirming and before anything reaches the engine.
-//   2. "What Applicant never does" — reused VERBATIM via `neverDoesList`,
-//      exported by applicantOnboarding.js (the OOBE welcome step / D4's
-//      Portal-empty-state reuse). Not duplicated text — the same import.
+//   2. "What I promise" — reused VERBATIM via `neverDoesList`, exported by
+//      applicantOnboarding.js. Reframed in the demo-tone pass from a list of
+//      negative "never" disclaimers to positive control statements; the OOBE
+//      welcome step and Portal empty state now show the shorter `trustLine`
+//      one-liner instead, but this fuller Trust Center still reads the item
+//      list — not duplicated text, the same import.
 //   3. Honesty artifacts — the pre-submit snapshot ("Review exactly what will
 //      be sent", applicantRemote.js) and the immutable per-application
 //      submission record + full audit-log JSON export, both reachable from
@@ -108,22 +111,25 @@ function _body() { return _modalEl && _modalEl.querySelector('#applicant-trust-b
 
 // ── Section renderers ────────────────────────────────────────────────────────
 
+// Demo-tone pass: dropped the shouty ALL-CAPS treatment (text-transform) —
+// the safety facts below are a selling point, not a disclaimer, and read
+// calmer as normal sentence case.
 function _sectionHead(title) {
-  return `<div style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;padding:2px 0 8px;">${esc(title)}</div>`;
+  return `<div style="font-size:11px;letter-spacing:0.02em;font-weight:600;opacity:0.6;padding:2px 0 8px;">${esc(title)}</div>`;
 }
 
 // (1) The irreversible-action gate.
 function _gateSectionHTML() {
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
-      ${_sectionHead('The final submit is always yours')}
+      ${_sectionHead('You have the final say on every submission')}
       <p style="font-size:12px;line-height:1.6;margin:0 0 8px;">
         I can search, draft, and fill out an application right up to the final
-        submit step — but I never click it myself without you. When an
-        application is ready, you choose: click submit yourself in the live
-        session, or explicitly authorize me to click it for you, just this
-        once. There is no path in the product that lets me submit without
-        that explicit action from you.
+        submit step — the send is always yours to make. When an application
+        is ready, you choose: click submit yourself in the live session, or
+        explicitly authorize me to click it for you, just this once. There is
+        no path in the product that lets me submit without that explicit
+        action from you.
       </p>
       <p style="font-size:12px;line-height:1.6;margin:0 0 8px;">
         If you authorize me, I confirm the exact role and company back to you
@@ -134,18 +140,18 @@ function _gateSectionHTML() {
       </p>
       <p style="font-size:11px;line-height:1.5;margin:0;opacity:0.7;">
         I also pause and ask whenever something is uncertain, rather than
-        guessing — see "What I never do" below.
+        guessing — see "What I promise" below.
       </p>
     </div>`;
 }
 
-// (2) "What Applicant never does" — reused verbatim from applicantOnboarding.js.
+// (2) "What I promise" — reused verbatim from applicantOnboarding.js.
 function _neverDoesSectionHTML() {
   const items = Array.isArray(neverDoesList) ? neverDoesList : [];
   if (!items.length) return '';
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
-      ${_sectionHead('What I never do')}
+      ${_sectionHead('What I promise')}
       <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7;">
         ${items.map((t) => `<li>${esc(t)}</li>`).join('')}
       </ul>

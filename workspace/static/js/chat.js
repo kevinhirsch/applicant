@@ -425,6 +425,23 @@ import createResearchSynapse from './researchSynapse.js';
       }
     }
 
+    // --- Job Assistant dispatch: engine-backed sessions don't stream ---
+    // The Job Assistant's session (resolved by applicantChat.js via
+    // /api/applicant/chat/session, flagged by its engine-sentinel
+    // endpoint_url) gets its replies from the Applicant engine through the
+    // workspace proxy — not from the LLM streaming path below. Hand the
+    // send to the surface module (it appends the bubbles through
+    // chatRenderer itself and clears the composer only on success) and
+    // stop here.
+    if (window.applicantChatModule
+        && typeof window.applicantChatModule.isEngineSessionActive === 'function'
+        && window.applicantChatModule.isEngineSessionActive()
+        && typeof window.applicantChatModule.sendEngineMessage === 'function') {
+      _releaseSendFlag();
+      window.applicantChatModule.sendEngineMessage(msg);
+      return;
+    }
+
     // Materialize pending session (deferred from model click) on first message
     if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       const ok = await sessionModule.materializePendingSession();

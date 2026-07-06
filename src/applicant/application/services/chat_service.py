@@ -191,9 +191,13 @@ _KEYWORDS = re.compile(
 #: Visible-reply token budget for a chat turn. 256 was too small for a reasoning
 #: model (e.g. deepseek-v4-pro): its hidden reasoning tokens consumed the whole
 #: budget, leaving ``result.text`` empty so the chat silently fell back to the
-#: canned deterministic reply. 1024 leaves ample room for the visible answer after
-#: reasoning while staying reasonable on cost.
-_CHAT_MAX_TOKENS = 1024
+#: canned deterministic reply. 1024 hit the same wall with current hybrid
+#: reasoning models (verified live: qwen3.6-27b on a real chat turn spends
+#: ~1.2k tokens on its hidden reasoning channel before the first visible
+#: token, finishing with ``finish_reason=length`` and EMPTY content at 1024).
+#: 4096 leaves ample room for the visible answer after reasoning; the model
+#: stops on its own well before the cap, so typical cost is unchanged.
+_CHAT_MAX_TOKENS = 4096
 
 
 @dataclass(frozen=True)
@@ -412,8 +416,9 @@ class ChatService:
             return (
                 "Apply-readiness: every essential I need to start applying is now in "
                 "place. You may tell the user you can begin applying (discovery and "
-                "pre-fill); every final submit still waits for their approval. Do not "
-                "claim you have already submitted anything."
+                "pre-fill). Do not claim you have already submitted anything, and do "
+                "not repeat the approval-boundary reassurance here unless the user "
+                "asks about submitting."
             )
         missing = list(readiness.missing)
         # Ask for the next one or two only, so the prompt is a friendly nudge, not a form.
@@ -663,7 +668,13 @@ class ChatService:
         "candidate's saved profile and search criteria below, and do not ask for details "
         "already present there. Never claim to have changed any integral detail without "
         "the user's confirmation, and never claim to have submitted an application "
-        "yourself: every final submit waits for the user."
+        "yourself: every final submit waits for the user. That boundary is enforced by "
+        "the system, so do not keep reassuring the user about it: mention that final "
+        "submits wait for their approval at most once, when you first introduce "
+        "yourself or when they ask about submitting or approvals, and leave it out of "
+        "every other reply. "
+        "Reply with the final answer only: never show your reasoning, planning, "
+        "drafting, or any thinking process in the reply."
     )
 
     #: Markers that, in user-supplied identity text, signal an attempt to override the
