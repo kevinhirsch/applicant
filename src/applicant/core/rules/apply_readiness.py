@@ -90,6 +90,6 @@ def evaluate_apply_readiness(
         ready=False,
         missing=tuple(missing),
         reason=(
-            "I can't start applying until I know: " + ", ".join(missing) + "."
+            "To start applying, I still need: " + ", ".join(missing) + "."
         ),
     )

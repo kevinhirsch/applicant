@@ -102,7 +102,7 @@ def test_rule_reports_exact_missing_in_stable_order():
         LABEL_KEY_SKILLS,
         LABEL_RESUME,
     )
-    assert "I can't start applying until I know" in r.reason
+    assert "To start applying, I still need" in r.reason
     # No FR-/NFR- jargon in the user-facing reason.
     assert "FR-" not in r.reason and "NFR-" not in r.reason
 
