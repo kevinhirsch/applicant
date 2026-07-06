@@ -13,6 +13,15 @@ fixed, it moves to "Resolved" with its PR. Status legend:
 > Source tags reference the validation pass that found it (live core-validation, browser-prefill,
 > spec-categorization, the gap-closer agents G1–G6, etc.).
 
+> **Companion log.** Bugs found incidentally while sweeping the 12-lens UX-hardening backlog
+> live in [design/audits/discovered-issues.md](design/audits/discovered-issues.md) (the "DISC"
+> ledger), and per-lens backlog status in
+> [design/audits/exhaustive2/CLOSURE-STATUS.md](design/audits/exhaustive2/CLOSURE-STATUS.md).
+> Notifier-adapter correctness fixes (dedup/re-fire, ntfy reach/preempt) shipped in **PR #626**;
+> the cross-user isolation thread (owner-scoping the front-door proxies on reads **and** writes)
+> closed in **#626/#629/#630**. Note K5 (ntfy not front-door-configurable) remains OPEN — that
+> is the config-thread-through, distinct from the adapter fixes.
+
 ---
 
 ## OPEN (real defects awaiting a fix)
