@@ -493,7 +493,7 @@ def test_honesty_section_reflects_real_debug_affordances_and_wires_the_button(no
         const norm = body.innerHTML.replace(/\\s+/g, ' ');
 
         let opened = 0;
-        window.applicantDebugModule = { openApplicantDebug: () => { opened++; } };
+        window.applicantActivityModule = { openApplicantActivity: () => { opened++; } };
         const btn = body.querySelector('#applicant-trust-open-debug');
         btn.dispatchEvent({ type: 'click' });
 
@@ -525,7 +525,7 @@ def test_honesty_section_falls_back_gracefully_without_debug_module(node_availab
     script = _IMPORT_TRIO + """
         await trustMod.openApplicantTrust();
         const body = document.getElementById('applicant-trust-body');
-        delete window.applicantDebugModule;
+        delete window.applicantActivityModule;
         const btn = body.querySelector('#applicant-trust-open-debug');
         btn.dispatchEvent({ type: 'click' });
         const modal = document.getElementById('applicant-trust-modal');

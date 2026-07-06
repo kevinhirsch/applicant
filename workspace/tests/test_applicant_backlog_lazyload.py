@@ -134,7 +134,12 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # (no engine calls), the same category as applicantCapabilities.js /
     # applicantShortcuts.js above, not one of the "heavy" surfaces this wave
     # lazy-loaded away.
-    assert count == 47, f"expected 47 eager module <script> tags, got {count}"
+    # 48 after wiring applicantAutomationSettings.js -- a Settings-tab panel in
+    # the SAME eager category as applicantCampaignSettings.js /
+    # applicantModelLadder.js (settings.js reads their window.mount* globals);
+    # it was accidentally omitted, so the Automation Preferences tab rendered
+    # permanently empty until this tag was added.
+    assert count == 48, f"expected 48 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():
