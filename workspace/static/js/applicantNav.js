@@ -95,15 +95,19 @@ const NAV = [
   { group: 'chat', items: [
     { rail: 'rail-assistant', side: 'tool-assistant-btn', label: 'Chat', icon: 'chat', title: 'Job Assistant — ask about your applications and what needs your attention' },
   ] },
-  // Secondary utilities — sidebar-only (no rail twin, matching how these
-  // shipped). Each is wired by its own module's launcher poll on the id below;
-  // renderNav only owns the markup. Names are disambiguated from the primary
-  // nav: the live feed is "Activity" (tool-activity-btn) while the history +
-  // run-controls + update surface here is "Run log" (tool-debug-btn).
+  // Secondary utilities. They keep the canonical `rail: null` (so they stay OUT
+  // of the reconciled PRIMARY rail order the single-source test pins) but each
+  // now also carries a `railId` (S1-6): renderNav emits a collapsed-rail twin
+  // for it too, so a user with the sidebar collapsed can still reach Compare /
+  // Run log / Trust instead of the rail silently dropping them. The twins are
+  // wired by app.js's `_railToolMap` (railId -> the sidebar `side` id), the same
+  // delegation the other rail icons use. Names are disambiguated from the
+  // primary nav: the live feed is "Activity" (tool-activity-btn) while the
+  // history + run-controls + update surface here is "Run log" (tool-debug-btn).
   { group: 'utilities', items: [
-    { rail: null, side: 'tool-compare-btn', label: 'Compare', icon: 'compare', title: 'Compare — put two models or drafts side by side' },
-    { rail: null, side: 'tool-debug-btn', label: 'Run log', icon: 'runlog', title: 'Run log — application history, run controls, and updates' },
-    { rail: null, side: 'tool-trust-btn', label: 'Trust', icon: 'trust', title: 'How Applicant protects you — the final say, my promises, and your data' },
+    { rail: null, side: 'tool-compare-btn', railId: 'rail-applicant-compare', label: 'Compare', icon: 'compare', title: 'Compare — put two models or drafts side by side' },
+    { rail: null, side: 'tool-debug-btn', railId: 'rail-debug', label: 'Run log', icon: 'runlog', title: 'Run log — application history, run controls, and updates' },
+    { rail: null, side: 'tool-trust-btn', railId: 'rail-trust', label: 'Trust', icon: 'trust', title: 'How Applicant protects you — the final say, my promises, and your data' },
   ] },
   { spacer: true },
   { group: 'bottom', items: [
@@ -117,8 +121,12 @@ const NAV = [
 ];
 
 function _railButton(item) {
+  // A primary destination emits under `item.rail`; a secondary utility twin
+  // (S1-6) under `item.railId` (Compare/Run log/Trust — deliberately not `rail`
+  // so it stays out of the single-source PRIMARY rail order).
+  const railId = item.rail || item.railId;
   return (
-    `<button type="button" class="icon-rail-btn" id="${item.rail}" title="${item.title}" aria-label="${item.title}">` +
+    `<button type="button" class="icon-rail-btn" id="${railId}" title="${item.title}" aria-label="${item.title}">` +
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[item.icon]}</svg>` +
     `</button>`
   );
@@ -167,7 +175,11 @@ export function renderNav() {
     }
     firstGroup = false;
     for (const item of group.items) {
-      if (item.rail) railHTML.push(_railButton(item));
+      // A primary destination (`rail`) OR a secondary utility twin (`railId`,
+      // S1-6) both emit a rail button; `rail` also feeds the single-source
+      // order test, `railId` deliberately does not (secondary, wired via
+      // app.js `_railToolMap`).
+      if (item.rail || item.railId) railHTML.push(_railButton(item));
       if (item.side) sideHTML.push(_sidebarItem(item));
     }
   }

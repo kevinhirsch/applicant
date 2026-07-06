@@ -35,6 +35,18 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 let _deps = null;
 let _autoSelectingDefault = false;
 
+// S1-7 (white-label): the composer's model picker must not read as a raw
+// provider catalog dump — a configured OpenRouter-style endpoint can expose
+// 300+ models, and one click from the box that used to render ALL of them
+// (each tagged with its provider logo + endpoint name) makes Applicant look
+// like a generic model router. Curate the browse view instead: favorites first,
+// then a short capped "All models" list with the rest behind a plain-language
+// "Show all N" row. A search still matches across everything (the cap is only
+// for the unfiltered browse). Provider logos / endpoint-brand tags are dropped
+// from the rows + the composer label so no vendor branding leaks through.
+const _MODEL_PICKER_CAP = 8;
+let _pickerShowAll = false;
+
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
   const items = window.modelsModule.getCachedItems() || [];
@@ -202,14 +214,9 @@ function _initModelPickerDropdown() {
         row.style.opacity = '0.45';
         row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
       }
-      const _mlogo = providerLogo(m.mid);
-      if (_mlogo) {
-        const logoSpan = document.createElement('span');
-        logoSpan.className = 'provider-logo';
-        logoSpan.style.opacity = '0.6';
-        logoSpan.innerHTML = _mlogo;
-        row.appendChild(logoSpan);
-      }
+      // S1-7 (white-label): no provider logo. The rows show the model NAME
+      // only — the front door doesn't advertise which LLM vendor is behind a
+      // model.
       const nameSpan = document.createElement('span');
       nameSpan.textContent = m.display;
       row.appendChild(nameSpan);
@@ -220,12 +227,10 @@ function _initModelPickerDropdown() {
         badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
         row.appendChild(badge);
       }
-      const epSpan = document.createElement('span');
-      epSpan.className = 'model-switch-ep';
-      // Don't show endpoint name if it matches the model name (local self-hosted)
-      const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
-      epSpan.textContent = _epDisplay;
-      row.appendChild(epSpan);
+      // S1-7 (white-label): the per-row endpoint-name tag is intentionally
+      // dropped — it surfaced raw provider brands ("OpenRouter", …) beside every
+      // model. Quick model-switching only needs the model name; endpoint
+      // management lives in Settings.
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -236,7 +241,25 @@ function _initModelPickerDropdown() {
     }
     if (restModels.length > 0) {
       if (favModels.length > 0) _addSection('All models');
-      restModels.forEach(_addRow);
+      // S1-7 (white-label): cap the unfiltered browse so a big provider catalog
+      // doesn't dump 300+ rows into the composer. A search (q) shows every match.
+      const filtering = !!q;
+      const capped = !filtering && !_pickerShowAll && restModels.length > _MODEL_PICKER_CAP;
+      (capped ? restModels.slice(0, _MODEL_PICKER_CAP) : restModels).forEach(_addRow);
+      if (capped) {
+        const moreRow = document.createElement('div');
+        moreRow.className = 'model-switch-item mp-show-all';
+        moreRow.setAttribute('role', 'button');
+        moreRow.tabIndex = 0;
+        moreRow.textContent = `Show all ${restModels.length} models`;
+        moreRow.style.cssText = 'justify-content:center;opacity:0.65;font-size:12px;';
+        const _expand = () => { _pickerShowAll = true; _populate(filter); };
+        moreRow.addEventListener('click', (e) => { e.stopPropagation(); _expand(); });
+        moreRow.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _expand(); }
+        });
+        listEl.appendChild(moreRow);
+      }
     }
     if (listEl.children.length === 0) {
       const empty = document.createElement('div');
@@ -351,6 +374,8 @@ function _initModelPickerDropdown() {
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
       // Force-clear any in-progress close animation
       menu.classList.remove('closing', 'hidden');
+      // S1-7: each open starts on the curated (capped) browse view.
+      _pickerShowAll = false;
       _populate('');
       if (window.modelsModule && window.modelsModule.refreshModels) {
         window.modelsModule.refreshModels(true).then(() => {
@@ -373,7 +398,11 @@ function _initModelPickerDropdown() {
     }
   });
 
-  search.addEventListener('input', () => _populate(search.value));
+  search.addEventListener('input', () => {
+    // Clearing the search returns to the curated (capped) browse view.
+    _pickerShowAll = false;
+    _populate(search.value);
+  });
   search.addEventListener('click', (e) => e.stopPropagation());
   search.addEventListener('keydown', (e) => {
     _handlePickerKeydown(e, listEl, '.model-switch-item', _close);
@@ -505,10 +534,7 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
-  const logo = modelId ? providerLogo(modelId) : null;
-  if (logo) {
-    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
-  } else {
-    label.textContent = displayName;
-  }
+  // S1-7 (white-label): the composer shows just the model NAME — no provider
+  // logo — so the front door doesn't advertise which LLM vendor is behind it.
+  label.textContent = displayName;
 }
