@@ -84,7 +84,7 @@ function _ensureChatHintRegistered() {
   if (_chatHintRegistered || !appkitChatHint || typeof appkitChatHint.register !== 'function') return;
   appkitChatHint.register(CHAT_HINT_KEY, {
     html: 'Ask me what needs your attention, or tell me about your preferences and ' +
-      "I’ll keep them up to date. I never submit an application without your OK.",
+      "I’ll keep them up to date. Nothing goes out without your go-ahead.",
     gameBuildOnly: false,
   });
   _chatHintRegistered = true;

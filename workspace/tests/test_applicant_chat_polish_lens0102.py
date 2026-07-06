@@ -73,16 +73,23 @@ def test_errtext_import_still_present():
 
 def test_curly_apostrophes_in_user_facing_strings():
     """Cross-cutting finding #3: pick curly (’) apostrophes everywhere in
-    user-facing copy — the chat guardrail hint and the empty-thread greeting.
-    (The starter-prompt chip "Tell me what you're looking for" is
-    intentionally left alone — ``test_applicant_chat_help_prompt_lens12.py``
-    asserts that exact string verbatim.)"""
+    user-facing copy. The chat guardrail hint and the thread-intro greeting
+    still used a straight apostrophe. (The starter-prompt chip "Tell me what
+    you're looking for" is intentionally left alone — see the module
+    docstring: an existing, out-of-scope test asserts that exact straight
+    apostrophe verbatim.)
+
+    Demo-tone pass: the guardrail hint's "I never submit an application
+    without your OK" disclaimer was reframed as a positive control statement
+    ("Nothing goes out without your go-ahead")."""
     js = _read()
-    assert "I’ll keep them up to date. I never submit an application without your OK." in js
+    assert "I’ll keep them up to date. Nothing goes out without your go-ahead." in js
     assert "or tell me about your preferences and I’ll keep them up to date." in js
     # The straight-apostrophe forms must be gone from those exact strings.
-    assert "I'll keep them up to date. I never submit an application without your OK." not in js
+    assert "I'll keep them up to date. Nothing goes out without your go-ahead." not in js
     assert "or tell me about your preferences and I'll keep them up to date." not in js
+    # The old negative-capability framing must not have crept back in.
+    assert "I never submit an application without your OK." not in js
     # Deliberately preserved straight apostrophe (see docstring above).
     assert "Tell me what you're looking for" in js
 
