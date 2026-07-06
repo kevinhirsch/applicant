@@ -166,7 +166,7 @@ function _ensureModalEl() {
         <div id="applicant-remote-handoff" class="admin-card" style="display:none;flex-direction:column;gap:8px;">
           <h5 style="margin:0;font-size:0.95em;font-weight:600;">Fill these in yourself</h5>
           <p id="applicant-remote-handoff-note" style="margin:0;opacity:0.75;font-size:12px;">
-            The assistant couldn't fill this form automatically. Copy each answer below
+            I couldn't fill this form automatically. Copy each answer below
             into the live session, then submit it there and come back to mark it submitted.
           </p>
           <div id="applicant-remote-handoff-body" style="display:flex;flex-direction:column;gap:4px;"></div>
@@ -274,6 +274,21 @@ function _wire(modal) {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeRemoteSession();
   });
+
+  // micro-interactions audit #55: while focus sits inside the sandboxed
+  // live-session iframe, keydowns fire in the iframe's own document and never
+  // reach the modal's Escape handler — the surface's only keyboard exit dies
+  // exactly when the user is interacting with the session. As soon as the
+  // pointer leaves the frame, hand focus back to the shell (the close button)
+  // so Escape works again without waiting for an explicit click.
+  const frameWrap = modal.querySelector('#applicant-remote-frame-wrap');
+  if (frameWrap) {
+    frameWrap.addEventListener('mouseleave', () => {
+      const frame = modal.querySelector('#applicant-remote-frame');
+      const closeBtn = modal.querySelector('#applicant-remote-close');
+      if (frame && closeBtn && document.activeElement === frame) closeBtn.focus();
+    });
+  }
 }
 
 // ── session state / picker ──────────────────────────────────────────────────
@@ -447,7 +462,7 @@ async function _onToggleDesktopAssist() {
       ? 'Desktop help is on for this session'
       : 'Desktop help is off for this session');
   } catch (e) {
-    _toast(e.message || 'Could not change desktop help');
+    _toast(errText(e) || 'Could not change desktop help');
   } finally {
     _busy = false;
     // `orig` is discarded: `_renderDesktopAssist()` recomputes the correct
@@ -492,10 +507,10 @@ function _renderHandoff() {
   card.style.display = 'flex';
   if (note) {
     note.textContent = _handoffData.kind === 'wrong_ats'
-      ? 'The assistant didn’t recognize this form well enough to fill it in '
+      ? 'I didn’t recognize this form well enough to fill it in '
         + 'automatically. Copy each answer below into the live session, then submit '
         + 'it there and come back to mark it submitted.'
-      : 'The assistant tried to fill this form and ran into a problem. Copy each '
+      : 'I tried to fill this form and ran into a problem. Copy each '
         + 'answer below into the live session, then submit it there and come back '
         + 'to mark it submitted.';
   }
@@ -556,7 +571,7 @@ async function _loadSessions() {
   try {
     data = await _fetchJSON(`${API}/sessions`);
   } catch (e) {
-    _toast(e.message || 'Could not load live sessions');
+    _toast(errText(e) || 'Could not load live sessions');
     return;
   }
   _sessionList = (data && Array.isArray(data.sessions)) ? data.sessions : [];
@@ -658,7 +673,7 @@ async function _onTakeover() {
     _announcePhase('You now have control of the session.');
     _loadSessions().catch(e => console.debug('Silent catch in applicantRemote:', e));
   } catch (e) {
-    _toast(e.message || 'Could not take control');
+    _toast(errText(e) || 'Could not take control');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
@@ -693,7 +708,7 @@ async function _resume(step) {
     _toast('Continuing the application');
     _announcePhase('Continuing the application.');
   } catch (e) {
-    _toast(e.message || 'Could not continue');
+    _toast(errText(e) || 'Could not continue');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
@@ -805,7 +820,7 @@ async function _onSubmitSelf() {
     _toast('Recorded — thanks for finishing it yourself');
     submitted = true;
   } catch (e) {
-    _toast(e.message || 'Could not record the submission');
+    _toast(errText(e) || 'Could not record the submission');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
@@ -928,7 +943,7 @@ async function _onAuthorizeFinish() {
     _toast('Done — I submitted the application for you');
     submitted = true;
   } catch (e) {
-    _toast(e.message || 'Could not authorize the submission');
+    _toast(errText(e) || 'Could not authorize the submission');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
