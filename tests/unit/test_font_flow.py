@@ -90,13 +90,19 @@ def test_install_copies_into_confined_dir_and_refreshes_cache(installer, tmp_pat
 
 
 def test_install_cannot_escape_confined_dir(installer, tmp_path):
+    """A path-traversal name is rejected outright (Ledger #94), not silently
+    sanitized-and-accepted: nothing is written and nothing is recorded as
+    installed, so the confined dir is empty and the traversal string never
+    surfaces as a "font".
+    """
     font = tmp_path / "evil.ttf"
     font.write_bytes(b"\x00")
-    # A path-traversal name is sanitized; the file stays inside the confined dir.
-    installer.install_font(str(font), "../../../etc/evil")
+    with pytest.raises(ValueError):
+        installer.install_font(str(font), "../../../etc/evil")
     installed_dir = tmp_path / "fonts"
-    files = list(installed_dir.iterdir())
-    assert files and all(p.parent == installed_dir for p in files)
+    # No file was written into (or escaped) the confined dir.
+    assert not installed_dir.exists() or list(installed_dir.iterdir()) == []
+    assert not any(f.name == "../../../etc/evil" for f in installer.list_fonts())
 
 
 def test_confirm_once_installed(service, tmp_path):
@@ -177,3 +183,79 @@ def test_installs_persist_across_restart(tmp_path):
     # New installer over same confined dir = restart; rescans installed fonts.
     inst2 = FontInstaller(install_root=root)
     assert inst2.missing_fonts(["Inconsolata"]) == []
+
+
+# ── Ledger #94: traversal-named font never becomes a "listed font" ──────────
+#
+# A crafted resume's declared font-family text (or a direct API call) could
+# previously hand a path-traversal string through as a font `name`. The write
+# path was always confined (a crafted name can never escape install_root — see
+# test_install_cannot_escape_confined_dir), but nothing stopped the raw/ugly
+# string from being treated as ground truth and surfacing in the "installed
+# fonts" list — e.g. the observed
+# ``.._.._.._.._tmp_pwned_by_traversal`` poison entry. These tests pin the fix
+# at every entry point: install, detection, and rescan-on-restart.
+
+
+def test_install_rejects_traversal_name_and_never_lists_it(installer, tmp_path):
+    font = tmp_path / "evil.ttf"
+    font.write_bytes(b"\x00")
+    traversal_name = "../../../../tmp/pwned_by_traversal"
+    with pytest.raises(ValueError):
+        installer.install_font(str(font), traversal_name)
+    names = [f.name for f in installer.list_fonts()]
+    assert traversal_name not in names
+    assert not any(".." in n for n in names)
+
+
+def test_detect_required_fonts_filters_traversal_shaped_directive(installer, tmp_path):
+    """The exact entry point observed in the wild: a resume's declared LaTeX font
+    directive is untrusted content, so a traversal-shaped family name must never
+    enter the required/missing list that later feeds `name=` on /fonts/install.
+    """
+    doc = tmp_path / "resume.tex"
+    doc.write_text(
+        "\\setmainfont{../../../../tmp/pwned_by_traversal}\n",
+        encoding="utf-8",
+    )
+    assert installer.detect_required_fonts(str(doc)) == []
+
+
+def test_detect_required_fonts_filters_traversal_shaped_docx_font_table(installer, tmp_path):
+    """Same entry point via a real .docx font table (word/styles.xml), not just
+    LaTeX source — a crafted docx can declare an arbitrary ``w:ascii`` value.
+
+    python-docx's default theme still declares its own stock fonts (Arial,
+    Courier, etc.) regardless of what we set, so this only asserts the injected
+    traversal string itself never survives into the detected list — not that
+    the list is empty.
+    """
+    doc = tmp_path / "resume.docx"
+    traversal_name = "../../../../tmp/pwned_by_traversal"
+    _write_docx_with_font(doc, traversal_name)
+    found = installer.detect_required_fonts(str(doc))
+    assert traversal_name not in found
+    assert not any(".." in f for f in found)
+
+
+def test_missing_fonts_ignores_traversal_shaped_input(service):
+    """Even a direct ``required`` list (bypassing detection) can't smuggle a
+    traversal string into the missing/upload-prompt list."""
+    report = service.report_for_fonts(["../../../../tmp/pwned_by_traversal", "Inconsolata"])
+    assert report.missing == ["Inconsolata"]
+
+
+def test_rescan_skips_pre_existing_poisoned_filename(tmp_path):
+    """A poisoned filename already sitting in the confined dir (e.g. left over
+    from before this fix) must not resurface as an 'installed font' on the next
+    scan/restart, while a legitimately-installed font alongside it still lists.
+    """
+    root = tmp_path / "fonts"
+    root.mkdir()
+    (root / ".._.._.._.._tmp_pwned_by_traversal.ttf").write_bytes(b"\x00")
+    (root / "Inconsolata.ttf").write_bytes(b"\x00")
+    inst = FontInstaller(install_root=str(root))
+    names = [f.name for f in inst.list_fonts()]
+    assert "Inconsolata" in names
+    assert not any("pwned" in n for n in names)
+    assert not any(n.startswith(".") for n in names)
