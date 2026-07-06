@@ -83,34 +83,49 @@ def _attr(tag: str, name: str) -> str | None:
 
 
 def test_criteria_aria_labels_describe_the_field_not_the_placeholder_example():
+    """Superseded by the lens 05 a11y-deep pass (finding #64,
+    ``test_applicant_a11y_indexhtml_lens05.py``): each of these fields has a
+    proper visible ``<label for>``, so rather than keep a rephrased
+    ``aria-label`` that still duplicates/echoes that label (lens 02's fix),
+    the ``aria-label`` was removed outright and the real label now wins the
+    accessible-name computation. This test only guards that the placeholder
+    example is untouched and the old rephrased aria-label strings are gone."""
     html = _read()
     cases = {
-        "applicant-crit-titles": ("Software Engineer, Backend Engineer", "Job titles you're targeting"),
-        "applicant-crit-locations": ("Remote, New York, London", "Locations you're open to"),
-        "applicant-crit-workmodes": ("remote, hybrid, on-site", "Ways of working you're open to"),
-        "applicant-crit-keywords": ("Python, distributed systems", "Keywords a role should mention"),
-        "applicant-crit-salary": ("120000", "Lowest acceptable salary"),
+        "applicant-crit-titles": "Software Engineer, Backend Engineer",
+        "applicant-crit-locations": "Remote, New York, London",
+        "applicant-crit-workmodes": "remote, hybrid, on-site",
+        "applicant-crit-keywords": "Python, distributed systems",
+        "applicant-crit-salary": "120000",
     }
-    for element_id, (stale_example, expected_label) in cases.items():
+    for element_id, stale_example in cases.items():
         tag = _tag_with_id(html, element_id)
         aria = _attr(tag, "aria-label")
-        assert aria == expected_label, f"{element_id}: expected aria-label {expected_label!r}, got {aria!r}"
-        assert aria != stale_example, f"{element_id}: aria-label must not still be the placeholder example"
+        assert aria is None, (
+            f"{element_id}: aria-label should have been removed (lens 05 "
+            f"#64) so its visible <label> wins, got {aria!r}"
+        )
         # the placeholder itself is untouched — only aria-label changed
         assert _attr(tag, "placeholder") == stale_example
 
 
 def test_add_detail_aria_labels_describe_the_field_not_the_placeholder_example():
+    """Superseded by the lens 05 a11y-deep pass (finding #64) — see the
+    docstring on ``test_criteria_aria_labels_describe_the_field_not_the_
+    placeholder_example`` above; same rationale applies to these two fields,
+    which also have a proper visible ``<label for>``."""
     html = _read()
     cases = {
-        "applicant-attr-name": ("Phone number", "What this detail is called"),
-        "applicant-attr-value": ("+1 555 0100", "The value for this detail"),
+        "applicant-attr-name": "Phone number",
+        "applicant-attr-value": "+1 555 0100",
     }
-    for element_id, (stale_example, expected_label) in cases.items():
+    for element_id, stale_example in cases.items():
         tag = _tag_with_id(html, element_id)
         aria = _attr(tag, "aria-label")
-        assert aria == expected_label, f"{element_id}: expected aria-label {expected_label!r}, got {aria!r}"
-        assert aria != stale_example
+        assert aria is None, (
+            f"{element_id}: aria-label should have been removed (lens 05 "
+            f"#64) so its visible <label> wins, got {aria!r}"
+        )
         assert _attr(tag, "placeholder") == stale_example
 
 

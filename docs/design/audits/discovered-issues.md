@@ -13,6 +13,11 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
 ## Open
 
+- **DISC-17 · low · Stale lifted-from path comment in workspace middleware.**
+  `workspace/core/middleware.py`'s header comment reads `# src/middleware.py` — a leftover
+  path from wherever the file was lifted, now wrong. Cosmetic; fix on next touch of that file.
+  Where: `workspace/core/middleware.py` (top-of-file comment). Status: open (surfaced fixing 03-perf).
+
 - **DISC-15 · high (security) · Cross-user isolation gap likely extends to other proxies.**
   The notification-inbox owner-scope fix (lens 10 #28) closed one hole, but the same class
   affects the sibling `applicant_*_routes.py` proxies (`/pending`, campaigns, tracker, activity):

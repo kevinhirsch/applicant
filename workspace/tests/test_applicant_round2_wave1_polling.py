@@ -270,16 +270,37 @@ def test_digest_js_presence_heartbeat_still_guards_visibility():
 
 
 def test_status_strip_markup_is_a_live_region():
-    """#applicant-status-strip in index.html must carry role="status" and
-    aria-live="polite" so screen readers announce state changes (paused /
-    resumed / running) without the user navigating to it."""
+    """The status strip must announce state changes (paused / resumed /
+    running) without the user navigating to it.
+
+    Superseded by the lens 05 a11y-deep pass (finding #15/#16, see
+    ``test_applicant_a11y_indexhtml_lens05.py``): overriding the clickable
+    ``#applicant-status-strip`` <button>'s role to "status" hid its
+    activatable (opens Activity) semantics from assistive tech, and its
+    static aria-label masked the live child text from ever being announced.
+    The live-region role/aria-live/aria-atomic now live on the child
+    ``#applicant-status-text`` span that applicantActivity.js actually
+    updates, while the button itself stays a plain, unmasked button."""
     html = _read(INDEX_HTML)
     m = re.search(r'<button[^>]*id="applicant-status-strip"[^>]*>', html)
     assert m, "expected the #applicant-status-strip element in index.html"
-    tag = m.group(0)
-    assert re.search(r'role="status"', tag), "the status strip must carry role=\"status\""
-    assert re.search(r'aria-live="polite"', tag), "the status strip must carry aria-live=\"polite\""
-    assert re.search(r'aria-label="[^"]+"', tag), "the status strip must carry a plain-language aria-label"
+    button_tag = m.group(0)
+    assert not re.search(r'role="status"', button_tag), (
+        "the clickable status strip button must not have its role overridden to status"
+    )
+    assert not re.search(r'aria-live="polite"', button_tag), (
+        "aria-live belongs on the live text span, not the clickable button wrapper"
+    )
+    assert not re.search(r'aria-label="[^"]+"', button_tag), (
+        "a static aria-label on the button would mask the live child text"
+    )
+
+    m2 = re.search(r'<span[^>]*id="applicant-status-text"[^>]*>', html)
+    assert m2, "expected the #applicant-status-text element in index.html"
+    text_tag = m2.group(0)
+    assert re.search(r'role="status"', text_tag), "the status text span must carry role=\"status\""
+    assert re.search(r'aria-live="polite"', text_tag), "the status text span must carry aria-live=\"polite\""
+    assert re.search(r'aria-atomic="true"', text_tag), "the status text span must carry aria-atomic=\"true\""
 
 
 def test_activity_js_never_strips_the_strip_live_region_attributes():

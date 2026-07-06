@@ -110,7 +110,13 @@ function _ensureModalEl() {
             <label class="ow-field" style="font-size:12px;opacity:0.8;display:flex;flex-direction:column;">
               Google password
               <span style="display:flex;gap:6px;align-items:center;margin-top:4px;">
-                <input id="applicant-vault-google-secret" class="applicant-field" type="password" autocomplete="new-password"
+                <!-- lens 06 #47: this is an EXISTING Google account the user is
+                     signing in with, not a new one being created here, so the
+                     browser's autofill hint is "current-password" (matches the
+                     username field being an existing-account lookup, not a
+                     fresh account signup) — "new-password" was wrong and could
+                     make some browsers suggest generating a fresh password. -->
+                <input id="applicant-vault-google-secret" class="applicant-field" type="password" autocomplete="current-password"
                        placeholder="Google password" style="width:100%;">
                 <button type="button" class="applicant-vault-toggle-secret cal-btn" data-target="applicant-vault-google-secret"
                         aria-pressed="false" title="Show/hide the password as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
@@ -177,6 +183,21 @@ function _ensureModalEl() {
           </p>
           <button id="applicant-vault-rotate-key" class="cal-btn" style="align-self:flex-start;"
                   title="Re-encrypt every saved sign-in under a new key">Rotate encryption key</button>
+          <!-- lens 11 #46: nothing in-product ever explained that saved
+               sign-ins depend on a server-side encryption key that lives
+               OUTSIDE the database — so a backup that only covers the
+               database can still lose every saved sign-in for good. This is
+               copy-only guidance; the key itself is never fetched, shown, or
+               sent to this screen (NFR-PRIV-1 — same as the rest of the
+               vault, which never reads a saved secret back). -->
+          <p style="margin:0;opacity:0.7;font-size:12px;border-top:1px solid var(--border);padding-top:8px;">
+            Saved sign-ins are protected by an encryption key stored on the
+            server — it is never shown here and never sent to this screen.
+            If that key is ever lost (for example, a server rebuild that
+            skips it), every saved sign-in becomes unreadable for good and
+            will need to be re-entered. Make sure whatever backs up this
+            server includes that key file, not just the database.
+          </p>
         </div>
       </div>
     </div>`;
@@ -197,6 +218,11 @@ function _wire(modal) {
   on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
   on('applicant-vault-refresh', 'click', () => _onRefreshTenants());
   on('applicant-vault-rotate-key', 'click', _onRotateKey);
+  // lens 01 #67: saved sign-in rows are re-rendered wholesale on every
+  // _loadTenants() call, so the per-row "Replace" button is wired once here
+  // via delegation on the stable list container, rather than re-binding a
+  // listener per row after each render.
+  on('applicant-vault-list', 'click', _onTenantRowClick);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _maybeCloseVault();
   });
@@ -440,13 +466,48 @@ async function _loadTenants() {
   // a11y-deep audit #58: role="listitem" (paired with the container's
   // role="list" above) so SR users get "list, N items" context instead of
   // undifferentiated divs.
+  // lens 01 #67: rows used to be text-only with no way to act on a saved
+  // sign-in short of the encryption-key rotation button further down the
+  // modal. The engine's credential store has no per-tenant DELETE route (only
+  // POST to bank/overwrite one, GET to list tenant keys, and the blanket
+  // key-rotation endpoint) — check `applicant/app/routers/credentials.py`
+  // before adding one here — so this is a "replace by re-saving" affordance:
+  // it pre-fills the site/username below so the user only has to type the
+  // new password and hit Save, which overwrites the existing record for that
+  // tenant key. It is NOT a remove — there is nowhere to remove a saved
+  // sign-in without deleting the whole job search that owns it.
   listEl.innerHTML = tenants
     .map((t) => {
       const key = (t && typeof t === 'object') ? (t.tenant_key || t.key || '') : t;
+      const keyAttr = esc(key);
       return `<div role="listitem" style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <span aria-hidden="true" style="opacity:0.6;">🔒</span><span>${esc(key)}</span></div>`;
+        <span aria-hidden="true" style="opacity:0.6;">🔒</span><span style="flex:1;">${esc(key)}</span>
+        <button type="button" class="applicant-vault-replace-tenant memory-toolbar-btn" data-tenant="${keyAttr}"
+                style="flex-shrink:0;font-size:11px;padding:2px 8px;"
+                title="There is no separate remove for a saved sign-in — fill in a new username and password below and save to replace this one.">Replace</button>
+      </div>`;
     })
     .join('');
+}
+
+// lens 01 #67: shared by the per-row "Replace" button below and the existing
+// post-takeover prefill (openApplicantVault's `opts.prefillTenant`) so both
+// paths fill in the "sign-in for a specific site" form the same way instead
+// of duplicating the scroll/focus logic.
+function _prefillTenantForm(tenantKey) {
+  if (!_modalEl || !tenantKey) return;
+  const tenant = _modalEl.querySelector('#applicant-vault-tenant');
+  if (!tenant) return;
+  tenant.value = String(tenantKey);
+  try { tenant.scrollIntoView({ block: 'center' }); } catch { /* no-op */ }
+  const username = _modalEl.querySelector('#applicant-vault-username');
+  if (username) { try { username.focus(); } catch { /* no-op */ } }
+}
+
+function _onTenantRowClick(e) {
+  const btn = e.target.closest && e.target.closest('.applicant-vault-replace-tenant');
+  if (!btn) return;
+  _prefillTenantForm(btn.dataset.tenant);
 }
 
 async function _save({ tenantKey, username, secret }) {
@@ -634,15 +695,7 @@ export async function openApplicantVault(campaignId, opts) {
   // the user created an account during a live takeover (FR-VAULT-2), so they only
   // have to type the username + password they just chose.
   const prefillTenant = opts && opts.prefillTenant;
-  if (prefillTenant && _modalEl) {
-    const tenant = _modalEl.querySelector('#applicant-vault-tenant');
-    if (tenant) {
-      tenant.value = String(prefillTenant);
-      try { tenant.scrollIntoView({ block: 'center' }); } catch { /* no-op */ }
-      const username = _modalEl.querySelector('#applicant-vault-username');
-      if (username) { try { username.focus(); } catch { /* no-op */ } }
-    }
-  }
+  if (prefillTenant) _prefillTenantForm(prefillTenant);
 }
 
 export function closeApplicantVault() {

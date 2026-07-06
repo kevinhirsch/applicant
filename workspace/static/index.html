@@ -454,23 +454,23 @@
               <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
                 <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-titles">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for" aria-label="Job titles you're targeting">
+                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for">
                 </div>
                 <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-locations">Locations <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles" aria-label="Locations you're open to">
+                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles">
                 </div>
                 <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-workmodes">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site" aria-label="Ways of working you're open to">
+                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site">
                 </div>
                 <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-keywords">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention" aria-label="Keywords a role should mention">
+                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention">
                 </div>
                 <div class="ow-field" style="max-width:240px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-salary">Lowest acceptable salary</label>
-                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)" aria-label="Lowest acceptable salary">
+                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)">
                 </div>
               </div>
               <div id="applicant-crit-learned" class="hidden" style="margin-top:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(127,127,127,0.06)">
@@ -498,11 +498,11 @@
               <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
                 <div style="flex:1;min-width:140px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-attr-name">Detail</label>
-                  <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'" aria-label="What this detail is called">
+                  <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'">
                 </div>
                 <div style="flex:1;min-width:140px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-attr-value">Value</label>
-                  <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail" aria-label="The value for this detail">
+                  <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail">
                 </div>
                 <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed." for="applicant-attr-sensitive">
                   <input type="checkbox" id="applicant-attr-sensitive" role="switch"><span class="ow-switch-track" aria-hidden="true"></span><span class="ow-switch-label">Sensitive</span>
@@ -542,7 +542,7 @@
                   <button type="button" id="applicant-banned-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
                 </div>
                 <p class="memory-desc" style="margin:0 0 6px;font-size:11px;opacity:0.7">These get removed from anything the assistant writes. One phrase per line.</p>
-                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text" aria-label="e.g. delve into&#10;passionate about leveraging"></textarea>
+                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text" aria-label="Phrases to never use, one per line"></textarea>
                 <div id="applicant-banned-seed" style="font-size:11px;opacity:0.6;margin-top:6px"></div>
                 <div style="margin-top:6px">
                   <button type="button" id="applicant-banned-save-btn" class="admin-btn-add" title="Save your phrase list">Save phrases</button>
@@ -852,7 +852,7 @@
 
   <button type="button" class="hamburger-btn" id="hamburger-btn" title="Show sidebar" aria-label="Show sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <!-- new session button removed — use + in send button instead -->
-  <div class="icon-rail" id="icon-rail">
+  <div class="icon-rail" id="icon-rail" role="navigation" aria-label="Icon rail">
     <div class="rail-resize-handle" id="rail-resize-handle"></div>
     <!-- Static: core actions -->
     <button type="button" class="icon-rail-btn" id="rail-search-btn" title="Search conversations (Ctrl+K)" aria-label="Search conversations (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg></button>
@@ -1229,14 +1229,14 @@
     </div>
   </nav>
 
-  <main class="chat-container welcome-active" id="chat-container" role="region" aria-label="Chat area" aria-busy="false">
+  <main class="chat-container welcome-active" id="chat-container" role="region" aria-label="Chat area">
     <div class="chat-top-bar">
       <!-- Always-visible agent status strip. Compact "Applicant is: <current action>"
            with a live/paused dot. Hidden until there's activity; populated + polled by
            applicantActivity.js. Click opens the Activity page. -->
-      <button type="button" id="applicant-status-strip" class="applicant-status-strip" title="What your assistant is doing — open Activity" style="display:none;" role="status" aria-live="polite" aria-label="What your assistant is doing — open Activity">
+      <button type="button" id="applicant-status-strip" class="applicant-status-strip" title="What your assistant is doing — open Activity" style="display:none;">
         <span class="applicant-status-dot" id="applicant-status-dot"></span>
-        <span class="applicant-status-text" id="applicant-status-text"></span>
+        <span class="applicant-status-text" id="applicant-status-text" role="status" aria-live="polite" aria-atomic="true"></span>
       </button>
       <!-- Global pause / kill-switch — the supervisory brake for the autonomous agent,
            beside the always-visible status strip. Sibling of the strip button (which is
