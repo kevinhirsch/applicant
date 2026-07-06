@@ -19,7 +19,8 @@ documents the vendored app's internals.
 
 ## Commands
 
-Engine (repo root; uses `uv`, Python 3.11):
+Engine (repo root; uses `uv`. Local dev is Python 3.11; **CI runs the suite on Python 3.12** —
+if something passes locally but fails in CI, suspect a version-sensitive path first):
 ```bash
 uv sync                                            # install deps (incl. dev: ruff, pytest)
 uv run pytest -q                                   # full engine suite (testpaths=tests; integration tests are @pytest.mark.integration)
@@ -29,7 +30,10 @@ uv run pytest -m "not integration"                 # default-style run (hermetic
 # (deploy stack / dev container up) the suite uses the REAL DB. Force the hermetic
 # in-memory lane with an unreachable URL — this is the green-increment test command:
 DATABASE_URL='postgresql+psycopg://x:x@127.0.0.1:1/none' uv run pytest -q -m "not integration"
+# Known-env quirk: test_the_secretstorage_layer_roundtrips_a_secret_without_storing_plaintext
+# fails locally (CWD-relative SQLite) but PASSES in CI — not a regression; don't chase it.
 uv run ruff check .                                # lint (workspace/ is extend-excluded)
+uv run lint-imports                                # import-contract check — MUST be "2 kept, 0 broken"
 uv run python -c "from applicant.app.main import app"   # import/boot smoke
 uv run alembic heads                               # MUST be a single head
 uv run alembic upgrade head                        # apply migrations
@@ -39,6 +43,7 @@ Front-door (workspace): runs under the **root** `uv` env for the Applicant proxy
 app has its own heavier deps not installed here, so only run the `applicant_*` tests:
 ```bash
 uv run pytest -q workspace/tests/test_applicant_*.py    # front-door proxy/lane tests
+cd workspace && npm test                                # front-end JS unit suite (node --test)
 python -m compileall -q workspace/app.py workspace/routes workspace/src   # workspace syntax
 node --check workspace/static/js/<file>.js              # front-end has no bundler — node --check only
 ```
@@ -64,8 +69,11 @@ bash scripts/update.sh --apply                                  # git-sync → b
 ```
 Stack services: `applicant-ui` (public) + `api` (internal) + `postgres` + `searxng` + `chromadb` +
 `ntfy` (+ optional `takeover-desktop`). CI (`.github/workflows/ci.yml`) gates every PR on: ruff,
-engine pytest, the front-door proxy tests, single Alembic head, workspace compileall, `node --check`
-on all workspace JS, `docker compose config`, and the white-label codename denylist.
+`lint-imports`, engine pytest, the front-door proxy tests, the `npm test` JS suite, single Alembic
+head, workspace compileall, `node --check` on all workspace JS, `docker compose config`, and the
+white-label codename denylist. Run the exact hermetic set locally before pushing (see the
+green-increment principle below) — CI is Python 3.12 while local is often 3.11, so don't rely on a
+green local run alone.
 
 ## Architecture (the big picture)
 
@@ -85,7 +93,11 @@ its own ground truth) — never rely on a caller-supplied input to opt a safety 
 **The bridge (bidirectional):**
 - workspace → engine: `workspace/src/applicant_engine.py` (`ApplicantEngineClient`, `ENGINE_URL`,
   default `http://api:8000`). The ~12 `workspace/routes/applicant_*_routes.py` are thin auth-protected,
-  owner-scoped proxies over it (`/api/applicant/*`).
+  owner-scoped proxies over it (`/api/applicant/*`). **The engine is single-tenant** (no owner concept
+  in its data), so `require_user` alone is only IDOR protection against foreign ids — it does NOT
+  isolate one workspace account from another's data. Any proxy that surfaces or mutates the owner's
+  data must gate with `require_engine_owner` (`workspace/src/auth_helpers.py`), which passes the lone
+  owner in single-user mode and denies a second account. Apply it to reads AND writes.
 - engine → workspace (callback): `workspace/routes/applicant_internal_routes.py`, a token-gated
   (`APPLICANT_INTERNAL_TOKEN`) channel at `/api/applicant/internal/*` the engine calls via
   `WORKSPACE_URL` (calendar interviews, deep-research, Cookbook local models). Token unset ⇒ disabled.
@@ -161,7 +173,12 @@ exercised by the real `compose up --build` at deploy time.
 3. **White-label, always.** Zero references to the upstream fork's vendor/persona codenames, and zero
    `FR-`/`NFR-` jargon, in user-facing strings (and shipped artifacts generally). The product is
    **Applicant**. Plain language + tooltips. The CI **white-label check** holds the codename denylist
-   and fails the build on any match.
+   and fails the build on any match. Footgun: it runs **two separate greps** (one alternation of the
+   persona codenames, one for the compound project name) each with its **own** `:!` exclusion list,
+   so a file that names a codename must be excluded from **both**. A test that needs to assert
+   codename-*absence* should build the banned list from `chr()` ordinals with **no** codename in a
+   comment either — otherwise it trips the repo-wide grep and needs a CI exclusion. Verify locally by
+   running both `git grep` commands from `ci.yml` verbatim (their exclusion lists included).
 
 4. **Front-door proxies; the engine owns logic.** Workspace `/api/applicant/*` routes are thin
    auth-protected, owner-scoped proxies over the engine client; reuse the engine's gates (e.g.
@@ -169,9 +186,11 @@ exercised by the real `compose up --build` at deploy time.
    system (`.cal-btn`, `.admin-card`, `.settings-*`, `.memory-*`) — don't hand-roll button sizes or
    undefined classes.
 
-5. **Green increments.** Before merge: `uv run pytest -q`, the front-door `test_applicant_*` tests,
-   `uv run ruff check .`, the boot smoke, a single Alembic head, and `docker compose ... config`
-   must pass — i.e. everything CI gates. Keep PRs focused; develop on a branch and open a PR. PRs are
+5. **Green increments.** Before merge, run everything CI gates: the hermetic engine suite (the
+   unreachable-`DATABASE_URL` command above), the front-door `test_applicant_*` tests, `cd workspace
+   && npm test`, `uv run ruff check .`, `uv run lint-imports` (2 kept / 0 broken), **both** white-label
+   greps, the boot smoke, a single Alembic head, and `docker compose ... config`. Keep PRs focused;
+   develop on a branch and open a PR. PRs are
    **squash-merged**, so after each merge the working branch diverges from `main` (its commits are not
    `main`'s squashed one) and `git push` is rejected non-fast-forward — the merged work is already in
    `main`, so realign with `git fetch origin main && git reset --hard origin/main` before continuing
@@ -181,3 +200,10 @@ See `workspace/CLAUDE.md` for the vendored app's internals, `docs/spec/master-sp
 requirement set, and `docs/playtest-protocol.md` for the repeatable front-door audit + UI-regression
 playbook (stand up the live stack, the five HCI lenses, the contract sweep, and the automated
 monkey/crawl).
+
+**Live status & backlog.** `docs/delivery-status.md` is the per-phase "done" summary;
+`docs/traceability.md` maps requirements to engine + front-door reachability. The UX-hardening
+backlog is the 12-lens `docs/design/audits/exhaustive2/` set, tracked in that dir's
+`CLOSURE-STATUS.md` (per-lens closed / mechanical-remaining / feature-heavy-ask-first). Bugs found
+incidentally while sweeping it go in `docs/design/audits/discovered-issues.md` (the "DISC" ledger);
+engine/deploy defects go in `docs/known-issues.md`. Update these as work lands so they don't drift.
