@@ -22,11 +22,16 @@ export async function initOllamaModels() {
   } catch { host.innerHTML = ''; return; }
 
   if (!status || !status.reachable) {
+    // ON-S2-2: this used to name raw deploy internals (a COMPOSE_FILE value,
+    // .env, a docker compose command) — fine for whoever runs the server,
+    // meaningless (and off-brand) to a consumer in the onboarding wizard,
+    // where this same panel is also reachable. Plain language either way:
+    // say what's true (local models aren't on yet) and point at the two
+    // real next steps (ask the operator, or use a cloud provider instead).
     host.innerHTML =
       '<div class="adm-ep-inline-msg" style="opacity:0.6;font-size:11px;margin-top:8px;">'
-      + 'Local models: Ollama isn\'t reachable. Enable the bundled service — add '
-      + '<code>COMPOSE_FILE=docker-compose.yml:docker/ollama.yml</code> to <code>.env</code> '
-      + 'and run <code>docker compose up -d</code>.</div>';
+      + 'Local models aren\'t turned on for this workspace yet. Ask whoever manages this '
+      + 'deployment to enable them, or connect a cloud provider instead below.</div>';
     return;
   }
 
