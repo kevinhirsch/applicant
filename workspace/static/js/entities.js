@@ -432,11 +432,55 @@ async function saveAggressiveness(value) {
   showError((res.data && res.data.message) || 'Could not update the tone');
 }
 
+// DP-S2-5: fold DISPLAY duplicates out of the Profile attribute list without
+// touching stored data (edit/bind/delete still address each real attribute by id).
+// The engine returns two shapes that render as verbatim repeats:
+//   • aggregate vs itemized skills — a single `technical_skills` fact lists the
+//     skills comma-joined AND each skill is ALSO its own `skill:<X>` fact, so every
+//     skill named in the aggregate showed twice. Hide the itemized `skill:<X>` row
+//     when its value already appears in an aggregate; keep any itemized skill the
+//     aggregate omits (still real, unique info).
+//   • `full_name` / `full_legal_name` — when they carry the SAME value they render
+//     as two identical rows; keep the first, drop the exact-value twin (a genuinely
+//     different legal name is NOT collapsed).
+function _dedupeProfileAttributes(items) {
+  if (!Array.isArray(items)) return [];
+  const AGG_NAMES = new Set(['technical_skills', 'skills']);
+  const aggregated = new Set();
+  items.forEach((a) => {
+    if (a && AGG_NAMES.has(String(a.name || '').toLowerCase())) {
+      String(a.value || '').split(',').forEach((tok) => {
+        const t = tok.trim().toLowerCase();
+        if (t) aggregated.add(t);
+      });
+    }
+  });
+  const TWIN_NAMES = new Set(['full_name', 'full_legal_name']);
+  const seenTwinValues = new Set();
+  return items.filter((a) => {
+    if (!a) return false;
+    const lname = String(a.name || '').toLowerCase();
+    if (lname.startsWith('skill:')) {
+      const v = String(a.value || '').trim().toLowerCase();
+      if (v && aggregated.has(v)) return false;
+    }
+    if (TWIN_NAMES.has(lname)) {
+      const v = String(a.value || '').trim().toLowerCase();
+      if (v) {
+        if (seenTwinValues.has(v)) return false;
+        seenTwinValues.add(v);
+      }
+    }
+    return true;
+  });
+}
+
 async function loadProfileAttributes() {
   const list = el('applicant-attr-list');
   const empty = el('applicant-attr-empty');
   const res = await _profileFetch('/attributes');
-  const items = (res.data && res.data.items) || [];
+  // DP-S2-5: dedupe for display only; the count then reflects the rows actually shown.
+  const items = _dedupeProfileAttributes((res.data && res.data.items) || []);
   const countEl = el('applicant-attr-count'); if (countEl) countEl.textContent = items.length;
   const tabCount = el('applicant-profile-count'); if (tabCount) tabCount.textContent = items.length;
   if (!list) return;

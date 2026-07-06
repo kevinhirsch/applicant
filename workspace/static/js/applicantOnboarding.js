@@ -2654,10 +2654,16 @@ function _dismiss() {
   _justCompletedSetup = false;
   // #52: nothing left to resume once setup genuinely completes — drop every
   // scoped draft rather than leave stale ones around for a later re-run/Settings visit.
-  // #27: also remember locally that this user reached the real finish screen and
-  // moved on, so maybeLaunchOnboarding() doesn't reopen the wizard on every future
-  // visit just because the optional profile gate never strictly completed.
-  if (justCompleted) { _clearAllDrafts(); _markDismissedLocally(); }
+  // Only on a genuine completion; a mid-wizard dismiss keeps its drafts so an
+  // explicit re-run resumes exactly where the user left off.
+  if (justCompleted) { _clearAllDrafts(); }
+  // CC-S2-6 / ON-S3-19: remember the dismissal locally on EVERY close — not only a
+  // genuine completion (#27). The wizard is blocking, so once the user closes it
+  // (Escape/discard OR "Get started"), it must NOT auto-re-mount behind another
+  // modal or steal clicks after in-app navigation. maybeLaunchOnboarding() (boot/
+  // reload) and the locked-feature nav guard both honour this flag; an explicit
+  // "Re-run setup" (window.launchApplicantSetup) still reopens it and clears it.
+  _markDismissedLocally();
   // Re-run the feature-activation layer so the job sections light up now that the
   // engine gate is open. app.js exposes the refresh; fall back to a reload.
   try {
@@ -2705,6 +2711,14 @@ function _clearDismissedLocally() {
   try { localStorage.removeItem(_dismissedStorageKey()); } catch { /* best-effort */ }
 }
 
+// CC-S2-6 / ON-S3-19: expose the per-user dismissed check so the shell's locked-
+// feature nav guard (app.js refreshApplicantFeatures) can tell "the user closed
+// setup for now" apart from "never opened", and only route a locked-feature click
+// into the blocking wizard when it hasn't been dismissed. Returns false on any
+// error so the guard fails OPEN (its prior behaviour) rather than trapping a click.
+export function isOnboardingDismissedLocally() { return _isDismissedLocally(); }
+try { if (typeof window !== 'undefined') window.isApplicantOnboardingDismissed = isOnboardingDismissedLocally; } catch { /* no-op */ }
+
 // ── public entry: maybe launch the wizard on boot ───────────────────────────
 
 // Returns true when the setup wizard was launched (setup incomplete), false
@@ -2743,6 +2757,11 @@ export async function maybeLaunchOnboarding() {
 // completion, starting at the first step so any prior choice can be reviewed/changed.
 export async function launchOnboarding() {
   if (_overlay) return;
+  // Explicit re-run (Settings "Re-run setup", a "Finish/Connect" CTA) means the
+  // user WANTS setup now — clear any prior local dismissal so it reopens, and so a
+  // later close re-marks it fresh (CC-S2-6). The locked-feature guard deliberately
+  // does NOT reach here once dismissed (it checks isApplicantOnboardingDismissed).
+  _clearDismissedLocally();
   _overlay = _buildOverlay();
   document.body.appendChild(_overlay);
   if (_overlayA11yCleanup) _overlayA11yCleanup();

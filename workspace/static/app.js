@@ -1420,7 +1420,17 @@ function initializeEventListeners() {
                 ev.stopPropagation();
                 ev.preventDefault();
                 try { uiModule.showToast(reason); } catch (_) {}
-                if (!disabledInBuild) {
+                // CC-S2-6 / ON-S3-19: a locked-feature click routes into the setup
+                // wizard ONLY while it hasn't been dismissed. Once the user has
+                // closed the blocking wizard for now, clicking a still-locked
+                // feature just explains why (the toast above) instead of
+                // re-mounting the overlay and stealing the click. Fails OPEN if the
+                // onboarding module hasn't exposed the check yet (prior behaviour).
+                const _onbDismissed = (() => {
+                  try { return typeof window.isApplicantOnboardingDismissed === 'function' && window.isApplicantOnboardingDismissed(); }
+                  catch (_) { return false; }
+                })();
+                if (!disabledInBuild && !_onbDismissed) {
                   try { if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup(); } catch (_) {}
                 }
               };

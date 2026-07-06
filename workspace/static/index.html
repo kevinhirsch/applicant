@@ -73,6 +73,11 @@
           var advMap = {userBubbleBg:'--user-bubble-bg',aiBubbleBg:'--ai-bubble-bg',bubbleBorder:'--bubble-border',sidebarBg:'--sidebar-bg',sectionAccent:'--section-accent',brandColor:'--brand-color',inputBg:'--input-bg',inputBorder:'--input-border',sendBtnBg:'--send-btn-bg',sendBtnHover:'--send-btn-hover',codeBg:'--code-bg',codeFg:'--code-fg',toggleBg:'--toggle-bg',toggleActive:'--toggle-active',accentPrimary:'--accent-primary',accentError:'--accent-error'};
           for (var k in advMap) { if (a[k]) s.setProperty(advMap[k], a[k]); }
         }
+        // CC-S1-2: stamp the dark-palette flag as early as the body allows (it's
+        // not parsed yet inside <head>) so the frosted chrome renders dark glass
+        // from first paint on a dark theme instead of flashing the light material.
+        // applyColors() re-applies this on boot; this just removes the flash.
+        document.addEventListener('DOMContentLoaded', function(){ try { document.body.classList.toggle('applicant-theme-dark', dk); } catch(_){} }, {once:true});
       }
       // Apply font early
       if (t && t.font) {
@@ -277,7 +282,7 @@
       <div class="modal-body memory-modal-body">
         <div class="memory-tabs">
           <button type="button" class="memory-tab active" data-memory-tab="browse"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Memories <span id="memory-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
-          <button type="button" class="memory-tab" data-memory-tab="skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
+          <button type="button" class="memory-tab" data-memory-tab="skills" title="The agent's own reusable playbooks — separate from your profile skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Playbooks <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" data-memory-tab="entities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v4M10.5 13.5 6.5 16M13.5 13.5 17.5 16"/></svg>Entities <span id="entities-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" id="applicant-profile-tab" data-memory-tab="applicant-profile" title="Your job-application profile — facts the assistant pre-fills, and what it has learned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>Profile <span id="applicant-profile-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" data-memory-tab="add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add</button>
@@ -368,11 +373,11 @@
         <div class="memory-tab-panel hidden" data-memory-panel="skills">
           <div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Skills <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="margin:0;padding:0;line-height:1;">Playbooks <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
-              <label class="admin-switch" title="Inject relevant skills into chat context" for="skills-enabled-header-toggle"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" title="Inject relevant playbooks into chat context" for="skills-enabled-header-toggle"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
-            <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones.</p>
+            <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable playbooks the AI writes for itself and runs via /skill — the agent's own know-how, separate from your profile skills. Sort by confidence to surface the proven ones.</p>
             <div class="memory-toolbar">
               <div class="memory-toolbar-row">
                 <select id="skills-sort" class="memory-sort-select">
