@@ -144,7 +144,7 @@ function _campaignCard(c) {
         <label class="settings-label" for="cs-mode-${id}">Run mode
           <span style="opacity:0.6;font-weight:normal">(when I stop looking for this search)</span></label>
         <select id="cs-mode-${id}" class="settings-input" data-cs-field="run_mode"
-                title="Continuous: I never stop looking. Fixed duration: I stop after a set time. Until enough matches: I stop once you've approved enough">${modeOpts}</select>
+                title="Continuous: I never stop looking. Fixed duration: I stop after a set time. Until enough matches: I stop once you’ve approved enough">${modeOpts}</select>
       </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-tput-${id}">Daily target
@@ -212,7 +212,7 @@ function _renderSources(host, campaignId, items) {
       const on = s.enabled !== false;
       return `
         <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px"
-               title="On: I search ${esc(_sourceLabel(s.source_key))} for new roles. Off: I skip it — what I've already learned about it is kept in case you turn it back on.">
+               title="On: I search ${esc(_sourceLabel(s.source_key))} for new roles. Off: I skip it — what I’ve already learned about it is kept in case you turn it back on.">
           <input type="checkbox" data-cs-source="${key}" ${on ? 'checked' : ''}>
           <span style="flex:1"><strong>${esc(_sourceLabel(s.source_key))}</strong>
             ${_liveBadge(s.live === true)}
@@ -237,7 +237,7 @@ async function _wireSources(host, campaignId) {
         _toast(`${_sourceLabel(sourceKey)} ${cb.checked ? 'enabled' : 'disabled'}`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
-        _toast(`I couldn't update that source: ${errText(e)}`);
+        _toast(`I couldn’t update that source: ${errText(e)}`);
       }
     });
   });
@@ -281,7 +281,7 @@ async function _wireCard(host, card) {
       _toast('Search updated');
       await mountApplicantCampaignSettings(host); // re-render fresh (clears the dirty badge too)
     } catch (e) {
-      _toast(`I couldn't save that: ${errText(e)}`);
+      _toast(`I couldn’t save that: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -334,7 +334,7 @@ async function _wireCard(host, card) {
       _toast(active ? 'Search archived' : 'Search reactivated');
       await mountApplicantCampaignSettings(host);
     } catch (e) {
-      _toast(`I couldn't update that: ${errText(e)}`);
+      _toast(`I couldn’t update that: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -355,7 +355,7 @@ async function _wireCard(host, card) {
       _toast('Search duplicated');
       await mountApplicantCampaignSettings(host); // re-render fresh with the new campaign
     } catch (e) {
-      _toast(`I couldn't duplicate that search: ${errText(e)}`);
+      _toast(`I couldn’t duplicate that search: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -366,7 +366,7 @@ async function _wireCard(host, card) {
     try {
       window.open(`${BASE}/${encodeURIComponent(id)}/audit-log/export.json`, '_blank', 'noopener');
     } catch (e) {
-      _toast(`I couldn't open the activity log: ${errText(e)}`);
+      _toast(`I couldn’t open the activity log: ${errText(e)}`);
     }
   });
   card.querySelector('.cs-delete')?.addEventListener('click', async (ev) => {
@@ -384,7 +384,7 @@ async function _wireCard(host, card) {
       _toast('Search deleted');
       await mountApplicantCampaignSettings(host); // re-render fresh without it
     } catch (e) {
-      _toast(`I couldn't delete that search: ${errText(e)}`);
+      _toast(`I couldn’t delete that search: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -430,7 +430,7 @@ async function _wireCreate(host) {
       _toast('Search created');
       await mountApplicantCampaignSettings(host);
     } catch (e) {
-      _toast(`I couldn't create that search: ${errText(e)}`);
+      _toast(`I couldn’t create that search: ${errText(e)}`);
       btn.disabled = false;
     }
   };
@@ -456,11 +456,11 @@ export async function mountApplicantCampaignSettings(host) {
   host.setAttribute('aria-live', 'polite');
   host.setAttribute('aria-busy', 'true');
   const savedScrollTop = host.scrollTop;
-  host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Loading campaigns…</p>';
+  host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Loading searches…</p>';
   const { available, campaigns } = await _loadCampaigns();
   if (!available) {
     host.innerHTML =
-      '<p style="font-size:0.85rem;opacity:0.7;">I can\'t connect right now — your search settings will appear once I\'m back.</p>';
+      '<p style="font-size:0.85rem;opacity:0.7;">I can’t connect right now — your search settings will appear once I’m back.</p>';
     host.setAttribute('aria-busy', 'false');
     return;
   }
