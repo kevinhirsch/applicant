@@ -862,9 +862,15 @@ const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '
 /**
  * HTML-escape a string to prevent XSS.
  * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
+ *
+ * SR-S2-5: only null/undefined coerce to '' — the old `(s || '')` also
+ * swallowed falsy-but-real values (0, false), so a stat tile bound to a
+ * genuine 0 (Matched/Approved/Submitted/Sources-seen, Config capacity, …)
+ * rendered blank instead of "0". Every other value is stringified then
+ * escaped exactly as before.
  */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──

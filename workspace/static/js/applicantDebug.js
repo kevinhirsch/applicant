@@ -1,13 +1,18 @@
 // static/js/applicantDebug.js
 //
-// Activity / Debug — the workspace observability + operations surface wired to
+// Run log — the workspace observability + operations surface wired to
 // the Applicant engine. ADDITIVE and self-contained: it opens its own modal,
 // talks to the engine through the admin/ops workspace proxies
 // (/api/applicant/admin/* and /api/applicant/ops/*), and never touches any
 // native surface.
 //
+// SR-S2-7: this window and its first tab used to both be called "Activity",
+// colliding with the separate, always-on "Activity" live feed elsewhere in the
+// nav. The window is titled "Run log" (matching its nav label) and the first
+// tab below is "Applications" — nothing here is named "Activity" anymore.
+//
 // What it shows (all plain-language, white-labeled, read-only unless noted):
-//   • Activity   — per-application history for a campaign, with a drill-in to
+//   • Applications — per-application history for a campaign, with a drill-in to
 //                  that application's screenshots, workflow state and outcomes,
 //                  plus a one-click "I submitted this myself" (mark-submitted)
 //                  so manual/hand-off applications still teach the system.
@@ -81,8 +86,12 @@ const RUN_NOW_TIMEOUT_MS = 120000;
 // #86: collapsed from 8 tabs (Activity/Insights/Logs/Variants/Run/Sources/
 // Tools/Update) to 6 — Sources/Tools/Update now render as sub-sections of one
 // Config pane (see _renderConfig) instead of three separate top-level tabs.
+// SR-S2-7: the tab key ('activity') stays put — gating/tests key off it — only
+// its visible label changed, from "Activity" (a collision with the separate
+// live "Activity" feed) to "Applications" (this tab is the per-application
+// history list; see openApplicantDebugDetail's own comment).
 const TABS = [
-  ['activity', 'Activity'],
+  ['activity', 'Applications'],
   ['insights', 'Insights'],
   ['logs', 'Logs'],
   ['variants', 'Variants'],
@@ -132,7 +141,7 @@ function _ensureModalEl() {
       <div class="modal-header">
         <h4 id="applicant-debug-title">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-          Activity &amp; controls
+          Run log
         </h4>
         <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">${CLOSE_SVG}</button>
       </div>
@@ -1328,6 +1337,22 @@ async function _renderDetections(host) {
   host.innerHTML = intro + `<div class="applicant-debug-list">${rows}</div>`;
 }
 
+// SR-S2-6: a tool's key (or, occasionally, its engine-supplied label) can
+// arrive as a raw hyphen/underscore-joined identifier, e.g. "Account-Creation"
+// or "Cover-Letter-Generation" — plumbing, not plain language. Reflow that
+// specific shape into a normal sentence (separators -> spaces, only the
+// leading word capitalized). A label that's already plain language (no
+// hyphen/underscore) passes through untouched, so this never mangles a
+// legitimately-cased engine label.
+function _humanizeToolLabel(s) {
+  const text = String(s == null ? '' : s);
+  if (!/[-_]/.test(text)) return text;
+  const words = text.split(/[-_]+/).filter(Boolean);
+  if (!words.length) return text;
+  const lower = words.map((w) => w.toLowerCase()).join(' ');
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 async function _renderTools(host) {
   host = host || _body();
   // Engine-wide tool registry (not campaign-scoped): list every tool with an
@@ -1345,7 +1370,7 @@ async function _renderTools(host) {
     `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn my tools on or off. I never use a disabled tool.</div>` +
     tools.map((t) => {
       const key = t.key != null ? t.key : '';
-      const label = t.label || key;
+      const label = _humanizeToolLabel(t.label || key);
       return `<div class="applicant-debug-list-row">
       <div style="min-width:0;">
         <div style="font-weight:600;">${esc(label)}</div>
