@@ -38,7 +38,7 @@
 //     progress) instead of raw <input type=file>.
 
 import fileHandlerModule from './fileHandler.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, errText } from './applicantCore.js';
 
 const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
@@ -331,17 +331,45 @@ async function _refreshStatus() {
   return _status;
 }
 
+// #117: remember which campaign the wizard is walking through, per user, so a
+// reload/relaunch always resumes the SAME one. `GET .../campaigns` carries no
+// guaranteed ordering (an unordered SQL SELECT can legitimately return rows in a
+// different order across requests), so blindly taking `list[0]` made the
+// resumed campaign — and therefore the resumed intake SECTION — depend on
+// server-side row order rather than on anything the user did. Pinning the
+// resolved id here makes "first incomplete step" a pure function of THIS
+// campaign's own state again.
+const _CAMPAIGN_KEY_PREFIX = 'applicant_onboarding_campaign:';
+
+function _campaignStorageKey() {
+  let user = '';
+  try { user = (document.body && document.body.dataset && document.body.dataset.user) || ''; } catch { /* no-op */ }
+  return `${_CAMPAIGN_KEY_PREFIX}${user}`;
+}
+
+function _rememberedCampaignId() {
+  try { return localStorage.getItem(_campaignStorageKey()) || null; } catch { return null; }
+}
+
+function _rememberCampaignId(id) {
+  try { if (id) localStorage.setItem(_campaignStorageKey(), id); } catch { /* best-effort */ }
+}
+
 // The intake attaches to a campaign; ensure one exists once the LLM gate is open.
 async function _ensureCampaign() {
   if (_campaignId) return _campaignId;
   let list = [];
   try { list = await _fetchJSON(`${SETUP}/campaigns`); } catch { list = []; }
   if (Array.isArray(list) && list.length) {
-    _campaignId = list[0].id;
+    const remembered = _rememberedCampaignId();
+    const match = remembered && list.find((c) => c.id === remembered);
+    _campaignId = match ? match.id : list[0].id;
+    _rememberCampaignId(_campaignId);
     return _campaignId;
   }
   const created = await _post(`${SETUP}/campaigns`, { name: 'My job search' });
   _campaignId = created.id;
+  _rememberCampaignId(_campaignId);
   return _campaignId;
 }
 
@@ -446,6 +474,12 @@ function _renderRail() {
 // Null = wizard mode (the default). See mountSettingsStep() below.
 let _bodyTarget = null;
 let _footTarget = null;
+// #96: explicit "am I being rendered inside Settings, not the wizard?" flag,
+// threaded through mountSettingsStep() below. The relocated renderers
+// (_renderChannels/_renderSandbox/_renderFonts) use it to drop wizard-only
+// footer chrome ("Skip for now" / "…&amp; continue") that reads as meaningless
+// once there's no wizard flow to continue or skip — Settings just needs "Save".
+let _inSettingsContext = false;
 
 function _setBody(html) {
   const body = _bodyTarget || document.getElementById('ao-body');
@@ -576,9 +610,21 @@ async function _prevStep() {
 }
 
 // Persistent Back / Skip bar shown on every step so no step can trap the user.
+//
+// #18: "Your profile" (the `onboarding` step) manages its OWN Back/Skip/Save &
+// continue per intake section (see _renderIntakeSection / _renderRepeatSection /
+// _renderBaseResume's own `_setFoot` calls) — layering this persistent bar on
+// top of it produced FOUR footer buttons with TWO differently-behaved "Back"s
+// (this one jumped to the previous TOP-LEVEL wizard step; the section's own Back
+// moves between intake sections) plus a "Finish" that actually skipped the
+// entire remaining profile, contradicting its label. Leave all navigation to
+// the section footer while inside that step; _finish() already clears this bar
+// itself once the wizard actually reaches the completion screen.
 function _renderNav() {
   const nav = document.getElementById('ao-nav');
   if (!nav) return;
+  const cur0 = STEPS[_stepIndex];
+  if (cur0 && cur0.key === 'onboarding') { nav.innerHTML = ''; return; }
   const last = _stepIndex >= STEPS.length - 1;
   // D16 (activation-funnel audit 09): "Skip for now" and "Finish" used to be the
   // exact same button with no hint of what skipping actually costs. On the one
@@ -691,6 +737,15 @@ async function _renderLLM() {
   const host = document.getElementById('ao-llm-manager');
   if (adm && typeof adm.mountEndpointManager === 'function' && host && adm.mountEndpointManager(host)) {
     _llmManagerMounted = true;
+    // #14: the manager's real inputs (e.g. #adm-epLocalUrl / #adm-epUrl) don't
+    // exist yet at the _setBody() call above — that call's own _restoreDraft
+    // only found the empty `#ao-llm-manager` placeholder, so a draft saved from
+    // a previous visit to this step never made it back onto screen. Re-run the
+    // restore now that mountEndpointManager() has actually populated the DOM.
+    // (The API-key field stays excluded from drafting by design — see
+    // _isDraftableField's `type === 'password'` check — so no secret is ever
+    // persisted to sessionStorage here.)
+    _restoreDraft(document.getElementById('ao-body'));
   } else if (host) {
     host.innerHTML = _err('The model manager is unavailable. Please reload and try again.');
   }
@@ -920,7 +975,9 @@ async function _renderChannels() {
     </div>
     <div id="ao-ch-msg"></div>
   `);
-  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-ch-save">Save &amp; continue</button>`);
+  // #96: "…&amp; continue" reads as meaningless once this renderer is mounted
+  // inside Settings (there is no wizard flow to continue) — plain "Save" there.
+  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-ch-save">${_inSettingsContext ? 'Save' : 'Save &amp; continue'}</button>`);
 
   const collect = () => {
     const body = {
@@ -1213,7 +1270,8 @@ async function _renderSandbox() {
     </div>
     <div id="ao-sb-msg"></div>
   `);
-  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-sb-save">Save &amp; continue</button>`);
+  // #96: same Settings-vs-wizard footer wording fix as _renderChannels above.
+  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-sb-save">${_inSettingsContext ? 'Save' : 'Save &amp; continue'}</button>`);
 
   // Desktop help (FR-CUA) — present-but-grayed until the desktop helper is baked
   // into the sandbox image and the engine's health preflight passes. The actual
@@ -1308,7 +1366,13 @@ async function _renderFonts() {
     <p style="font-size:0.82rem;opacity:0.7;margin:12px 0 0;">Installed fonts: <span id="ao-font-installed">${installed.length ? esc(installed.join(', ')) : 'none yet'}</span></p>
     <div id="ao-font-msg"></div>
   `);
-  _setFoot(`
+  // #96: "Skip for now" / "Continue" are wizard-navigation labels — both used to
+  // fire the exact same handler in EVERY context, so inside Settings they read as
+  // two buttons doing an identical, meaningless thing (there's no wizard step to
+  // skip or continue to). Collapse to one plain "Save" there.
+  _setFoot(_inSettingsContext
+    ? '<button class="cal-btn cal-btn-primary" id="ao-font-continue">Save</button>'
+    : `
     <button class="cal-btn" id="ao-font-skip">Skip for now</button>
     <button class="cal-btn cal-btn-primary" id="ao-font-continue">Continue</button>
   `);
@@ -1395,7 +1459,10 @@ async function _renderFonts() {
     try { await _advanceAndContinue('fonts'); }
     finally { _busy = false; }
   };
-  document.getElementById('ao-font-skip').onclick = finishFonts;
+  // #96: the skip button doesn't exist in Settings context (see the _setFoot
+  // call above) — guard rather than assume it's present.
+  const fontSkipBtn = document.getElementById('ao-font-skip');
+  if (fontSkipBtn) fontSkipBtn.onclick = finishFonts;
   document.getElementById('ao-font-continue').onclick = finishFonts;
 }
 
@@ -1696,6 +1763,23 @@ function _collectRepeatEntries(listEl) {
   return out;
 }
 
+// #19: a real "Skip for now" affordance for every intake section's footer. The
+// résumé step's body copy already promised one ("Use Skip for now…") but no
+// footer control matched it — and now that the persistent nav bar is hidden for
+// the whole "Your profile" step (#18, see _renderNav), there's no other way to
+// bail out of it. "Your profile" is optional (STEPS' own `required: false`), so
+// jumping straight to the finish screen is a fully supported path: whatever was
+// already saved stays saved, and a later reopen resumes at the first section
+// still incomplete.
+function _intakeSkipButtonHTML() {
+  return '<button type="button" class="cal-btn" id="ao-intake-skip">Skip for now</button>';
+}
+
+function _wireIntakeSkip() {
+  const btn = document.getElementById('ao-intake-skip');
+  if (btn) btn.onclick = () => { if (!_busy) _finish(); };
+}
+
 function _renderRepeatSection(key, spec, saved) {
   const total = INTAKE_SECTIONS.length;
   const entries = _repeatEntries(saved);
@@ -1709,8 +1793,10 @@ function _renderRepeatSection(key, spec, saved) {
   `);
   _setFoot(`
     ${_intakeIndex > 0 ? '<button class="cal-btn" id="ao-intake-back">Back</button>' : ''}
+    ${_intakeSkipButtonHTML()}
     <button class="cal-btn cal-btn-primary" id="ao-intake-next">Save &amp; continue</button>
   `);
+  _wireIntakeSkip();
 
   const list = document.getElementById('ao-repeat-list');
   _wireRepeatRemove(list, spec);
@@ -1823,8 +1909,10 @@ async function _renderIntakeSection() {
   `);
   _setFoot(`
     ${_intakeIndex > 0 ? '<button class="cal-btn" id="ao-intake-back">Back</button>' : ''}
+    ${_intakeSkipButtonHTML()}
     <button class="cal-btn cal-btn-primary" id="ao-intake-next">Save &amp; continue</button>
   `);
+  _wireIntakeSkip();
 
   // Micro-interactions lens 01 #22: toggle each EEO detail input's visibility
   // with its own select (rehydration itself happens in _fieldHTML above).
@@ -1969,8 +2057,10 @@ function _renderBaseResume(saved) {
   `);
   _setFoot(`
     <button class="cal-btn" id="ao-intake-back">Back</button>
+    ${_intakeSkipButtonHTML()}
     <button class="cal-btn cal-btn-primary" id="ao-resume-next" ${saved && saved.document_path ? '' : 'disabled'}>Continue</button>
   `);
+  _wireIntakeSkip();
 
   document.getElementById('ao-intake-back').onclick = () => {
     _intakeIndex = Math.max(0, _intakeIndex - 1); _renderIntakeSection();
@@ -2239,16 +2329,39 @@ async function _nextIntakeOrComplete() {
     // 409 with missing_sections -> jump back to the first missing one.
     const missing = (e.body && e.body.detail && e.body.detail.missing_sections)
       || (e.body && e.body.missing_sections) || [];
+    // #26: a 409 that names nothing actually missing means the intake is
+    // already complete on the engine's side (e.g. a duplicate/late completion
+    // request racing a previous one) — treat that as success instead of
+    // stranding the user on the last section with an unexplained failure.
+    if (!missing.length && e.status === 409) {
+      await _advanceAndContinue('onboarding');
+      return;
+    }
     if (missing.length) {
       const idx = INTAKE_SECTIONS.indexOf(missing[0]);
       _intakeIndex = idx >= 0 ? idx : 0;
       await _renderIntakeSection();
-      document.getElementById('ao-intake-msg')
-        && (document.getElementById('ao-intake-msg').innerHTML = _err('Please finish this section to continue.'));
+      // #26: the section we just jumped back to may not even render an
+      // `#ao-intake-msg` container (e.g. base_resume uses its own status area),
+      // which previously swallowed this message entirely — a toast is always
+      // visible regardless of which section's markup is on screen, and the
+      // per-section message is kept as a bonus where that container exists.
+      const msg = `Please finish "${_sectionLabel(missing[0])}" to continue.`;
+      const inline = document.getElementById('ao-intake-msg');
+      if (inline) inline.innerHTML = _err(esc(msg));
+      _toast(msg);
     } else {
-      _toast(e.message || 'Could not finish onboarding.');
+      _toast(errText(e) || 'Could not finish onboarding.');
     }
   }
+}
+
+// Human-readable label for an intake section key, reusing SECTION_FORMS' own
+// titles (#26) rather than echoing the raw engine key (e.g. "campaign_criteria").
+function _sectionLabel(key) {
+  if (key === 'base_resume') return 'Start with your résumé';
+  const spec = SECTION_FORMS[key];
+  return (spec && spec.title) || key;
 }
 
 // ── finish ──────────────────────────────────────────────────────────────────
@@ -2399,7 +2512,10 @@ function _dismiss() {
   _justCompletedSetup = false;
   // #52: nothing left to resume once setup genuinely completes — drop every
   // scoped draft rather than leave stale ones around for a later re-run/Settings visit.
-  if (justCompleted) _clearAllDrafts();
+  // #27: also remember locally that this user reached the real finish screen and
+  // moved on, so maybeLaunchOnboarding() doesn't reopen the wizard on every future
+  // visit just because the optional profile gate never strictly completed.
+  if (justCompleted) { _clearAllDrafts(); _markDismissedLocally(); }
   // Re-run the feature-activation layer so the job sections light up now that the
   // engine gate is open. app.js exposes the refresh; fall back to a reload.
   try {
@@ -2415,12 +2531,45 @@ function _dismiss() {
   try { window.location.reload(); } catch { /* no-op */ }
 }
 
+// ── dismissed-wizard persistence (#27) ──────────────────────────────────────
+//
+// The server's `onboarding_complete` is the STRICT apply-readiness gate (target
+// roles, work mode, locations, salary floor, key skills, a résumé) — but "Your
+// profile" is explicitly OPTIONAL (see the STEPS comment above) and the wizard's
+// own _finish() screen tells the user "You're all set" the moment a model is
+// connected, regardless of that stricter gate. A user who reaches that genuine
+// completion screen and moves on must not be forced to re-dismiss the wizard on
+// every subsequent login just because the optional profile essentials were never
+// (or not yet) fully supplied. Remember that hand-off locally, per user (mirrors
+// the `document.body.dataset.user`-scoped keying appkitWindow.js/appkitNotice.js
+// already use), alongside the server truth so either one suppresses re-launch.
+const _DISMISSED_KEY_PREFIX = 'applicant_onboarding_dismissed:';
+
+function _dismissedStorageKey() {
+  let user = '';
+  try { user = (document.body && document.body.dataset && document.body.dataset.user) || ''; } catch { /* no-op */ }
+  return `${_DISMISSED_KEY_PREFIX}${user}`;
+}
+
+function _isDismissedLocally() {
+  try { return localStorage.getItem(_dismissedStorageKey()) === '1'; } catch { return false; }
+}
+
+function _markDismissedLocally() {
+  try { localStorage.setItem(_dismissedStorageKey(), '1'); } catch { /* best-effort */ }
+}
+
+function _clearDismissedLocally() {
+  try { localStorage.removeItem(_dismissedStorageKey()); } catch { /* best-effort */ }
+}
+
 // ── public entry: maybe launch the wizard on boot ───────────────────────────
 
 // Returns true when the setup wizard was launched (setup incomplete), false
-// otherwise (setup already complete, or the engine is unreachable). Callers use
-// this to decide whether to take precedence over a post-login landing surface:
-// the wizard always wins, and the home-base Portal only opens when this is false.
+// otherwise (setup already complete, already dismissed, or the engine is
+// unreachable). Callers use this to decide whether to take precedence over a
+// post-login landing surface: the wizard always wins, and the home-base Portal
+// only opens when this is false.
 export async function maybeLaunchOnboarding() {
   if (_overlay) return true; // already open
   let status;
@@ -2428,7 +2577,11 @@ export async function maybeLaunchOnboarding() {
   catch { return false; } // engine unreachable -> don't block; the user can still log in
   if (!status) return false;
   const complete = status.llm_configured && status.onboarding_complete;
-  if (complete) return false; // nothing to do
+  if (complete) { _clearDismissedLocally(); return false; } // nothing to do
+  // #27: server truth isn't complete (the optional profile essentials may never
+  // fill in), but the user already reached "You're all set" once and dismissed —
+  // trust that local signal so the wizard doesn't reopen on every visit.
+  if (_isDismissedLocally()) return false;
 
   _overlay = _buildOverlay();
   document.body.appendChild(_overlay);
@@ -2557,8 +2710,12 @@ export async function mountSettingsStep(stepKey, container) {
   }
   const prevBody = _bodyTarget;
   const prevFoot = _footTarget;
+  const prevSettingsContext = _inSettingsContext;
   _bodyTarget = body;
   _footTarget = foot;
+  // #96: mark this render as Settings context so the relocated renderers can
+  // drop wizard-only footer chrome (see the flag's own doc comment above).
+  _inSettingsContext = true;
   // #52: scope the draft to this Settings step (e.g. 'channels'/'sandbox'/
   // 'fonts'/'update') so a reload while editing Settings also survives.
   _draftScope = stepKey;
@@ -2570,6 +2727,7 @@ export async function mountSettingsStep(stepKey, container) {
     // address their own elements by id.
     _bodyTarget = prevBody;
     _footTarget = prevFoot;
+    _inSettingsContext = prevSettingsContext;
   }
   return true;
 }
