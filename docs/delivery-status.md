@@ -30,13 +30,23 @@ for the phase plan and exit criteria.
 | Phase 3b (durable revision sessions) | 480 |
 | Phase 4 | 539 |
 | Production-hardening remediation | 594 |
-| Production-hardening re-audit (current) | **2436** |
+| Production-hardening re-audit | 2436 |
+| Front-door UX-hardening pass (current) | **3704 engine + 2647 front-door** |
 
-(24 integration tests skip by default — they require live external boundaries.)
+(Integration tests skip by default — they require live external boundaries. One engine test,
+`test_the_secretstorage_layer_roundtrips…`, fails only in a CWD-relative-SQLite local env and
+passes in CI.)
+
+The **front-door UX-hardening pass** is the ongoing closure of the 12-lens `exhaustive2/`
+audit backlog + the incidental-bug ledger — see
+[design/audits/exhaustive2/CLOSURE-STATUS.md](design/audits/exhaustive2/CLOSURE-STATUS.md)
+for per-lens status and [design/audits/discovered-issues.md](design/audits/discovered-issues.md)
+for the bug ledger. It also closed the cross-user isolation thread (single-tenant engine: the
+`pending/campaigns/tracker/activity` proxies are now owner-scoped on reads **and** writes).
 
 ## What is and isn't proven by the test suite
 
-The **2436 hermetic tests prove the logic** of every requirement against fakes / in-memory
+The **3704 hermetic engine tests prove the logic** of every requirement against fakes / in-memory
 adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
 conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
 the **25 integration-gated skips** cover those and run only on a live deployment with the

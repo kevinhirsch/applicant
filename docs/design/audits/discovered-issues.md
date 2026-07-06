@@ -9,6 +9,11 @@ safety / a promised feature that silently never runs), **med**, **low**.
 
 Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
+**Snapshot (after PRs #626–#630):** 12 fixed — DISC-0/3/7/8/9/10/11/12/13/15/15b/17;
+6 open — DISC-2 (restart-durable ledgers, highest value), DISC-4, DISC-5, DISC-6, DISC-14,
+DISC-16. Per-lens backlog status lives in
+[`exhaustive2/CLOSURE-STATUS.md`](exhaustive2/CLOSURE-STATUS.md).
+
 ---
 
 ## Open
