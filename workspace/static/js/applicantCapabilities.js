@@ -28,13 +28,19 @@
 //   - Reuses the shared `.modal` / `.modal-content` / `.ow-window` /
 //     `.modal-header` / `.modal-body` / `.admin-card` / `.cal-btn` chrome
 //     from style.css -- no new CSS added anywhere.
-//   - Trigger: a small floating launcher button (bottom-left, out of the way
-//     of the existing bottom-right toast/status stack) so the capability list
-//     is discoverable by click, not just a hotkey -- reachability shouldn't
-//     depend on a user already knowing a keybind for a first-run disclosure
-//     surface. Also bound to a bare `Ctrl+Shift+?` chord for keyboard parity
-//     with the rest of the power-user surfaces (commandPalette.js /
-//     applicantShortcuts.js), ignored while typing in an editable field.
+//   - Trigger: a small floating launcher button, bottom-right (see the inline
+//     comment on `_ensureTriggerEl`'s style for the full placement rationale
+//     -- it deliberately does NOT sit bottom-left, where it would land on top
+//     of the sidebar's own user bar), so the capability list is discoverable
+//     by click, not just a hotkey -- reachability shouldn't depend on a user
+//     already knowing a keybind for a first-run disclosure surface. Hidden
+//     below a ~420px viewport width, where this corner is the composer's
+//     send button instead (a JS matchMedia guard -- see _NARROW_QUERY below;
+//     this module only ever styles itself from JS, so that's the equivalent
+//     of a CSS media query here). Also bound to a bare `Ctrl+Shift+?` chord
+//     for keyboard parity with the rest of the power-user surfaces
+//     (commandPalette.js / applicantShortcuts.js), ignored while typing in an
+//     editable field.
 
 import { esc, _fetchJSON, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
 
@@ -94,6 +100,23 @@ function _bodyHTML(tools) {
 let _modalEl = null;
 let _modalA11yCleanup = null;
 let _triggerEl = null;
+
+// shell-S2-12/CC-S2-5: hide the floating trigger below a ~420px viewport
+// width instead of letting it sit on top of the composer's send button
+// (confirmed overlap at 375px; desktop bottom-right is clean — see the
+// placement rationale on `_ensureTriggerEl`'s style below). This module has
+// no stylesheet of its own (every style here is set from JS), so a
+// matchMedia guard is the equivalent of a CSS media query for it — mirrors
+// the same `window.matchMedia('(max-width: …)')` pattern already used by
+// platform.js / appkitWindow.js elsewhere in this codebase.
+const _NARROW_QUERY = (typeof window !== 'undefined' && window.matchMedia)
+  ? window.matchMedia('(max-width: 420px)')
+  : { matches: false, addEventListener() {} };
+
+function _applyTriggerVisibility() {
+  if (!_triggerEl) return;
+  _triggerEl.style.display = _NARROW_QUERY.matches ? 'none' : '';
+}
 
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
@@ -157,16 +180,27 @@ function _ensureTriggerEl() {
   btn.className = 'cal-btn';
   btn.title = 'What can the assistant do?';
   btn.setAttribute('aria-label', 'What can the assistant do?');
-  // #31: bottom-left put this pill directly over the sidebar's own bottom-left
-  // user bar (avatar/name), covering it and intercepting clicks meant for it,
-  // on any sidebar width (full, resized, or collapsed to the icon rail).
-  // Bottom-right mirrors the top-right toast corner and stays clear of the
-  // sidebar at every width.
+  // #31/shell-S2-12/CC-S2-5: bottom-left put this pill directly over the
+  // sidebar's own bottom-left user bar (avatar/name), covering it and
+  // intercepting clicks meant for it, on any sidebar width (full, resized, or
+  // collapsed to the icon rail) -- so it does NOT go there. Bottom-right is
+  // clear of that user bar at every width, and clear of the toast/notice
+  // stack too: the toast (style.css `.toast`, appkitNotice.js's
+  // `#appkit-notice-toast`) renders top-right, and the above-composer notice
+  // zone (`#appkit-notice-zone`) is centered above the composer, not
+  // corner-anchored -- so bottom-right doesn't collide with either on
+  // desktop. The one real collision is on narrow screens, where the
+  // composer's own send button reaches into this same corner (confirmed at
+  // 375px); _applyTriggerVisibility() below hides the pill entirely rather
+  // than let the two overlap, instead of relocating it (this module has no
+  // other clear resting place free of both the user bar and the toast/notice
+  // corners once the composer also claims bottom-right).
   btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:850;border-radius:999px;width:auto;padding:0 14px;box-shadow:0 4px 12px rgba(0,0,0,0.25);';
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Assistant can…';
   btn.addEventListener('click', () => toggleApplicantCapabilities());
   document.body.appendChild(btn);
   _triggerEl = btn;
+  _applyTriggerVisibility();
   return btn;
 }
 
@@ -207,6 +241,13 @@ export function toggleApplicantCapabilities() {
 // typing in an editable field.
 function _boot() {
   _ensureTriggerEl();
+  // Keep the pill's visibility in sync if the viewport crosses the ~420px
+  // guard later (resize / orientation change / devtools panel), not just at
+  // boot. addListener is the pre-Safari-14 fallback for MediaQueryList.
+  try {
+    if (_NARROW_QUERY.addEventListener) _NARROW_QUERY.addEventListener('change', _applyTriggerVisibility);
+    else if (_NARROW_QUERY.addListener) _NARROW_QUERY.addListener(_applyTriggerVisibility);
+  } catch (_) { /* no-op — the pill just keeps whatever visibility it booted with */ }
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', _boot, { once: true });
