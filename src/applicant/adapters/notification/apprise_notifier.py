@@ -33,6 +33,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from applicant.observability.logging import get_logger
@@ -184,6 +185,55 @@ def _looks_like_html(body: str) -> bool:
     return bool(_HTML_BODY_RE.search(body))
 
 
+# #35: the "email" field (``apprise_urls``) accepts ANY Apprise service URL, but the
+# ladder still applies mail-shaped TIMING to whatever is pasted there (the 15-minute
+# email-backstop delay) and labels it "email" in the quiet-hours preference map. A
+# Slack/Telegram/etc. URL pasted into that field silently inherits both, with no sign
+# anything is off. These are the schemes Apprise treats as an actual mail transport
+# (direct ``mailto(s)://`` plus its provider-shorthand aliases); anything else is
+# flagged by :func:`_non_mail_apprise_urls` rather than silently accepted.
+_MAIL_LIKE_APPRISE_SCHEMES = frozenset(
+    {
+        "mailto",
+        "mailtos",
+        "mailgun",
+        "sendgrid",
+        "ses",
+        "sparkpost",
+        "smtp2go",
+        "gmail",
+        "outlook365",
+        "office365",
+        "yahoo",
+        "aweber",
+        "fastmail",
+        "seznam",
+        "smtp",
+        "smtps",
+    }
+)
+
+
+def _non_mail_apprise_urls(apprise_urls: str) -> list[str]:
+    """Entries in ``apprise_urls`` whose scheme is not email-shaped (#35).
+
+    Returns the offending entries (original casing) so callers can surface exactly
+    what was pasted; an empty list means every configured entry looks like mail (or
+    the field is empty). A scheme-less/unparseable entry is left alone here — it is
+    someone else's problem (SSRF/URL validation) — this only flags a RECOGNIZABLE,
+    non-mail Apprise scheme (e.g. ``slack://``, ``tgram://``, ``discord://``).
+    """
+    offenders: list[str] = []
+    for raw in (apprise_urls or "").split(","):
+        entry = raw.strip()
+        if not entry or "://" not in entry:
+            continue
+        scheme = urlsplit(entry).scheme.lower()
+        if scheme and scheme not in _MAIL_LIKE_APPRISE_SCHEMES:
+            offenders.append(entry)
+    return offenders
+
+
 def _ntfy_url_with_priority(url: str, notification: Notification) -> str:
     """Map urgency to Apprise's ntfy ``priority`` query param (#15).
 
@@ -204,6 +254,20 @@ def _ntfy_url_with_priority(url: str, notification: Notification) -> str:
     )
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}priority={priority}"
+
+
+# #36: ``NotificationChannel.PUSH`` documents "push" as the LOGICAL name for the
+# phone-push channel, with ``NotificationChannel.NTFY`` ("ntfy") as its current
+# transport. The two enum members share one runtime value today (existing callers
+# and persisted config all key off the literal "ntfy"), so this map is a forward
+# seam rather than a live rename: if a per-channel preference (``quiet_hours_channels``
+# — see ``configure``) is ever persisted under the logical "push" key instead of the
+# transport "ntfy" key (e.g. a future UI/config migration), preference lookups still
+# resolve correctly either way. Swapping the underlying transport later (web-push,
+# Gotify, ...) only needs an entry added here, not a rename of every persisted key.
+_CHANNEL_LOGICAL_ALIASES: dict[str, str] = {
+    NotificationChannel.NTFY.value: "push",
+}
 
 
 class AppriseNotifier:
@@ -228,9 +292,17 @@ class AppriseNotifier:
     ) -> None:
         self._discord = discord_webhook_url
         self._apprise = apprise_urls  # email/SMTP/other Apprise URLs (comma-separated)
+        self._warn_non_mail_apprise_urls()
         # #300: ntfy push channel — a plain ntfy topic URL (e.g. ``ntfy://ntfy.sh/topic``).
-        # Opt-in, exactly like Discord/email. When configured, urgent action alerts are
-        # delivered here in addition to Discord/email (always-immediate, no escalation hold).
+        # Opt-in, exactly like Discord/email. IMMEDIATE/CRITICAL notifications fan out
+        # here right away, same as every other configured channel.
+        # #19/#20: NORMAL notifications also reach ntfy now (not just web-preemptable
+        # decisions), so a phone-push-only user still gets the daily digest-ready /
+        # status / nudge pings. #20: a web-preemptable DECISION holds ntfy for the same
+        # window as Discord and is likewise presence-preemptable (see ``_fire_due``) —
+        # a quick web approval, or verified presence, suppresses the phone buzz just
+        # like it suppresses Discord. Purely informational NORMAL notifications (no
+        # decision to pre-empt) fire immediately, with no hold.
         self._ntfy = ntfy_url
         self._in_app = in_app
         self._hold_seconds = escalation_hold_seconds
@@ -318,6 +390,28 @@ class AppriseNotifier:
     def has_ntfy(self) -> bool:
         return bool(self._ntfy)
 
+    def non_mail_apprise_urls(self) -> list[str]:
+        """Configured ``apprise_urls`` entries that are not an email-shaped scheme (#35).
+
+        The "email" field accepts any Apprise service URL but still applies mail
+        timing (the 15-minute backstop) and the "email" quiet-hours label to whatever
+        is pasted there. Non-empty means at least one entry (e.g. a Slack/Telegram
+        webhook) is silently riding the email ladder's timing — callers (Settings, an
+        operator dashboard) can surface this; the adapter itself only warns (see
+        ``_warn_non_mail_apprise_urls``) rather than rejecting the value outright.
+        """
+        return _non_mail_apprise_urls(self._apprise)
+
+    def _warn_non_mail_apprise_urls(self) -> None:
+        """Log once per (re)configuration when a non-mail URL is in ``apprise_urls`` (#35)."""
+        offenders = _non_mail_apprise_urls(self._apprise)
+        if offenders:
+            log.warning(
+                "apprise_url_non_mail_scheme",
+                schemes=sorted({urlsplit(u).scheme.lower() for u in offenders}),
+                count=len(offenders),
+            )
+
     def is_live(self) -> bool:
         """True when configured channels actually go over the wire (NOTIFICATIONS_LIVE).
 
@@ -351,6 +445,7 @@ class AppriseNotifier:
             self._discord = discord_webhook_url
         if apprise_urls is not None:
             self._apprise = apprise_urls
+            self._warn_non_mail_apprise_urls()
         if ntfy_url is not None:
             self._ntfy = ntfy_url
         if quiet_hours is not None:
@@ -424,10 +519,15 @@ class AppriseNotifier:
                 _Rung(channel=NotificationChannel.EMAIL.value, due_at=email_due)
             )
 
-        # #300: ntfy fires only for urgent action alerts (web-preemptable decisions) —
-        # alongside Discord, not instead of it. Deep links are included so the push
+        # #19: ntfy now fans out to every NORMAL notification, not just web-preemptable
+        # decisions — a phone-push-only user (no Discord/email configured) previously
+        # never received the digest-ready ping, the daily status update, or the
+        # essentials nudge. #20: web-preemptable decisions still hold ntfy for the same
+        # window as Discord (and are presence-preemptable, see ``_fire_due``); purely
+        # informational NORMAL notifications have nothing to pre-empt, so they fire
+        # immediately, matching the in-app rung. Deep links are included so the push
         # notification leads directly to the Portal action.
-        if self._ntfy and notification.web_preemptable:
+        if self._ntfy:
             ntfy_delay = self._hold_seconds if notification.web_preemptable else 0
             rungs.append(
                 _Rung(channel=NotificationChannel.NTFY.value, due_at=now + ntfy_delay)
@@ -474,6 +574,24 @@ class AppriseNotifier:
             return when
         return when.astimezone(tz)
 
+    def _preference_for_channel(self, channel: str) -> bool | None:
+        """Look up a per-channel quiet-hours preference, alias-aware (#36).
+
+        ``_quiet_hours_channels`` is keyed by whatever channel name the caller
+        persisted. Today that is always the transport name (``"ntfy"``); this also
+        checks the logical alias (``"push"``, see ``_CHANNEL_LOGICAL_ALIASES``) so a
+        preference map does not orphan a stored entry if the config layer starts
+        writing the logical name instead of (or in addition to) the transport name.
+        The transport-keyed entry wins if both happen to be present.
+        """
+        pref = self._quiet_hours_channels.get(channel)
+        if pref is not None:
+            return pref
+        alias = _CHANNEL_LOGICAL_ALIASES.get(channel)
+        if alias is not None:
+            return self._quiet_hours_channels.get(alias)
+        return None
+
     def _channel_quiet_deferred(
         self, channel: str, notification: Notification, when: datetime
     ) -> bool:
@@ -496,7 +614,7 @@ class AppriseNotifier:
             return False  # IMMEDIATE / CRITICAL never deferred
         if channel == NotificationChannel.IN_APP.value:
             return False  # the silent home-base sink always surfaces
-        pref = self._quiet_hours_channels.get(channel)
+        pref = self._preference_for_channel(channel)
         if pref is False:
             # Explicit "let it through" preference — never deferred, independent of
             # the instant.
@@ -639,18 +757,55 @@ class AppriseNotifier:
 
     # --- public API -------------------------------------------------------
     def notify(self, notification: Notification) -> str:
+        """Dispatch a notification, honoring the ladder + cross-channel dedup.
+
+        #9: a repeat ``notify()`` for a ``dedup_key`` that is STILL ACTIVE (its prior
+        delivery has not been ``expire()``-d, and has not yet aged out of ``_sent``)
+        is an idempotent no-op — it returns the EXISTING delivery's handle instead of
+        replacing it and re-firing fresh rungs. Several call sites already assumed
+        this (the scheduler-stall alert's "even if this fired twice the notifier
+        collapses it to a single operator alert", the daily nudges' "a no-op at the
+        notifier") — before this fix that was false: a second ``notify()`` with the
+        same key overwrote ``_sent[key]`` and immediately fired brand-new rungs,
+        double-pinging every configured channel for what the caller believed was one
+        logical event.
+
+        The re-arm path is preserved: once :meth:`expire` marks the delivery inactive
+        (acted-on elsewhere, FR-NOTIF-3) or :meth:`_prune_sent` drops a fully-escalated
+        delivery that is past the email-timeout cutoff, the key is no longer "active"
+        and the next ``notify()`` for it starts a fresh ladder, exactly as before.
+        """
+        # Prune BEFORE checking so a delivery that has already fully escalated and
+        # aged out is correctly treated as inactive (re-arm), not as still-live.
+        # (Uses its own fresh clock read — deliberately NOT reused below, since
+        # ``_build_rungs`` takes its own later clock read for ``due_at``; reusing a
+        # stale timestamp to fire against would skip rungs due "in the future" by a
+        # few microseconds.)
+        self._prune_sent(self._now_secs())
+        key = notification.dedup_key
+        if key:
+            with self._sent_lock:
+                existing = self._sent.get(key)
+                if existing is not None and existing.active:
+                    return existing.handle
         with self._sent_lock:
             self._counter += 1
             handle = f"notif-{self._counter}"
         rungs = self._build_rungs(notification)
         delivery = _Delivery(handle=handle, notification=notification, rungs=rungs)
-        key = notification.dedup_key or handle
+        store_key = key or handle
         with self._sent_lock:
-            self._sent[key] = delivery
+            # Re-check under the lock: another thread may have inserted an active
+            # delivery for the same key between the check above and here.
+            existing = self._sent.get(store_key)
+            if existing is not None and existing.active:
+                return existing.handle
+            self._sent[store_key] = delivery
         # Fire any rung already due (NORMAL in-app + Discord-now; IMMEDIATE all).
         # _fire_due mutates only the local delivery object (not _sent) so it can run
         # outside the lock; the dispatch itself is deliberately lock-free (no IO under
-        # a lock).
+        # a lock). Fresh clock read (not the one used for the pre-check prune above) —
+        # ``_build_rungs`` computed ``due_at`` from its OWN later clock read.
         self._fire_due(delivery, self._now_secs())
         # LEAK-NOTIF-1: opportunistically drop fully-fired, past-timeout deliveries
         # so apps that never call ``expire`` (abandon/complete off-path) do not leak
@@ -851,11 +1006,16 @@ class AppriseNotifier:
                 continue
             # Presence pre-emption (FR-NOTIF-2): when the user is verifiably present
             # in the web UI, suppress the Discord push in favor of the in-app surface.
-            # A force flush is an explicit "send everything now" — presence no longer
-            # suppresses Discord (the user asked for the held pushes to go out).
+            # #20: ntfy is held on the same schedule as Discord for web-preemptable
+            # decisions, so it gets the same presence pre-empt — otherwise it was held
+            # like an escalation but never actually preemptable (the worst of both: a
+            # delayed alert with no way to skip it). A force flush is an explicit "send
+            # everything now" — presence no longer suppresses either channel (the user
+            # asked for the held pushes to go out).
             if (
                 not force
-                and rung.channel == NotificationChannel.DISCORD.value
+                and rung.channel
+                in (NotificationChannel.DISCORD.value, NotificationChannel.NTFY.value)
                 and delivery.notification.web_preemptable
                 and self._is_present(when)
             ):

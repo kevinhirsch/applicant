@@ -33,7 +33,12 @@ Design notes:
 
 * Auth: these routes are NOT in the auth-exempt list, so the global gate in
   ``app.py`` requires a logged-in session. We additionally call ``require_user``
-  so a middleware misconfig can't open them up.
+  so a middleware misconfig can't open them up. The notification-center
+  endpoints (``GET /notifications``, ``POST /notifications/{id}/seen``) are
+  gated more strictly by ``_require_notification_owner`` instead — the engine
+  inbox is single-tenant (no owner concept), so a plain "is someone logged in"
+  check would let any other workspace account read/dismiss the real owner's
+  job-search notifications (security, lens 10 #28).
 * Errors: a transport failure (engine down / timeout) → 503; an engine HTTP
   error is forwarded with its own status + detail (so e.g. a 409 confirm-gate
   passes through). No raw httpx escapes — the engine client guarantees a typed
@@ -59,7 +64,7 @@ from src.applicant_engine import (
     shared_engine_http_client,
     soft_degrade,
 )
-from src.auth_helpers import require_user
+from src.auth_helpers import get_current_user, is_trusted_loopback, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +106,54 @@ class SnoozeIn(BaseModel):
 def _require_user(request: Request) -> str:
     """Require an authenticated owner (the global gate also enforces this)."""
     return require_user(request)
+
+
+def _require_notification_owner(request: Request) -> str:
+    """Require the engine-owner account for the notification inbox (security,
+    lens 10 #28).
+
+    The engine has no owner concept at all (single-tenant per deployment):
+    every in-app inbox entry — title, body, deep link, all of it — belongs to
+    the ONE person this Applicant instance was set up for, not to whichever
+    workspace account happens to be logged in. Plain ``require_user`` (any
+    authenticated user) was letting a second, unrelated workspace account read
+    and dismiss that owner's job-search notifications (titles include role/
+    company).
+
+    Mirrors ``applicant_admin_routes.py``'s ``_require_admin`` exactly — the
+    one place in this proxy layer that already distinguishes "the specific
+    owner" from "any authenticated user": in single-user / unconfigured mode
+    there is no admin distinction, so the lone owner passes (matching the rest
+    of the workspace); once the workspace is configured for MULTIPLE accounts,
+    only an admin may reach the notification center. Fails closed: any failure
+    resolving admin status denies rather than allows.
+    """
+    owner = get_current_user(request)
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
+
+    if not configured:
+        # Single-user / first-run: no admin distinction, but only from a DIRECT
+        # loopback connection when there is no session at all (mirrors
+        # ``_require_admin``'s #228 hardening below).
+        if owner:
+            return owner
+        if is_trusted_loopback(request):
+            return ""
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if not owner:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        is_admin = bool(auth_mgr.is_admin(owner))
+    except Exception:  # defensive: never fail open on the gate itself
+        is_admin = False
+    if not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Your account can't access this job search's notifications.",
+        )
+    return owner
 
 
 def _engine_http_error(exc: EngineError) -> HTTPException:
@@ -466,8 +519,13 @@ def setup_applicant_portal_routes() -> APIRouter:
         Thin proxy over the engine's in-app inbox. Degrades soft like the pending
         feed: an unreachable engine returns an empty, well-formed payload with the
         reachability flag so the Portal keeps rendering its action rows.
+
+        Owner-scoped (security, lens 10 #28): gated by
+        :func:`_require_notification_owner`, not the plain auth-only
+        ``_require_user`` — titles/bodies include role/company, so any other
+        workspace account must not be able to read them.
         """
-        _require_user(request)
+        _require_notification_owner(request)
         async with ApplicantEngineClient() as engine:
             try:
                 data = await engine.list_notifications()
@@ -503,8 +561,13 @@ def setup_applicant_portal_routes() -> APIRouter:
 
         A 404 from the engine (already pruned/cleared) is treated as success so
         the UI can drop the row idempotently instead of erroring.
+
+        Owner-scoped (security, lens 10 #28): gated by
+        :func:`_require_notification_owner`, matching the read above — a
+        non-owner workspace account must not be able to dismiss the owner's
+        pending notifications either.
         """
-        _require_user(request)
+        _require_notification_owner(request)
         async with ApplicantEngineClient() as engine:
             try:
                 await engine.dismiss_notification(notification_id)

@@ -2001,7 +2001,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _loadApplicantMaterials(id, results);
       };
       btn.addEventListener('click', _go);
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _go(); } });
+      // lens 01 #15: guard against firing on an IME composition-commit Enter
+      // (CJK / dead-key input), matching the Vault/Chat fix pattern.
+      input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        e.preventDefault(); _go();
+      });
 
       // Variant-library lookup (mirrors the application lookup above).
       const vInput = wrap.querySelector('#doclib-variant-campaign');
@@ -2015,7 +2020,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _loadVariantLibrary(id, vResults);
       };
       vBtn.addEventListener('click', _goVariants);
-      vInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _goVariants(); } });
+      // lens 01 #15: same IME-composition guard as the application-id lookup above.
+      vInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        e.preventDefault(); _goVariants();
+      });
       if (_variantLastCampaign) _loadVariantLibrary(_variantLastCampaign, vResults);
 
       // On-demand generation (FR-RESUME-10 / FR-ANSWER-1): draft a cover letter or a
@@ -2063,9 +2072,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         }
         return true;
       };
-      genWrap.querySelector('#doclib-gen-cover-btn').addEventListener('click', async () => {
+      // lens 01 #6: both draft actions below fired a POST with no in-flight
+      // guard, so an impatient double-click drafted two cover letters / two
+      // answers (two engine generations, two review items). Disable the
+      // button for the duration of its own request, matching every other
+      // button in this file (see the Approve/Download/Promote buttons below).
+      const coverBtn = genWrap.querySelector('#doclib-gen-cover-btn');
+      const coverBtnLabel = coverBtn.textContent;
+      coverBtn.addEventListener('click', async () => {
         const ids = _genIds();
         if (!_needIds(ids)) return;
+        if (coverBtn.disabled) return;
+        coverBtn.disabled = true;
+        coverBtn.textContent = 'Writing…';
         _setGen('Writing a cover letter…');
         try {
           const res = await fetch(`${_APPLICANT_BASE}/cover-letter`, {
@@ -2083,12 +2102,31 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             _loadApplicantMaterials(ids.application_id, results);
           }
         } catch { _setGen('I couldn’t connect just now. Try again shortly.'); }
+        finally { coverBtn.disabled = false; coverBtn.textContent = coverBtnLabel; }
       });
-      genWrap.querySelector('#doclib-gen-answer-btn').addEventListener('click', async () => {
+      const answerBtn = genWrap.querySelector('#doclib-gen-answer-btn');
+      const answerBtnLabel = answerBtn.textContent;
+      answerBtn.addEventListener('click', async () => {
         const ids = _genIds();
         if (!_needIds(ids)) return;
-        const question = (window.prompt('What screening question should I answer?') || '').trim();
+        if (answerBtn.disabled) return;
+        // lens 01 #10: this used to be a bare window.prompt() — no multiline,
+        // no paste comfort, off-theme, blocks the main thread. Lift the same
+        // styledPrompt the digest's Pass flow already uses (falling back to
+        // window.prompt only if the kit helper is somehow unavailable).
+        const question = ((
+          uiModule && uiModule.styledPrompt
+            ? await uiModule.styledPrompt('What screening question should I answer?', {
+                title: 'Draft a screening answer',
+                placeholder: 'Paste the exact screening question here',
+                confirmText: 'Draft answer',
+                maxLength: 2000,
+              })
+            : window.prompt('What screening question should I answer?')
+        ) || '').trim();
         if (!question) return;
+        answerBtn.disabled = true;
+        answerBtn.textContent = 'Drafting…';
         _setGen('Drafting an answer…');
         try {
           const res = await fetch(`${_APPLICANT_BASE}/screening-answer`, {
@@ -2101,6 +2139,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _applicantLastAppId = ids.application_id;
           _loadApplicantMaterials(ids.application_id, results);
         } catch { _setGen('I couldn’t connect just now. Try again shortly.'); }
+        finally { answerBtn.disabled = false; answerBtn.textContent = answerBtnLabel; }
       });
 
       // Template merge-fill (dark-engine audit item 41): deterministic {{field}}
@@ -2207,7 +2246,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         return;
       }
       container.innerHTML = variants.map((v) => {
-        const id = v.variant_id || v.id || 'Variant';
+        const rawId = v.variant_id || v.id || '';
+        const id = rawId || 'Variant';
         // "Why this variant" (dark-engine audit item 53): the engine's real
         // JD-keyword coverage for this tailored resume, in plain language.
         // 'not scored' when this variant has not been JD-matched yet.
@@ -2236,7 +2276,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               `because the writing model was unavailable — review it closely.">` +
               `Fallback draft — model was unavailable</div>`
           : '';
-        return `<div class="admin-card" style="margin-top:6px;">` +
+        // lens 01 #65: these rows used to be inert — no way to read the
+        // variant or open it from here. Make the card itself clickable and
+        // keyboard-activatable; the open action reuses the SAME
+        // download-the-compiled-PDF fetch the materials-list variant card's
+        // "Download PDF" button already uses (wired below, once the cards
+        // are in the DOM), just opened inline instead of force-downloaded so
+        // it reads as "view" rather than "save".
+        return `<div class="admin-card doclib-variant-card" data-variant-id="${esc(rawId)}" ` +
+          `role="${rawId ? 'button' : 'group'}" tabindex="${rawId ? '0' : '-1'}" ` +
+          `style="margin-top:6px;${rawId ? 'cursor:pointer;' : ''}" ` +
+          `title="${rawId ? 'Open this resume version’s PDF.' : ''}">` +
           `<div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>` +
           `<div class="memory-desc" style="opacity:0.7;margin-top:2px;">` +
             `${esc(scoreText)} · ${esc(approved)}${depth}${from}</div>` +
@@ -2244,6 +2294,34 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           degradedHtml +
         `</div>`;
       }).join('');
+
+      // Wire up the open action once the cards are in the DOM (attributes
+      // alone don't get you keyboard Enter/Space activation or a click
+      // handler). Deep-links into the same PDF the materials-view "Download
+      // PDF" button serves for a resume variant (`_applicantCard` below) —
+      // the one existing "open" action a bare variant id already supports.
+      container.querySelectorAll('.doclib-variant-card[data-variant-id]').forEach((el) => {
+        const vid = el.getAttribute('data-variant-id');
+        if (!vid) return;
+        const _openVariant = async () => {
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(vid)}/download`, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank', 'noopener');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          } catch (err) {
+            if (uiModule) uiModule.showError((err && err.message) || String(err));
+          }
+        };
+        el.addEventListener('click', _openVariant);
+        el.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          _openVariant();
+        });
+      });
     }
 
     // Résumé <-> job-posting keyword match explainer (product-gaps backlog
@@ -2478,11 +2556,36 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       results.appendChild(list);
     }
 
+    // lens 01 #40: Approve/Decline in the redline review panel used to just
+    // call _loadApplicantMaterials, which tears the whole list down and
+    // rebuilds it from scratch — scroll jumps to the top and the item the
+    // reviewer was just looking at collapses back to its closed state. A
+    // real in-place update of one row isn't structurally available here (the
+    // approve/decline endpoints don't hand back enough to patch a card, and
+    // the header's "All approved" gate/JD-match line depend on the FULL
+    // list), so this reloads the list but preserves the reviewer's scroll
+    // position and, best-effort, reopens the same item's review panel
+    // afterwards so it doesn't read as having silently discarded their spot.
+    async function _reloadApplicantMaterialsPreservingContext(appId, results, openItemId) {
+      const scrollHost = (results && results.querySelector('.doclib-grid')) || results;
+      const scrollTop = scrollHost ? scrollHost.scrollTop : 0;
+      await _loadApplicantMaterials(appId, results);
+      const newScrollHost = (results && results.querySelector('.doclib-grid')) || results;
+      if (newScrollHost) newScrollHost.scrollTop = scrollTop;
+      if (!openItemId || !results) return;
+      const newCard = results.querySelector(`[data-item-id="${CSS.escape(String(openItemId))}"]`);
+      const reopenBtn = newCard && newCard.querySelector('.doclib-applicant-review-toggle');
+      if (reopenBtn) reopenBtn.click();
+    }
+
     // One material card: title, approval state, content preview, and the
     // actions (open the review loop / quick-approve a resume variant).
     function _applicantCard(item, appId, results) {
       const card = document.createElement('div');
       card.className = 'doclib-card memory-item';
+      // lens 01 #40: lets a full-list reload after Approve/Decline find this
+      // SAME item's card again and restore what the reviewer was looking at.
+      card.dataset.itemId = String(item.id);
       card.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
       const approved = !!item.approved;
       const isVariant = (item.type || '').toLowerCase() === 'resume_variant';
@@ -2619,7 +2722,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         actions.appendChild(promoteBtn);
       } else {
         const reviewBtn = document.createElement('button');
-        reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-applicant-review-toggle';
         reviewBtn.textContent = 'Review and edit';
         reviewBtn.title = 'Open this document, see the suggested changes, ask for tweaks, then approve it.';
         reviewBtn.addEventListener('click', (e) => { e.stopPropagation(); _openApplicantReview(item, appId, card, results); });
@@ -2729,6 +2832,34 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       panel.appendChild(redline);
 
+      // lens 01 #63: the redline is the primary review artifact (the actual
+      // resume diff the reviewer is deciding on) but was hard-capped at
+      // 200px with no way to see more. Add a show-more/show-less toggle;
+      // only surface it once the content actually overflows the compact cap
+      // (checked after the browser has laid the node out).
+      const redlineToggle = document.createElement('button');
+      redlineToggle.type = 'button';
+      redlineToggle.className = 'doclib-card-text-btn';
+      redlineToggle.style.cssText = 'align-self:flex-start;font-size:11px;padding:2px 8px;display:none;';
+      const _syncRedlineToggle = () => {
+        const expanded = redline.style.maxHeight === 'none';
+        const overflowing = redline.scrollHeight > redline.clientHeight;
+        redlineToggle.style.display = (overflowing || expanded) ? 'inline-block' : 'none';
+        redlineToggle.textContent = expanded ? 'Show less' : 'Show more';
+        redlineToggle.title = expanded
+          ? 'Collapse the changes back to a compact view.'
+          : 'Expand to see the full set of changes.';
+      };
+      redlineToggle.addEventListener('click', () => {
+        redline.style.maxHeight = redline.style.maxHeight === 'none' ? '200px' : 'none';
+        _syncRedlineToggle();
+      });
+      panel.appendChild(redlineToggle);
+      // Defer to the next frame so layout has settled after the innerHTML
+      // assignment above (scrollHeight/clientHeight need a real layout pass).
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_syncRedlineToggle);
+      else _syncRedlineToggle();
+
       // "Compare to original" (dark-engine audit item 22): the review session's
       // own redline_state only ever carries the latest content, never a real
       // additions/subtractions diff, so this is the one path that renders an
@@ -2776,6 +2907,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             } else {
               redline.innerHTML = '<div style="opacity:0.6;">No differences found.</div>';
             }
+            // The swapped-in content may now be shorter/longer than before —
+            // re-check whether the show-more toggle is still needed (#63).
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_syncRedlineToggle);
+            else _syncRedlineToggle();
           } catch (err) {
             if (uiModule) uiModule.showError(err.message || String(err));
           } finally {
@@ -2915,7 +3050,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (!res.ok) throw new Error(await _applicantErrText(res));
           _reviewInstructionDrafts.delete(_draftKey);
           if (uiModule) uiModule.showToast('Document approved');
-          _loadApplicantMaterials(appId, results);
+          _reloadApplicantMaterialsPreservingContext(appId, results, item.id);
         } catch (err) {
           approveBtn.disabled = false;
           approveBtn.textContent = 'Approve';
@@ -2934,7 +3069,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (!res.ok) throw new Error(await _applicantErrText(res));
           _reviewInstructionDrafts.delete(_draftKey);
           if (uiModule) uiModule.showToast('Document declined');
-          _loadApplicantMaterials(appId, results);
+          _reloadApplicantMaterialsPreservingContext(appId, results, item.id);
         } catch (err) {
           declineBtn.disabled = false;
           declineBtn.textContent = 'Decline';
