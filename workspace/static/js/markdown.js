@@ -367,6 +367,20 @@ export function processWithThinking(text) {
   return _useSvgEmoji() ? svgifyEmoji(html) : html;
 }
 
+// Common emoji shortcodes models emit as literal ":name:" text. Converted on the
+// RAW markdown source (before parsing) so the resulting emoji flows through the
+// normal emoji pipeline (svgifyEmoji). Unknown ":x:" is left untouched, so code
+// snippets / paths / times containing colons are not mangled.
+const _EMOJI_SHORTCODES = {
+  wave: '👋', smile: '😄', smiley: '😃', grin: '😁', laughing: '😆', joy: '😂',
+  blush: '😊', wink: '😉', thinking: '🤔', sweat_smile: '😅', cry: '😢', sob: '😭',
+  heart: '❤️', thumbsup: '👍', '+1': '👍', thumbsdown: '👎', '-1': '👎', clap: '👏',
+  pray: '🙏', ok_hand: '👌', muscle: '💪', point_right: '👉', tada: '🎉', rocket: '🚀',
+  fire: '🔥', sparkles: '✨', star: '⭐', bulb: '💡', eyes: '👀', check: '✅',
+  white_check_mark: '✅', heavy_check_mark: '✔️', x: '❌', warning: '⚠️',
+  question: '❓', exclamation: '❗', '100': '💯',
+};
+
 /**
  * Convert markdown to HTML
  */
@@ -374,6 +388,10 @@ export function mdToHtml(src) {
   // CRITICAL: Extract allowed HTML blocks first (details/summary)
   const allowedHtmlBlocks = [];
   let s = (src ?? '');
+
+  // Convert common emoji shortcodes (":wave:" etc.) that models emit as literal
+  // text; unknown shortcodes pass through unchanged so code/paths/times aren't mangled.
+  s = s.replace(/:([a-z0-9_+-]+):/gi, (m, name) => _EMOJI_SHORTCODES[name.toLowerCase()] || m);
 
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
