@@ -100,12 +100,21 @@ def test_all_successful_redrives_emit_no_batch_failure_signal(monkeypatch):
         agent_loop=_FakeAgentLoop(fail_on=set()),
     )
 
+    # recent_logs() is a process-wide ring buffer shared across the whole suite,
+    # so a sibling test's redrive_failed_batch can linger in it — count the
+    # baseline first and assert THIS call added none of its own.
+    failures_before = len(
+        [e for e in recent_logs(limit=500) if e.get("event") == "redrive_failed_batch"]
+    )
+
     redriven = lifespan_mod._redrive_pending(container)
 
     assert redriven == 2
 
-    events = recent_logs(limit=200)
-    assert not [e for e in events if e.get("event") == "redrive_failed_batch"]
+    failures_after = [
+        e for e in recent_logs(limit=500) if e.get("event") == "redrive_failed_batch"
+    ]
+    assert len(failures_after) == failures_before
 
     snapshot = fresh_boot_health.snapshot()
     assert snapshot["degraded"] is False
