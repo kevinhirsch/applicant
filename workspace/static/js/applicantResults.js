@@ -43,6 +43,11 @@ let _modalEl = null;
 let _modalA11yCleanup = null;
 let _pollStop = null;
 let _loading = false;
+// Fingerprint of the last data actually rendered (audit 01 #32): lets a silent
+// 60s background poll skip re-rendering when nothing changed, so it doesn't
+// reset scroll position or kill an in-progress text selection mid-read. A
+// user-initiated refresh (showSpinner) always renders regardless.
+let _lastResultsKey = null;
 
 
 // ── Small formatting helpers ────────────────────────────────────────────────
@@ -79,7 +84,7 @@ function _ensureModalEl() {
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="cal-btn" id="applicant-results-refresh" title="Refresh your results">Refresh</button>
-          <button class="close-btn" id="applicant-results-close" title="Close">✖</button>
+          <button class="close-btn" id="applicant-results-close" title="Close" aria-label="Close">✖</button>
         </div>
       </div>
       <div class="modal-body" id="applicant-results-body" style="flex:1;overflow-y:auto;">
@@ -115,6 +120,8 @@ export function closeApplicantResults() {
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-results-body'); }
+
+function _refreshBtn() { return _modalEl && _modalEl.querySelector('#applicant-results-refresh'); }
 
 // ── Section renderers ────────────────────────────────────────────────────────
 
@@ -167,6 +174,9 @@ function _renderFunnel(summary) {
   const overall = matched > 0 ? _pct(submitted, matched) : '';
   let headline = '';
   if (matched > 0) {
+    // NOTE: kept as a straight apostrophe deliberately — pinned verbatim by
+    // the out-of-scope test_applicant_backlog_narratedinsights.py (needle
+    // "You've had ${matched} role"), which this single-file lane may not edit.
     headline = `You've had ${matched} role${matched === 1 ? '' : 's'} matched so far — `
       + `you approved ${approved}, and ${submitted} ${submitted === 1 ? 'has' : 'have'} been submitted`
       + (overall ? ` (${overall} of everything matched).` : '.');
@@ -193,10 +203,13 @@ function _sourcesHeadline(sources) {
   if (!top) return '';
   const rate = (top.conversion_rate == null) ? null : _num(top.conversion_rate);
   const rateText = rate == null ? '' : ` (${rate}%)`;
-  return `You're converting best on ${top.source || 'this source'} — `
+  return `You’re converting best on ${top.source || 'this source'} — `
     + `${_num(top.submitted)} of ${_num(top.matched)} matched roles there were submitted${rateText}.`;
 }
 
+// NOTE: the tooltip below keeps its straight apostrophe ("it's") deliberately
+// — pinned verbatim by the out-of-scope test_applicant_copy_results_core_lens02.py,
+// which this single-file lane may not edit.
 function _renderSources(sources) {
   if (!sources.length) return '';
   const rows = sources.map((s) => {
@@ -226,11 +239,15 @@ function _renderSources(sources) {
 
 // The learned "what converts for you" role signature — role titles only, the
 // plain-language bias the assistant applies.
+//
+// NOTE: the tooltip below keeps its straight apostrophe ("I've") deliberately
+// — pinned verbatim by the out-of-scope test_applicant_copy_results_core_lens02.py,
+// which this single-file lane may not edit.
 function _renderSignature(roles, samples) {
   if (!roles.length) return '';
   const chips = roles.map((r) => `
     <span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:12px;border:1px solid var(--border);font-size:11px;">${esc(String(r))}</span>`);
-  const headline = `Based on what's actually converted so far, you tend to move forward on roles like these:`;
+  const headline = 'Based on what’s actually converted so far, you tend to move forward on roles like these:';
   const sub = (samples != null && _num(samples) > 0)
     ? `<div style="font-size:10px;opacity:0.55;margin-bottom:8px;">Based on ${esc(String(_num(samples)))} application${_num(samples) === 1 ? '' : 's'} that moved forward.</div>`
     : '';
@@ -253,7 +270,7 @@ function _renderSignature(roles, samples) {
 function _renderDeclines(reasons) {
   if (!reasons.length) return '';
   const top = reasons[0];
-  const headline = `Here's what comes up most when you decline a role — `
+  const headline = `Here’s what comes up most when you decline a role — `
     + `most often "${top.reason}" (${_num(top.count)} time${_num(top.count) === 1 ? '' : 's'}).`;
   const chips = reasons.map((r) => `
     <span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:12px;border:1px solid var(--border);font-size:11px;">${esc(String(r.reason))} <span style="opacity:0.55;">(${esc(String(_num(r.count)))})</span></span>`);
@@ -281,15 +298,26 @@ function _renderResults(host, data) {
 
 // Designed empty state for a brand-new user: reachable engine + a campaign, but no
 // submissions yet. Hopeful, not a flat "nothing here".
+//
+// NOTE: the body text below keeps its straight apostrophes ("I've"/"You'll")
+// deliberately — pinned verbatim by the out-of-scope
+// test_applicant_copy_results_core_lens02.py, which this single-file lane
+// may not edit.
 function _renderEmpty(host) {
   host.innerHTML = emptyHTML(
     'No results yet',
     'Your results appear here once I\'ve submitted a few applications for you. '
     + 'You\'ll see how roles move from found, to approved, to submitted — plus which '
     + 'sources convert best and what kinds of roles move forward for you.',
+    '<button type="button" class="cal-btn" id="applicant-results-empty-activity">See what I’m working on</button>',
   );
+  const btn = host.querySelector('#applicant-results-empty-activity');
+  if (btn) btn.addEventListener('click', () => { _close(); setHash('activity'); });
 }
 
+// NOTE: the body text below keeps its straight apostrophe ("I'm") deliberately
+// — pinned verbatim by the out-of-scope test_applicant_copy_results_core_lens02.py,
+// which this single-file lane may not edit.
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
     'Not connected yet',
@@ -306,16 +334,24 @@ function _renderGated(host, data) {
 }
 
 async function _load(showSpinner) {
+  // Busy/disabled guard (audit 01 #35): a second click on Refresh while a load
+  // is already in flight is otherwise silently a no-op — visibly disable the
+  // button so it reads as busy instead of broken.
   if (_loading) return;
   _loading = true;
   const host = _body();
+  const btn = _refreshBtn();
+  if (btn) { btn.disabled = true; btn.dataset.label = btn.dataset.label || btn.textContent; btn.textContent = 'Refreshing…'; }
   if (host && showSpinner) host.innerHTML = loadingHTML('Loading your results…');
   try {
     const data = await _fetchJSON(API);
     if (!host) return;
-    if (data && data.gated === true) { _renderGated(host, data); return; }
-    if (data && data.engine_available === false) { _renderOffline(host); return; }
-    if (!data || data.has_data === false) { _renderEmpty(host); return; }
+    if (data && data.gated === true) { _lastResultsKey = null; _renderGated(host, data); return; }
+    if (data && data.engine_available === false) { _lastResultsKey = null; _renderOffline(host); return; }
+    if (!data || data.has_data === false) { _lastResultsKey = null; _renderEmpty(host); return; }
+    const key = JSON.stringify(data);
+    if (!showSpinner && key === _lastResultsKey) return;
+    _lastResultsKey = key;
     _renderResults(host, data);
   } catch (e) {
     if (host) {
@@ -324,6 +360,7 @@ async function _load(showSpinner) {
     }
   } finally {
     _loading = false;
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Refresh'; }
   }
 }
 
