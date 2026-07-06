@@ -363,10 +363,10 @@ import { isNarrow } from './platform.js';
 // Migration waves (Lane F / F-2) move each existing surface onto this class
 // and DELETE its bespoke code in the same PR. New windows MUST compose the kit
 // (the F-3 ratchet pins it).
-import * as Modals from './modalManager.js';
-import { makeWindowDraggable } from './windowDrag.js';
-import { makeWindowResizable, windowMaxWidth } from './windowResize.js';
-import { isNarrow } from './platform.js';
+// NB: the Modals/windowDrag/windowResize/platform imports live at the TOP of this
+// file (one import block). A duplicated copy of that block used to sit here — a
+// module-scope redeclaration ("Identifier 'Modals' has already been declared")
+// that made the WHOLE module unloadable, so window.AppkitWindowKit never mounted.
 
 // A2 (#573, DWE audit F9): the kit no longer owns a PRIVATE z counter. The kit's
 // non-modal band (the old `_zTop` 500–980) is now allocated by THE single window
