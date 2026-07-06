@@ -10447,18 +10447,27 @@ mark.doc-find-mark.current {
   body.doc-view .modal[id^="email-reader-"] { z-index: 150 !important; }
   body.doc-view.email-front #email-lib-modal,
   body.doc-view.email-front .modal[id^="email-reader-"] { z-index: 300 !important; }
-  /* Hide new-session button and hamburger when doc editor is open on mobile */
+  /* Hide the new-session button when the doc editor is open on mobile */
   body.doc-view .mobile-new-chat-btn,
   /* Hide the global hamburger while Compare Mode is active — the compare
    header has its own close button in the top-right, and overlapping the
    two looks like a bug. The .compare-active class lives on the chat
    container, not body, so use :has(). */
 body:has(.compare-active) .hamburger-btn { display: none !important; }
-/* Mobile: hide the sidebar hamburger when a document panel (or notes pane)
-   is open — those sheets cover the whole screen on mobile, so a floating
-   hamburger sticking out over them is just clutter / mis-tap bait. */
+/* Mobile: hide the sidebar hamburger when the notes pane is open — it has
+   its own close control and covers the whole screen, so a floating
+   hamburger sticking out over it is just clutter / mis-tap bait.
+   NOTE (P0 mobile-nav-trap fix): the doc-view selector for this same
+   hamburger used to be hidden here too, but the doc/email panel can
+   appear on mobile with NO user action at all — a leftover session's
+   compose/email draft auto-restoring on login (see static/js/document.js
+   loadSessionDocs / static/app.js boot restore) — which left a phone
+   with no nav whatsoever except the panel's own tiny close control. The
+   hamburger's z-index (210) already sits above both the full-screen doc
+   pane (170) and the sidebar it opens (200), so it stays reachable here
+   instead of being hidden — the mobile shell must never trap the user
+   with no way back to nav. */
 @media (max-width: 768px) {
-  body.doc-view .hamburger-btn,
   body:has(#notes-pane) .hamburger-btn { display: none !important; }
 }
   /* Make room for hamburger button alongside the tab/header bars (fallback if shown) */
