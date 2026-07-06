@@ -74,9 +74,7 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M12 2 4 5v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V5z"/><path d="M9 12l2 2 4-4"/></svg>
           How Applicant protects you
         </h4>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button class="close-btn" id="applicant-trust-close" title="Close">✖</button>
-        </div>
+        <button class="close-btn" id="applicant-trust-close" title="Close">✖</button>
       </div>
       <div class="modal-body" id="applicant-trust-body" style="flex:1;overflow-y:auto;">
       </div>

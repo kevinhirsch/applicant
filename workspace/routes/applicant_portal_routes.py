@@ -181,7 +181,14 @@ async def _gate_state(engine: ApplicantEngineClient) -> dict:
         return {}
     if not isinstance(raw, dict):
         return {}
-    out: dict = {"automated_work_allowed": bool(raw.get("automated_work_allowed"))}
+    # Conditional inclusion (like apply_ready/apply_missing below): an older engine
+    # that omits a key must NOT be reported as a definite ``false`` — the Portal JS
+    # treats a MISSING gate field as "unknown" and stays in the calm empty state,
+    # whereas ``false`` trips the "your search isn't running yet" alarm. Sending
+    # ``bool(raw.get(...))`` here would fabricate that ``false`` and false-alarm.
+    out: dict = {}
+    if "automated_work_allowed" in raw:
+        out["automated_work_allowed"] = bool(raw["automated_work_allowed"])
     if "apply_ready" in raw:
         out["apply_ready"] = bool(raw.get("apply_ready"))
     if "apply_missing" in raw:

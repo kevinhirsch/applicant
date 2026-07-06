@@ -926,6 +926,12 @@ body.bg-pattern-sparkles {
     }
     .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
     .modal.modal-minimized { display: none !important; }
+    /* SR-S1-3: app.js `initModalMinimize` still adds the single-class `.minimized`
+       to unregistered modals (the applicant Portal / Tracker / Results / Activity /
+       Trust surfaces) and builds a #modal-dock restore chip. The rule that hid a
+       `.modal.minimized` had been deleted (a stale comment below wrongly declared the
+       legacy kit dead), so clicking "_" left the modal fully visible. Restore it. */
+    .modal.minimized { display: none !important; }
     /* Window tile snap ghost (desktop only) */
     #tile-ghost {
       position: fixed; pointer-events: none; z-index: 9000;
@@ -4895,6 +4901,10 @@ body.bg-pattern-sparkles {
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--window-header-gap);
+      /* CC-S2-1: a shared header-band height so every modal titlebar matches (they
+         ranged ~19px–62px). align-items:center keeps the title + traffic-lights on
+         one optical centerline within the band. */
+      min-height: 44px; box-sizing: border-box;
       cursor:grab; user-select:none;
       /* Pin the header (with its close button) to the top of the
          scrollable modal-content so users can always dismiss the modal
@@ -4987,10 +4997,50 @@ body.bg-pattern-sparkles {
       .minimize-btn { display: none !important; }
       #modal-dock { display: none !important; }
     }
-    /* (Legacy minimize kit — .modal.minimized + #modal-dock + .modal-dock-*
-       — removed here. It was fully superseded by .modal.modal-minimized and
-       the #minimized-dock / .minimized-dock-chip system in modalManager.js;
-       the only remaining reference was a comment. No live JS/HTML used it.) */
+    /* SR-S1-3: the legacy minimize kit (.modal.minimized + #modal-dock + .modal-dock-*)
+       is STILL live — app.js `initModalMinimize` auto-injects a "_" button + a
+       #modal-dock restore chip on every UNREGISTERED modal (modalManager's
+       #minimized-dock system only covers registered ones). Its CSS had been removed as
+       "dead"; restored below, mirroring the #minimized-dock chip look so the restore
+       chip is visible and usable. (Mobile hide lives in the @media block above.) */
+    #modal-dock {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; flex-wrap: wrap;
+      max-width: calc(100vw - 24px);
+      padding: 4px; z-index: 999; pointer-events: none;
+    }
+    .modal-dock-item {
+      pointer-events: auto;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 8px 6px 10px;
+      background: var(--panel, var(--bg));
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--fg); font-family: inherit; font-size: 12px;
+      cursor: pointer; user-select: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      animation: dock-chip-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    .modal-dock-item:hover {
+      background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel, var(--bg)));
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+    }
+    .modal-dock-label { white-space: nowrap; }
+    .modal-dock-close {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; padding: 0; border: none; border-radius: 50%;
+      background: color-mix(in srgb, var(--fg) 12%, transparent);
+      color: var(--fg); font-size: 12px; line-height: 1; cursor: pointer;
+    }
+    .modal-dock-close:hover { background: var(--red); color: #fff; }
+    /* CC-S2-5: on a narrow phone the fixed "Assistant can…" launcher pill
+       (#applicant-capabilities-trigger, positioned bottom-right inline by JS) lands on
+       top of the composer's Send button. Hide the floating pill under 420px — the
+       capabilities panel stays reachable from the nav; this is the responsive guard
+       (the pill's desktop position is handled in applicantCapabilities.js). */
+    @media (max-width: 420px) {
+      #applicant-capabilities-trigger { display: none !important; }
+    }
     .modal-body { flex:1; overflow-y:auto; }
     .modal-body button { margin-top:6px; }
     /* Styled confirm dialog — keeps backdrop */
@@ -11370,7 +11420,11 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   padding: 4px 10px;
   border: none;
   border-radius: 6px;
-  background: var(--red);
+  /* DP-S4: primary "add / save" CTA follows the blue-CTA convention. Was var(--red),
+     which renders coral (#e06c75) or, on glass, a low-contrast gray (#9aa3af) — the
+     "orange Save phrases button" that broke the all-blue primary-action language.
+     (In frosted .ow-window / Settings this is further overridden to luminous kit glass.) */
+  background: var(--ow-ios-blue, #0a84ff);
   color: #fff;
   cursor: pointer;
   font-weight: 600;
@@ -11379,7 +11433,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   transition: all 0.15s;
 }
 .admin-btn-add:hover {
-  background: color-mix(in srgb, var(--red) 80%, white);
+  background: color-mix(in srgb, var(--ow-ios-blue, #0a84ff) 88%, #000);
 }
 .admin-btn-add:disabled {
   opacity: 0.5;
@@ -18015,6 +18069,11 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.5;
   padding: 4px 12px 2px;
 }
+/* SET-S2-8: the "Filter settings…" box toggles `.hidden` on nav items, but the flat
+   `.settings-nav-item { display:flex }` below out-ranked `.hidden { display:none }`
+   (equal specificity, later source order) so filtering never hid anything. This
+   two-class override makes a filtered-out item actually disappear. */
+.settings-nav-item.hidden { display: none !important; }
 .settings-nav-item {
   display: flex;
   align-items: center;
@@ -18056,6 +18115,61 @@ body.gallery-selecting .gallery-dl-btn,
 .settings-nav-item.active svg {
   opacity: 1;
 }
+
+/* CC-S1-1: the theme picker grid (#themeGrid / #themeUserGrid) had NO rule in
+   style.css — the swatch styling only lived in the UNLINKED css/kit-themes.css, so
+   the picker rendered as a bare text list with no color previews. theme.js already
+   emits the markup (a .theme-swatch card per theme, a 4-swatch .theme-swatch-colors
+   preview strip, a .theme-swatch-name for custom themes, and a .theme-delete-btn);
+   style it here as a grid of preview cards with hover + selected states. */
+#themeGrid, #themeUserGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+  margin: 4px 0;
+}
+.theme-swatch {
+  position: relative;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font-size: 12px; line-height: 1.2;
+  cursor: pointer; text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+.theme-swatch:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  transform: translateY(-1px);
+}
+.theme-swatch.active {
+  border-color: var(--sys-blue, #0a84ff);
+  box-shadow: 0 0 0 1px var(--sys-blue, #0a84ff);
+}
+/* the 4-color preview strip (bg / panel / fg / accent) */
+.theme-swatch-colors {
+  display: flex; height: 28px;
+  border-radius: 5px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+.theme-swatch-colors span { flex: 1 1 0; display: block; }
+.theme-swatch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* delete affordance on custom-theme cards (reveals on hover) */
+.theme-delete-btn {
+  position: absolute; top: 4px; right: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  border: none; border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg); cursor: pointer;
+  opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+}
+.theme-swatch:hover .theme-delete-btn,
+.theme-delete-btn:focus-visible { opacity: 0.85; }
+.theme-delete-btn:hover { opacity: 1; background: var(--red); color: #fff; }
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
 
@@ -32193,6 +32307,13 @@ body.theme-frosted {
   --chrome-ink: #16191f;
   --chrome-ink-2: rgba(22, 25, 31, 0.68);
   --chrome-ink-3: rgba(22, 25, 31, 0.45);
+  /* CC-S1-2: capture the ACTIVE color theme's real surface colors here on <body>,
+     BEFORE the light-chrome ramp further down re-pins --panel/--bg to fixed near-white
+     on the chrome surfaces. Descendants read these to tint the frosted glass BY theme
+     (see the frosted-surface background rule), so switching themes visibly re-colors the
+     chrome instead of always looking like the same washed-out backdrop mesh. */
+  --theme-panel-raw: var(--panel);
+  --theme-bg-raw: var(--bg);
 }
 
 body.theme-frosted #sidebar,
@@ -32217,7 +32338,17 @@ body.theme-frosted #theme-popup .modal-content {
      much more transparent than before so what's behind actually shows
      through. The blur catches whatever pixels are below. */
   background-color: color-mix(in srgb, var(--panel, var(--bg)) 32%, transparent) !important;
-  background-image: linear-gradient(180deg,
+  background-image:
+    /* CC-S1-2: theme-colored tint layer so switching color themes visibly re-tints the
+       glass. The light-chrome ramp pins --panel to a fixed #f5f6f8 on these surfaces, so
+       without this layer every theme looked identical. --theme-*-raw hold the active
+       theme's real panel/bg (captured on body.theme-frosted, above). KNOB: the two 15%
+       figures — raise for a stronger theme cast, lower toward 0% for neutral light-glass.
+       Kept conservative so the fixed dark chrome-ink stays legible; overseer tunes live. */
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--theme-bg-raw, var(--panel)) 15%, transparent),
+      color-mix(in srgb, var(--theme-panel-raw, var(--panel)) 15%, transparent)),
+    linear-gradient(180deg,
     color-mix(in srgb, var(--fg, #fff) 14%, transparent) 0%,
     color-mix(in srgb, var(--fg, #fff)  4%, transparent) 26%,
     transparent 55%) !important;
@@ -32771,7 +32902,10 @@ body.theme-frosted .modal {
 #applicant-onboarding-overlay .ao-tip:hover::after,
 #applicant-onboarding-overlay .ao-tip:focus::after {
   content: attr(data-tip);
-  position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
+  /* ON-S2-4: open DOWNWARD — the `?` sits at the top of an overflow:auto body
+     (#ao-body / settings panel), so an upward bubble (bottom:100%) was clipped out
+     of view. Opening below keeps the (already-correct) text visible. */
+  position: absolute; left: 50%; top: calc(100% + 7px); transform: translateX(-50%);
   width: max-content; max-width: 280px; white-space: normal; text-align: left;
   /* D78: `--popover-bg`/`--card-bg`/`--text` are never actually set anywhere in
      this theme, so this always fell through to the hard-coded dark literals
@@ -32811,7 +32945,11 @@ body.theme-frosted .modal {
 #applicant-onboarding-overlay .ao-help { font-size: 12px; line-height: 1.5; }
 #applicant-onboarding-overlay .ao-help h2 { font-size: 0.9rem; margin: 0 0 6px; }
 #applicant-onboarding-overlay .ao-help code {
-  background: var(--card-bg, #2a2a2a); padding: 1px 5px; border-radius: 4px; font-size: 11px;
+  /* SET-S1-2 / D78: `--card-bg` is never defined in any theme, so this fell through to
+     the hard #2a2a2a literal — a ~1.2:1 near-invisible chip in dark themes, an
+     unreadable dark box in light ones. Use a theme-tracking fg-tint (the same remedy
+     D78 applied to the sibling tooltip above). */
+  background: color-mix(in srgb, var(--fg) 10%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 11px;
 }
 /* Collapsed "Advanced" disclosure inside a wizard step. */
 #applicant-onboarding-overlay .ao-adv { margin-top: 8px; }
@@ -32844,7 +32982,10 @@ body.theme-frosted .modal {
 .ao-settings-body .ao-tip:hover::after,
 .ao-settings-body .ao-tip:focus::after {
   content: attr(data-tip);
-  position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
+  /* ON-S2-4: open DOWNWARD — the `?` sits at the top of an overflow:auto body
+     (#ao-body / settings panel), so an upward bubble (bottom:100%) was clipped out
+     of view. Opening below keeps the (already-correct) text visible. */
+  position: absolute; left: 50%; top: calc(100% + 7px); transform: translateX(-50%);
   width: max-content; max-width: 280px; white-space: normal; text-align: left;
   /* D78: `--popover-bg`/`--card-bg`/`--text` are never actually set anywhere in
      this theme, so this always fell through to the hard-coded dark literals
@@ -32857,7 +32998,7 @@ body.theme-frosted .modal {
 }
 .ao-settings-body .ao-help { font-size: 12px; line-height: 1.5; }
 .ao-settings-body .ao-help h2 { font-size: 0.9rem; margin: 0 0 6px; }
-.ao-settings-body .ao-help code { background: var(--card-bg, #2a2a2a); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.ao-settings-body .ao-help code { background: color-mix(in srgb, var(--fg) 10%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 11px; } /* SET-S1-2: theme-tracking fg-tint, was the invisible var(--card-bg,#2a2a2a) */
 .ao-settings-body .ao-adv { margin-top: 8px; }
 .ao-settings-body .ao-adv > summary { cursor: pointer; font-size: 12px; opacity: 0.75; padding: 4px 0; user-select: none; list-style: revert; }
 .ao-settings-body .ao-adv > summary:hover { opacity: 1; }
@@ -34188,7 +34329,7 @@ body.theme-frosted .ow-title {
    Unfocused → neutral grey (authentic macOS). The third (green/zoom/maximize) light is
    DELIBERATELY GONE (owner ruling): it was inert everywhere and only crowded the
    centered title at thin widths — close/minimize are the cluster now. */
-body.theme-frosted .ow-controls {
+.ow-controls {
   order: -1;                     /* cluster to the LEFT of the (centered) title */
   gap: var(--stoplight-gap);
   display: flex; align-items: center;
@@ -34196,7 +34337,7 @@ body.theme-frosted .ow-controls {
 }
 /* A right-side titlebar ACCESSORY (e.g. settings "Peek") — NOT a traffic light. A
    small quiet control at the band's right end, clear of the left light cluster. */
-body.theme-frosted .ow-titlebar-accessory {
+.ow-titlebar-accessory {
   order: 5; margin-left: auto;
   display: inline-flex; align-items: center; gap: 4px;
   min-height: 24px; padding: 2px 8px; border-radius: var(--ow-radius-inner, 14px);
@@ -34204,20 +34345,20 @@ body.theme-frosted .ow-titlebar-accessory {
   border: 1px solid color-mix(in srgb, var(--fg, #fff) 16%, transparent);
   font-size: 11px; color: var(--fg, #fff); opacity: .8; cursor: pointer;
 }
-body.theme-frosted .ow-titlebar-accessory:hover { opacity: 1; }
+.ow-titlebar-accessory:hover { opacity: 1; }
 /* macOS traffic-light ORDER: red (close) → yellow (minimize) → GREEN (dock). The green
    disc is the DOCK toggle and exists ONLY on dockable windows (the kit builds .ow-dock
    solely under `if (this.o.dockable)`), so a non-dockable window shows red + yellow only
    and never an empty green slot. It visually occupies the slot the inert maximize/zoom
    light used to — but it is a REAL, functional control (dock → control-room gadget, and
    back), NOT a maximize button. */
-body.theme-frosted .ow-controls .ow-close { order: 0; }   /* red    (leftmost) */
-body.theme-frosted .ow-controls .ow-min   { order: 1; }   /* yellow            */
-body.theme-frosted .ow-controls .ow-dock  { order: 2; }   /* green  (rightmost) */
+.ow-controls .ow-close { order: 0; }   /* red    (leftmost) */
+.ow-controls .ow-min   { order: 1; }   /* yellow            */
+.ow-controls .ow-dock  { order: 2; }   /* green  (rightmost) */
 
-body.theme-frosted .ow-controls .ow-close,
-body.theme-frosted .ow-controls .ow-min,
-body.theme-frosted .ow-controls .ow-dock {
+.ow-controls .ow-close,
+.ow-controls .ow-min,
+.ow-controls .ow-dock {
   box-sizing: border-box;                      /* ring lives INSIDE the 12px disc */
   flex: 0 0 auto;                              /* never flex-squashed into an oval */
   width: var(--stoplight-size); height: var(--stoplight-size);
@@ -34240,33 +34381,33 @@ body.theme-frosted .ow-controls .ow-dock {
 /* The visible macOS glyph is a DECORATIVE ::before (hover/focus only, ~9px — authentic
    macOS). A pseudo-element's content is NOT the element's textContent, so it is never
    sampled by the crowding floor; it is aria-hidden by nature. */
-body.theme-frosted .ow-controls .ow-close::before { content: "\00d7"; }  /* × */
-body.theme-frosted .ow-controls .ow-min::before   { content: "\2212"; }  /* − */
+.ow-controls .ow-close::before { content: "\00d7"; }  /* × */
+.ow-controls .ow-min::before   { content: "\2212"; }  /* − */
 /* GREEN dock glyph: a downward-into-tray arrow (\2913 ⤓) = "dock / tuck into the rail".
    When the window is ALREADY docked, the toggle floats it back out, so the glyph flips to
    an upward-out-of-tray arrow (\2912 ⤒) = "float / pop out". Both read as a dock action,
    never a maximize. */
-body.theme-frosted .ow-controls .ow-dock::before        { content: "\2913"; }  /* ⤓ dock */
-body.theme-frosted .ow-window.ow-docked
+.ow-controls .ow-dock::before        { content: "\2913"; }  /* ⤓ dock */
+.ow-window.ow-docked
   .ow-controls .ow-dock::before                          { content: "\2912"; }  /* ⤒ float */
-body.theme-frosted .ow-controls .ow-close::before,
-body.theme-frosted .ow-controls .ow-min::before,
-body.theme-frosted .ow-controls .ow-dock::before {
+.ow-controls .ow-close::before,
+.ow-controls .ow-min::before,
+.ow-controls .ow-dock::before {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 9px; line-height: 1; color: transparent; pointer-events: none;
 }
 /* the dock arrow reads a touch larger so the tray bar is legible at 12px */
-body.theme-frosted .ow-controls .ow-dock::before { font-size: 10px; }
+.ow-controls .ow-dock::before { font-size: 10px; }
 /* Glyph reveal: hovering the CLUSTER (any light — the ::after hit strips extend the
    hover zone) or keyboard focus inside it reveals ALL glyphs together — authentic
    macOS group reveal, NOT a whole-titlebar hover. */
-body.theme-frosted .ow-controls:hover .ow-close::before,
-body.theme-frosted .ow-controls:hover .ow-min::before,
-body.theme-frosted .ow-controls:hover .ow-dock::before,
-body.theme-frosted .ow-controls:focus-within .ow-close::before,
-body.theme-frosted .ow-controls:focus-within .ow-min::before,
-body.theme-frosted .ow-controls:focus-within .ow-dock::before,
-body.theme-frosted .ow-controls button:focus-visible::before {
+.ow-controls:hover .ow-close::before,
+.ow-controls:hover .ow-min::before,
+.ow-controls:hover .ow-dock::before,
+.ow-controls:focus-within .ow-close::before,
+.ow-controls:focus-within .ow-min::before,
+.ow-controls:focus-within .ow-dock::before,
+.ow-controls button:focus-visible::before {
   color: var(--stoplight-glyph);
 }
 /* DEFAULT → colored lights. The colored state is the base so every family that
@@ -34274,28 +34415,28 @@ body.theme-frosted .ow-controls button:focus-visible::before {
    Job Assistant / Today), which never receive the kit's .ow-focused class but are,
    as open modals, always the key surface. (Green dock dot only ever exists on
    dockable windows.) */
-body.theme-frosted .ow-controls .ow-close { background: var(--stoplight-close); }
-body.theme-frosted .ow-controls .ow-min   { background: var(--stoplight-min); }
-body.theme-frosted .ow-controls .ow-dock  { background: var(--stoplight-zoom); }
+.ow-controls .ow-close { background: var(--stoplight-close); }
+.ow-controls .ow-min   { background: var(--stoplight-min); }
+.ow-controls .ow-dock  { background: var(--stoplight-zoom); }
 /* UNFOCUSED kit window → neutral grey lights (authentic macOS). Scoped to real
    kit-stacked windows (:not(.modal)) — appkitWindow.js stamps .ow-focused on the
    top of ITS stack only, so a .modal hybrid must not be greyed by omission. */
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-close,
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-min,
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-dock {
+.ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-close,
+.ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-min,
+.ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-dock {
   background: var(--stoplight-idle);
 }
 /* …and hovering an unfocused window's cluster re-lights it (macOS lets you aim at a
    background window's controls without raising it first). */
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-close { background: var(--stoplight-close); }
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-min   { background: var(--stoplight-min); }
-body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-dock  { background: var(--stoplight-zoom); }
+.ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-close { background: var(--stoplight-close); }
+.ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-min   { background: var(--stoplight-min); }
+.ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-dock  { background: var(--stoplight-zoom); }
 /* a11y: a crisp focus-visible RING on the traffic lights (keyboard focus must read even
    when the cluster is colored at rest). offset clears the 12px disc so the ring is legible;
    the disc's own glyph also reveals on :focus-visible (above). */
-body.theme-frosted .ow-controls .ow-close:focus-visible,
-body.theme-frosted .ow-controls .ow-min:focus-visible,
-body.theme-frosted .ow-controls .ow-dock:focus-visible {
+.ow-controls .ow-close:focus-visible,
+.ow-controls .ow-min:focus-visible,
+.ow-controls .ow-dock:focus-visible {
   outline: 2px solid var(--ow-ios-blue, #0a84ff);
   outline-offset: 2px;
 }
@@ -34303,39 +34444,39 @@ body.theme-frosted .ow-controls .ow-dock:focus-visible {
    clickable — the macOS inactive-control look): it's always rendered so the cluster
    keeps its shape, so the disabled state shares this rule. (The green/maximize light
    was removed.) */
-body.theme-frosted .ow-controls .ow-min[disabled] {
+.ow-controls .ow-min[disabled] {
   background: var(--stoplight-disabled) !important;
   cursor: default; pointer-events: none; color: transparent !important;
 }
 /* a disabled light NEVER reveals a glyph, even when the cluster is hovered */
-body.theme-frosted .ow-controls .ow-min[disabled]::before { content: none !important; }
+.ow-controls .ow-min[disabled]::before { content: none !important; }
 /* Shared plumbing for every light in the cluster (all .ow-controls buttons ARE
    stoplights — close/min/dock is the kit's whole set). position anchors the hit
    region; no glass-disc fill here (the hue rules above own the paint). */
-body.theme-frosted .ow-controls button {
+.ow-controls button {
   position: relative;
   background-image: none;
 }
 /* Invisible hit region: one non-overlapping strip per light — pitch-wide (disc + gap)
    so neighbors never eat each other's clicks, 44px tall for the titlebar band
    (WCAG 2.5.5 vertically without bloating the visible 12px disc). */
-body.theme-frosted .ow-controls button::after {
+.ow-controls button::after {
   content: ""; position: absolute; top: 50%; left: 50%;
   width: calc(var(--stoplight-size) + var(--stoplight-gap));
   height: 44px; transform: translate(-50%, -50%);
 }
 /* macOS lights do NOT grow, lift, or recolor on hover — the glyph reveal (above) is
    the hover signal; a PRESSED light darkens slightly. */
-body.theme-frosted .ow-controls button:hover,
-body.theme-frosted .ow-controls button:focus-visible {
+.ow-controls button:hover,
+.ow-controls button:focus-visible {
   opacity: 1; transform: none; box-shadow: none;
 }
-body.theme-frosted .ow-controls button:active { transform: none; filter: brightness(0.8); }
+.ow-controls button:active { transform: none; filter: brightness(0.8); }
 @media (prefers-reduced-motion: reduce) {
-  body.theme-frosted .ow-controls .ow-close,
-  body.theme-frosted .ow-controls .ow-min,
-  body.theme-frosted .ow-controls .ow-dock,
-  body.theme-frosted .ow-controls button { transition: none; }
+  .ow-controls .ow-close,
+  .ow-controls .ow-min,
+  .ow-controls .ow-dock,
+  .ow-controls button { transition: none; }
 }
 
 /* ── LEGACY MODAL TITLEBARS → the SAME stoplights ─────────────────────────────
@@ -34351,10 +34492,10 @@ body.theme-frosted .ow-controls button:active { transform: none; filter: brightn
    are untouched. The .ow-titlebar hybrids (Portal / Job Assistant / Today) match
    via the .ow-controls rules above; where a button carries both class families
    the two rule sets agree token-for-token. */
-body.theme-frosted .modal-header .close-btn,
-body.theme-frosted .modal-header .modal-close,
-body.theme-frosted .modal-header .minimize-btn,
-body.theme-frosted .modal-header .modal-minimize-btn {
+.modal-header .close-btn,
+.modal-header .modal-close,
+.modal-header .minimize-btn,
+.modal-header .modal-minimize-btn {
   box-sizing: border-box;
   flex: 0 0 auto;                              /* never flex-squashed into an oval */
   width: var(--stoplight-size); height: var(--stoplight-size);
@@ -34373,84 +34514,99 @@ body.theme-frosted .modal-header .modal-minimize-btn {
 }
 /* some headers ship an inline SVG inside the button (capabilities/shortcuts ✖,
    the injected minimize dash) — the disc glyph replaces it */
-body.theme-frosted .modal-header .close-btn > svg,
-body.theme-frosted .modal-header .modal-close > svg,
-body.theme-frosted .modal-header .minimize-btn > svg,
-body.theme-frosted .modal-header .modal-minimize-btn > svg { display: none; }
+.modal-header .close-btn > svg,
+.modal-header .modal-close > svg,
+.modal-header .minimize-btn > svg,
+.modal-header .modal-minimize-btn > svg { display: none; }
 /* macOS order: red (close) leftmost, then yellow (minimize); the title h4 and its
    margin-right:auto stay put, so accessories (Peek, Refresh, …) remain flush right. */
-body.theme-frosted .modal-header .close-btn,
-body.theme-frosted .modal-header .modal-close {
-  order: -3;
-  margin: 0 var(--stoplight-gap) 0 0;
+/* SR-S2-4 / CC-S1-3: anchor the two lights ABSOLUTELY to the header's top-left so
+   they land in the SAME corner no matter how deep a surface nests them. The old
+   `order:-3/-2` only reorders DIRECT children of the flex header, so surfaces that
+   wrap the buttons in an extra <div> (Tracker / Results / Activity / Trust) left
+   their lights stranded top-right. .modal-header is position:sticky — a positioning
+   context — so absolute descendants resolve to it from ANY nesting depth, and this
+   is theme-independent now the cluster is de-scoped from body.theme-frosted. */
+.modal-header .close-btn,
+.modal-header .modal-close {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  left: 0; margin: 0;
   background: var(--stoplight-close);
 }
-body.theme-frosted .modal-header .minimize-btn,
-body.theme-frosted .modal-header .modal-minimize-btn {
-  order: -2;
-  margin: 0 var(--space-3, 12px) 0 0;          /* clear the title */
-  margin-left: 0 !important;                   /* beat the injected inline auto-margin */
+.modal-header .minimize-btn,
+.modal-header .modal-minimize-btn {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  left: calc(var(--stoplight-size, 12px) + var(--stoplight-gap, 8px));  /* right of close */
+  margin: 0;
   background: var(--stoplight-min);
 }
+/* Reserve a left gutter so the title never underlaps the absolutely-placed lights.
+   :has() matches whether the control is a direct child or nested. Desktop only —
+   the mobile sheet hides these controls (swipe-to-dismiss). */
+@media (min-width: 769px) {
+  .modal-header:has(.close-btn, .modal-close, .minimize-btn, .modal-minimize-btn) {
+    padding-left: calc(var(--stoplight-size, 12px) * 2 + var(--stoplight-gap, 8px) * 2 + 4px);
+  }
+}
 /* glyphs — invisible at rest, same 9px marks as the kit cluster */
-body.theme-frosted .modal-header .close-btn::before,
-body.theme-frosted .modal-header .modal-close::before { content: "\00d7"; }  /* × */
-body.theme-frosted .modal-header .minimize-btn::before,
-body.theme-frosted .modal-header .modal-minimize-btn::before { content: "\2212"; }  /* − */
-body.theme-frosted .modal-header .close-btn::before,
-body.theme-frosted .modal-header .modal-close::before,
-body.theme-frosted .modal-header .minimize-btn::before,
-body.theme-frosted .modal-header .modal-minimize-btn::before {
+.modal-header .close-btn::before,
+.modal-header .modal-close::before { content: "\00d7"; }  /* × */
+.modal-header .minimize-btn::before,
+.modal-header .modal-minimize-btn::before { content: "\2212"; }  /* − */
+.modal-header .close-btn::before,
+.modal-header .modal-close::before,
+.modal-header .minimize-btn::before,
+.modal-header .modal-minimize-btn::before {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 9px; line-height: 1; color: transparent; pointer-events: none;
 }
 /* group reveal: hovering ANY light in the header (there is no wrapper element in the
    legacy headers, so :has() plays the .ow-controls:hover role) or keyboard focus on
    one reveals ALL the header's glyphs together */
-body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .close-btn::before,
-body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-close::before,
-body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .minimize-btn::before,
-body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-minimize-btn::before,
-body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .close-btn::before,
-body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-close::before,
-body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .minimize-btn::before,
-body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-minimize-btn::before {
+.modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .close-btn::before,
+.modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-close::before,
+.modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .minimize-btn::before,
+.modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-minimize-btn::before,
+.modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .close-btn::before,
+.modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-close::before,
+.modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .minimize-btn::before,
+.modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-minimize-btn::before {
   color: var(--stoplight-glyph);
 }
 /* no grow / no recolor on hover (glyphs are the signal); pressed = slightly darker */
-body.theme-frosted .modal-header .close-btn:hover,
-body.theme-frosted .modal-header .modal-close:hover,
-body.theme-frosted .modal-header .minimize-btn:hover,
-body.theme-frosted .modal-header .modal-minimize-btn:hover {
+.modal-header .close-btn:hover,
+.modal-header .modal-close:hover,
+.modal-header .minimize-btn:hover,
+.modal-header .modal-minimize-btn:hover {
   transform: none; box-shadow: none; color: transparent;
 }
-body.theme-frosted .modal-header .close-btn:active,
-body.theme-frosted .modal-header .modal-close:active,
-body.theme-frosted .modal-header .minimize-btn:active,
-body.theme-frosted .modal-header .modal-minimize-btn:active { filter: brightness(0.8); }
+.modal-header .close-btn:active,
+.modal-header .modal-close:active,
+.modal-header .minimize-btn:active,
+.modal-header .modal-minimize-btn:active { filter: brightness(0.8); }
 /* keyboard focus ring — same treatment as the kit cluster */
-body.theme-frosted .modal-header .close-btn:focus-visible,
-body.theme-frosted .modal-header .modal-close:focus-visible,
-body.theme-frosted .modal-header .minimize-btn:focus-visible,
-body.theme-frosted .modal-header .modal-minimize-btn:focus-visible {
+.modal-header .close-btn:focus-visible,
+.modal-header .modal-close:focus-visible,
+.modal-header .minimize-btn:focus-visible,
+.modal-header .modal-minimize-btn:focus-visible {
   outline: 2px solid var(--ow-ios-blue, #0a84ff);
   outline-offset: 2px;
 }
 /* invisible hit region — pitch-wide strip, 30px tall (the legacy headers are shorter
    bands than the kit's 44px titlebar; the strip must not blanket the draggable header) */
-body.theme-frosted .modal-header .close-btn::after,
-body.theme-frosted .modal-header .modal-close::after,
-body.theme-frosted .modal-header .minimize-btn::after,
-body.theme-frosted .modal-header .modal-minimize-btn::after {
+.modal-header .close-btn::after,
+.modal-header .modal-close::after,
+.modal-header .minimize-btn::after,
+.modal-header .modal-minimize-btn::after {
   content: ""; position: absolute; top: 50%; left: 50%;
   width: calc(var(--stoplight-size) + var(--stoplight-gap));
   height: 30px; transform: translate(-50%, -50%);
 }
 @media (prefers-reduced-motion: reduce) {
-  body.theme-frosted .modal-header .close-btn,
-  body.theme-frosted .modal-header .modal-close,
-  body.theme-frosted .modal-header .minimize-btn,
-  body.theme-frosted .modal-header .modal-minimize-btn { transition: none; }
+  .modal-header .close-btn,
+  .modal-header .modal-close,
+  .modal-header .minimize-btn,
+  .modal-header .modal-minimize-btn { transition: none; }
 }
 
 /* ── PROMINENT action (one per view): bright filled accent glass + crisp glyph ──*/
@@ -35444,6 +35600,78 @@ body.theme-frosted .ow-window .ow-body a.admin-btn-delete:focus-visible {
   outline-offset: 2px;
 }
 
+/* SET-S2-7: the Settings modal is `.settings-modal-content`, NOT a `.ow-window`, so
+   the admin-button kit override ABOVE (scoped to `.ow-window .ow-body`) skipped it —
+   every admin button there fell through to the base look, where the glass theme's
+   neutral `--red` (#9aa3af) painted secondary/danger buttons at ~2.55:1. Re-apply the
+   SAME kit treatment inside the Settings modal so add / secondary / danger read
+   correctly there too, matching Calendar/Compare/Trust. */
+body.theme-frosted .settings-modal-content .admin-btn-add,
+body.theme-frosted .settings-modal-content a.admin-btn-add,
+body.theme-frosted .settings-modal-content .admin-btn-sm,
+body.theme-frosted .settings-modal-content .admin-btn-delete,
+body.theme-frosted .settings-modal-content a.admin-btn-delete {
+  border-radius: var(--ow-radius-inner, 12px);
+  font-family: var(--ow-ui-font);
+  font-weight: var(--ow-fw-semibold, 600);
+  letter-spacing: -0.01em;
+  -webkit-backdrop-filter: var(--ow-btn-glass, blur(10px) saturate(118%));
+  backdrop-filter: var(--ow-btn-glass, blur(10px) saturate(118%));
+  transition: background-color .18s ease, box-shadow .18s ease, filter .18s ease, transform .14s ease;
+}
+/* PROMINENT — luminous neutral glass + dark ink (NOT a red fill). */
+body.theme-frosted .settings-modal-content .admin-btn-add,
+body.theme-frosted .settings-modal-content a.admin-btn-add {
+  background:
+    radial-gradient(120% 100% at 30% 0%, rgba(255,255,255,0.30), transparent 55%),
+    rgba(255,255,255,0.26);
+  color: #16191f;
+  border: 1px solid rgba(255,255,255,0.34);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 4px 14px rgba(0,0,0,0.22);
+}
+body.theme-frosted .settings-modal-content .admin-btn-add:hover,
+body.theme-frosted .settings-modal-content a.admin-btn-add:hover {
+  background:
+    radial-gradient(120% 100% at 30% 0%, rgba(255,255,255,0.36), transparent 55%),
+    rgba(255,255,255,0.32);
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+}
+/* SECONDARY — faint dark wash + hairline. */
+body.theme-frosted .settings-modal-content .admin-btn-sm {
+  background-color: var(--ow-control-fill);
+  color: var(--ow-control-ink, #16191f);
+  border: 1px solid var(--ow-control-rim);
+  box-shadow: inset 0 1px 0 var(--ow-glass-rim, rgba(255,255,255,0.12));
+}
+body.theme-frosted .settings-modal-content .admin-btn-sm:hover {
+  background-color: var(--ow-control-fill-hover);
+  border-color: var(--ow-control-rim);
+  filter: brightness(1.03);
+}
+/* DESTRUCTIVE — system-red fill + legible on-red label (HIG Destructive role). */
+body.theme-frosted .settings-modal-content .admin-btn-delete,
+body.theme-frosted .settings-modal-content a.admin-btn-delete {
+  background: var(--ow-danger, #ff453a);
+  color: var(--ow-on-danger, #fff);
+  border: 1px solid color-mix(in srgb, #000 14%, var(--ow-danger, #ff453a));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), 0 4px 14px rgba(0,0,0,0.22);
+}
+body.theme-frosted .settings-modal-content .admin-btn-delete:hover,
+body.theme-frosted .settings-modal-content a.admin-btn-delete:hover {
+  background: var(--ow-danger, #ff453a);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+body.theme-frosted .settings-modal-content .admin-btn-add:focus-visible,
+body.theme-frosted .settings-modal-content .admin-btn-sm:focus-visible,
+body.theme-frosted .settings-modal-content .admin-btn-delete:focus-visible,
+body.theme-frosted .settings-modal-content a.admin-btn-add:focus-visible,
+body.theme-frosted .settings-modal-content a.admin-btn-delete:focus-visible {
+  outline: var(--ow-focus-ring-w, 3px) solid var(--ow-focus-ring, #0a84ff);
+  outline-offset: 2px;
+}
+
 /* ── FIELDS: admin text inputs ride the kit field look (recessed glass well,    */
 /*    dark ink, soft luminous rim, system-blue focus ring) — replaces the hard   */
 /*    --border box + red focus edge. Scoped to the admin text-ish inputs only    */
@@ -35452,6 +35680,12 @@ body.theme-frosted .admin-card input[type="text"]:not(.ow-field),
 body.theme-frosted .admin-card input[type="password"]:not(.ow-field),
 body.theme-frosted .admin-card input[type="number"]:not(.ow-field),
 body.theme-frosted .admin-card input[type="search"]:not(.ow-field),
+/* ON-S2-3: email/tel/url were omitted, so those fields (Email, Phone, links) fell
+   through to the dark base input while text/password siblings rendered as light glass
+   wells — the owner's "black box" inputs. Include them so the whole form matches. */
+body.theme-frosted .admin-card input[type="email"]:not(.ow-field),
+body.theme-frosted .admin-card input[type="tel"]:not(.ow-field),
+body.theme-frosted .admin-card input[type="url"]:not(.ow-field),
 body.theme-frosted .admin-add-form input:not(.ow-field) {
   border-radius: var(--ow-radius-inner, 12px);
   border: 1px solid var(--ow-control-rim);
@@ -35465,6 +35699,9 @@ body.theme-frosted .admin-add-form input:not(.ow-field) {
 body.theme-frosted .admin-card input[type="text"]:not(.ow-field)::placeholder,
 body.theme-frosted .admin-card input[type="password"]:not(.ow-field)::placeholder,
 body.theme-frosted .admin-card input[type="search"]:not(.ow-field)::placeholder,
+body.theme-frosted .admin-card input[type="email"]:not(.ow-field)::placeholder,
+body.theme-frosted .admin-card input[type="tel"]:not(.ow-field)::placeholder,
+body.theme-frosted .admin-card input[type="url"]:not(.ow-field)::placeholder,
 body.theme-frosted .admin-add-form input:not(.ow-field)::placeholder {
   color: color-mix(in srgb, var(--ow-control-ink, #16191f) 56%, transparent);
   opacity: 1;
@@ -35473,6 +35710,9 @@ body.theme-frosted .admin-card input[type="text"]:not(.ow-field):focus,
 body.theme-frosted .admin-card input[type="password"]:not(.ow-field):focus,
 body.theme-frosted .admin-card input[type="number"]:not(.ow-field):focus,
 body.theme-frosted .admin-card input[type="search"]:not(.ow-field):focus,
+body.theme-frosted .admin-card input[type="email"]:not(.ow-field):focus,
+body.theme-frosted .admin-card input[type="tel"]:not(.ow-field):focus,
+body.theme-frosted .admin-card input[type="url"]:not(.ow-field):focus,
 body.theme-frosted .admin-add-form input:not(.ow-field):focus {
   outline: none;
   border-color: var(--ow-focus-ring, #0a84ff);
@@ -36399,6 +36639,178 @@ body.theme-frosted .gallery-detail-menu {
      buttons ~2.4:1 (the "gray CTA" / unreadable send affordances). */
   --send-btn-bg: var(--sys-blue);
   --send-btn-hover: color-mix(in srgb, var(--sys-blue) 82%, #000);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   CC-S1-2 — "styling isn't applying": make the frosted CHROME track the color theme.
+   The light-chrome ramp ABOVE pins every glass surface to a fixed macOS-light
+   material with dark ink, so a DARK color theme (dark / midnight / ocean / the
+   default glass …) still rendered near-white chrome (sampled srgb 0.97) regardless
+   of the palette — the owner's #1 complaint. theme.js (applyColors) stamps
+   `body.applicant-theme-dark` when the active palette's background is dark; the rules
+   below — gated on that class, so LIGHT palettes keep the light ramp 100% untouched —
+   flip the SAME chrome to a DARK glass surface with LIGHT ink, tinted from the theme's
+   own captured tokens (--theme-panel-raw / --theme-bg-raw) so dark vs midnight vs ocean
+   each read as themselves. Blur/translucency are preserved (see backdrop-filter above,
+   inherited) — only the base tint + ink polarity change.
+   KNOB: the panel-mix % below (surface darkness / opacity) and the two tint-layer %
+   (how much of the theme's colour casts through). Raise panel-mix for a denser, darker
+   surface; lower it for more see-through glass.
+   ────────────────────────────────────────────────────────────────────────────── */
+
+/* 1 — ink tokens flip to LIGHT on dark chrome (mirrors the dark-ink pin at 32307). */
+body.theme-frosted.applicant-theme-dark {
+  --chrome-ink: #eef1f4;
+  --chrome-ink-2: rgba(238, 241, 244, 0.70);
+  --chrome-ink-3: rgba(238, 241, 244, 0.45);
+  --ow-control-ink: #eef1f4;
+}
+
+/* 2 — dark glass SURFACE, tinted from the active theme, on the same chrome-surface
+   lists the light treatment targets (32319 frosted-surfaces + 36605 chrome ramp). */
+body.theme-frosted.applicant-theme-dark #sidebar,
+body.theme-frosted.applicant-theme-dark .icon-rail,
+body.theme-frosted.applicant-theme-dark .chat-top-bar,
+body.theme-frosted.applicant-theme-dark .chat-input-bar,
+body.theme-frosted.applicant-theme-dark .model-picker-btn,
+body.theme-frosted.applicant-theme-dark .model-picker-menu,
+body.theme-frosted.applicant-theme-dark .toast,
+body.theme-frosted.applicant-theme-dark .tool-indicator,
+body.theme-frosted.applicant-theme-dark .attach-card,
+body.theme-frosted.applicant-theme-dark #minimized-dock,
+body.theme-frosted.applicant-theme-dark .modal-content,
+body.theme-frosted.applicant-theme-dark .doclib-modal-content,
+body.theme-frosted.applicant-theme-dark .gallery-modal-content,
+body.theme-frosted.applicant-theme-dark .notes-pane,
+body.theme-frosted.applicant-theme-dark .research-pane,
+body.theme-frosted.applicant-theme-dark .calendar-pane,
+body.theme-frosted.applicant-theme-dark .cookbook-pane,
+body.theme-frosted.applicant-theme-dark .doc-pane,
+body.theme-frosted.applicant-theme-dark .doc-pane-floating,
+body.theme-frosted.applicant-theme-dark .cp-popover,
+body.theme-frosted.applicant-theme-dark .dropdown,
+body.theme-frosted.applicant-theme-dark .overflow-menu,
+body.theme-frosted.applicant-theme-dark .doc-tab-dropdown,
+body.theme-frosted.applicant-theme-dark .email-reader,
+body.theme-frosted.applicant-theme-dark .admin-card,
+body.theme-frosted.applicant-theme-dark .gallery-detail-menu,
+body.theme-frosted.applicant-theme-dark #theme-popup .modal-content {
+  background-color: color-mix(in srgb, var(--theme-panel-raw, #1d2026) 68%, transparent) !important;
+  background-image:
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--theme-bg-raw, #15171c) 52%, transparent),
+      color-mix(in srgb, var(--theme-panel-raw, #1d2026) 52%, transparent)),
+    linear-gradient(180deg,
+      color-mix(in srgb, #ffffff 9%, transparent) 0%,
+      color-mix(in srgb, #ffffff 3%, transparent) 30%,
+      transparent 62%) !important;
+  border-color: color-mix(in srgb, #ffffff 15%, transparent) !important;
+}
+
+/* 3 — the token GROUP flip: dark surfaces + LIGHT ink for every token-derived
+   interior fill, mirroring the light-chrome ramp's group (36605) with dark values
+   pulled from the ACTIVE theme's captured raw tokens. */
+body.theme-frosted.applicant-theme-dark #sidebar,
+body.theme-frosted.applicant-theme-dark .icon-rail,
+body.theme-frosted.applicant-theme-dark .chat-top-bar,
+body.theme-frosted.applicant-theme-dark .chat-input-bar,
+body.theme-frosted.applicant-theme-dark .model-picker-btn,
+body.theme-frosted.applicant-theme-dark .model-picker-menu,
+body.theme-frosted.applicant-theme-dark .toast,
+body.theme-frosted.applicant-theme-dark .tool-indicator,
+body.theme-frosted.applicant-theme-dark .attach-card,
+body.theme-frosted.applicant-theme-dark #minimized-dock,
+body.theme-frosted.applicant-theme-dark .doc-tab-dropdown,
+body.theme-frosted.applicant-theme-dark .gallery-detail-menu,
+body.theme-frosted.applicant-theme-dark .modal-content,
+body.theme-frosted.applicant-theme-dark .admin-card {
+  --fg: #eef1f4;
+  --panel: var(--theme-panel-raw, #1d2026);
+  --bg: var(--theme-bg-raw, #15171c);
+  --border: rgba(238, 241, 244, 0.16);
+  --sidebar-bg: transparent;
+  --win-bg: var(--theme-panel-raw, #1d2026);
+  --input-bg: rgba(255, 255, 255, 0.08);
+  --input-border: rgba(238, 241, 244, 0.22);
+  --code-bg: rgba(255, 255, 255, 0.06);
+  --code-fg: #eef1f4;
+  --toggle-bg: rgba(238, 241, 244, 0.20);
+}
+
+/* 4 — form controls inside dark chrome: light ink + placeholder (overrides 36657). */
+body.theme-frosted.applicant-theme-dark input,
+body.theme-frosted.applicant-theme-dark textarea,
+body.theme-frosted.applicant-theme-dark select {
+  color: #eef1f4;
+}
+body.theme-frosted.applicant-theme-dark input::placeholder,
+body.theme-frosted.applicant-theme-dark textarea::placeholder {
+  color: rgba(238, 241, 244, 0.5);
+}
+
+/* 5 — chat-bar chip TEXT the light treatment hard-pinned to dark ink (#16191f,
+   36129-36171) would read dark-on-dark now; flip to light with a soft dark halo
+   (the light halo the light path uses becomes a smudge under light ink). The
+   reasoning-accordion BODY is a fixed light-glass content surface (NOT re-tinted
+   here), so it is deliberately excluded — it keeps its dark ink. */
+body.theme-frosted.applicant-theme-dark .thinking-header-left,
+body.theme-frosted.applicant-theme-dark .tool-indicator.active,
+body.theme-frosted.applicant-theme-dark .doc-indicator-active,
+body.theme-frosted.applicant-theme-dark #doc-indicator-btn.active,
+body.theme-frosted.applicant-theme-dark #overflow-doc-btn.has-docs,
+body.theme-frosted.applicant-theme-dark #overflow-doc-btn.active,
+body.theme-frosted.applicant-theme-dark .thinking-toggle,
+body.theme-frosted.applicant-theme-dark .live-think-toggle,
+body.theme-frosted.applicant-theme-dark .thinking-timer,
+body.theme-frosted.applicant-theme-dark .live-think-timer {
+  color: #eef1f4 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* 6 — the load-bearing one: the blanket chrome dark-ink rule (36520) hard-sets
+   `color:#16191f !important` on EVERY descendant (`*`) of the chrome surfaces, which
+   overrides the --fg/--chrome-ink token flip in blocks 1/3. Mirror its selector list
+   — but ONLY the surfaces blocks 2/3 actually darkened — with LIGHT ink + a dark halo.
+   `.thinking-section` is deliberately OMITTED (it stays a fixed light-glass content
+   surface with dark ink, so flipping its text light would be light-on-light). This is
+   what makes the dark chrome legible; icon glyphs that stroke `currentColor` flip too. */
+body.theme-frosted.applicant-theme-dark #sidebar,
+body.theme-frosted.applicant-theme-dark #sidebar *,
+body.theme-frosted.applicant-theme-dark .icon-rail,
+body.theme-frosted.applicant-theme-dark .icon-rail *,
+body.theme-frosted.applicant-theme-dark .chat-input-bar,
+body.theme-frosted.applicant-theme-dark .chat-top-bar,
+body.theme-frosted.applicant-theme-dark .modal-content,
+body.theme-frosted.applicant-theme-dark .admin-card,
+body.theme-frosted.applicant-theme-dark .toast,
+body.theme-frosted.applicant-theme-dark .tool-indicator,
+body.theme-frosted.applicant-theme-dark .dropdown,
+body.theme-frosted.applicant-theme-dark .overflow-menu,
+body.theme-frosted.applicant-theme-dark .cp-popover {
+  color: #eef1f4 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+/* 6a — the light-glass halo (rgba(255,255,255,.4/.45)) the light path adds to sidebar/
+   rail links (36565) reads as a white smudge under light ink; swap it for a dark halo. */
+body.theme-frosted.applicant-theme-dark #sidebar a,
+body.theme-frosted.applicant-theme-dark #sidebar button,
+body.theme-frosted.applicant-theme-dark .icon-rail a,
+body.theme-frosted.applicant-theme-dark .icon-rail button {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+/* 7 — legacy modal-header + window titlebar text (36897 / 36908) is hard-pinned to
+   dark ink; flip to light for dark chrome so tool-window/settings/theme titles stay
+   legible on the now-dark glass. The .ow-titlebar family is included because the tool
+   windows are darkened below (block 8). */
+body.theme-frosted.applicant-theme-dark .modal-content .modal-header h4,
+body.theme-frosted.applicant-theme-dark .plan-window-content .modal-header h4,
+body.theme-frosted.applicant-theme-dark .plan-window-content #plan-window-title,
+body.theme-frosted.applicant-theme-dark .ow-titlebar,
+body.theme-frosted.applicant-theme-dark .ow-title,
+body.theme-frosted.applicant-theme-dark .ow-title .ow-load-hint,
+body.theme-frosted.applicant-theme-dark .ow-titlebar-accessory {
+  color: #eef1f4 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
 }
 
 /* FORM-CONTROL RAMP (recurrence root-cause fix) — the global rule `input, textarea,

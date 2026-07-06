@@ -46,6 +46,10 @@ WORKSPACE_DIR = REPO_ROOT / "workspace"
 JS_DIR = WORKSPACE_DIR / "static" / "js"
 TRACKER_JS = JS_DIR / "applicantTracker.js"
 RESULTS_JS = JS_DIR / "applicantResults.js"
+# Pass 2a: rail-tracker (and the rest of the reconciled job-search nav) now
+# renders from applicantNav.js's single-source NAV array instead of being
+# static markup in index.html.
+NAV_JS = JS_DIR / "applicantNav.js"
 INDEX_HTML = WORKSPACE_DIR / "static" / "index.html"
 APP_PY = WORKSPACE_DIR / "app.py"
 TRACKER_ROUTES_PY = WORKSPACE_DIR / "routes" / "applicant_tracker_routes.py"
@@ -220,14 +224,25 @@ def test_proxy_is_registered_in_workspace_app():
 
 
 def test_index_html_wires_the_rail_button_and_script_include():
+    """Pass 2a: rail-tracker is no longer static markup in index.html -- it is
+    emitted by applicantNav.js's NAV array (the 'search' group) into the
+    #applicant-rail-nav mount. The applicantTracker.js script include (which
+    wires it via getElementById('rail-tracker')) is still static here."""
     src = _read(INDEX_HTML)
-    assert 'id="rail-tracker"' in src
+    nav_src = _read(NAV_JS)
+    assert re.search(r"\brail:\s*'rail-tracker'", nav_src), (
+        "expected a NAV item with rail: 'rail-tracker' in applicantNav.js"
+    )
     assert 'src="/static/js/applicantTracker.js"' in src
-    # The rail button must come BEFORE the module that wires it, same document
-    # order as every other rail entry (script tags load after the rail markup).
-    rail_pos = src.index('id="rail-tracker"')
-    script_pos = src.index('src="/static/js/applicantTracker.js"')
-    assert rail_pos < script_pos
+
+    # applicantNav.js (which self-boots and renders rail-tracker into the DOM)
+    # must be wired BEFORE applicantTracker.js (which wires that button) --
+    # the same "button exists before the module that wires it" document-order
+    # guarantee the old assertion pinned, now expressed across the two script
+    # tags instead of markup-vs-script.
+    nav_script_pos = src.index('src="/static/js/applicantNav.js"')
+    tracker_script_pos = src.index('src="/static/js/applicantTracker.js"')
+    assert nav_script_pos < tracker_script_pos
 
 
 # ── real behavior: the pure bucket-classifier function ──────────────────────

@@ -548,7 +548,15 @@ def email_nav_has_btn(t08ctx):
 @when("the email toolbar launcher element is looked up")
 def lookup_email_btn(t08ctx):
     html = t08ctx["html"]
-    t08ctx["email_btn_present"] = 'id="tool-email-btn"' in html or "id='tool-email-btn'" in html
+    # The reconciled single-source nav (workspace/static/js/applicantNav.js) now
+    # EMITS the sidebar launcher (`side: 'tool-email-btn'`) from its NAV array; it
+    # is no longer hand-written static markup in index.html. The gate can still
+    # ungrey it as long as the element exists at render time, so it counts as
+    # present if it lives in the static shell OR the nav renderer's NAV array.
+    in_html = 'id="tool-email-btn"' in html or "id='tool-email-btn'" in html
+    nav_js = _read(REPO_ROOT / "workspace" / "static" / "js" / "applicantNav.js")
+    in_nav = "'tool-email-btn'" in nav_js or '"tool-email-btn"' in nav_js
+    t08ctx["email_btn_present"] = in_html or in_nav
 
 
 @then("the email toolbar launcher element is present so it can be ungreyed")

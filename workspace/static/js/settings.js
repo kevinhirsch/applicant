@@ -126,6 +126,7 @@ function _reflectTabInHash(tab) {
 // (callers decide whether/when to reflect it).
 function _activateSettingsTab(tab) {
   if (!modalEl || !tab) return false;
+  tab = _normalizeSettingsTab(tab);
   const btn = modalEl.querySelector(`[data-settings-tab="${tab}"]`);
   if (!btn) return false;
   modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
@@ -155,7 +156,7 @@ function _wireSettingsHashRouting() {
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const tab = btn.dataset.settingsTab;
+      const tab = _normalizeSettingsTab(btn.dataset.settingsTab);
       // Lazy-init admin when first clicking an admin tab
       if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
         window.adminModule.open(tab);
@@ -213,10 +214,13 @@ function mountRelocatedSetupStep(tab) {
       });
     }
   }
-  // The Automation tab (dark-engine audit items 82/84/85) hosts the generic
-  // engine-preferences module, a self-contained tab mounted the same way as
-  // Campaign/the model ladder above.
-  if (tab === 'automation') {
+  // The Automation tab -- really the existing "sandbox" tab, since SET-S2-5
+  // folded the once-separate "Automation Preferences" tab into it -- hosts
+  // the generic engine-preferences module (dark-engine audit items 82/84/85)
+  // ALONGSIDE the sandbox-location config the `cfg` lookup below already
+  // mounts for this same tab, a self-contained module mounted the same way
+  // as Campaign/the model ladder above.
+  if (tab === 'sandbox') {
     const automationHost = document.getElementById('ao-settings-automation');
     const mountAutomation = window.mountApplicantAutomationSettings;
     if (automationHost && typeof mountAutomation === 'function') {
@@ -244,48 +248,124 @@ function mountRelocatedSetupStep(tab) {
   });
 }
 
-/* ── Automation tab (dark-engine audit items 82/84/85) ──
-   The existing "sandbox" tab already carries the visible label "Automation" (it
-   hosts the automation-SANDBOX config -- where the driven browser runs). This new
-   tab is a broader, generic engine-preferences home (the audit's "no generic
-   engine-preferences tab" gap), so it is labelled "Automation Preferences" in the
-   sidebar to stay distinct from the existing tab rather than colliding with it.
-   Its markup isn't in static/index.html (out of this phase's file lane), so it is
-   built here at Settings-modal init time and inserted next to the Campaign tab --
-   the closest sibling (both are self-contained, engine-config-store-backed tabs
-   mounted the same way). Idempotent: a no-op if already injected (e.g. Settings
-   opened twice in one page load). */
+/* ── Automation tab (SET-S2-5 — was a second, adjacent "Automation" entry) ──
+   This used to inject its OWN sidebar tab + panel ("Automation Preferences"),
+   sitting right next to the existing static "sandbox" tab (labelled plain
+   "Automation" — the browser-sandbox-location config). Two sidebar rows both
+   about "Automation" was exactly the owner-flagged confusion (SET-S2-5), so
+   this now folds the SAME generic engine-preferences module into the
+   EXISTING "sandbox" panel instead of adding a second nav entry: no new tab,
+   no new button, one "Automation" destination. static/index.html (out of
+   this file's lane) already renders `[data-settings-panel="sandbox"]` with
+   its own "Automation sandbox" card; this prepends a sibling card into that
+   same panel div (DOM-only at runtime — the file on disk is untouched) so
+   the general preferences and the sandbox-location config both live under
+   the one tab the sidebar already has, and inherit that tab's existing
+   admin-only gating for free. Idempotent: a no-op if already injected (e.g.
+   Settings opened twice in one page load). */
 function injectAutomationTab() {
-  if (!modalEl || modalEl.querySelector('[data-settings-tab="automation"]')) return;
-  const sidebar = modalEl.querySelector('.settings-sidebar');
-  const panels = modalEl.querySelector('.settings-panels');
-  if (!sidebar || !panels) return;
+  if (!modalEl) return;
+  const panel = modalEl.querySelector('[data-settings-panel="sandbox"]');
+  if (!panel || panel.querySelector('#ao-settings-automation')) return;
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'settings-nav-item admin-only';
-  btn.dataset.settingsTab = 'automation';
-  btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+  const card = document.createElement('div');
+  card.className = 'admin-card';
+  card.innerHTML = '<h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">'
     + '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>'
     + '<line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>'
     + '<line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>'
     + '<line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
-    + '</svg><span>Automation Preferences</span>';
-  const campaignBtn = sidebar.querySelector('[data-settings-tab="campaign"]');
-  if (campaignBtn) {
-    campaignBtn.insertAdjacentElement('afterend', btn);
-  } else {
-    sidebar.appendChild(btn);
-  }
-
-  const panel = document.createElement('div');
-  panel.dataset.settingsPanel = 'automation';
-  panel.className = 'hidden';
-  panel.innerHTML = '<div class="admin-toggle-sub" style="margin-bottom:10px">'
+    + '</svg>Automation Preferences</h2>'
+    + '<div class="admin-toggle-sub" style="margin-bottom:10px">'
     + 'Engine-level automation preferences — browser identity, account creation, '
     + 'and safety limits.</div>'
     + '<div id="ao-settings-automation"></div>';
-  panels.appendChild(panel);
+  panel.insertBefore(card, panel.firstChild);
+}
+
+/* ── Deprecated/merged tab aliases (SET-S2-5/SET-S2-6) ──
+   "automation" no longer exists as its own tab (folded into "sandbox" above)
+   and "reminders" no longer exists as its own tab (folded into
+   "notifications"/"Alerts" by _mergeAlertsTabs() below). Both buttons'
+   underlying `data-settings-tab` markup still lives in static/index.html
+   (out of this file's lane; "automation" was never real markup to begin
+   with), so route any caller still asking for the old key — a saved
+   `#settings/<tab>` hash, a `/settings reminders` slash command, a future
+   `settingsModule.open('reminders')` — to the tab that actually owns that
+   content now, instead of landing on a hidden button / an emptied panel. */
+const _MERGED_TAB_ALIASES = { automation: 'sandbox', reminders: 'notifications' };
+function _normalizeSettingsTab(tab) {
+  return (tab && _MERGED_TAB_ALIASES[tab]) || tab;
+}
+
+/* ── Alerts tab (SET-S2-6 — owner-flagged "Reminders" vs "Notifications"
+   overlap, plus a 3rd "Email" tab nearby) ──
+   All three panels' markup/ids live in static/index.html (out of this file's
+   lane), so this folds the Reminders panel's EXISTING cards — unchanged
+   ids, unchanged save handlers — into the "notifications" panel at runtime
+   and relabels that tab "Alerts". "Email" stays its own tab (mailbox
+   account + AI writing style, genuinely distinct from delivery/alert
+   preferences) but gets a disambiguating label so it no longer reads as a
+   3rd overlapping comms tab next to "Alerts". The emptied "reminders" panel
+   is left in the DOM (not removed): initReminderSettings() only checks that
+   `[data-settings-panel="reminders"]` EXISTS to decide whether to run at
+   all, and every control it wires keys off its own element id (`el(id)` =
+   `document.getElementById`), so relocating those ids into a new parent
+   changes nothing about how they load/save. Idempotent — a no-op if already
+   merged. */
+function _mergeAlertsTabs() {
+  if (!modalEl) return;
+  const survivorPanel = modalEl.querySelector('[data-settings-panel="notifications"]');
+  if (!survivorPanel || survivorPanel.dataset.alertsMerged === '1') return;
+
+  const survivorBtn = modalEl.querySelector('[data-settings-tab="notifications"]');
+  const remindersBtn = modalEl.querySelector('[data-settings-tab="reminders"]');
+  const remindersPanel = modalEl.querySelector('[data-settings-panel="reminders"]');
+  const emailBtn = modalEl.querySelector('[data-settings-tab="email"]');
+
+  // "Notifications" -> "Alerts": the surviving tab now covers both
+  // Applicant's own digest/approval channel AND note-reminder delivery, so
+  // its old, narrower label no longer fits either half well.
+  if (survivorBtn) {
+    const label = survivorBtn.querySelector('span');
+    if (label) label.textContent = 'Alerts';
+  }
+  // Disambiguate "Email" so it no longer reads as a 3rd overlapping
+  // alerts/comms tab now that "Alerts" sits right next to it.
+  if (emailBtn) {
+    const label = emailBtn.querySelector('span');
+    if (label) label.textContent = 'Email Account';
+  }
+
+  if (remindersPanel) {
+    // A small divider + caption marks where the folded-in Reminders cards
+    // begin, so the merged panel reads as two clear groups instead of one
+    // undifferentiated stack of admin-cards — reuses the existing sidebar
+    // divider/label classes (no new CSS) per CLAUDE.md principle #4.
+    const divider = document.createElement('div');
+    divider.className = 'settings-sidebar-divider';
+    divider.style.margin = '4px 0 10px';
+    const label = document.createElement('div');
+    label.className = 'settings-sidebar-label';
+    label.style.padding = '0 0 6px';
+    label.textContent = 'Reminders';
+    survivorPanel.appendChild(divider);
+    survivorPanel.appendChild(label);
+    while (remindersPanel.firstChild) survivorPanel.appendChild(remindersPanel.firstChild);
+  }
+
+  // Hide (don't remove) the now-redundant nav button so save handlers keyed
+  // off its still-present container id keep working, but the sidebar shows
+  // one merged entry instead of two overlapping ones. `.hidden` alone can
+  // lose a specificity fight with `.settings-nav-item{display:flex}`
+  // (SET-S2-8), so force it inline too — belt-and-suspenders regardless of
+  // which order that CSS fix and this one land in.
+  if (remindersBtn) {
+    remindersBtn.classList.add('hidden');
+    remindersBtn.style.display = 'none';
+  }
+
+  survivorPanel.dataset.alertsMerged = '1';
 }
 
 /* ── Sidebar tab search/filter (design audit lens 11, finding #24) ──
@@ -2510,6 +2590,7 @@ function initAccount() {
 function initAll() {
   modalEl = el('settings-modal');
   injectAutomationTab(); // must run before initTabs() binds [data-settings-tab] clicks
+  _mergeAlertsTabs(); // ditto — hides/relabels tabs before initTabs() binds clicks
   injectSettingsTabSearch();
   initTabs();
   _wireTabSemantics(); // after initTabs()/injectAutomationTab() so the injected tab is covered too
@@ -4731,6 +4812,11 @@ function syncAdminVisibility() {
    ═══════════════════════════════════════════ */
 export function open(tab) {
   if (!initialized) initAll();
+  // SET-S2-5/SET-S2-6: redirect any caller still asking for a tab that's
+  // since been folded into another one (see _MERGED_TAB_ALIASES) so an old
+  // bookmark/slash-command/hash lands on the real content, not a hidden
+  // button or an emptied panel.
+  tab = _normalizeSettingsTab(tab);
   syncAppearanceCheckboxes();
   resetWindowPlacement();
   modalEl.classList.remove('hidden');
@@ -4742,7 +4828,7 @@ export function open(tab) {
   // falling through to whatever was last active. No hash present ⇒ default
   // behavior is unchanged.
   if (!tab) {
-    const hashTab = _tabFromHash();
+    const hashTab = _normalizeSettingsTab(_tabFromHash());
     if (hashTab && !ADMIN_TABS.has(hashTab) && modalEl.querySelector(`[data-settings-tab="${hashTab}"]`)) {
       tab = hashTab;
     }

@@ -25,6 +25,11 @@ _INDEX = _REPO / "static" / "index.html"
 _APP_JS = _REPO / "static" / "app.js"
 _PRESETS = _REPO / "static" / "js" / "presets.js"
 _CALENDAR = _REPO / "static" / "js" / "calendar.js"
+# Pass 2a: the Applicant surfaces' sidebar list-items moved out of index.html
+# into applicantNav.js's single-source NAV array (see
+# ``test_applicant_nav_single_source.py``). The vendored (hidden) tools stay
+# static here, unaffected.
+_NAV_JS = _REPO / "static" / "js" / "applicantNav.js"
 
 # The UI_VIS_MAP keys for the 7 vendored sidebar tools. Inline display:none in
 # index.html (HIDDEN_SIDEBAR_IDS) is NOT enough on its own: app.js
@@ -45,11 +50,12 @@ VENDORED_UI_VIS_KEYS = [
     "tool-theme",
 ]
 
-# The 7 vendored sidebar tools that must NOT render as visible Applicant
+# The 6 vendored sidebar tools that must NOT render as visible Applicant
 # surfaces. (The real Applicant surfaces — gallery/assistant/compare/debug/
-# email/library/memory — are intentionally absent from this list.)
+# email/library/memory/... — are intentionally absent from this list.)
+# tool-calendar-btn used to live here too, but Calendar is now a KEPT
+# (visible) Applicant surface (Pass 2a design decision #2) — moved below.
 HIDDEN_SIDEBAR_IDS = [
-    "tool-calendar-btn",
     "tool-cookbook-btn",
     "tool-research-btn",
     "tool-gallery-btn",
@@ -59,14 +65,24 @@ HIDDEN_SIDEBAR_IDS = [
 ]
 
 # Applicant surfaces that MUST stay visible — a guard against over-hiding.
+# Pass 2a: all of these are now emitted by applicantNav.js's NAV array
+# (renderNav's `_sidebarItem()`) rather than being static index.html divs —
+# see `_nav_side_ids()` below, which `test_applicant_sidebar_surfaces_stay_
+# visible` consults for any id no longer found as static markup.
 KEEP_SIDEBAR_IDS = [
+    "tool-portal-btn",
+    "tool-tracker-btn",
+    "tool-results-btn",
+    "tool-activity-btn",
+    "tool-library-btn",
     "tool-applicant-gallery-btn",
+    "tool-memory-btn",
+    "tool-email-btn",
+    "tool-calendar-btn",
     "tool-assistant-btn",
     "tool-compare-btn",
     "tool-debug-btn",
-    "tool-email-btn",
-    "tool-library-btn",
-    "tool-memory-btn",
+    "tool-trust-btn",
 ]
 
 # Vendored AI-media / agent-training Settings cards. Each toggle input must sit
@@ -194,6 +210,17 @@ def _sidebar_items() -> dict[str, dict]:
     return p.items
 
 
+def _nav_side_ids() -> set[str]:
+    """Sidebar-item ids (`side: '...'`) emitted by applicantNav.js's NAV
+    array. `_sidebarItem()` (verified below to have no hidden/display:none
+    branch) is the ONE render path for these, so an id being present in NAV
+    means it renders unconditionally -- visible -- whenever the shell mounts."""
+    src = _NAV_JS.read_text(encoding="utf-8")
+    m = re.search(r"const NAV = \[(.*?)\n\];", src, re.S)
+    assert m, "expected a `const NAV = [ ... ];` array literal in applicantNav.js"
+    return set(re.findall(r"\bside:\s*'([^']+)'", m.group(1)))
+
+
 def test_vendored_sidebar_tools_are_hidden():
     items = _sidebar_items()
     for tool_id in HIDDEN_SIDEBAR_IDS:
@@ -202,13 +229,37 @@ def test_vendored_sidebar_tools_are_hidden():
             f"{tool_id} renders as a VISIBLE sidebar item — it must carry "
             f"display:none (vendored-tool bleed in the white-label front door)"
         )
+    # And none of the vendored ids leaked into the Pass 2a single-source NAV
+    # array either (the only other place a sidebar item could come from).
+    nav_ids = _nav_side_ids()
+    for tool_id in HIDDEN_SIDEBAR_IDS:
+        assert tool_id not in nav_ids, (
+            f"{tool_id} is a vendored tool but is emitted by applicantNav.js "
+            f"— vendored-tool bleed into the reconciled job-search nav"
+        )
 
 
 def test_applicant_sidebar_surfaces_stay_visible():
-    items = _sidebar_items()
+    """Applicant surfaces must render visibly — either as a non-hidden,
+    still-static index.html list-item, or (Pass 2a) as a `side` entry in
+    applicantNav.js's NAV array. `_sidebarItem()` has no conditional
+    hidden/display:none path (checked below), so being present in NAV is
+    itself proof of visibility — the single source of truth these surfaces
+    moved to."""
+    nav_src = _NAV_JS.read_text(encoding="utf-8")
+    sidebaritem_m = re.search(r"function _sidebarItem\(item\)\s*\{(.*?)\n\}", nav_src, re.S)
+    assert sidebaritem_m, "expected a _sidebarItem(item) function in applicantNav.js"
+    sidebaritem_body = sidebaritem_m.group(1)
+    assert "display:none" not in sidebaritem_body.replace(" ", "")
+    assert "hidden" not in sidebaritem_body.lower()
+
+    static_items = _sidebar_items()
+    nav_ids = _nav_side_ids()
     for tool_id in KEEP_SIDEBAR_IDS:
-        assert tool_id in items, f"{tool_id} not found in sidebar — id may have drifted"
-        assert not items[tool_id]["hidden"], (
+        if tool_id in nav_ids:
+            continue  # emitted unconditionally by applicantNav.js -- visible
+        assert tool_id in static_items, f"{tool_id} not found in sidebar — id may have drifted"
+        assert not static_items[tool_id]["hidden"], (
             f"{tool_id} is an Applicant surface but got hidden — over-hiding regression"
         )
 

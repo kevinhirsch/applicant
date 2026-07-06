@@ -368,6 +368,27 @@ function generateHarmonyColors(accentHex, harmonyType, mode) {
   };
 }
 
+// CC-S1-2 ("styling isn't applying"): is the active theme's BACKGROUND a dark
+// one? Used to stamp `body.applicant-theme-dark`, which the frosted-glass chrome
+// reads to render a DARK glass surface with LIGHT ink for dark palettes (dark /
+// midnight / ocean / …) instead of the fixed macOS-light material — so switching
+// color themes visibly re-colours the sidebar + modal chrome. Relative-luminance
+// threshold (WCAG coefficients); errs dark on a malformed value so a bad hex never
+// forces the light ramp onto a dark palette. Mirrors the head anti-FOUC script's
+// `dk` split so first paint and steady state agree.
+function _themeBgIsDark(hex) {
+  try {
+    const h = String(hex || '').replace('#', '');
+    if (h.length < 6) return true;
+    const chan = (i) => {
+      const c = parseInt(h.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    const L = 0.2126 * chan(0) + 0.7152 * chan(2) + 0.0722 * chan(4);
+    return L < 0.34;
+  } catch { return true; }
+}
+
 export function applyColors(colors) {
   const s = document.documentElement.style;
   s.setProperty('--bg', colors.bg);
@@ -375,6 +396,12 @@ export function applyColors(colors) {
   s.setProperty('--panel', colors.panel);
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
+  // CC-S1-2: mark whether this palette is dark so the frosted chrome can track it.
+  // EXCEPTION: the neutral "Liquid Glass" default (`glass:true`) is intentionally
+  // rendered with the LIGHT frosted material (its dark bg is the wallpaper, not the
+  // chrome) — that's the shipped default look — so it never takes the dark ramp even
+  // though its bg is dark. Every OTHER dark palette (dark/midnight/ocean/…) does.
+  try { if (document.body) document.body.classList.toggle('applicant-theme-dark', _themeBgIsDark(colors.bg) && !colors.glass); } catch { /* body not ready yet — initThemeUI re-applies on boot */ }
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).

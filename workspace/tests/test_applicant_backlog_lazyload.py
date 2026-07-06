@@ -83,6 +83,9 @@ _PALETTE_JS = _JS_DIR / "commandPalette.js"
 _DEBUG_JS = _JS_DIR / "applicantDebug.js"
 _GALLERY_JS = _JS_DIR / "applicantGallery.js"
 _COMPARE_JS = _JS_DIR / "applicantCompare.js"
+# Pass 2a: some of the launcher ids lazyLaunch.js wires moved out of
+# index.html into applicantNav.js's single-source NAV array.
+_NAV_JS = _JS_DIR / "applicantNav.js"
 _HAS_NODE = shutil.which("node") is not None
 
 
@@ -139,7 +142,15 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # applicantModelLadder.js (settings.js reads their window.mount* globals);
     # it was accidentally omitted, so the Automation Preferences tab rendered
     # permanently empty until this tag was added.
-    assert count == 48, f"expected 48 eager module <script> tags, got {count}"
+    # 49 after the nav refactor (Pass 2a) added ONE new eager module,
+    # applicantNav.js -- the single source of truth `renderNav()` now emits
+    # the icon-rail + sidebar job-search destinations from, replacing two
+    # hand-authored (and drifting) index.html markup blocks. It is not one of
+    # the "heavy, launcher-only" surfaces this wave lazy-loaded away (it must
+    # run eagerly and first, before every destination module's own launcher
+    # wiring), so it stays eager like applicantTrust.js/applicantCapabilities.js
+    # above.
+    assert count == 49, f"expected 49 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():
@@ -178,16 +189,26 @@ def test_lazylaunch_uses_dynamic_import_for_all_three_surfaces():
 
 
 def test_lazylaunch_button_ids_match_index_html():
-    """The button ids lazyLaunch.js wires must actually exist in index.html,
-    and must match the ids each real surface's own _wireLauncher() targets
-    (applicantDebug.js: tool-debug-btn; applicantGallery.js:
-    tool-applicant-gallery-btn / rail-applicant-gallery; applicantCompare.js:
-    tool-compare-btn / rail-compare)."""
+    """The button ids lazyLaunch.js wires must actually exist -- either as
+    static markup in index.html, or (Pass 2a) as an id applicantNav.js's NAV
+    array emits -- and must match the ids each real surface's own
+    _wireLauncher() targets (applicantDebug.js: tool-debug-btn;
+    applicantGallery.js: tool-applicant-gallery-btn / rail-applicant-gallery;
+    applicantCompare.js: tool-compare-btn / rail-compare)."""
     lazy_src = _read(_LAZYLAUNCH_JS)
     html_src = _read(_INDEX_HTML)
+    nav_src = _read(_NAV_JS)
     debug_src = _read(_DEBUG_JS)
     gallery_src = _read(_GALLERY_JS)
     compare_src = _read(_COMPARE_JS)
+
+    # Pass 2a moved these four into applicantNav.js's NAV array. rail-compare
+    # is the native (vendored, hidden) workspace-compare rail button, which
+    # Pass 2a leaves as static index.html markup.
+    NAV_SOURCED = {
+        "tool-debug-btn", "tool-applicant-gallery-btn",
+        "rail-applicant-gallery", "tool-compare-btn",
+    }
 
     for btn_id in (
         "tool-debug-btn",
@@ -195,7 +216,12 @@ def test_lazylaunch_button_ids_match_index_html():
         "tool-compare-btn", "rail-compare",
     ):
         assert f"'{btn_id}'" in lazy_src, f"lazyLaunch.js must reference {btn_id!r}"
-        assert f'id="{btn_id}"' in html_src, f"{btn_id!r} must exist in index.html"
+        if btn_id in NAV_SOURCED:
+            assert re.search(rf"\b(?:rail|side):\s*'{re.escape(btn_id)}'", nav_src), (
+                f"{btn_id!r} must be emitted by applicantNav.js's NAV array"
+            )
+        else:
+            assert f'id="{btn_id}"' in html_src, f"{btn_id!r} must exist in index.html"
 
     assert "'tool-debug-btn'" in debug_src
     assert "'tool-applicant-gallery-btn'" in gallery_src and "'rail-applicant-gallery'" in gallery_src

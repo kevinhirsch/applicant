@@ -621,7 +621,7 @@ function renderSkillsList() {
   const showBuiltin = false;
 
   if (!sorted.length && !showBuiltin) {
-    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
+    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No playbooks yet — the agent writes these reusable procedures for itself as it works. (Your résumé skills live in the Profile tab.)' : 'Loading…'}</div>`;
     return;
   }
 

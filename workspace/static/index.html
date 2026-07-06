@@ -73,6 +73,13 @@
           var advMap = {userBubbleBg:'--user-bubble-bg',aiBubbleBg:'--ai-bubble-bg',bubbleBorder:'--bubble-border',sidebarBg:'--sidebar-bg',sectionAccent:'--section-accent',brandColor:'--brand-color',inputBg:'--input-bg',inputBorder:'--input-border',sendBtnBg:'--send-btn-bg',sendBtnHover:'--send-btn-hover',codeBg:'--code-bg',codeFg:'--code-fg',toggleBg:'--toggle-bg',toggleActive:'--toggle-active',accentPrimary:'--accent-primary',accentError:'--accent-error'};
           for (var k in advMap) { if (a[k]) s.setProperty(advMap[k], a[k]); }
         }
+        // CC-S1-2: stamp the dark-palette flag as early as the body allows (it's
+        // not parsed yet inside <head>) so the frosted chrome renders dark glass
+        // from first paint on a dark theme instead of flashing the light material.
+        // applyColors() re-applies this on boot; this just removes the flash.
+        // Neutral "Liquid Glass" default (glass:true) keeps the LIGHT frosted
+        // material even though its bg is dark — matches applyColors()'s exception.
+        document.addEventListener('DOMContentLoaded', function(){ try { document.body.classList.toggle('applicant-theme-dark', dk && !(c && c.glass)); } catch(_){} }, {once:true});
       }
       // Apply font early
       if (t && t.font) {
@@ -271,13 +278,13 @@
   <div id="memory-modal" class="modal hidden">
     <div class="modal-content memory-modal-content" style="background:var(--bg)">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Brain</h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Profile</h4>
         <button type="button" class="close-btn" id="close-memory-modal" aria-label="Close memory modal">✖</button>
       </div>
       <div class="modal-body memory-modal-body">
         <div class="memory-tabs">
           <button type="button" class="memory-tab active" data-memory-tab="browse"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Memories <span id="memory-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
-          <button type="button" class="memory-tab" data-memory-tab="skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
+          <button type="button" class="memory-tab" data-memory-tab="skills" title="The agent's own reusable playbooks — separate from your profile skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Playbooks <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" data-memory-tab="entities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v4M10.5 13.5 6.5 16M13.5 13.5 17.5 16"/></svg>Entities <span id="entities-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" id="applicant-profile-tab" data-memory-tab="applicant-profile" title="Your job-application profile — facts the assistant pre-fills, and what it has learned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>Profile <span id="applicant-profile-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button type="button" class="memory-tab" data-memory-tab="add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add</button>
@@ -368,11 +375,11 @@
         <div class="memory-tab-panel hidden" data-memory-panel="skills">
           <div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Skills <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="margin:0;padding:0;line-height:1;">Playbooks <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
-              <label class="admin-switch" title="Inject relevant skills into chat context" for="skills-enabled-header-toggle"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" title="Inject relevant playbooks into chat context" for="skills-enabled-header-toggle"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
-            <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones.</p>
+            <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable playbooks the AI writes for itself and runs via /skill — the agent's own know-how, separate from your profile skills. Sort by confidence to surface the proven ones.</p>
             <div class="memory-toolbar">
               <div class="memory-toolbar-row">
                 <select id="skills-sort" class="memory-sort-select">
@@ -867,42 +874,29 @@
     <!-- Dynamic contextual indicators (shown only while active) -->
     <button type="button" class="icon-rail-btn rail-dynamic" id="rail-chats" title="Chat ready" aria-label="Chat ready" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button type="button" class="icon-rail-btn rail-dynamic" id="rail-documents" title="Documents" aria-label="Documents" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
-    <!-- Job-search surfaces — clustered at the top so the rail reads as a focused
-         job-application product, not a generic workspace (A2). Order: Pending
-         home base · Job Assistant · Applications/Documents (Library) · Brain →
-         Profile · Daily updates (Email) · Deep Research · Calendar. -->
-    <!-- CRIT-portal: Pending — primary home-base; lists everything awaiting you across your job searches. Live count badge added by applicantPortal.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-portal" title="Pending — everything that needs your attention, across all your job searches" aria-label="Pending — everything that needs your attention, across all your job searches"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
-    <!-- CRIT-portal end -->
-    <!-- Activity — chronological feed of what the assistant is doing across your job search. Hidden until there's activity; shown by applicantActivity.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-activity" title="Activity — a live feed of what I'm doing" aria-label="Activity — a live feed of what I'm doing" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></button>
-    <!-- Results (#1 audit finding): a non-admin window onto the engine's outcome/learning data (funnel, per-source conversion, "what converts for you"). Greyed by the feature-activation layer until a model is connected; opens via applicantResults.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-results" title="Results — how your applications are doing and what's working" aria-label="Results — how your applications are doing and what's working" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg></button>
-    <!-- Tracker (design-audit Top-25 #4): the post-submission board — applied, awaiting response, interview/offer signals, rejected/ghosted/archived — plus the "record what happened" affordance. Self-boots and wires this button; opens via applicantTracker.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-tracker" title="Tracker — where each application stands" aria-label="Tracker — where each application stands"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-assistant" title="Job Assistant — ask about your applications and what needs your attention" aria-label="Job Assistant — ask about your applications and what needs your attention"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-archive" title="Applications & documents" aria-label="Applications & documents"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-memory" title="Profile — the details I use to apply for you" aria-label="Profile — the details I use to apply for you"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-email" title="Daily updates — the roles I flagged for you today" aria-label="Daily updates — the roles I flagged for you today"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-research" title="Deep Research" aria-label="Deep Research"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
-    <!-- Gallery (#296): the Applicant engine's captured screenshots + generated materials. DISTINCT from the workspace image gallery (#rail-gallery). Greyed by the feature-activation layer until the engine reports the `gallery` section configured; opens via applicantGallery.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-applicant-gallery" title="Application Gallery — screenshots and materials from my work" aria-label="Application Gallery — screenshots and materials from my work"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-calendar" title="Calendar" aria-label="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-theme" title="Theme" aria-label="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
-    <!-- Off-purpose generic tool launchers hidden for the job-application product (A2):
-         Compare, Cookbook, Gallery, Notes, Tasks. The underlying JS modules are
-         untouched and still load; only their rail discoverability is removed.
-         (Image editor / faces / YouTube / TTS-STT have no rail buttons.) -->
+    <!-- Applicant job-search nav — SINGLE SOURCE OF TRUTH in
+         static/js/applicantNav.js (renderNav). This mount is filled with the
+         same destinations, ids and order as the sidebar #tools-section below
+         (Today · Tracker · Results · Activity · Documents · Gallery · Profile ·
+         Daily updates · Calendar · Chat) plus the bottom Update · Settings
+         cluster. display:contents so the emitted buttons + flex spacer are real
+         flex children of the rail. Do not hand-author destinations here. -->
+    <div id="applicant-rail-nav" style="display:contents"></div>
+    <!-- Off-nav generic launchers — kept in the DOM so their JS modules and
+         keybind hints still resolve, but NOT part of the reconciled job-search
+         nav: hidden here, reachable via slash-commands / overflow / Settings
+         (Deep Research, Theme, Compare, Cookbook, Gallery, Notes, Tasks).
+         S1-6: #rail-compare stays here (the native/vendored compare rail button,
+         hidden). The Applicant Compare's OWN collapsed-rail twin is emitted by
+         applicantNav.js as #rail-applicant-compare (with Run log + Trust), so the
+         two ids don't collide — see applicantNav.js's utilities group. -->
+    <button type="button" class="icon-rail-btn" id="rail-research" title="Deep Research" aria-label="Deep Research" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+    <button type="button" class="icon-rail-btn" id="rail-theme" title="Theme" aria-label="Theme" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-compare" title="Compare" aria-label="Compare" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-cookbook" title="Cookbook" aria-label="Cookbook" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-gallery" title="Gallery" aria-label="Gallery" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-notes" title="Notes" aria-label="Notes" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-tasks" title="Tasks" aria-label="Tasks" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg></button>
-    <div style="flex:1"></div>
-    <!-- Static: bottom -->
-    <!-- Update — one-click updater (backup → latest version → restart). Opens its own modal; wired + rendered by applicantUpdate.js. -->
-    <button type="button" class="icon-rail-btn" id="rail-update" title="Update Applicant" aria-label="Update Applicant"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="3" x2="12" y2="16"/></svg></button>
-    <button type="button" class="icon-rail-btn" id="rail-settings" title="Settings" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
 
   <nav class="sidebar" id="sidebar" role="navigation" aria-label="Sidebar">
@@ -914,29 +908,30 @@
       </div>
     </div>
     <div class="sidebar-inner">
-      <div class="list-item" id="sidebar-new-chat-btn" title="New chat">
-        <svg class="sidebar-action-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:relative;left:-2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="grow" style="position:relative;left:-3px;">New Chat</span>
-      </div>
-      <!-- #45: bare "Search" here read as job/role search now that this
-           product's headline feature IS a job search — but this opens only
-           conversation search (its own placeholder already says "Search
-           conversations..."). Naming the scope in the nav label itself,
-           not just the hover title, avoids landing on an unrelated,
-           empty-looking result for a role/company query. -->
-      <div class="list-item" id="sidebar-search-btn" title="Search conversations (Ctrl+K)">
-        <svg class="sidebar-action-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <span class="grow" style="position:relative;left:-1px;">Search chats</span>
-      </div>
-      <!-- Assistant sidebar entry removed — its log + settings live inside
-           the Tasks modal (Activity + Settings tabs). The backend
-           assistant session is still maintained for log_to_assistant()
-           writes from scheduled tasks. -->
-
-      <div class="section" id="sessions-section">
+      <!-- S1-1: the standalone "New Chat" and "Search chats" rows that used to
+           stack here were folded into the Chats section header below (as compact
+           icon buttons — ids #sidebar-new-chat-btn / #sidebar-search-btn are
+           preserved, so their wiring + the chat-unification new-chat interceptor
+           still resolve them), so the sidebar reads as ONE coherent chat area
+           instead of three separate stacked chat rows.
+           S1-2: this Chats block (and the models block) carry a flex `order` so
+           the product nav (#tools-section) renders ABOVE this chat/email chrome
+           — the app's own destinations come first. -->
+      <div class="section" id="sessions-section" style="order:1">
         <div class="section-header-flex">
           <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
           <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
+            <!-- S1-1: Search chats + New chat, folded in from the two standalone
+                 rows that used to stack above this section. Same ids, so app.js's
+                 search wiring and the chat-unification new-chat interceptor still
+                 find them; icon-only to match the sibling library/sort controls. -->
+            <button type="button" class="section-header-btn" id="sidebar-search-btn" title="Search chats (Ctrl+K)" aria-label="Search chats">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+            </button>
+            <button type="button" class="section-header-btn list-item-plus-btn" id="sidebar-new-chat-btn" title="New chat" aria-label="New chat">
+              <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span class="list-item-plus-label">new</span>
+            </button>
             <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
@@ -1003,7 +998,13 @@
         </div>
       </div>
 
-      <div class="section" id="email-section">
+      <!-- S1-4: the native inbox section is hidden in the Applicant front door —
+           it duplicates the "Daily updates" digest door (#tool-email-btn in the
+           product nav, which opens the same email-library popup). Kept in the DOM
+           (id + #email-section-title preserved) so emailInbox.js and the
+           rail-email → email-section-title delegation still resolve; just not a
+           second, competing envelope in the sidebar. -->
+      <div class="section" id="email-section" style="display:none">
         <div class="section-header-flex">
           <span class="section-title" id="email-section-title" style="cursor:pointer;" title="Open email inbox"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><span>Email</span></span>
           <button type="button" class="section-header-btn list-item-plus-btn" id="email-compose-btn" title="Compose email">
@@ -1019,7 +1020,7 @@
         </div>
       </div>
 
-      <div class="section" id="models-section">
+      <div class="section" id="models-section" style="order:1">
         <div class="section-header-flex">
           <span class="section-title"> Models</span>
           <div style="position:relative; display:inline-block;">
@@ -1049,48 +1050,24 @@
       </div>
 
       <div class="section" id="tools-section">
-        <div class="section-header-flex">
-          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tools</span>
-        </div>
-        <!-- Pending — the post-login home base / notification center. The only
-             other launcher (#rail-portal) lives in the collapsed .icon-rail, which
-             is display:none whenever the wide .sidebar is expanded, so without this
-             list-item the Portal has no door in the expanded layout. Wired by
-             applicantPortal.js `_wireLauncher` → openApplicantPortal(). -->
-        <div class="list-item" id="tool-portal-btn" role="button" tabindex="0" title="Pending — everything that needs your attention, across all your job searches">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M9 11l3 3L22 4"/>
-            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-          </svg>
-          <span class="grow">Pending</span>
-        </div>
-        <div class="list-item" id="tool-memory-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
-          </svg>
-          <span class="grow">Brain</span>
-        </div>
-        <div class="list-item" id="tool-calendar-btn" style="display:none">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="4" width="18" height="18" rx="2"/>
-            <line x1="16" y1="2" x2="16" y2="6"/>
-            <line x1="8" y1="2" x2="8" y2="6"/>
-            <line x1="3" y1="10" x2="21" y2="10"/>
-          </svg>
-          <span class="grow">Calendar</span>
-        </div>
-        <div class="list-item" id="tool-compare-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
-          <span class="grow">Compare</span>
-        </div>
+        <!-- S1-2: the generic "Tools" caption/accordion header was removed so the
+             Applicant job-search destinations read as the PRIMARY navigation (not
+             a collapsible sub-section). Combined with the flex `order` on the
+             Chats/Models blocks above, this product nav now sits at the TOP of the
+             sidebar — the app's own destinations are the first thing users see. -->
+        <!-- Applicant job-search nav — SINGLE SOURCE OF TRUTH in
+             static/js/applicantNav.js (renderNav). This mount is filled with the
+             same destinations, ids and order as the icon rail above (Today ·
+             Tracker · Results · Activity · Documents · Gallery · Profile ·
+             Daily updates · Calendar · Chat · Settings). Do not hand-author
+             destinations here — edit the NAV array in applicantNav.js instead. -->
+        <div id="applicant-sidebar-nav" style="display:contents"></div>
+        <!-- Hidden generic workspace tools kept inline (display:none) so their
+             modules + keybind hints keep resolving. They are NOT part of the
+             reconciled job-search nav — which renderNav (applicantNav.js) emits
+             into #applicant-sidebar-nav above. Compare, Run log (debug) and
+             Trust ARE part of that nav now, so their list-items are emitted by
+             applicantNav.js, not duplicated here. -->
         <div class="list-item" id="tool-cookbook-btn" style="display:none">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
@@ -1116,16 +1093,6 @@
           </svg>
           <span class="grow">Gallery</span>
         </div>
-        <div class="list-item" id="tool-library-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/>
-          </svg>
-          <span class="grow">Library</span>
-          <button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document">
-            <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span class="list-item-plus-label">new</span>
-          </button>
-        </div>
         <div class="list-item" id="tool-notes-btn" style="display:none">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -1149,70 +1116,6 @@
           <span class="grow">Tasks</span>
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
-
-        <!-- CRIT-ops: Activity / debug launcher (read-only observability + run
-             controls + update). Greyed by the feature-activation layer until the
-             engine is configured (the `debug` section in applicant_features.py). -->
-        <div class="list-item" id="tool-debug-btn" title="Activity — application history, run controls, and updates">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-          </svg>
-          <span class="grow">Activity & controls</span>
-        </div>
-        <!-- end CRIT-ops -->
-        <!-- Gallery (#296): the per-campaign screenshots + generated materials the
-             Applicant engine captured, as a browsable grid. DISTINCT from the
-             workspace's own image gallery (#tool-gallery-btn). Greyed by the
-             feature-activation layer until the engine reports the `gallery`
-             section configured; opens via applicantGallery.js. -->
-        <div class="list-item" id="tool-applicant-gallery-btn" role="button" tabindex="0" title="Application Gallery — screenshots and materials from my work">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <span class="grow">Application Gallery</span>
-        </div>
-        <!-- Email / Daily updates launcher — the Applicant digest-in-app surface.
-             Greyed by the feature-activation layer until the engine reports
-             channels_configured + digest_in_app live. -->
-        <div class="list-item" id="tool-email-btn" title="Daily updates — the roles I flagged for you today">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="2" y="4" width="20" height="16" rx="2"/>
-            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
-          </svg>
-          <span class="grow">Daily updates</span>
-        </div>
-
-
-        <div class="list-item" id="tool-assistant-btn" title="Job Assistant — ask about your applications and what needs your attention">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-          <span class="grow">Job Assistant</span>
-        </div>
-
-        <!-- Trust Center — "How Applicant protects you". Content-only (no engine
-             calls); wired by applicantTrust.js's own `_wireLaunchers()`, which
-             looks for exactly this id. -->
-        <div class="list-item" id="tool-trust-btn" role="button" tabindex="0" title="How Applicant protects you — the final say, my promises, and your data">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 2 4 5v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V5z"/>
-            <path d="M9 12l2 2 4-4"/>
-          </svg>
-          <span class="grow">Trust Center</span>
-        </div>
-
         <div class="list-item" id="tool-theme-btn" style="display:none">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -2030,6 +1933,16 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <!-- CC-S3-1: a visible entry point for the theme/color picker. It used
+               to be reachable only via the /theme slash-command (its sidebar +
+               rail launchers are display:none), so the color themes had no
+               discoverable door. This opens the same picker (#theme-modal) the
+               hidden #tool-theme-btn launches (wired in app.js). -->
+          <div class="admin-card" style="padding-bottom:6px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>Theme &amp; colors</h2>
+            <span class="admin-toggle-sub" style="display:block;margin:2px 0 8px;opacity:0.6">Pick a color theme, background, and glass style for the whole app.</span>
+            <button type="button" class="cal-btn" id="appearance-open-theme-btn">Open theme picker</button>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
             <div class="vis-toggles">
@@ -2053,11 +1966,10 @@
                 <span class="vis-label">Chats <span class="vis-hint">Chat history list</span></span>
                 <input id="vis-sessions-section" type="checkbox" checked data-ui-key="sessions-section"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row" for="vis-email-section">
-                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
-                <span class="vis-label">Email</span>
-                <input id="vis-email-section" type="checkbox" checked data-ui-key="email-section"><span class="vis-switch"></span>
-              </label>
+              <!-- S1-4: the "Email" (native inbox section) visibility toggle was
+                   removed — the native #email-section duplicates the "Daily
+                   updates" digest door and is hidden in the white-label front
+                   door, so there is no toggle to re-reveal a second email door. -->
               <label class="vis-row" for="vis-models-section">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
                 <span class="vis-label">Models <span class="vis-hint">Model selector &amp; quick-chat</span></span>
@@ -2070,7 +1982,7 @@
               </label>
               <label class="vis-row" for="vis-tool-memory">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></span>
-                <span class="vis-label">Brain</span>
+                <span class="vis-label">Profile</span>
                 <input id="vis-tool-memory" type="checkbox" checked data-ui-key="tool-memory"><span class="vis-switch"></span>
               </label>
               <!-- White-label: the off-product vendored tool toggles (Calendar,
@@ -2667,6 +2579,11 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<!-- Applicant nav — SINGLE SOURCE OF TRUTH for both nav surfaces. Loaded FIRST
+     (before lazyLaunch/app.js and every destination module) so it self-renders
+     the rail + sidebar destinations into their mount points before anything
+     wires those ids by getElementById or polls for them. -->
+<script type="module" src="/static/js/applicantNav.js"></script>
 <!-- Perf audit (exhaustive2/03_performance.md #2): Debug, Gallery, and Compare
      used to be eager <script> tags here (400KB+ combined) even though each is
      reached only via an explicit launcher click or a shared #debug/#gallery/

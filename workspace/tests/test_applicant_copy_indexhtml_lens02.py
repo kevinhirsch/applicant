@@ -58,10 +58,23 @@ import re
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 INDEX_HTML = REPO_ROOT / "workspace" / "static" / "index.html"
+# Pass 2a: the icon-rail + sidebar job-search destinations (and their voice-
+# audited tooltips) now live in ONE place — applicantNav.js's NAV array —
+# instead of being hand-authored twice in index.html. The rail-button /
+# sidebar-list-item tooltip assertions below read that single source; renderNav
+# emits each item's `title` verbatim as BOTH the rail button's title+aria-label
+# AND the sidebar item's title, so one check covers both copies (they cannot
+# diverge). Copy that still lives in index.html (settings cards, the Profile
+# tab, the tool-debug label) keeps reading index.html.
+NAV_JS = REPO_ROOT / "workspace" / "static" / "js" / "applicantNav.js"
 
 
 def _read() -> str:
     return INDEX_HTML.read_text(encoding="utf-8")
+
+
+def _read_nav() -> str:
+    return NAV_JS.read_text(encoding="utf-8")
 
 
 def _tag_with_id(html: str, element_id: str) -> str:
@@ -152,19 +165,28 @@ def test_no_aria_label_still_duplicates_a_sibling_placeholder_example():
 
 
 def test_debug_launcher_label_disambiguated_from_the_activity_feed():
-    html = _read()
-    # tool-debug-btn's visible <span class="grow"> label, not just its title
-    m = re.search(
-        r'id="tool-debug-btn"[^>]*>.*?<span class="grow">([^<]*)</span>',
-        html,
-        re.S,
+    # tool-debug-btn moved out of index.html into applicantNav.js's NAV array
+    # (utilities group) in the later nav-reconciliation pass -- and picked up
+    # a further rename to disambiguate it from the live "Activity" feed
+    # (tool-activity-btn): "Activity & controls" (this lens-02 pass's fix)
+    # became "Run log".
+    nav = _read_nav()
+    m = re.search(r"side:\s*'tool-debug-btn'[^}]*label:\s*'([^']*)'", nav, re.S)
+    assert m, "expected a NAV entry for tool-debug-btn with a visible label"
+    assert m.group(1) == "Run log"
+    assert "Activity & controls" not in nav, (
+        "expected the launcher's stale visible label to be gone from the NAV array"
     )
-    assert m, "expected #tool-debug-btn with a visible .grow label"
-    assert m.group(1) == "Activity & controls"
 
-    # the rail's own live-feed button keeps its own distinct name
-    rail_tag = _tag_with_id(html, "rail-activity")
-    assert _attr(rail_tag, "title") == "Activity — a live feed of what I'm doing"
+    # the rail's own live-feed button keeps its own distinct name (also
+    # sourced from the single applicantNav.js NAV array)
+    assert "Activity — a live feed of what I'm doing" in nav
+
+    # and it's really gone from index.html, not just duplicated there too
+    assert "tool-debug-btn" not in _read(), (
+        "tool-debug-btn should no longer be static markup in index.html -- "
+        "it is now emitted by applicantNav.js (nav single-source pass)"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -189,65 +211,53 @@ def test_settings_vault_and_livesession_cards_are_first_person():
 
 
 def test_rail_activity_tooltip_is_first_person():
-    html = _read()
-    tag = _tag_with_id(html, "rail-activity")
-    assert _attr(tag, "title") == "Activity — a live feed of what I'm doing"
-    assert _attr(tag, "aria-label") == "Activity — a live feed of what I'm doing"
-    assert "what your assistant is doing" not in html
+    nav = _read_nav()
+    # renderNav emits this `title` to both the rail button (title + aria-label)
+    # and the sidebar item title from one source, so a single check covers both.
+    assert "Activity — a live feed of what I'm doing" in nav
+    assert "what your assistant is doing" not in nav
+    assert "what your assistant is doing" not in _read()
 
 
 def test_rail_results_tooltip_drops_funnel_jargon():
-    html = _read()
-    tag = _tag_with_id(html, "rail-results")
-    assert _attr(tag, "title") == "Results — how your applications are doing and what's working"
-    assert _attr(tag, "aria-label") == "Results — how your applications are doing and what's working"
-    assert "your funnel and what converts for you" not in html
+    nav = _read_nav()
+    assert "Results — how your applications are doing and what's working" in nav
+    assert "your funnel and what converts for you" not in nav
+    assert "your funnel and what converts for you" not in _read()
 
 
 def test_job_assistant_tooltip_is_plain_language_in_both_copies():
-    html = _read()
-    rail_tag = _tag_with_id(html, "rail-assistant")
-    assert _attr(rail_tag, "title") == "Job Assistant — ask about your applications and what needs your attention"
-    assert _attr(rail_tag, "aria-label") == "Job Assistant — ask about your applications and what needs your attention"
-
-    list_tag = _tag_with_id(html, "tool-assistant-btn")
-    assert _attr(list_tag, "title") == "Job Assistant — ask about your applications and what needs your attention"
-
-    assert "surfaces what needs you" not in html
+    nav = _read_nav()
+    # one NAV entry feeds both the rail button and the sidebar list-item.
+    assert "Job Assistant — ask about your applications and what needs your attention" in nav
+    assert "surfaces what needs you" not in nav
+    assert "surfaces what needs you" not in _read()
 
 
 def test_rail_profile_tooltip_is_first_person():
-    html = _read()
-    tag = _tag_with_id(html, "rail-memory")
-    assert _attr(tag, "title") == "Profile — the details I use to apply for you"
-    assert _attr(tag, "aria-label") == "Profile — the details I use to apply for you"
-    assert "what the assistant knows about you" not in html
+    nav = _read_nav()
+    assert "Profile — the details I use to apply for you" in nav
+    assert "what the assistant knows about you" not in nav
+    assert "what the assistant knows about you" not in _read()
 
 
 def test_daily_updates_tooltip_is_first_person_in_both_copies():
-    html = _read()
-    rail_tag = _tag_with_id(html, "rail-email")
-    assert _attr(rail_tag, "title") == "Daily updates — the roles I flagged for you today"
-    assert _attr(rail_tag, "aria-label") == "Daily updates — the roles I flagged for you today"
-
-    list_tag = _tag_with_id(html, "tool-email-btn")
-    assert _attr(list_tag, "title") == "Daily updates — the roles I flagged for you today"
-
-    assert "today's roles your assistant flagged" not in html
-    assert "today’s roles your assistant flagged" not in html
+    nav = _read_nav()
+    assert "Daily updates — the roles I flagged for you today" in nav
+    for bad in ("today's roles your assistant flagged", "today’s roles your assistant flagged"):
+        assert bad not in nav
+        assert bad not in _read()
 
 
 def test_application_gallery_tooltip_is_first_person_in_both_copies():
-    html = _read()
-    rail_tag = _tag_with_id(html, "rail-applicant-gallery")
-    assert _attr(rail_tag, "title") == "Application Gallery — screenshots and materials from my work"
-    assert _attr(rail_tag, "aria-label") == "Application Gallery — screenshots and materials from my work"
-
-    list_tag = _tag_with_id(html, "tool-applicant-gallery-btn")
-    assert _attr(list_tag, "title") == "Application Gallery — screenshots and materials from my work"
-
-    assert "your assistant's screenshots and generated materials" not in html
-    assert "your assistant’s screenshots and generated materials" not in html
+    nav = _read_nav()
+    assert "Application Gallery — screenshots and materials from my work" in nav
+    for bad in (
+        "your assistant's screenshots and generated materials",
+        "your assistant’s screenshots and generated materials",
+    ):
+        assert bad not in nav
+        assert bad not in _read()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -277,15 +287,13 @@ def test_suggested_details_card_is_first_person():
 
 
 def test_pending_tooltip_reads_across_all_job_searches_in_both_copies():
-    html = _read()
-    rail_tag = _tag_with_id(html, "rail-portal")
-    assert _attr(rail_tag, "title") == "Pending — everything that needs your attention, across all your job searches"
-    assert _attr(rail_tag, "aria-label") == "Pending — everything that needs your attention, across all your job searches"
-
-    list_tag = _tag_with_id(html, "tool-portal-btn")
-    assert _attr(list_tag, "title") == "Pending — everything that needs your attention, across all your job searches"
-
-    assert "everything across your job search that needs your attention" not in html
+    nav = _read_nav()
+    assert (
+        "Pending — everything that needs your attention, across all your job searches"
+        in nav
+    )
+    assert "everything across your job search that needs your attention" not in nav
+    assert "everything across your job search that needs your attention" not in _read()
 
 
 # ── Denylist hygiene (per the task's standing instruction) ──────────────────

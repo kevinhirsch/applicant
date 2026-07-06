@@ -124,6 +124,15 @@ def test_status_error_degrades_without_raising():
 def test_nav_ids_and_requirement_exposed():
     out = _features(_router(status=FULLY_CONFIGURED, dormant=ALL_LIVE))
     docs = out["sections"]["documents"]
-    assert "rail-documents" in docs["nav_ids"]
+    # nav_ids track the launchers renderNav (applicantNav.js) actually emits —
+    # the rail door for Documents is `rail-archive` (Pass 2a nav reconcile).
+    assert "rail-archive" in docs["nav_ids"]
+    assert "tool-library-btn" in docs["nav_ids"]
+    assert "rail-documents" not in docs["nav_ids"]
     assert docs["requirement"] == "onboarding_complete"
     assert docs["lane"] == "A"
+    # Results' reconciled sidebar twin is gated alongside its rail button so the
+    # sidebar door can't be clicked while the section is locked.
+    results = out["sections"]["results"]
+    assert "rail-results" in results["nav_ids"]
+    assert "tool-results-btn" in results["nav_ids"]

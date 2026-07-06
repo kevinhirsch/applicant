@@ -40,10 +40,18 @@ import re
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent  # workspace/
 _INDEX_HTML = _REPO / "static" / "index.html"
+# Pass 2a: the Tools sidebar list-items (incl. tool-trust-btn) now render from
+# applicantNav.js's single-source NAV array instead of being hand-authored
+# divs in index.html.
+_NAV_JS = _REPO / "static" / "js" / "applicantNav.js"
 
 
 def _read() -> str:
     return _INDEX_HTML.read_text(encoding="utf-8")
+
+
+def _read_nav() -> str:
+    return _NAV_JS.read_text(encoding="utf-8")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -57,10 +65,16 @@ def test_trust_center_module_script_is_loaded():
 
 
 def test_trust_center_launcher_element_exists_with_the_expected_id():
-    src = _read()
-    # applicantTrust.js's own _wireLaunchers() does
-    # `document.getElementById('tool-trust-btn')` -- this exact id must exist.
-    assert re.search(r'id="tool-trust-btn"', src)
+    """Pass 2a: tool-trust-btn is no longer static markup in index.html -- it
+    is emitted by applicantNav.js's `_sidebarItem()` from the NAV array's
+    utilities group into the `#applicant-sidebar-nav` mount point. Assert it
+    for real against the NAV array, the same id applicantTrust.js's own
+    `_wireLaunchers()` will find via `document.getElementById('tool-trust-btn')`
+    once renderNav has run."""
+    nav_src = _read_nav()
+    assert re.search(r"\bside:\s*'tool-trust-btn'", nav_src), (
+        "expected a NAV item with side: 'tool-trust-btn' in applicantNav.js"
+    )
 
 
 def test_trust_center_launcher_is_a_sibling_list_item_in_the_tools_section():
@@ -72,16 +86,33 @@ def test_trust_center_launcher_is_a_sibling_list_item_in_the_tools_section():
     )
     assert tools_section, "expected to find the Tools section list-items block"
     body = tools_section.group(0)
-    assert 'id="tool-trust-btn"' in body
+    # tool-trust-btn itself is rendered by applicantNav.js (Pass 2a), not
+    # static here -- but the mount point it renders into must still be a
+    # descendant of the Tools section (the structural anchor that makes it a
+    # sibling of the other launchers at runtime: the mount is
+    # `display:contents`, so the emitted list-items sit alongside e.g.
+    # #tool-library-btn in the real DOM).
+    assert 'id="applicant-sidebar-nav"' in body, (
+        "expected the #applicant-sidebar-nav mount point inside the Tools section"
+    )
+
     # Matches the sibling launcher markup convention (e.g. #tool-assistant-btn,
-    # #tool-portal-btn): a `list-item` div with an icon + a `.grow` label span.
+    # #tool-portal-btn): a `list-item` div with an icon + a `.grow` label span
+    # -- now emitted by the shared `_sidebarItem()` template from the NAV
+    # array's tool-trust-btn entry.
+    nav_src = _read_nav()
     launcher = re.search(
-        r'<div class="list-item"[^>]*id="tool-trust-btn"[^>]*>.*?<span class="grow">([^<]+)</span>',
-        body,
+        r"\{\s*rail:\s*null,\s*side:\s*'tool-trust-btn'[^}]*\}",
+        nav_src,
         re.S,
     )
-    assert launcher, "expected a .list-item div for #tool-trust-btn with a .grow label"
-    assert launcher.group(1).strip() == "Trust Center"
+    assert launcher, "expected the tool-trust-btn NAV entry (utilities group)"
+    label_m = re.search(r"label:\s*'([^']+)'", launcher.group(0))
+    assert label_m, "expected a label field on the tool-trust-btn NAV entry"
+    assert label_m.group(1) == "Trust", (
+        f"expected the Trust launcher's visible label to read 'Trust' "
+        f"(renamed from 'Trust Center'), got {label_m.group(1)!r}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════

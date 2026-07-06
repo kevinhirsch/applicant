@@ -3786,7 +3786,7 @@ async function _cmdTourBrain(args, ctx) {
       text: '<b>Tidy</b> runs your model to clear out irrelevant memories and duplicates. It also triggers automatically from Tasks.',
       before: () => _tab('browse') },
     { sel: '.memory-tab-panel[data-memory-panel="skills"]',
-      text: '<b>Skills</b> are basically your AI’s memory for improving its abilities.',
+      text: '<b>Playbooks</b> are reusable procedures your AI writes for itself to improve its abilities — separate from your profile skills.',
       before: () => _tab('skills') },
     { sel: '.memory-tab-panel[data-memory-panel="settings"]',
       text: '<b>Settings</b> lets you turn off auto extraction and set how strong skills need to be before they are tagged.',

@@ -39,10 +39,52 @@ import re
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 INDEX_HTML = REPO_ROOT / "workspace" / "static" / "index.html"
+# Pass 2a: the icon rail's job-search destinations (Today, Tracker, Results,
+# Activity, ... Calendar, Update, Settings) now render from applicantNav.js's
+# NAV array instead of being hand-authored `<button>` tags in index.html. The
+# assertions below that used to read those ids out of index.html now read the
+# single source of truth instead — see `test_applicant_nav_single_source.py`
+# for the sibling suite that pins the NAV array's shape itself.
+NAV_JS = REPO_ROOT / "workspace" / "static" / "js" / "applicantNav.js"
 
 
 def _read() -> str:
     return INDEX_HTML.read_text(encoding="utf-8")
+
+
+def _read_nav() -> str:
+    return NAV_JS.read_text(encoding="utf-8")
+
+
+def _nav_rail_item(nav_src: str, rail_id: str) -> str:
+    """Return the raw `{ ... }` NAV array item object literal whose `rail`
+    field is `rail_id`. Fails loudly if renderNav no longer emits it."""
+    m = re.search(rf"\{{\s*rail:\s*'{re.escape(rail_id)}'[^}}]*\}}", nav_src, re.S)
+    assert m, f"expected a NAV item with rail: '{rail_id}' in applicantNav.js"
+    return m.group(0)
+
+
+def _nav_field(item_src: str, field: str) -> str:
+    m = re.search(rf"\b{field}:\s*'([^']*)'", item_src)
+    assert m, f"expected a {field!r} field on NAV item: {item_src!r}"
+    return m.group(1)
+
+
+def _railbutton_template() -> str:
+    """The body of applicantNav.js's `_railButton(item)` function -- the ONE
+    render path every NAV rail button goes through, so checking it once
+    proves an invariant (e.g. "aria-label always equals title") for every id
+    `_nav_rail_item` resolves, rather than re-deriving what the template
+    already guarantees by construction."""
+    m = re.search(r"function _railButton\(item\)\s*\{(.*?)\n\}", _read_nav(), re.S)
+    assert m, "expected a _railButton(item) function in applicantNav.js"
+    return m.group(1)
+
+
+def _sidebaritem_template() -> str:
+    m = re.search(r"function _sidebarItem\(item\)\s*\{(.*?)\n\}", _read_nav(), re.S)
+    assert m, "expected a _sidebarItem(item) function in applicantNav.js"
+    return m.group(1)
 
 
 def _button_tag(html: str, element_id: str) -> str:
@@ -61,29 +103,38 @@ def _attr(tag: str, name: str) -> str | None:
 
 # ── Icon-only rail buttons: aria-label matches the existing title verbatim ──
 
-RAIL_BUTTONS_MATCH_TITLE = [
+# Still hand-authored `<button>` tags in index.html -- the "native scaffolding"
+# rail buttons Pass 2a's applicantNav.js NAV array does not touch.
+NATIVE_RAIL_BUTTONS_MATCH_TITLE = [
     "rail-search-btn",
     "rail-new-session",
     "rail-delete-session",
     "rail-chats",
     "rail-documents",
-    "rail-portal",
     "rail-research",
-    "rail-calendar",
     "rail-theme",
     "rail-compare",
     "rail-cookbook",
     "rail-gallery",
     "rail-notes",
     "rail-tasks",
+]
+
+# Pass 2a: these rail buttons are now emitted by applicantNav.js's NAV array
+# (renderNav's `_railButton()`) instead of being static markup in index.html.
+NAV_RAIL_BUTTONS_MATCH_TITLE = [
+    "rail-portal",
+    "rail-calendar",
     "rail-update",
     "rail-settings",
 ]
 
+RAIL_BUTTONS_MATCH_TITLE = NATIVE_RAIL_BUTTONS_MATCH_TITLE + NAV_RAIL_BUTTONS_MATCH_TITLE
+
 
 def test_icon_rail_buttons_have_aria_label_matching_title():
     html = _read()
-    for element_id in RAIL_BUTTONS_MATCH_TITLE:
+    for element_id in NATIVE_RAIL_BUTTONS_MATCH_TITLE:
         tag = _button_tag(html, element_id)
         title = _attr(tag, "title")
         label = _attr(tag, "aria-label")
@@ -94,15 +145,38 @@ def test_icon_rail_buttons_have_aria_label_matching_title():
             f"title {title!r} per the established phrasing convention"
         )
 
+    # Pass 2a: applicantNav.js's `_railButton()` emits `title="${item.title}"`
+    # and `aria-label="${item.title}"` from the SAME field -- read that
+    # template for real (not just assumed) so a future edit that makes them
+    # diverge (e.g. aria-label sourced from `item.label` instead) still fails
+    # this test, then confirm each tracked id is actually a real NAV rail item.
+    template = _railbutton_template()
+    assert 'title="${item.title}"' in template
+    assert 'aria-label="${item.title}"' in template
+    nav_src = _read_nav()
+    for element_id in NAV_RAIL_BUTTONS_MATCH_TITLE:
+        item = _nav_rail_item(nav_src, element_id)
+        title = _nav_field(item, "title")
+        assert title, f"expected #{element_id}'s NAV item to carry a title (test setup sanity)"
+
 
 def test_icon_rail_buttons_all_carry_the_icon_rail_btn_class():
     """Sanity check that the ids above are actually the icon-only rail
     buttons this item targets (not some unrelated element that happens to
     share an id substring)."""
     html = _read()
-    for element_id in RAIL_BUTTONS_MATCH_TITLE:
+    for element_id in NATIVE_RAIL_BUTTONS_MATCH_TITLE:
         tag = _button_tag(html, element_id)
         assert "icon-rail-btn" in tag, f"expected #{element_id} to carry class icon-rail-btn"
+
+    # Pass 2a: the NAV-sourced ids all render through the same `_railButton()`
+    # template, which hard-codes class="icon-rail-btn" -- verifying the
+    # template once covers every id it renders; then confirm each tracked id
+    # really is a NAV rail item (not a stale/renamed one).
+    assert 'class="icon-rail-btn"' in _railbutton_template()
+    nav_src = _read_nav()
+    for element_id in NAV_RAIL_BUTTONS_MATCH_TITLE:
+        _nav_rail_item(nav_src, element_id)  # raises if not a real NAV rail item
 
 
 # ── Sidebar/rail toggle buttons ─────────────────────────────────────────────
@@ -203,9 +277,21 @@ def test_every_icon_rail_btn_occurrence_has_an_aria_label():
         tag = m.group(0)
         count += 1
         assert "aria-label=" in tag, f"expected every .icon-rail-btn to carry an aria-label, got: {tag}"
-    assert count >= len(RAIL_BUTTONS_MATCH_TITLE), (
-        "sanity: expected to find at least as many icon-rail-btn occurrences as "
-        "the ids this test explicitly tracks"
+    assert count >= len(NATIVE_RAIL_BUTTONS_MATCH_TITLE), (
+        "sanity: expected to find at least as many static icon-rail-btn "
+        "occurrences in index.html as the native ids this test explicitly tracks"
+    )
+
+    # Pass 2a: the remaining rail buttons are emitted by applicantNav.js at
+    # runtime, all through the same `_railButton()` template -- verify it
+    # unconditionally emits an aria-label, and that at least as many NAV items
+    # carry a `rail` id as this test explicitly tracks (so the invariant still
+    # bites if renderNav's rail coverage silently shrinks).
+    assert "aria-label=" in _railbutton_template()
+    nav_rail_count = len(re.findall(r"\brail:\s*'[^']+'", _read_nav()))
+    assert nav_rail_count >= len(NAV_RAIL_BUTTONS_MATCH_TITLE), (
+        "sanity: expected at least as many NAV items with a `rail` id as the "
+        "ids this test explicitly tracks"
     )
 
 
@@ -214,12 +300,25 @@ def test_every_icon_rail_btn_occurrence_has_an_aria_label():
 def test_tool_list_items_have_visible_text_and_were_not_touched():
     """`#tool-memory-btn` etc. are `<div class="list-item">`, not buttons, and
     already carry a visible `<span class="grow">Label</span>` text node — so
-    they were correctly left alone by this batch. Guard against a regression
-    where someone assumes these need aria-label too and starts hand-rolling
-    one that drifts from the visible text."""
-    html = _read()
-    m = re.search(r'<div class="list-item" id="tool-memory-btn">.*?</div>', html, re.DOTALL)
-    assert m, "expected #tool-memory-btn markup"
-    block = m.group(0)
-    assert '<span class="grow">Brain</span>' in block
-    assert "aria-label" not in block
+    they need no aria-label. Guard against a regression where someone assumes
+    these need aria-label too and starts hand-rolling one that drifts from
+    the visible text.
+
+    Pass 2a moved this markup out of index.html into applicantNav.js's
+    `_sidebarItem()` template (memory's visible label was also renamed
+    "Brain" -> "Profile" along the way) -- verify the invariant against its
+    new home instead of assuming a static div that no longer exists."""
+    nav_src = _read_nav()
+    item = _nav_rail_item(nav_src, "rail-memory")
+    assert _nav_field(item, "side") == "tool-memory-btn"
+    assert _nav_field(item, "label") == "Profile", (
+        "expected the Profile launcher's visible label to read 'Profile' "
+        "(renamed from 'Brain')"
+    )
+
+    # `_sidebarItem()` is the ONE render path for every NAV `side` entry --
+    # verify it emits the visible `.grow` label and never an aria-label
+    # (list-items aren't buttons; the visible text is their accessible name).
+    template = _sidebaritem_template()
+    assert '<span class="grow">${item.label}</span>' in template
+    assert "aria-label" not in template

@@ -1068,12 +1068,36 @@ function initializeEventListeners() {
     userBarSettings.addEventListener('click', () => settingsModule.open());
   }
   if (userBarProfile) {
-    // Clicking the user (avatar + name) jumps straight to the Account tab
-    // instead of landing on whatever was last selected.
-    userBarProfile.addEventListener('click', () => settingsModule.open('account'));
+    // S1-3: the avatar opens the user's PROFILE (the details Applicant uses to
+    // apply for them), distinct from the gear beside it which opens Settings —
+    // the two used to be duplicates (both opened Settings). Delegate to the same
+    // launcher the nav "Profile" item uses (tool-memory-btn / rail-memory ->
+    // applicantMind) so the feature-gate guard still applies while Profile is
+    // locked; fall back to opening it directly, then to Settings→Account.
+    userBarProfile.addEventListener('click', () => {
+      // Delegate to the nav "Profile" launcher (its module opens Profile and the
+      // feature-gate guard still applies); fall back to Settings→Account if that
+      // nav item hasn't rendered yet. Deliberately NOT calling the surface's
+      // open() by name — surfaces self-boot / are opened by their own launchers.
+      const navProfile = el('tool-memory-btn') || el('rail-memory');
+      if (navProfile) { navProfile.click(); return; }
+      settingsModule.open('account');
+    });
   }
   if (userBarAdmin) {
     userBarAdmin.addEventListener('click', () => adminModule.open());
+  }
+
+  // CC-S3-1: the Settings→Appearance "Open theme picker" button gives the
+  // theme/color chooser a visible door (its sidebar + rail launchers are
+  // display:none). It opens the same #theme-modal the hidden #tool-theme-btn
+  // does (wired by modalManager), so there's one theme code path, not a new one.
+  const appearanceThemeBtn = el('appearance-open-theme-btn');
+  if (appearanceThemeBtn) {
+    appearanceThemeBtn.addEventListener('click', () => {
+      const t = el('tool-theme-btn');
+      if (t) t.click();
+    });
   }
 
   // Fetch auth status — populate user bar and show admin button if admin
@@ -1396,7 +1420,17 @@ function initializeEventListeners() {
                 ev.stopPropagation();
                 ev.preventDefault();
                 try { uiModule.showToast(reason); } catch (_) {}
-                if (!disabledInBuild) {
+                // CC-S2-6 / ON-S3-19: a locked-feature click routes into the setup
+                // wizard ONLY while it hasn't been dismissed. Once the user has
+                // closed the blocking wizard for now, clicking a still-locked
+                // feature just explains why (the toast above) instead of
+                // re-mounting the overlay and stealing the click. Fails OPEN if the
+                // onboarding module hasn't exposed the check yet (prior behaviour).
+                const _onbDismissed = (() => {
+                  try { return typeof window.isApplicantOnboardingDismissed === 'function' && window.isApplicantOnboardingDismissed(); }
+                  catch (_) { return false; }
+                })();
+                if (!disabledInBuild && !_onbDismissed) {
                   try { if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup(); } catch (_) {}
                 }
               };
@@ -1408,6 +1442,12 @@ function initializeEventListeners() {
     })
     .catch(() => {});
   };
+  // Nav: render BOTH nav surfaces from the single applicantNav.js source before
+  // feature-gating runs — gating binds to the exact ids renderNav emits, so a
+  // missing id would fail OPEN. applicantNav also self-boots from its own
+  // <script> tag (which loads before app.js), so this is an idempotent safety
+  // net that additionally documents the required ordering (render → gate).
+  try { if (window.applicantNavModule) window.applicantNavModule.renderNav(); } catch (_) { /* non-fatal */ }
   window._applicantFeaturesReady = window.refreshApplicantFeatures();
 
   // CRIT-portal: load the standalone Pending-Actions Portal. It self-boots (wires
@@ -1477,6 +1517,13 @@ function initializeEventListeners() {
         // #email= deep link, etc.) exactly as the page loaded with it.
         try { await portal.openApplicantPortal({ skipHashUpdate: true }); } catch { /* non-fatal */ }
       }
+      // One-window-at-a-time (Pass 2a): seed the active-surface tracker so
+      // navigating to another surface closes this home base instead of stacking
+      // on top of it. The 2a landing opens the Pending portal (labelled "Today"
+      // in the nav, still registered under the 'portal' token — applicantToday
+      // already owns the 'today' route); Pass 2b promotes Today to a real tab
+      // host and seeds that instead.
+      if (router && typeof router.setActive === 'function') router.setActive('portal');
       // Idempotent — also covers the "no hash at all" / "#portal" cases so
       // hashchange listening (back/forward, later deep links) is always live.
       if (router) router.initHashRouting();
@@ -2387,7 +2434,12 @@ function initializeEventListeners() {
     'sidebar-new-chat':    '#sidebar-new-chat-btn',
     'sidebar-search':      '#sidebar-search-btn',
     'sessions-section':    '#sessions-section',
-    'email-section':       '#email-section',
+    // S1-4: `email-section` is DELIBERATELY absent (like the vendored tools
+    // below). The native inbox section duplicates the "Daily updates" digest
+    // door, so it carries an inline `style="display:none"` in index.html and its
+    // Appearance toggle row was removed — keeping it out of this map lets that
+    // inline hide hold unconditionally (applyUIVis force-sets display for every
+    // mapped key, which would otherwise re-reveal it).
     'models-section':      '#models-section',
     'tools-section':       '#tools-section',
     // Per-tool visibility — fine-grained control over which entries show
@@ -3498,6 +3550,14 @@ function startApplicantApp() {
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
     'rail-compare':   'tool-compare-btn',
+    // S1-6: collapsed-rail twins for the secondary utilities applicantNav.js now
+    // emits (Compare, Run log, Trust) so a collapsed user can reach them — they
+    // delegate to their sidebar list-items exactly like the other rail icons.
+    // The Applicant Compare twin is #rail-applicant-compare (the vendored
+    // #rail-compare above stays hidden — distinct id, no collision).
+    'rail-applicant-compare': 'tool-compare-btn',
+    'rail-debug':     'tool-debug-btn',
+    'rail-trust':     'tool-trust-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-archive':   'tool-library-btn',

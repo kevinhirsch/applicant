@@ -101,7 +101,10 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "documents",
         "lane": "A",
         "title": "Documents / resume library",
-        "nav_ids": ["rail-documents", "tool-library-btn", "overflow-doc-btn"],
+        # nav_ids track the actual launchers renderNav (applicantNav.js) emits:
+        # the rail button is `rail-archive` (rail-documents is a native
+        # "docs-attached" chat indicator, not this section's launcher).
+        "nav_ids": ["rail-archive", "tool-library-btn", "overflow-doc-btn"],
         "dormant_keys": ["redline_surface"],
         "requires": "onboarding_complete",
         "present_but_disabled": False,
@@ -157,7 +160,11 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "debug",
         "lane": None,
         "title": "Activity / debug",
-        "nav_ids": ["tool-debug-btn"],
+        # S1-6: `rail-debug` is the collapsed-rail twin applicantNav.js now emits
+        # for Run log (railId on the utilities group). Gate it alongside the
+        # sidebar `tool-debug-btn` so the rail door can't be clicked while the
+        # section is locked (a nav_id that resolves to nothing fails OPEN).
+        "nav_ids": ["tool-debug-btn", "rail-debug"],
         # #199: gate the launcher off the live operator surfaces it exposes — the
         # read-only observability (debug_surface) AND the tool-toggle registry whose
         # controls live inside this same Activity/debug panel. Both report ``live`` in
@@ -257,7 +264,11 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "compare",
         "lane": None,
         "title": "Compare",
-        "nav_ids": ["rail-compare", "tool-compare-btn"],
+        # rail-compare = the vendored (hidden) compare rail button; tool-compare-btn
+        # = the sidebar list-item; rail-applicant-compare = the collapsed-rail twin
+        # applicantNav.js emits (S1-6). All three are gated together so neither
+        # visible door can be clicked while Compare is locked.
+        "nav_ids": ["rail-compare", "tool-compare-btn", "rail-applicant-compare"],
         "dormant_keys": [],
         "requires": "llm_configured",
         "present_but_disabled": False,
@@ -268,12 +279,14 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
     # Reachable via the /api/applicant/results proxy over the engine's learning
     # summary, which is gated behind the engine LLM/setup gate — so this section
     # lights up once a model is connected, like the other engine-backed surfaces.
-    # Its own rail entry (#rail-results), opened by applicantResults.js.
+    # Its own rail entry (#rail-results) plus the reconciled sidebar twin
+    # (#tool-results-btn) renderNav emits — both gated so the sidebar door
+    # can't be clicked while the section is locked (a missing id fails OPEN).
     {
         "key": "results",
         "lane": None,
         "title": "Results — your funnel & what converts",
-        "nav_ids": ["rail-results"],
+        "nav_ids": ["rail-results", "tool-results-btn"],
         "dormant_keys": [],
         "requires": "llm_configured",
         "present_but_disabled": False,
