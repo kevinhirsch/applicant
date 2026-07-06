@@ -58,6 +58,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -71,6 +72,16 @@ from src.auth_helpers import get_current_user, require_engine_owner
 
 logger = logging.getLogger(__name__)
 
+
+#: A conversational turn runs the engine's FULL agent loop server-side —
+#: including one or more remote-LLM round trips — so with a cloud model it
+#: legitimately outlives the engine client's conservative 30s default read
+#: timeout (built for in-network CRUD). Give the ``POST /message`` proxy its
+#: own read budget; every other call in this router keeps the tight default.
+#: ``applicantChat.js``'s browser-side ``MESSAGE_TIMEOUT_MS`` must stay above
+#: this value (contract-tested) or the composer aborts a turn the backend is
+#: still legitimately waiting on.
+_CHAT_TURN_TIMEOUT = httpx.Timeout(connect=3.0, read=90.0, write=10.0, pool=3.0)
 
 #: Sentinel ``endpoint_url`` that flags the per-user Job Assistant workspace
 #: session (chat-unification pass). The front-end identifies the session by
@@ -505,7 +516,7 @@ def setup_applicant_chat_routes(session_manager=None) -> APIRouter:
             if session_manager is None:
                 raise HTTPException(status_code=404, detail="Chat session not found")
             _require_engine_chat_session(session_manager, sid, owner)
-        async with ApplicantEngineClient() as engine:
+        async with ApplicantEngineClient(timeout=_CHAT_TURN_TIMEOUT) as engine:
             try:
                 result = await engine.chat(
                     {"campaign_id": body.campaign_id, "message": body.message}

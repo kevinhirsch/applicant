@@ -136,6 +136,9 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
+    "/api/applicant/chat/message",  # unified chat turn — the engine runs its full agent
+                                    # loop (incl. remote-LLM round trips); bounded by the
+                                    # proxy's own 90s engine-client read budget
     "/api/applicant/research",  # manual deep-research trigger (engine-backed; can be multi-minute)
     "/api/applicant/internal/research",  # engine deep-research callback (multi-minute; must not be killed)
     "/api/model/download",  # tmux setup may run pip installs

@@ -1280,6 +1280,36 @@ function _animateSessionRowsRemoving(ids, selector) {
   return new Promise(resolve => setTimeout(resolve, 520));
 }
 
+/** ONE-chat unification: resolve the engine-backed Applicant assistant's
+ *  session so a fresh landing (first load / zero sessions) opens THE chat
+ *  instead of auto-creating a bare direct-LLM session. Returns the session id,
+ *  or null when this account doesn't own the engine chat (the engine is
+ *  single-tenant — a second workspace account gets the native behavior) or the
+ *  assistant is unavailable. Refreshes the cached list when the session was
+ *  just created server-side so selectSession() finds its meta. */
+async function _resolveEngineChatSession() {
+  try {
+    const res = await fetch(`${API_BASE}/api/applicant/chat/session`);
+    if (!res.ok) return null; // 401/403 non-owner, 5xx unavailable → native fallback
+    const data = await res.json();
+    const sid = data && data.session_id;
+    if (!sid) return null;
+    if (!sessions.some(s => s.id === sid)) {
+      try {
+        const r2 = await fetch(`${API_BASE}/api/sessions`);
+        const fresh = await r2.json();
+        if (Array.isArray(fresh)) {
+          sessions = fresh;
+          renderSessionList();
+        }
+      } catch (_) { /* list refresh is best-effort */ }
+    }
+    return sid;
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function loadSessions() {
   try {
     // Use prefetched data from login page if available (first load only)
@@ -1360,6 +1390,13 @@ export async function loadSessions() {
     const _isFirstLoad = !sessionStorage.getItem('ody-session-active');
     if (_isFirstLoad) {
       sessionStorage.setItem('ody-session-active', '1');
+      if (!targetId && !hasPendingChat) {
+        // ONE chat: land the first visit in the engine-backed Applicant
+        // assistant. Only when that surface isn't available to this account
+        // (non-owner / engine chat down) fall back to the historical
+        // default-model direct chat.
+        targetId = await _resolveEngineChatSession();
+      }
       if (!targetId) {
         try {
           const dcRes = await fetch(`${API_BASE}/api/default-chat`);
@@ -1408,13 +1445,21 @@ export async function loadSessions() {
       // Only auto-create if there are truly zero sessions (not just unselected)
       if (activeSessions.length === 0 && !_autoCreateInProgress) {
         _autoCreateInProgress = true;
-        try {
-          const dcRes = await fetch(`${API_BASE}/api/default-chat`);
-          const dc = await dcRes.json();
-          if (dc.endpoint_url && dc.model) {
-            await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
-          }
-        } catch (_) { /* no default model — that's fine, user can /setup */ }
+        // ONE chat: a blank account opens the engine-backed Applicant
+        // assistant, not a bare direct-LLM session. Native fallback only
+        // when this account doesn't get the assistant (see the helper).
+        const engineSid = await _resolveEngineChatSession();
+        if (engineSid) {
+          await selectSession(engineSid, { keepSidebar: true });
+        } else {
+          try {
+            const dcRes = await fetch(`${API_BASE}/api/default-chat`);
+            const dc = await dcRes.json();
+            if (dc.endpoint_url && dc.model) {
+              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+            }
+          } catch (_) { /* no default model — that's fine, user can /setup */ }
+        }
         _autoCreateInProgress = false;
       }
     }
@@ -1431,6 +1476,11 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     return; // deactivate does a page reload
   }
   try {
+    // Navigating to a real session invalidates any not-yet-materialized
+    // "new chat with model X" — without this, the stale pending state makes
+    // later loadSessions() passes skip re-selection (the hasPendingChat
+    // guard) and can shadow the conversation the user is actually in.
+    _pendingChat = null;
     const navToken = ++_sessionNavToken;
     const prevSessionId = currentSessionId;
     // Re-archive peeked session when navigating away

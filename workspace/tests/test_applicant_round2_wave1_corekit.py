@@ -144,10 +144,21 @@ def test_chat_message_send_overrides_default_timeout_above_backend_engine_timeou
     assert dm, "expected to find the backend engine client's read timeout"
     backend_read_timeout_ms = float(dm.group(1)) * 1000
 
+    # The unified chat's /message proxy carries its own, longer read budget
+    # (a turn runs the engine's full agent loop incl. remote-LLM round trips)
+    # — the browser must outlast whichever backend wait actually applies.
+    routes_src = _read(
+        ENGINE_CLIENT_PY.parent.parent / "routes" / "applicant_chat_routes.py"
+    )
+    tm = re.search(r"_CHAT_TURN_TIMEOUT\s*=\s*httpx\.Timeout\([^)]*read=([\d.]+)", routes_src)
+    assert tm, "expected the /message proxy's dedicated _CHAT_TURN_TIMEOUT read budget"
+    chat_turn_read_ms = float(tm.group(1)) * 1000
+    backend_wait_ms = max(backend_read_timeout_ms, chat_turn_read_ms)
+
     assert message_timeout_ms > 15000, "must override the shared 15s default"
-    assert message_timeout_ms > backend_read_timeout_ms, (
+    assert message_timeout_ms > backend_wait_ms, (
         f"MESSAGE_TIMEOUT_MS ({message_timeout_ms}ms) must exceed the backend's own "
-        f"engine-client read timeout ({backend_read_timeout_ms}ms), or the browser can "
+        f"engine-side wait ({backend_wait_ms}ms), or the browser can "
         "still abort while the backend is legitimately still waiting on the engine"
     )
 

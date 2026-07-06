@@ -255,6 +255,21 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            # The Job Assistant's engine-backed session (chat unification) has
+            # no swappable LLM endpoint — its replies come from the Applicant
+            # engine, flagged by the 'applicant://engine' sentinel in
+            # endpoint_url (see routes/applicant_chat_routes.ENGINE_SESSION_URL).
+            # Refuse ANY model/endpoint rewrite server-side: the model picker's
+            # auto-heal, the model-cycling shortcut, presets, and group-chat
+            # conversion would otherwise destroy the sentinel and silently
+            # reconnect the assistant's chat to a raw LLM endpoint.
+            if getattr(session, "endpoint_url", "") == "applicant://engine":
+                raise HTTPException(
+                    400,
+                    "This chat is your Applicant assistant — it doesn't use a "
+                    "selectable model. Start a chat from the model picker for "
+                    "direct model conversations.",
+                )
             if endpoint_id:
                 from core.database import ModelEndpoint
                 _db = SessionLocal()

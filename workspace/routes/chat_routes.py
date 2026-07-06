@@ -36,6 +36,7 @@ from routes.chat_helpers import (
     _enforce_chat_privileges,
 )
 from src.action_intents import message_needs_tools as _message_needs_tools
+from src.reasoning_strip import ReasoningStreamFilter, strip_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,10 @@ def setup_chat_routes(
             max_tokens=ctx.preset.max_tokens,
             prompt_type=preset_id,
         )
+        # Reasoning hygiene at the emit seam: nothing the user (or the saved
+        # history) sees may carry the model's chain-of-thought — same rule the
+        # engine enforces at its own adapter seam.
+        reply = strip_reasoning(reply or "")
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
 
@@ -679,6 +684,13 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                # Reasoning hygiene at the emit seam (mirrors the engine's own
+                # adapter-seam strip): every user-visible content delta passes
+                # through the stream filter, deltas flagged ``thinking`` (the
+                # separate reasoning_content channel) are dropped outright, and
+                # ``full_response`` — what gets persisted / partial-saved /
+                # reported by /stream_status — only ever holds the clean text.
+                _rfilter = ReasoningStreamFilter()
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -699,9 +711,16 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
+                                    if data.get("thinking"):
+                                        # Reasoning arriving on its own channel
+                                        # (reasoning_content) is never user-visible
+                                        # content — drop it at the emit seam.
+                                        continue
+                                    _safe = _rfilter.feed(data["delta"])
+                                    full_response = _rfilter.visible_text
                                     _stream_set(session, partial=full_response)
-                                    yield chunk
+                                    if _safe:
+                                        yield f'data: {json.dumps({"delta": _safe})}\n\n'
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
                                     last_metrics["model"] = sess.model
@@ -718,6 +737,19 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
+                            # Settle the reasoning filter: emit the clean tail
+                            # (text it was still withholding), and if the final
+                            # clean text diverged from what streamed live (an
+                            # untagged reasoning head only classifiable at end
+                            # of stream), tell the client to replace the
+                            # rendered text with the clean reply.
+                            _tail = _rfilter.flush()
+                            if _tail:
+                                yield f'data: {json.dumps({"delta": _tail})}\n\n'
+                            full_response = _rfilter.visible_text
+                            _stream_set(session, partial=full_response)
+                            if _rfilter.diverged:
+                                yield f'data: {json.dumps({"type": "content_replace", "content": full_response})}\n\n'
                             # Generate fallback metrics if LLM didn't send usage
                             if not last_metrics and full_response:
                                 _elapsed = time.time() - _chat_start
@@ -770,6 +802,20 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                # Reasoning hygiene at the emit seam, per text segment: a tool
+                # event / agent step ends the model's current prose segment, so
+                # the filter is flushed there (an unclosed <think> in one round
+                # must not swallow the next round's real answer) and rebuilt
+                # for the next segment. ``full_response`` = the clean text of
+                # all settled segments (``_round_base``) + the live one.
+                _rfilter = ReasoningStreamFilter()
+                _round_base = ""
+                _SEGMENT_EVENTS = (
+                    "tool_start", "tool_output", "agent_step",
+                    "doc_stream_open", "doc_stream_delta",
+                    "doc_update", "doc_suggestions", "ui_control",
+                    "web_sources",
+                )
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -793,10 +839,29 @@ def setup_chat_routes(
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = json.loads(chunk[6:])
-                                if "delta" in data:
-                                    full_response += data["delta"]
+                                if "delta" not in data and data.get("type") in _SEGMENT_EVENTS and not _rfilter.is_empty:
+                                    # Segment boundary: settle the in-flight text
+                                    # segment before the event renders (emits any
+                                    # withheld clean tail; a reasoning-only
+                                    # segment — the model thought, then called a
+                                    # tool — vanishes instead of resurfacing).
+                                    _seg_tail = _rfilter.flush(never_empty=False)
+                                    if _seg_tail:
+                                        yield f'data: {json.dumps({"delta": _seg_tail})}\n\n'
+                                    full_response = _round_base + _rfilter.visible_text
+                                    _round_base = full_response
+                                    _rfilter = ReasoningStreamFilter()
                                     _stream_set(session, partial=full_response)
-                                    yield chunk
+                                if "delta" in data:
+                                    if data.get("thinking"):
+                                        # Separate-channel reasoning (reasoning_content)
+                                        # is never user-visible — drop at the emit seam.
+                                        continue
+                                    _safe = _rfilter.feed(data["delta"])
+                                    full_response = _round_base + _rfilter.visible_text
+                                    _stream_set(session, partial=full_response)
+                                    if _safe:
+                                        yield f'data: {json.dumps({"delta": _safe})}\n\n'
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
                                     yield chunk
@@ -819,6 +884,18 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
+                            # Settle the last text segment's reasoning filter.
+                            # When tool activity / earlier prose exists, a
+                            # reasoning-only trailing segment simply vanishes;
+                            # when this segment IS the whole reply, keep the
+                            # whole-message never-empty semantics.
+                            _tail = _rfilter.flush(
+                                never_empty=(not _round_base and _agent_tool_calls == 0)
+                            )
+                            if _tail:
+                                yield f'data: {json.dumps({"delta": _tail})}\n\n'
+                            full_response = _round_base + _rfilter.visible_text
+                            _stream_set(session, partial=full_response)
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
@@ -1025,6 +1102,10 @@ def setup_chat_routes(
 
         async def stream_rewrite() -> AsyncGenerator[str, None]:
             full_response = ""
+            # Same emit-seam reasoning hygiene as the main chat stream: content
+            # deltas pass through the filter, separate-channel reasoning
+            # (thinking:true) is dropped rather than forwarded.
+            _rfilter = ReasoningStreamFilter()
             try:
                 async for chunk in stream_llm(
                     sess.endpoint_url,
@@ -1043,24 +1124,29 @@ def setup_chat_routes(
                         try:
                             data = json.loads(chunk[6:])
                             if "delta" in data:
-                                # Forward the chunk (so the client can show a
-                                # thinking indicator) but DON'T fold reasoning
-                                # tokens into the saved rewrite — only real
-                                # content. reasoning_content arrives flagged
-                                # with thinking:true.
-                                if not data.get("thinking"):
-                                    full_response += data["delta"]
-                                yield chunk
+                                # reasoning_content arrives flagged thinking:true —
+                                # that is the model's scratchpad, never the rewrite;
+                                # drop it at the emit seam instead of forwarding.
+                                if data.get("thinking"):
+                                    continue
+                                _safe = _rfilter.feed(data["delta"])
+                                if _safe:
+                                    yield f'data: {json.dumps({"delta": _safe})}\n\n'
                         except json.JSONDecodeError:
                             yield chunk
                     elif chunk.startswith("event: "):
                         yield chunk
                     elif chunk == "data: [DONE]\n\n":
                         # Update the last assistant message in session history.
-                        # Strip reasoning-model <think> blocks so the persisted
-                        # rewrite is just the rewritten text, not its scratchpad.
-                        from src.research_utils import strip_thinking
-                        full_response = strip_thinking(full_response).strip() or full_response
+                        # Settle the reasoning filter so the persisted rewrite is
+                        # just the rewritten text, not the model's scratchpad —
+                        # and never fall back to the raw text when the strip
+                        # leaves nothing (that fallback used to re-leak a reply
+                        # that was 100% reasoning).
+                        _tail = _rfilter.flush()
+                        if _tail:
+                            yield f'data: {json.dumps({"delta": _tail})}\n\n'
+                        full_response = _rfilter.visible_text.strip()
                         if full_response:
                             for msg in reversed(sess.history):
                                 if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \

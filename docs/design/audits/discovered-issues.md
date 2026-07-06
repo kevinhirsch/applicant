@@ -9,7 +9,8 @@ safety / a promised feature that silently never runs), **med**, **low**.
 
 Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
-**Snapshot (after PRs #626–#630):** 12 fixed — DISC-0/3/7/8/9/10/11/12/13/15/15b/17;
+**Snapshot (after PRs #626–#630 + chat unification):** 13 fixed —
+DISC-0/3/7/8/9/10/11/12/13/15/15b/17/18;
 6 open — DISC-2 (restart-durable ledgers, highest value), DISC-4, DISC-5, DISC-6, DISC-14,
 DISC-16. Per-lens backlog status lives in
 [`exhaustive2/CLOSURE-STATUS.md`](exhaustive2/CLOSURE-STATUS.md).
@@ -17,6 +18,20 @@ DISC-16. Per-lens backlog status lives in
 ---
 
 ## Open
+
+- **DISC-18 · high · Model-picker auto-heal rewrote the Job Assistant's engine sentinel.**
+  `updateModelPicker`'s "model no longer available → PATCH first available model onto the
+  session" auto-heal only recognized the engine-backed chat via the lazily-loaded
+  `applicantChatModule`, which loses the boot race — so every reload with a configured
+  model endpoint PATCHed `endpoint_url` from `applicant://engine` to that endpoint,
+  silently reconnecting the assistant's conversation to a raw LLM (split-brain: each
+  reload then minted a fresh "Job assistant" session). Live-caught during the chat-
+  unification verification (two corrupted sessions observed in the demo DB). Fixed
+  two-layer: a direct sentinel check in `modelPicker.js` before the heal, and a
+  server-side 400 in `session_routes.py` refusing any model/endpoint rewrite on a
+  sentinel-flagged session (covers the model-cycling shortcut, presets, and group
+  conversion too). Guard-tested in `test_applicant_chat_unification.py`.
+  Status: **fixed** (chat-unification PR).
 
 - **DISC-17 · low · Stale lifted-from path comment in workspace middleware.**
   `workspace/core/middleware.py`'s header comment reads `# src/middleware.py` — a leftover
