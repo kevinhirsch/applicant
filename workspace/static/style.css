@@ -18171,6 +18171,22 @@ body.gallery-selecting .gallery-dl-btn,
 .theme-delete-btn:focus-visible { opacity: 0.85; }
 .theme-delete-btn:hover { opacity: 1; background: var(--red); color: #fff; }
 
+/* Theme window scroll (regression fix): .modal-content is a flex-column capped at
+   85vh with overflow:hidden, and the theme tab panels (the Themes grid and the tall
+   Customize color/effects list) had NO scroll rule — so on a laptop-height screen the
+   content overflowed the cap and the window was unusable ("can't scroll", collapses).
+   Standard flexbox-scroll: the header + tabs stay put; the ACTIVE tab panel fills the
+   remaining height and scrolls. min-height:0 is required so the flex item may shrink
+   below its content height and let overflow-y actually engage. */
+#theme-popup > .modal-header,
+#theme-popup > #theme-tabs { flex: 0 0 auto; }
+#theme-popup > .theme-tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
 
 /* Keyboard shortcuts */
