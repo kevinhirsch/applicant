@@ -184,10 +184,10 @@ def test_no_codename_or_denylist_strings_leaked_in():
     banned_words = [
         "".join(chr(c) for c in codepoints)
         for codepoints in (
-            (102, 105, 114, 101, 104, 111, 117, 115, 101),  # firehouse
-            (111, 114, 119, 101, 108, 108),  # orwell
-            (111, 100, 121, 115, 115, 101, 117, 115),  # odysseus
-            (115, 109, 111, 107, 101, 121),  # smokey
+            (102, 105, 114, 101, 104, 111, 117, 115, 101),
+            (111, 114, 119, 101, 108, 108),
+            (111, 100, 121, 115, 115, 101, 117, 115),
+            (115, 109, 111, 107, 101, 121),
         )
     ]
     for banned in banned_words:

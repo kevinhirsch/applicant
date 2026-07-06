@@ -172,13 +172,13 @@ def _word_from_codes(codes: list[int]) -> str:
 
 def test_no_codenames_leak_into_this_file():
     banned = [
-        _word_from_codes([102, 105, 114, 101, 104, 111, 117, 115, 101]),  # firehouse
-        _word_from_codes([111, 114, 119, 101, 108, 108]),  # orwell
-        _word_from_codes([111, 100, 121, 115, 115, 101, 117, 115]),  # odysseus
-        _word_from_codes([115, 109, 111, 107, 101, 121]),  # smokey
+        _word_from_codes([102, 105, 114, 101, 104, 111, 117, 115, 101]),
+        _word_from_codes([111, 114, 119, 101, 108, 108]),
+        _word_from_codes([111, 100, 121, 115, 115, 101, 117, 115]),
+        _word_from_codes([115, 109, 111, 107, 101, 121]),
         _word_from_codes(
             [104, 101, 114, 109, 101, 115, 45, 97, 103, 101, 110, 116]
-        ),  # hermes-agent
+        ),
     ]
     js = _read().lower()
     for word in banned:
