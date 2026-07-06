@@ -1614,7 +1614,7 @@ function _renderList(body) {
   // of what quiet hours is holding (`GET /api/notifications` and the quiet-hours
   // proxy both omit it), so this ships as a button alone rather than guessing at
   // a "N held" figure.
-  const deliverBtn = `<button type="button" class="cal-btn applicant-portal-deliver-now" id="applicant-portal-deliver-now" title="Release notifications quiet hours is holding back, right now">Deliver now</button>`;
+  const deliverBtn = `<button type="button" class="cal-btn applicant-portal-deliver-now" id="applicant-portal-deliver-now" title="Send anything quiet hours is currently holding back, right now">Deliver now</button>`;
   const notifHdr = (infos.length || _items.length)
     ? `<div style="display:flex;align-items:center;gap:8px;margin:10px 2px 2px;">
          <span style="font-size:11px;opacity:0.7;">${infos.length ? 'Recent updates' : 'Notifications'}</span>
@@ -1622,7 +1622,14 @@ function _renderList(body) {
          ${deliverBtn}
        </div>`
     : '';
-  body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}`;
+  // #49: when there are pending actions above but no info notifications yet,
+  // the header above ("Notifications") rendered with nothing under it and no
+  // explanation — indistinguishable from a rendering bug. Name what's true
+  // instead of leaving it blank.
+  const notifEmpty = (!infos.length && _items.length)
+    ? '<div class="applicant-portal-notif-empty" style="font-size:11px;opacity:0.55;padding:2px 2px 4px;">Nothing new to report — I’ll let you know here as soon as there’s an update.</div>'
+    : '';
+  body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}${notifEmpty}`;
   _restoreDraftInputs(body, drafts);
   _wireRows(body);
   _wireDigestWhy(body);
@@ -1648,7 +1655,7 @@ function _wireDeliverNow(host) {
       const n = (res && typeof res.count === 'number') ? res.count : 0;
       const text = n > 0
         ? `Released ${n} held notification${n === 1 ? '' : 's'}.`
-        : 'Nothing was being held.';
+        : 'Nothing was being held back by quiet hours.';
       _toast(text);
       if (msg) msg.textContent = '';
       await _loadNotifs();

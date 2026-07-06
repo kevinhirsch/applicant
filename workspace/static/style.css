@@ -701,6 +701,16 @@ body.bg-pattern-sparkles {
       left: auto;
       right: 9px;
     }
+    /* #35: despite the base rule above already saying `background: none`, this
+       button (sitting outside #sidebar/.icon-rail, so it's untouched by their
+       own light-chrome token overrides elsewhere in this file) still painted
+       a solid dark panel-colored square once the sidebar was collapsed to the
+       icon rail — a heavy, unexplained block next to the rail's own icons.
+       Confirmed empirically that only an explicit, higher-precedence reset
+       here clears it; scoped to this one id so nothing else is affected. */
+    #hamburger-btn {
+      background: transparent !important;
+    }
     .mobile-new-chat-btn {
       display: none;
     }
@@ -1318,9 +1328,14 @@ body.bg-pattern-sparkles {
     .section-header-btn.active { opacity: 0.9; color: var(--chrome-ink); }
     .section-header-btn svg { width: 12px; height: 12px; }
 
-    /* Chats library — grid icon, hover-reveal so the header only toggles collapse */
+    /* Chats library — grid icon, hover-reveal so the header only toggles collapse.
+       #34: this used to rest at opacity 0 (fully invisible until the header row
+       was hovered) while its sibling Sort button sat at a dimly-visible 0.4 —
+       two adjacent, same-purpose icons in one inconsistent state. Resting at the
+       same 0.4 baseline as Sort removes that "did I imagine that button?" gap;
+       the hover/focus reveal to full opacity is unchanged. */
     #sessions-section .chats-manage-btn {
-      opacity: 0;
+      opacity: 0.4;
       transition: opacity 0.12s, background 0.08s;
     }
     #sessions-section .section-header-flex:hover .chats-manage-btn,
@@ -1335,6 +1350,20 @@ body.bg-pattern-sparkles {
     @media (hover: none) {
       #sessions-section .chats-manage-btn { opacity: 0.35; }
       #sessions-section .chats-manage-btn:active { opacity: 1; }
+    }
+    /* #34: "Chats" header icons (Manage/Sort) were a bare 12px glyph in a
+       1-3px pad box — a hit target so small it read as near-invisible.
+       Scoped to these two IDs only (not the shared `.section-header-btn`
+       class, which other sections like Models also use) so the larger tap
+       target lands only where the audit flagged it. */
+    #chats-library-btn,
+    #session-sort-btn {
+      padding: 3px 5px;
+    }
+    #chats-library-btn svg,
+    #session-sort-btn svg {
+      width: 14px;
+      height: 14px;
     }
 
     /* Collapse chevron */
@@ -10966,8 +10995,12 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   font-weight: 600;
 }
 .mcp-tools-panel .mcp-tools-header a {
-  font-size: 10px;
-  opacity: 0.5;
+  /* #13: 10px at 0.5 opacity read as grey-on-grey, easy to miss on the
+     "manage models"/"manage tools" panels these links share (endpoint model
+     lists in the wizard's Connect-a-model step, and Settings' Agent Tools). */
+  font-size: 11px;
+  opacity: 0.75;
+  font-weight: 600;
   color: var(--fg);
   text-decoration: none;
   cursor: pointer;
@@ -11295,9 +11328,11 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
 }
 .mcp-tools-count {
+  /* #13: bumped alongside the adjacent All/None links above so the "N/M
+     enabled" count reads as clearly as the row it's summarizing. */
   font-size: 11px;
   font-weight: 600;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 /* Badges */
@@ -11462,9 +11497,14 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 
 /* Status messages */
-.admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
-.admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
-.admin-warn { color: var(--color-warning, #f0ad4e); font-size: 11px; margin-top: 4px; }
+/* #15: these status lines had no bottom margin and a tight 1-line assumption,
+   so a longer message (e.g. the model-connect test's "Online — found N
+   models: a, b, c, …" preview) wrapped to a second line right into whatever
+   sits below it (a card divider, in the onboarding wizard's API accordion).
+   A little line-height + bottom margin keeps a wrapped line clear of it. */
+.admin-error { color: var(--color-error); font-size: 11px; margin: 4px 0 6px; line-height: 1.4; }
+.admin-success { color: var(--color-success); font-size: 11px; margin: 4px 0 6px; line-height: 1.4; }
+.admin-warn { color: var(--color-warning, #f0ad4e); font-size: 11px; margin: 4px 0 6px; line-height: 1.4; }
 .admin-empty {
   color: color-mix(in srgb, var(--fg) 58%, transparent);
   font-size: 12px;
@@ -17982,7 +18022,12 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 8px 10px;
   border: none;
   background: none;
-  color: var(--color-muted);
+  /* #101: the flat `--color-muted` (#888) grey read as a disabled rail next
+     to the active blue capsule. A color-mix of the real foreground color
+     (the same token the :hover rule below switches to) keeps unselected
+     tabs visibly dimmer than active/hover while staying legible in both
+     the plain and frosted themes. */
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -19461,6 +19506,13 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   gap: 0;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  /* #88: a strip with several tabs (e.g. Activity & controls' six: Activity /
+     Insights / Logs / Variants / Run controls / Config) could overflow a
+     narrower window and clip or overlap instead of wrapping. The <768px
+     media query below already scrolls this row instead of clipping it on
+     mobile -- extend the same proven treatment to desktop widths too. */
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 .lib-tab,
 .admin-tab {
@@ -19473,6 +19525,8 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   padding: 6px 14px;
   cursor: pointer;
   transition: color 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .lib-tab:hover,
 .admin-tab:hover { color: var(--fg); }
@@ -25327,6 +25381,12 @@ body.doc-find-active mark.doc-find-mark.current {
 #email-compose-btn {
   opacity: 0;
   transition: opacity 0.15s ease;
+  /* #34: the compose control rendered as a bare 21x14px box (icon plus a
+     few px of padding) -- a small tap target once revealed. A few extra px
+     on each axis keeps the same quiet icon-only look with more room to tap
+     accurately; the hover reveal above is unchanged. */
+  height: 18px !important;
+  padding: 0 6px !important;
 }
 #email-section:hover #email-compose-btn {
   opacity: 0.7;
@@ -25336,8 +25396,8 @@ body.doc-find-active mark.doc-find-mark.current {
   background: none !important;
 }
 #email-compose-btn svg {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 #email-compose-btn .list-item-plus-label {

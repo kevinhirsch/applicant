@@ -108,6 +108,16 @@ function _show(modal) {
         if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 14);
       }
     }
+    // #74: on a large/maximized window (email and the other big tool modals
+    // this hint targets), none of the side/above/below slots above may fit,
+    // and their final clamp can land the hint right on the window's own
+    // top-left corner -- exactly where its control cluster lives. When that's
+    // where we ended up, drop to a bottom-of-viewport placement instead,
+    // clear of any window chrome, rather than covering the controls.
+    if (left < r.left + 130 && top < r.top + 50) {
+      left = Math.max(8, (window.innerWidth - pw) / 2);
+      top = window.innerHeight - ph - 20;
+    }
     pop.style.left = left + 'px';
     pop.style.top  = top  + 'px';
     pop.style.opacity = '';
