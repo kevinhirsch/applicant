@@ -166,22 +166,23 @@ def test_mind_body_caps_reading_measure_at_66ch():
 # ── Remaining bare "Loading…" replaced with the shared loadingHTML() ──────
 
 def test_chat_modal_open_uses_shared_loading_helper():
-    """Item #56: opening the chat modal used to drop in a bare 'Loading…'
-    text node while campaigns loaded. It must now reuse the shared
-    `loadingHTML()` pill (imported from applicantCore.js) so the wait reads
-    as work in progress, consistent with the rest of the panel."""
+    """Item #56 (recast by the chat-unification pass): the Job Assistant's
+    waits must reuse the shared `loadingHTML()` pill (imported from
+    applicantCore.js) so they read as work in progress — the job-search bar
+    shows it while campaigns load, and the in-thread "thinking" bubble uses
+    its labelled form. No bare 'Loading…' text nodes anywhere."""
     src = _read(CHAT_JS)
     assert re.search(r"import\s*\{[^}]*\bloadingHTML\b[^}]*\}\s*from\s*'\./applicantCore\.js'", src), (
         "expected loadingHTML to be imported from the shared applicantCore helper module"
     )
-    m = re.search(r"export async function openApplicantChat\(opts\)\s*\{(.*?)\n\}", src, re.S)
-    assert m, "expected to find the openApplicantChat function"
-    body_of_fn = m.group(1)
-    assert "body.innerHTML = loadingHTML();" in body_of_fn, (
-        "openApplicantChat must set the modal body to the shared loadingHTML() pill"
+    assert "bar.innerHTML = loadingHTML();" in src, (
+        "the job-search bar must show the shared loadingHTML() pill while it resolves"
     )
-    # And no bare literal "Loading…" text node inside that same function.
-    assert "Loading…</div>" not in body_of_fn and ">Loading…<" not in body_of_fn
+    assert "loadingHTML('Thinking…')" in src, (
+        "the in-thread thinking placeholder must reuse the shared pill"
+    )
+    # And no bare literal "Loading…" text node anywhere in the module.
+    assert ">Loading…<" not in src
 
 
 # ── Dead-end "no model connected" offline text → actionable CTA ───────────
@@ -192,7 +193,7 @@ def test_chat_offline_state_has_actionable_connect_model_cta():
     now render a real primary-button CTA wired to the shared setup launcher
     (`window.launchApplicantSetup`) so there is an actual next step."""
     src = _read(CHAT_JS)
-    m = re.search(r"function _renderOffline\(body\)\s*\{(.*?)\n\}", src, re.S)
+    m = re.search(r"function _renderOffline\(bar\)\s*\{(.*?)\n\}", src, re.S)
     assert m, "expected to find _renderOffline"
     fn_body = m.group(1)
     assert re.search(r'id="applicant-chat-connect-cta"', fn_body), (

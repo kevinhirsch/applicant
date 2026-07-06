@@ -56,104 +56,70 @@ def test_all_four_files_stay_brace_balanced():
 
 
 # ── Chat (applicantChat.js) ─────────────────────────────────────────────────
+#
+# Chat-unification pass: the Job Assistant no longer opens its own modal — it
+# resolves a dedicated engine-backed session and opens it in the NATIVE chat
+# surface via selectSession() (the assistant.js pattern). The modal-specific
+# a11y contracts (focus trap re-init, aria-labelledby on the dialog, the
+# modal's own live-region thread/composer) are therefore owned by the native
+# chat plane now; what this section guards is the a11y of the pieces the Job
+# Assistant still ADDS to that plane (the job-search bar, starters, create
+# form) and that the retired modal really is gone.
 
 
-def test_chat_reinits_focus_management_on_every_open_not_just_first_creation():
-    """a11y-deep #1: initModalA11y must be (re-)wired inside
-    openApplicantChat (runs every open), NOT only inside the guarded
-    _ensureModalEl creation path (which only ever runs once per page load —
-    the bug the audit found: every reopen after the first silently lost
-    focus move-in/trap/restore)."""
+def test_chat_no_modal_remains_native_surface_only():
+    """Unification: the second, bolted-on chat modal is retired. The module
+    must not build its own dialog or wire its own focus trap — the native
+    chat surface (selectSession) owns all of that."""
     js = _read(CHAT_JS)
-    m = re.search(r"export async function openApplicantChat\(opts\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert m, "expected openApplicantChat's body"
-    body = m.group(1)
-    assert "uiModule.initModalA11y(modal, _close)" in body
-
-    m2 = re.search(r"function _ensureModalEl\(\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert m2, "expected _ensureModalEl's body"
-    assert "uiModule.initModalA11y(" not in m2.group(1), (
-        "the initModalA11y call must not live in the one-time creation path any more"
-    )
+    assert "applicant-chat-modal" not in js, "the retired modal's element id resurfaced"
+    assert "initModalA11y" not in js, "no modal => no local focus-trap wiring"
+    assert "_ensureModalEl" not in js
+    assert "selectSession(" in js, "the launcher must open the NATIVE chat surface"
 
 
-def test_chat_thread_is_a_live_region():
-    """a11y-deep #13: the Job Assistant's reply thread must be an audible
-    live region — an SR user used to hear nothing between sending a message
-    and manually re-reading the modal."""
+def test_chat_extras_bar_has_landmark_semantics():
+    """The job-search bar the Job Assistant mounts above the native thread is
+    a labelled region so SR users can find/skip it."""
     js = _read(CHAT_JS)
-    m = re.search(r'<div id="applicant-thread"[^>]*>', js)
-    assert m, "expected the #applicant-thread element"
-    tag = m.group(0)
-    assert 'role="log"' in tag
-    assert 'aria-live="polite"' in tag
+    assert "setAttribute('role', 'region')" in js
+    assert "setAttribute('aria-label', 'Job assistant controls')" in js
 
 
-def test_chat_modal_named_via_labelledby_not_a_hardcoded_string():
-    """a11y-deep #9: the dialog's accessible name must come from its own
-    visible heading (aria-labelledby) instead of a hardcoded aria-label
-    string that can drift from the screen."""
+def test_chat_new_campaign_input_and_picker_have_accessible_names():
+    """a11y-deep #66 (carried over): the inline new-campaign-name input and
+    the job-search picker must not be placeholder-only."""
     js = _read(CHAT_JS)
-    assert "aria-labelledby', 'applicant-chat-title'" in js
-    assert 'id="applicant-chat-title"' in js
-    assert "modal.setAttribute('aria-label', 'Job Assistant')" not in js
-
-
-def test_chat_decorative_svg_is_hidden_from_assistive_tech():
-    js = _read(CHAT_JS)
-    m = re.search(r"<svg[^>]*>", js)
-    assert m, "expected the title-glyph svg"
-    assert 'aria-hidden="true"' in m.group(0)
-
-
-def test_chat_composer_and_new_campaign_name_have_accessible_names():
-    """a11y-deep #66: the composer + inline new-campaign-name inputs were
-    placeholder-only (placeholders vanish on input and are not a reliable
-    accessible name)."""
-    js = _read(CHAT_JS)
-    assert 'id="applicant-input"' in js
-    m = re.search(r'<textarea id="applicant-input"[^>]*>', js)
-    assert m and 'aria-label="Message the Job Assistant"' in m.group(0)
-    m2 = re.search(r'<input type="text" id="applicant-new-campaign"[^>]*/?>', js)
+    m = re.search(r'<input type="text" id="applicant-new-campaign"[^>]*/?>', js)
+    assert m and "aria-label=" in m.group(0)
+    m2 = re.search(r'<select id="applicant-campaign-pick"[^>]*>', js)
     assert m2 and "aria-label=" in m2.group(0)
 
 
-def test_chat_reopen_keeps_the_conversation_instead_of_rebuilding_it():
-    """micro-interactions #49: closing the panel to check something else and
-    reopening it used to tear the whole conversation down and rebuild it
-    from scratch."""
-    js = _read(CHAT_JS)
-    assert "_conversationReady" in js
-    m = re.search(r"export async function openApplicantChat\(opts\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert m
-    body = m.group(1)
-    assert "if (_conversationReady && body.querySelector('#applicant-thread'))" in body
-    assert "_conversationReady = true;" in js
-
-
 def test_chat_starter_prompts_hide_once_the_conversation_starts():
-    """micro-interactions #84."""
+    """micro-interactions #84 (carried over to the unified send path)."""
     js = _read(CHAT_JS)
-    m = re.search(r"async function _send\(text\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert m, "expected _send's body"
+    m = re.search(r"export async function sendEngineMessage\(rawText\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
+    assert m, "expected sendEngineMessage's body"
     body = m.group(1)
     assert "applicant-starters" in body
     assert "style.display = 'none'" in body
 
 
-def test_chat_enter_handlers_guard_ime_composition():
-    """micro-interactions #15: an IME composition-commit Enter must not fire
-    the create-campaign action or the send chord."""
+def test_chat_enter_handler_guards_ime_composition():
+    """micro-interactions #15 (carried over): an IME composition-commit Enter
+    must not fire the create-campaign action. (The composer's own Enter
+    handling belongs to the native chat now.)"""
     js = _read(CHAT_JS)
-    assert js.count("e.isComposing") >= 2
+    assert "e.isComposing" in js and "e.keyCode !== 229" in js
 
 
-def test_chat_thread_intro_honours_its_seq_guard():
-    """micro-interactions #93: _renderThreadIntro used to take a `seq` param
-    and silently ignore it."""
+def test_chat_pending_refresh_honours_its_seq_guard():
+    """micro-interactions #93 (carried over): a slow job-search switch must
+    not paint a stale pending-count over a newer one."""
     js = _read(CHAT_JS)
-    m = re.search(r"function _renderThreadIntro\(seq\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert m, "expected _renderThreadIntro's body"
+    m = re.search(r"async function _loadPending\(seq\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
+    assert m, "expected _loadPending's body"
     assert "if (seq && seq !== _renderSeq) return;" in m.group(1)
 
 

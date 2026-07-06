@@ -81,6 +81,20 @@ export function currentHashToken() {
   return _hashToken();
 }
 
+/**
+ * Re-sync the change detector to whatever the hash is RIGHT NOW, without
+ * opening or closing anything. For a surface that hands its token over to a
+ * different hash owner after opening — e.g. the Job Assistant's '#chat'
+ * deep link resolves into the native chat's '#<sessionId>' hash via
+ * history.replaceState, which never fires hashchange. Without this the
+ * router still believes the surface's token is current, so the NEXT
+ * navigation to that same token short-circuits as "nothing changed" and
+ * the deep link goes dead.
+ */
+export function syncToken() {
+  _lastToken = _hashToken();
+}
+
 function _applyFromHash() {
   const token = _hashToken();
   if (token === _lastToken) return;
@@ -111,7 +125,7 @@ export function initHashRouting() {
 }
 
 const hashRouterModule = {
-  registerRoute, hasRoute, setHash, clearHash, currentHashToken, initHashRouting,
+  registerRoute, hasRoute, setHash, clearHash, currentHashToken, syncToken, initHashRouting,
 };
 // Expose for non-module callers / debugging, mirroring the window.applicant*Module pattern.
 try { window.applicantHashRouter = hashRouterModule; } catch (_) { /* no-op */ }

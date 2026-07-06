@@ -1,32 +1,68 @@
 // static/js/applicantChat.js
 //
-// Job Assistant — the workspace Chat/Agent surface wired to the Applicant
-// engine. This is ADDITIVE and self-contained: it does NOT touch the native
-// chat engine (chat.js) or the personal-assistant CrewMember (assistant.js). It
-// opens its own modal panel, talks to the engine through the workspace proxy at
-// /api/applicant/chat/*, and surfaces job actions inline so the user can act on
-// them without leaving the conversation.
+// Job Assistant — the Applicant engine's conversational surface, UNIFIED with
+// the native Chats experience.
+//
+// This module used to open its own self-contained modal panel with a second,
+// visually inferior message renderer. It now follows the exact pattern
+// assistant.js proved for the personal assistant: the rail launcher resolves a
+// dedicated per-user engine-backed chat session (GET /api/applicant/chat/session
+// — a plain workspace Session flagged by the ENGINE_SESSION_URL sentinel in its
+// endpoint_url) and opens it through selectSession(), so the conversation gets
+// the full native chat UX for free: the Chats/sessions list (labelled
+// "Job assistant"), the native renderer/markdown pipeline, and server-side
+// history persistence.
+//
+// What stays applicant-specific, rendered as ADDITIONS inside the native
+// surface while the Job Assistant session is active:
+//   - the job-search picker / create form / pending-actions count, mounted as
+//     a slim bar above the thread (#applicant-ja-bar);
+//   - the guardrail tip above the composer (Chat Hint kit, FR-UIKIT-2);
+//   - per-message job-action chips (proposed updates / gaps / search-update
+//     confirms) — decorateEngineMessage(), invoked from chatRenderer.addMessage's
+//     decoration seam for live turns and history reloads alike.
+//
+// The send path: chat.js's handleChatSubmit dispatches to sendEngineMessage()
+// when isEngineSessionActive() — the turn goes to the engine through the
+// workspace proxy (POST /api/applicant/chat/message, with session_id so the
+// backend persists the turn into the same session), never the LLM stream.
 //
 // Activation: the launcher (rail-assistant) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports a model is
 // connected (the `chat` section, gated on `llm_configured`). We don't fight
-// that — we just render a graceful "connect a model" state if opened while the
-// engine is unreachable.
+// that — the job-search bar renders a graceful "connect a model" state if the
+// surface is reached while the engine is unreachable.
 
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import chatRenderer from './chatRenderer.js';
+import {
+  selectSession, getCurrentSessionId, getSessions, loadSessions,
+} from './sessions.js';
 import {
   esc, _toast, _fetchJSON, _post, errText, loadingHTML, errorHTML, gatedHTML, wireRetry,
+  pollVisible,
 } from './applicantCore.js';
 // Chat Hint kit (FR-UIKIT-2): the ONE above-composer guidance affordance. The
 // assistant's "ask me what needs your attention" guardrail tip is routed through
 // the kit instead of being hand-rolled, so it shares the kit's chrome/anchor and
-// per-user dismiss persistence. It mounts above the composer's `.chat-input-bar`
-// (the composer carries that hook class) via the AppkitNotice kit.
+// per-user dismiss persistence. It mounts above the NATIVE composer's
+// `.chat-input-bar` via the AppkitNotice kit while the Job Assistant session is
+// the active chat, and is hidden again when the user switches away.
 import appkitChatHint from './appkitChatHint.js';
-import { registerRoute, setHash, clearHash } from './hashRouter.js';
+import { registerRoute, setHash, clearHash, syncToken } from './hashRouter.js';
 
 const API = '/api/applicant/chat';
+
+//: Sentinel endpoint_url that flags the Job Assistant's workspace session
+//: (mirrors ENGINE_SESSION_URL in routes/applicant_chat_routes.py). It is not
+//: a real endpoint — it exists so the send path / model picker / sidebar can
+//: recognise the session without any extra bookkeeping.
+const ENGINE_SESSION_URL = 'applicant://engine';
+
+//: The assistant's bubble label in the native renderer (persisted turns carry
+//: it as metadata.character_name so history reloads label identically).
+const ASSISTANT_LABEL = 'Job assistant';
 
 // Design-audit #9: _fetchJSON's shared 15s default timeout is right for plain
 // CRUD calls, but a chat turn runs the engine's full agent loop server-side —
@@ -54,183 +90,200 @@ function _ensureChatHintRegistered() {
   _chatHintRegistered = true;
 }
 
-let _modalEl = null;
-let _renderSeq = 0; // monotonic - guards stale async renders on fast campaign switches
-let _modalA11yCleanup = null;
+let _sessionId = null;        // resolved Job Assistant session id (this tab)
 let _campaigns = [];
 let _activeCampaignId = null;
 let _sending = false;
-// a11y/micro-interactions audit (05 #49 / 01 #49): true once a conversation has
-// been rendered into the modal — lets a reopen skip tearing the thread down and
-// rebuilding from scratch (see openApplicantChat below), so closing the panel to
-// check something else and reopening it no longer wipes the whole conversation.
-let _conversationReady = false;
+let _renderSeq = 0; // monotonic - guards stale async renders on fast campaign switches
 
-// Item #46: once the panel is docked to the bottom of the content plane (see
-// the CSS notes at "#applicant-chat-modal" in style.css), it sits directly
-// over the REAL page composer's band. Mirror Portal's own composer-dimming
-// (`_setComposerDimmed` in applicantPortal.js, audit #32) here rather than
-// importing it — this module is deliberately additive/self-contained (see
-// the file banner) — so the two composers don't visually double up while
-// this panel is open. Scoped to the real page composer only: `#chat-container
-// > .chat-input-bar` is that element's exact position in index.html, which
-// does NOT match this modal's own composer (`#applicant-composer`, appended
-// to `document.body`, not `#chat-container`).
-let _composerDimmed = false;
-let _composerPrevStyle = null;
-function _setComposerDimmed(on) {
-  let bar;
-  try { bar = document.querySelector('#chat-container > .chat-input-bar'); } catch { bar = null; }
-  if (!bar) return;
-  if (on) {
-    if (_composerDimmed) return; // already dimmed — don't clobber the saved prior style
-    _composerDimmed = true;
-    _composerPrevStyle = bar.getAttribute('style');
-    bar.style.transition = 'opacity 0.15s ease';
-    bar.style.opacity = '0.35';
-    bar.style.pointerEvents = 'none';
-  } else if (_composerDimmed) {
-    _composerDimmed = false;
-    if (_composerPrevStyle === null) bar.removeAttribute('style');
-    else bar.setAttribute('style', _composerPrevStyle);
-    _composerPrevStyle = null;
-  }
+// ── Session identity ─────────────────────────────────────────────────────────
+
+/** True when a cached /api/sessions row is the engine-backed Job Assistant
+ *  session (identified by the endpoint sentinel — survives renames). */
+export function isEngineSession(meta) {
+  return !!(meta && meta.endpoint_url === ENGINE_SESSION_URL);
 }
 
+/** True when the CURRENTLY ACTIVE chat is the Job Assistant session. This is
+ *  the one seam chat.js's send dispatch and modelPicker.js's visibility check
+ *  both consult (via window.applicantChatModule). */
+export function isEngineSessionActive() {
+  const sid = getCurrentSessionId();
+  if (!sid) return false;
+  if (_sessionId && sid === _sessionId) return true;
+  const meta = (getSessions() || []).find((s) => s.id === sid);
+  return isEngineSession(meta);
+}
 
+// ── Open / hash routing ──────────────────────────────────────────────────────
 
+let _openInFlight = false; // re-entrancy guard (double click / route replay)
 
-
-// NOTE: campaign steering controls (start/pause/resume/run-now) were removed —
-// they were never wired into the conversation render and pointed at chat-proxy
-// endpoints (`/api/applicant/chat/campaigns/{id}/status|start|pause|resume|
-// run-now`) that do not exist (the engine exposes those only under
-// `/api/agent-runs/*`, which the chat proxy does not forward), so the controls
-// would only ever have 404'd. Removed as dead code.
-
-// ── Modal scaffold ──────────────────────────────────────────────────────────
-//
-// Design-audit item #46: this stream used to render as a centered `.modal`
-// slab over the live composer/welcome. A full inline re-dock (re-parenting
-// the thread/composer out of the modal lifecycle entirely, so they become
-// literal siblings of the real composer in the DOM) is still judged too
-// risky to attempt in one pass here: it would touch the thinking-indicator,
-// send-gating, composer-clear-on-success, and retry-without-duplicate-bubble
-// wiring that all assume this modal's current lifecycle — real, working
-// behavior that a re-parent could silently break. Instead this panel now
-// makes a real, verifiable structural move within its EXISTING lifecycle:
-// - it docks to the BOTTOM of the content plane (the real composer's band)
-//   instead of floating vertically centered mid-screen over the welcome
-//   text (`#applicant-chat-modal { align-items: flex-end; }`, desktop-only,
-//   in style.css — the mobile bottom sheet was already bottom-anchored);
-// - its width now matches the real composer's own 800px max-width (below,
-//   `--window-w:800px`) so the two line up instead of the modal reading as
-//   an unrelated, differently-sized card;
-// - the real page composer is dimmed for as long as this panel is open
-//   (`_setComposerDimmed`, above — mirrors Portal's own composer-dimming)
-//   so the two don't visually double up underneath the docked panel.
-// The lower-risk half from the prior pass IS done and untouched here: the
-// composer bar inside the modal used to carry its own nested frosted-glass
-// layer on top of the modal's own glass ("glass-on-glass-on-content");
-// style.css flattens that inner layer so the panel reads as one content
-// plane (search "item #46" in style.css).
-//
-// Design-audit item #64: the header now composes the shared AppkitWindow kit
-// chrome (`.ow-window` / `.ow-titlebar` / `.ow-controls` / `.ow-close`) so its
-// titlebar matches every other window's traffic-light controls, mirroring
-// the exact pattern applicantPortal.js adopted (audit #25). The close button
-// keeps `.modal-close` + `.tap-exempt` alongside the new `.ow-close`: dropping
-// `.modal-close` would break the mobile swipe-to-dismiss handoff (the shared
-// mobile-sheet rule hides the desktop close-X via that class), and dropping
-// `.tap-exempt` would pull it into the global coarse-pointer 44px tap-target
-// floor and blow out the titlebar — the same subtlety Portal's batch found.
-
-function _ensureModalEl() {
-  if (_modalEl) return _modalEl;
-  const modal = document.createElement('div');
-  modal.id = 'applicant-chat-modal';
-  modal.className = 'modal hidden ow-window';
-  modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-modal', 'true');
-  // a11y-deep audit #9: name the dialog from its own visible heading
-  // (aria-labelledby) instead of a hardcoded string that can drift from the
-  // screen — see the id on the h4 below.
-  modal.setAttribute('aria-labelledby', 'applicant-chat-title');
-  modal.innerHTML = `
-    <div class="modal-content" style="--window-w:800px;display:flex;flex-direction:column;max-height:86vh;">
-      <div class="modal-header ow-titlebar">
-        <div class="ow-controls">
-          <button type="button" class="ow-close modal-close tap-exempt" id="applicant-chat-close" aria-label="Close" title="Close">&times;</button>
-        </div>
-        <h4 class="ow-title" id="applicant-chat-title">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Job Assistant
-        </h4>
-      </div>
-      <div class="modal-body" id="applicant-chat-body" style="flex:1;overflow-y:auto;">
-        ${loadingHTML()}
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  // a11y-deep audit #1: focus management (move-in/trap/restore) is (re-)wired
-  // in openApplicantChat on EVERY open, not here — this creation path only
-  // runs once per page load, and initModalA11y living here (behind that
-  // one-time guard) was exactly the bug: `_close()` tears the trap down, so
-  // every reopen after the first silently lost focus management.
-  modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
-  _modalEl = modal;
-  return modal;
+export async function openApplicantChat(opts) {
+  if (_openInFlight) return;
+  _openInFlight = true;
+  // Hash routing (audit #7): '#chat' deep-links here; selectSession() below
+  // then replaces it with the canonical '#<sessionId>' hash the native chat
+  // owns, so the deep link lands on the unified surface instead of 404ing.
+  if (!(opts && opts.skipHashUpdate)) setHash('chat');
+  try {
+    const info = await _fetchJSON(`${API}/session`);
+    if (!info || !info.session_id) {
+      _toast('The assistant is unavailable right now');
+      return;
+    }
+    _sessionId = info.session_id;
+    // The sidebar list and the send-path dispatch identify this session from
+    // the cached /api/sessions payload — refresh the list when the id is
+    // missing (a brand-new session, or one hydrated server-side after a
+    // restart) so it shows up in Chats immediately.
+    const known = (getSessions() || []).some((s) => s.id === _sessionId);
+    if (!known) {
+      try { await loadSessions(); } catch { /* list refresh is best-effort */ }
+    }
+    await selectSession(_sessionId);
+    // selectSession hands the hash over to the native '#<sessionId>' form via
+    // history.replaceState (no hashchange event) — re-sync the router's
+    // change detector or the NEXT '#chat' navigation would short-circuit as
+    // "nothing changed" and the deep link would go dead.
+    syncToken();
+    _syncExtras();
+  } catch (e) {
+    console.error('openApplicantChat failed:', e);
+    _toast(errText(e));
+  } finally {
+    _openInFlight = false;
+  }
 }
 
 function _close() {
-  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
-  if (_modalEl) {
-    _modalEl.classList.add('hidden');
-    _modalEl.style.display = '';
-  }
-  _setComposerDimmed(false);
-  // Hash routing (audit #7): only clears when the hash is actually ours.
+  // The unified surface lives in the native chat plane — there is no modal to
+  // hide. Closing (back-button off '#chat', or a programmatic close) only
+  // releases the hash token when it is actually ours.
   clearHash('chat');
 }
 
-// Exported so other modules/tests can close the Job Assistant without
-// reaching into its private state, mirroring openApplicantChat's public
-// export.
-export function closeApplicantChat() {
-  _close();
+// Exported so other modules/tests can close the Job Assistant surface without
+// reaching into its private state, mirroring openApplicantChat's public export.
+export function closeApplicantChat() { _close(); }
+
+// ── Per-session extras (the job-search bar + composer hint) ─────────────────
+//
+// Mounted while the Job Assistant session is the active chat; torn down when
+// the user switches to any other session. Driven by the
+// 'applicant:session-selected' dispatch seam in sessions.js plus a cheap
+// visibility-aware poll for paths that bypass selectSession (e.g. New Chat).
+
+let _extrasMounted = false;
+
+function _syncExtras() {
+  if (isEngineSessionActive()) {
+    _mountExtras();
+    _extrasMounted = true;
+  } else if (_extrasMounted) {
+    _unmountExtras();
+    _extrasMounted = false;
+  }
 }
 
-// ── Empty / offline state ────────────────────────────────────────────────────
+// The Notice kit is a classic script (it publishes window.AppkitNoticeKit as
+// its seam) and nothing in the boot chain loads it — without this the hint's
+// show() would no-op forever behind its kit-absent guard. A side-effect
+// dynamic import executes it once; cached thereafter.
+let _noticeKitLoad = null;
+function _ensureNoticeKitLoaded() {
+  if (typeof window !== 'undefined' && window.AppkitNoticeKit) return Promise.resolve();
+  if (!_noticeKitLoad) _noticeKitLoad = import('./appkitNotice.js').catch(() => null);
+  return _noticeKitLoad;
+}
 
-function _renderOffline(body) {
-  // Not connected yet is a GATE, not an error — route it through the kit's gated
-  // affordance with a clear CTA hint instead of a wall of prose (quick-wins #18).
-  // Item #52: the hint used to be inert text ("Open Settings → Connect a model")
-  // with no way to act on it — a dead end. Route it through a real primary button
-  // wired to the same launcher the rest of the front door uses to reopen setup
-  // (window.launchApplicantSetup, exported by applicantOnboarding.js), so there's
-  // an actual next step instead of a instruction to go find Settings yourself.
-  body.innerHTML = gatedHTML(
+function _mountExtras() {
+  const history = document.getElementById('chat-history');
+  if (!history || !history.parentNode) return;
+  let bar = document.getElementById('applicant-ja-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'applicant-ja-bar';
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', 'Job assistant controls');
+    bar.style.cssText = 'margin:0 auto;width:100%;max-width:800px;padding:8px 12px 0;box-sizing:border-box;flex-shrink:0;';
+    bar.innerHTML = loadingHTML();
+    history.parentNode.insertBefore(bar, history);
+    _refreshBar();
+  }
+  _ensureChatHintRegistered();
+  _ensureNoticeKitLoaded().then(() => {
+    // Re-check: the user may have switched away while the kit loaded.
+    if (!isEngineSessionActive()) return;
+    try { appkitChatHint.show(CHAT_HINT_KEY); } catch { /* kit unavailable — no-op */ }
+  });
+  // Belt-and-braces alongside updateModelPicker's own isEngineSessionActive
+  // seam: that seam can lose the race when this module loads lazily AFTER
+  // selectSession already ran its picker refresh — and a model picked here
+  // would rewrite the session's endpoint out from under the engine sentinel.
+  const pickerWrap = document.getElementById('model-picker-wrap');
+  if (pickerWrap) pickerWrap.style.display = 'none';
+  _maybeRenderIntro();
+  _pruneThreadActions();
+}
+
+function _unmountExtras() {
+  const bar = document.getElementById('applicant-ja-bar');
+  if (bar) bar.remove();
+  try { appkitChatHint.hide(CHAT_HINT_KEY); } catch { /* kit unavailable — no-op */ }
+  // Give the picker back to whatever session is taking over (its own
+  // updateModelPicker pass re-computes the proper state, incl. the
+  // group-chat hide). Only runs on a real mounted→unmounted transition.
+  const pickerWrap = document.getElementById('model-picker-wrap');
+  if (pickerWrap && pickerWrap.style.display === 'none') pickerWrap.style.display = '';
+}
+
+async function _loadCampaigns() {
+  const data = await _fetchJSON(`${API}/campaigns`);
+  _campaigns = Array.isArray(data && data.campaigns) ? data.campaigns : [];
+  if (!_activeCampaignId && _campaigns.length) _activeCampaignId = _campaigns[0].id;
+  return data;
+}
+
+async function _refreshBar() {
+  const bar = document.getElementById('applicant-ja-bar');
+  if (!bar) return;
+  try {
+    const data = await _loadCampaigns();
+    if (!document.getElementById('applicant-ja-bar')) return; // unmounted while loading
+    if (data && data.engine_available === false) { _renderOffline(bar); return; }
+    if (!_campaigns.length) { _renderNoCampaign(bar); return; }
+    _renderBarRow(bar);
+  } catch (e) {
+    bar.innerHTML = errorHTML(errText(e));
+    wireRetry(bar, _refreshBar);
+  }
+}
+
+// Not connected yet is a GATE, not an error — route it through the kit's gated
+// affordance with a clear CTA wired to the same launcher the rest of the front
+// door uses to reopen setup (window.launchApplicantSetup).
+function _renderOffline(bar) {
+  bar.innerHTML = gatedHTML(
     'Connect a model in Settings and I can answer questions about your '
       + 'applications and flag anything that needs your input.',
     '<button type="button" class="cal-btn cal-btn-primary" id="applicant-chat-connect-cta">Connect a model</button>',
   );
-  const cta = body.querySelector('#applicant-chat-connect-cta');
+  const cta = bar.querySelector('#applicant-chat-connect-cta');
   if (cta) {
     cta.addEventListener('click', () => {
       try {
-        if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); }
+        if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup();
       } catch { /* no-op — no launcher available, the button simply stays put */ }
     });
   }
 }
 
-function _renderNoCampaign(body) {
-  body.innerHTML = `
-    <div style="padding:24px 18px;text-align:center;">
-      <div style="font-size:14px;margin-bottom:10px;">Create a job search to get started</div>
-      <div style="font-size:12px;opacity:0.7;max-width:420px;margin:0 auto 14px;">
+function _renderNoCampaign(bar) {
+  bar.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:6px;padding:14px 12px;text-align:center;">
+      <div style="font-size:13px;margin-bottom:8px;">Create a job search to get started</div>
+      <div style="font-size:12px;opacity:0.7;max-width:420px;margin:0 auto 10px;">
         A job search groups its preferences, materials, and applications. Name it
         anything you like.
       </div>
@@ -240,8 +293,8 @@ function _renderNoCampaign(body) {
         <button type="button" class="cal-btn cal-btn-primary" id="applicant-create-campaign">Create</button>
       </div>
     </div>`;
-  const input = body.querySelector('#applicant-new-campaign');
-  const btn = body.querySelector('#applicant-create-campaign');
+  const input = bar.querySelector('#applicant-new-campaign');
+  const btn = bar.querySelector('#applicant-create-campaign');
   const create = async () => {
     const name = (input.value || '').trim();
     if (!name) { input.focus(); return; }
@@ -252,7 +305,7 @@ function _renderNoCampaign(body) {
       _toast('Job search created');
       await _loadCampaigns();
       if (created && created.id) _activeCampaignId = created.id;
-      _renderConversation();
+      _renderBarRow(bar);
     } catch (e) {
       _toast(errText(e) || 'Could not create the job search');
       btn.disabled = false;
@@ -265,10 +318,7 @@ function _renderNoCampaign(body) {
     // (CJK / dead-key input) fire the create action.
     if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) create();
   });
-  input.focus();
 }
-
-// ── Conversation view ────────────────────────────────────────────────────────
 
 function _campaignPicker() {
   if (_campaigns.length <= 1) return '';
@@ -276,128 +326,81 @@ function _campaignPicker() {
     `<option value="${esc(c.id)}"${c.id === _activeCampaignId ? ' selected' : ''}>${esc(c.name || c.id)}</option>`
   ).join('');
   return `
-    <label class="assistant-field" style="margin-bottom:10px;">
-      <span>Job search</span>
-      <select id="applicant-campaign-pick">${opts}</select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;flex-shrink:0;">
+      <span style="opacity:0.7;">Job search</span>
+      <select id="applicant-campaign-pick" class="settings-select" aria-label="Job search">${opts}</select>
     </label>`;
 }
 
-function _renderConversation() {
-  const body = _modalEl.querySelector('#applicant-chat-body');
-  body.innerHTML = `
-    ${_campaignPicker()}
-    <div id="applicant-controls"></div>
-    <div id="applicant-suggested-card" style="margin-bottom:10px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:none;"></div>
-    <div id="applicant-pending" style="margin-bottom:12px;"></div>
-    <div id="applicant-thread" class="chat-history" role="log" aria-live="polite" aria-label="Conversation with the Job Assistant"
-         style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
-    <div id="applicant-starters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
-    <div id="applicant-composer" class="chat-input-bar" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
-      <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
-                aria-label="Message the Job Assistant"
-                style="flex:1;resize:none;overflow-y:auto;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
-      <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send — or press Ctrl+Enter">Send</button>
+function _renderBarRow(bar) {
+  bar.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      ${_campaignPicker()}
+      <div id="applicant-pending" style="flex:1;min-width:220px;"></div>
     </div>
-    <div style="text-align:right;font-size:10px;opacity:0.5;margin-top:2px;">⌘/Ctrl + Enter to send</div>`;
+    <div id="applicant-starters" style="display:none;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>`;
 
-  const pick = body.querySelector('#applicant-campaign-pick');
+  const pick = bar.querySelector('#applicant-campaign-pick');
   if (pick) {
     pick.addEventListener('change', () => {
       _activeCampaignId = pick.value;
       const seq = ++_renderSeq;
-      _renderThreadIntro(seq);
       _loadPending(seq);
     });
   }
-
-  const input = body.querySelector('#applicant-input');
-  const sendBtn = body.querySelector('#applicant-send');
-  const send = () => _send(input.value);
-  sendBtn.addEventListener('click', send);
-  input.addEventListener('keydown', (e) => {
-    // micro-interactions audit #15: an IME composition-commit Enter must not
-    // fall through to the send chord below.
-    if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
-  });
-  // Gate the Send button on non-empty input (quick-wins #10): dim + disable until
-  // there's something to send, and keep it in sync as the user types.
-  input.addEventListener('input', _syncSendEnabled);
-  // micro-interactions audit #28: grow the composer with typed content.
-  input.addEventListener('input', () => _autoGrowComposer(input));
-  _syncSendEnabled();
-  _autoGrowComposer(input);
-
   _renderStarters();
-  _renderThreadIntro();
   _loadPending();
-  input.focus();
-
-  // Mount the above-composer guardrail tip through the Chat Hint kit. The kit
-  // anchors it above the composer's `.chat-input-bar` and owns its dismiss/
-  // persistence; show() is idempotent and a no-op once the user dismissed it.
-  _ensureChatHintRegistered();
-  try { appkitChatHint.show(CHAT_HINT_KEY); } catch { /* kit unavailable — no-op */ }
-
-  // micro-interactions audit #49: mark the conversation as rendered so a
-  // subsequent openApplicantChat() (closing to check something else, then
-  // reopening) can skip tearing this thread down and rebuilding it from
-  // scratch — see the reopen short-circuit in openApplicantChat below.
-  _conversationReady = true;
 }
 
-function _renderThreadIntro(seq) {
-  // micro-interactions audit #93: the campaign-switch caller passes a seq but
-  // this used to ignore it — a slow campaign switch could paint a stale
-  // intro over a newer one. Guard it the same way _loadPending already does.
-  if (seq && seq !== _renderSeq) return;
-  const thread = _modalEl.querySelector('#applicant-thread');
-  if (!thread) return;
-  thread.innerHTML = '';
-  _appendMessage('assistant',
-    'Hi — I can help with your job search. Ask me what needs your attention, ' +
-    "or tell me about your preferences and I’ll keep them up to date.");
+// ── Pending job actions ──────────────────────────────────────────────────────
+//
+// The Pending Portal is the single source of truth for everything awaiting the
+// user across all job searches (C4). Rather than re-render a second, divergent
+// list here (which let the same item behave differently in two places), the chat
+// surfaces a live count and a link that opens the Portal home base. The Portal
+// owns the affordances, the rendering, and the resolve/answer wiring.
+
+async function _loadPending(seq) {
+  const host = document.getElementById('applicant-pending');
+  if (!host) return;
+  try {
+    // Cross-job-search count from the Portal proxy — the same source the rail
+    // badge and the Portal home base use, so the number always agrees.
+    const data = await _fetchJSON('/api/applicant/portal/pending');
+    if (seq && seq !== _renderSeq) return; // stale — a newer switch is already in flight
+    if (data && data.engine_available === false) { host.innerHTML = ''; return; }
+    const count = (data && (data.count != null ? data.count : (data.items || []).length)) || 0;
+    if (!count) { host.innerHTML = ''; return; }
+    host.innerHTML = `
+      <div class="applicant-pending-link" style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <div style="font-size:12px;">
+          <strong>${esc(count)} item${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} your attention</strong>
+          <div style="opacity:0.6;font-size:11px;">Review and act on these in your Pending home base.</div>
+        </div>
+        <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="flex-shrink:0;">Open Pending</button>
+      </div>`;
+    const openBtn = host.querySelector('#applicant-open-portal');
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        try {
+          if (window.applicantPortalModule && typeof window.applicantPortalModule.openApplicantPortal === 'function') {
+            window.applicantPortalModule.openApplicantPortal();
+            return;
+          }
+        } catch { /* fall through */ }
+        const rail = document.getElementById('rail-portal');
+        if (rail) rail.click();
+      });
+    }
+  } catch (e) {
+    // Soft-degrade: a pending-actions failure must not break the conversation.
+    host.innerHTML = '';
+  }
 }
 
-// micro-interactions audit #28: the composer used to be a fixed rows=2 box
-// with manual resize only, so a three-line question scrolled inside a
-// two-line window. Grow it with the content instead, capped at ~6 rows so a
-// long paste can't swallow the whole panel.
-const COMPOSER_MAX_HEIGHT = 132; // ~6 lines at this font-size/padding
-function _autoGrowComposer(input) {
-  if (!input) return;
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px';
-}
+// ── Starters + intro (empty-thread invitation) ──────────────────────────────
 
-// Enable/disable the Send button based on whether there's typed content, so an
-// empty composer can't fire an empty send (quick-wins #10).
-function _syncSendEnabled() {
-  if (!_modalEl) return;
-  const input = _modalEl.querySelector('#applicant-input');
-  const sendBtn = _modalEl.querySelector('#applicant-send');
-  if (!input || !sendBtn) return;
-  if (_sending) return; // _send owns the button label/state while a request is live
-  const hasText = Boolean((input.value || '').trim());
-  sendBtn.disabled = !hasText;
-  sendBtn.style.opacity = hasText ? '' : '0.55';
-  sendBtn.style.cursor = hasText ? '' : 'not-allowed';
-}
-
-// Prefill the composer with a starter prompt and focus it, leaving the send under
-// the user's control (we don't auto-send — they can tweak first).
-function _prefillComposer(text) {
-  if (!_modalEl) return;
-  const input = _modalEl.querySelector('#applicant-input');
-  if (!input) return;
-  input.value = text;
-  input.focus();
-  try { input.setSelectionRange(text.length, text.length); } catch { /* no-op */ }
-  _syncSendEnabled();
-  _autoGrowComposer(input);
-}
-
-// A few tappable starter prompts so a blank composer reads as an invitation, not a
+// A few tappable starter prompts so a blank thread reads as an invitation, not a
 // dead end (delight #10 / quick-wins #18). Tapping one prefills the composer.
 const _STARTER_PROMPTS = [
   "Tell me what you're looking for",
@@ -406,69 +409,76 @@ const _STARTER_PROMPTS = [
   'How does this all work?',
 ];
 
+function _threadIsEmpty() {
+  const history = document.getElementById('chat-history');
+  return !history || history.querySelectorAll('.msg').length === 0;
+}
+
 function _renderStarters() {
-  const host = _modalEl && _modalEl.querySelector('#applicant-starters');
+  const host = document.getElementById('applicant-starters');
   if (!host) return;
+  if (!_threadIsEmpty() && !document.querySelector('#chat-history .applicant-ja-intro')) {
+    host.style.display = 'none';
+    return;
+  }
   host.innerHTML = _STARTER_PROMPTS.map((p) =>
     `<button type="button" class="cal-btn applicant-starter" style="font-size:12px;">${esc(p)}</button>`
   ).join('');
   host.querySelectorAll('.applicant-starter').forEach((btn) => {
     btn.addEventListener('click', () => _prefillComposer(btn.textContent || ''));
   });
+  host.style.display = 'flex';
 }
 
-// Lifted from chatRenderer.addMessage (workspace/static/js/chatRenderer.js,
-// ~line 1864) — its "standard single-bubble" path. addMessage itself is wired to
-// the main `#chat-history` (model colors, footers, metrics, TTS, session) and
-// can't be called from this modal, so we reuse its bubble markup + classes
-// verbatim: a `.msg`/`.msg-user`/`.msg-ai` wrapper with `.role` + `.body`, the
-// body rendered through markdownModule exactly like the main chat. This keeps the
-// Job Assistant bubbles styled and behaving like the workspace chat.
-function _appendMessage(role, content, { markdown = true } = {}) {
-  const thread = _modalEl.querySelector('#applicant-thread');
-  if (!thread) return null;
-
-  const wrap = document.createElement('div');
-  wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
-
-  const r = document.createElement('div');
-  r.className = 'role';
-  r.textContent = role === 'user' ? 'You' : 'Job Assistant';
-
-  const b = document.createElement('div');
-  b.className = 'body';
-  if (markdown) {
-    const text = markdownModule.squashOutsideCode(String(content == null ? '' : content));
-    b.innerHTML = markdownModule.processWithThinking(text);
-  } else {
-    // Caller supplies trusted HTML (e.g. a "thinking…" placeholder).
-    b.innerHTML = content;
-  }
-  wrap.dataset.raw = String(content == null ? '' : content);
-
-  wrap.appendChild(r);
-  wrap.appendChild(b);
-  thread.appendChild(wrap);
-  if (window.hljs) {
-    wrap.querySelectorAll('pre code:not(.hljs)').forEach((el) => window.hljs.highlightElement(el));
-  }
-  wrap.scrollIntoView({ block: 'nearest' });
-  return wrap;
+// Prefill the NATIVE composer with a starter prompt and focus it, leaving the
+// send under the user's control (we don't auto-send — they can tweak first).
+function _prefillComposer(text) {
+  const input = document.getElementById('message');
+  if (!input) return;
+  input.value = text;
+  input.focus();
+  try { input.setSelectionRange(text.length, text.length); } catch { /* no-op */ }
+  try { if (uiModule.autoResize) uiModule.autoResize(input); } catch { /* no-op */ }
 }
 
-// Update an existing AI bubble's body. `html` may include proposal/gap markup
-// that must be inserted verbatim after the markdown-rendered reply.
-function _setBubbleBody(wrap, replyText, extraHtml = '') {
+// First-visit greeting, rendered through the NATIVE renderer so it looks like
+// every other assistant bubble. Client-side only (not persisted) — it appears
+// while the thread is empty and naturally gives way to the real history.
+function _maybeRenderIntro() {
+  if (!_threadIsEmpty()) return;
+  if (document.querySelector('#chat-history .applicant-ja-intro')) return;
+  const wrap = chatRenderer.addMessage('assistant',
+    'Hi — I can help with your job search. Ask me what needs your attention, ' +
+    'or tell me about your preferences and I’ll keep them up to date.',
+    ASSISTANT_LABEL);
+  if (wrap) {
+    wrap.classList.add('applicant-ja-intro');
+    // The greeting is ephemeral — a footer offering delete/regenerate on it
+    // would act on a message the server never stored.
+    const footer = wrap.querySelector('.msg-footer');
+    if (footer) footer.remove();
+  }
+  _renderStarters();
+}
+
+// ── Native-footer pruning for engine turns ──────────────────────────────────
+//
+// The native footer actions that re-enter the LLM streaming path (regenerate,
+// rewrite shorter/simpler, fork, edit, resend, delete-by-id) can't apply to an
+// engine-backed turn — the Applicant engine owns this conversation's replies.
+// Keep copy; drop the rest. (.msg-action-btn covers exactly those; the copy
+// affordance is .footer-copy-btn.)
+
+function _pruneBubbleActions(wrap) {
   if (!wrap) return;
-  const b = wrap.querySelector('.body');
-  if (!b) return;
-  const text = markdownModule.squashOutsideCode(String(replyText == null ? '' : replyText));
-  b.innerHTML = markdownModule.processWithThinking(text) + (extraHtml || '');
-  wrap.dataset.raw = String(replyText == null ? '' : replyText);
-  if (window.hljs) {
-    b.querySelectorAll('pre code:not(.hljs)').forEach((el) => window.hljs.highlightElement(el));
-  }
+  wrap.querySelectorAll('.msg-footer .msg-action-btn').forEach((btn) => btn.remove());
 }
+
+function _pruneThreadActions() {
+  document.querySelectorAll('#chat-history .msg').forEach((m) => _pruneBubbleActions(m));
+}
+
+// ── Job-action chips (per-message decoration) ───────────────────────────────
 
 function _renderProposals(proposals) {
   if (!proposals || !proposals.length) return '';
@@ -531,76 +541,13 @@ function _renderCriteriaActions(actions) {
     </div>`;
 }
 
-// Does the actual POST + response/error rendering into an existing "thinking"
-// bubble, WITHOUT appending a new user bubble. Shared by the initial send and
-// by Retry, so retrying never duplicates the user's message in the thread.
-async function _sendToBubble(message, thinking) {
-  const input = _modalEl.querySelector('#applicant-input');
-  const sendBtn = _modalEl.querySelector('#applicant-send');
-  _sending = true;
-  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
-  try {
-    const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message }, { timeoutMs: MESSAGE_TIMEOUT_MS });
-    const reply = res.message || "I didn't get a reply — please try sending that again.";
-    if (thinking) {
-      const controls = res.control_actions || [];
-      _setBubbleBody(thinking, reply,
-        _renderGaps(res.gaps) +
-        _renderProposals(res.proposed_changes) +
-        _renderCriteriaActions(controls),
-      );
-      _wireProposalButtons(thinking, res.proposed_changes || []);
-      _wireCriteriaButtons(thinking, controls);
-    }
-    // Only clear the composer once the request actually succeeded — on
-    // failure the typed text must survive so the user isn't forced to retype.
-    if (input && input.value === message) { input.value = ''; _autoGrowComposer(input); }
-  } catch (e) {
-    if (thinking) {
-      const b = thinking.querySelector('.body');
-      if (b) {
-        b.innerHTML = `<span style="opacity:0.8;">${esc(errText(e))}</span> `
-          + '<button type="button" class="cal-btn applicant-chat-retry" '
-          + 'style="margin-left:6px;">Retry</button>';
-        const retry = b.querySelector('.applicant-chat-retry');
-        if (retry) retry.addEventListener('click', () => {
-          // Resend the same message against the SAME bubble — do not append
-          // another user bubble, and reset it back to "thinking" first.
-          b.innerHTML = loadingHTML('Thinking…');
-          _sendToBubble(message, thinking);
-        });
-      }
-    }
-  } finally {
-    _sending = false;
-    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
-    _syncSendEnabled();
-    if (input) input.focus();
-  }
-}
-
-async function _send(text) {
-  const message = (text || '').trim();
-  if (!message || _sending) return;
-  if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
-  // micro-interactions audit #84: starter prompts are an invitation for a
-  // blank composer — once the conversation actually starts they just eat
-  // vertical space, so hide them the first time a message goes out.
-  const startersHost = _modalEl && _modalEl.querySelector('#applicant-starters');
-  if (startersHost) startersHost.style.display = 'none';
-  _appendMessage('user', message);
-  // A calm "thinking" pill instead of a bare word, so the wait reads as work, not a
-  // hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
-  const thinking = _appendMessage('assistant', loadingHTML('Thinking…'), { markdown: false });
-  await _sendToBubble(message, thinking);
-}
-
 function _wireProposalButtons(container, proposals) {
   container.querySelectorAll('.applicant-confirm-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const idx = Number(btn.dataset.idx);
       const p = proposals[idx];
       if (!p) return;
+      if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
       btn.disabled = true;
       btn.textContent = 'Saving…';
       try {
@@ -635,6 +582,7 @@ function _wireCriteriaButtons(container, actions) {
       const idx = Number(btn.dataset.idx);
       const a = pending[idx];
       if (!a) return;
+      if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
       btn.disabled = true;
       btn.textContent = 'Saving…';
       try {
@@ -657,112 +605,133 @@ function _wireCriteriaButtons(container, actions) {
   });
 }
 
-// ── Pending job actions ──────────────────────────────────────────────────────
-//
-// The Pending Portal is the single source of truth for everything awaiting the
-// user across all job searches (C4). Rather than re-render a second, divergent
-// list here (which let the same item behave differently in two places), the chat
-// surfaces a live count and a link that opens the Portal home base. The Portal
-// owns the affordances, the rendering, and the resolve/answer wiring.
+/**
+ * Per-message extension for engine turns: attach the job-action chips
+ * (gaps / proposed updates / search-update confirms) to a native assistant
+ * bubble. Called by chatRenderer.addMessage's decoration seam on history
+ * reload (payload = persisted metadata.applicant) and by the live send path
+ * below — one code path for both.
+ */
+export function decorateEngineMessage(wrap, payload) {
+  if (!wrap || !payload) return;
+  const b = wrap.querySelector('.body');
+  if (!b) return;
+  _pruneBubbleActions(wrap);
+  const old = wrap.querySelector('.applicant-msg-extras');
+  if (old) old.remove();
+  const html = _renderGaps(payload.gaps)
+    + _renderProposals(payload.proposed_changes)
+    + _renderCriteriaActions(payload.control_actions);
+  if (!html) return;
+  const host = document.createElement('div');
+  host.className = 'applicant-msg-extras';
+  host.innerHTML = html;
+  b.appendChild(host);
+  _wireProposalButtons(host, payload.proposed_changes || []);
+  _wireCriteriaButtons(host, payload.control_actions || []);
+}
 
-async function _loadPending(seq) {
-  const host = _modalEl && _modalEl.querySelector('#applicant-pending');
-  if (!host) return;
+// ── Send path (dispatched from chat.js's handleChatSubmit) ──────────────────
+
+function _setBubbleReply(wrap, replyText) {
+  if (!wrap) return;
+  const b = wrap.querySelector('.body');
+  if (!b) return;
+  const text = markdownModule.squashOutsideCode(String(replyText == null ? '' : replyText));
+  b.innerHTML = markdownModule.processWithThinking(text);
+  wrap.dataset.raw = String(replyText == null ? '' : replyText);
+  if (window.hljs) {
+    b.querySelectorAll('pre code:not(.hljs)').forEach((el) => window.hljs.highlightElement(el));
+  }
+}
+
+// Does the actual POST + response/error rendering into an existing "thinking"
+// bubble, WITHOUT appending a new user bubble. Shared by the initial send and
+// by Retry, so retrying never duplicates the user's message in the thread.
+async function _sendToBubble(message, rawComposerValue, thinking) {
+  _sending = true;
+  const input = document.getElementById('message');
   try {
-    // Cross-job-search count from the Portal proxy — the same source the rail
-    // badge and the Portal home base use, so the number always agrees.
-    const data = await _fetchJSON('/api/applicant/portal/pending');
-    if (seq && seq !== _renderSeq) return; // stale — a newer switch is already in flight
-    if (data && data.engine_available === false) { host.innerHTML = ''; return; }
-    const count = (data && (data.count != null ? data.count : (data.items || []).length)) || 0;
-    if (!count) { host.innerHTML = ''; return; }
-    host.innerHTML = `
-      <div class="applicant-pending-link" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center;">
-        <div style="font-size:12px;">
-          <strong>${esc(count)} item${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} your attention</strong>
-          <div style="opacity:0.6;font-size:11px;">Review and act on these in your Pending home base.</div>
-        </div>
-        <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="flex-shrink:0;">Open Pending</button>
-      </div>`;
-    const openBtn = host.querySelector('#applicant-open-portal');
-    if (openBtn) {
-      openBtn.addEventListener('click', () => {
-        try {
-          if (window.applicantPortalModule && typeof window.applicantPortalModule.openApplicantPortal === 'function') {
-            window.applicantPortalModule.openApplicantPortal();
-            return;
-          }
-        } catch { /* fall through */ }
-        const rail = document.getElementById('rail-portal');
-        if (rail) rail.click();
-      });
+    const res = await _post(`${API}/message`, {
+      campaign_id: _activeCampaignId,
+      message,
+      session_id: _sessionId || getCurrentSessionId(),
+    }, { timeoutMs: MESSAGE_TIMEOUT_MS });
+    const reply = res.message || "I didn't get a reply — please try sending that again.";
+    _setBubbleReply(thinking, reply);
+    decorateEngineMessage(thinking, {
+      gaps: res.gaps || [],
+      proposed_changes: res.proposed_changes || [],
+      control_actions: res.control_actions || [],
+    });
+    // Only clear the composer once the request actually succeeded — on
+    // failure the typed text must survive so the user isn't forced to retype.
+    if (input && input.value === rawComposerValue) {
+      input.value = '';
+      try { if (uiModule.autoResize) uiModule.autoResize(input); } catch { /* no-op */ }
     }
-  } catch (e) {
-    // Soft-degrade: a pending-actions failure must not break the conversation.
-    host.innerHTML = '';
-  }
-}
-
-// ── Open / boot ──────────────────────────────────────────────────────────────
-
-async function _loadCampaigns() {
-  const data = await _fetchJSON(`${API}/campaigns`);
-  _campaigns = Array.isArray(data && data.campaigns) ? data.campaigns : [];
-  if (!_activeCampaignId && _campaigns.length) _activeCampaignId = _campaigns[0].id;
-  return data;
-}
-
-export async function openApplicantChat(opts) {
-  const modal = _ensureModalEl();
-  modal.classList.remove('hidden');
-  modal.style.display = 'flex';
-  if (!(opts && opts.skipHashUpdate)) setHash('chat');
-  // Item #46: the panel is now docked over the real composer's band (see the
-  // scaffold comments above) — dim the real composer for as long as it's open.
-  _setComposerDimmed(true);
-
-  // a11y-deep audit #1: re-init focus management on EVERY open, not just the
-  // first — `_close()` tears the trap down (see `_close` above), so without
-  // this every reopen after the first would silently lose focus move-in,
-  // the Tab trap, and focus restore.
-  if (_modalA11yCleanup) _modalA11yCleanup();
-  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
-
-  const body = modal.querySelector('#applicant-chat-body');
-
-  // micro-interactions audit #49: closing the panel to check something else
-  // and reopening it used to tear the whole conversation down and rebuild it
-  // from scratch. If a conversation is already rendered for the current
-  // campaign, keep it — just refresh the pending count and refocus the
-  // composer, instead of re-fetching campaigns and wiping the thread.
-  if (_conversationReady && body.querySelector('#applicant-thread')) {
     _loadPending();
-    const input = body.querySelector('#applicant-input');
-    if (input) input.focus();
-    return;
-  }
-
-  // Item #56: reuse the same spinner/pill the "thinking" reply already uses
-  // instead of a bare text node, so opening the panel reads as work in
-  // progress rather than a possible hang.
-  body.innerHTML = loadingHTML();
-  try {
-    const data = await _loadCampaigns();
-    if (data && data.engine_available === false) { _renderOffline(body); return; }
-    if (!_campaigns.length) { _renderNoCampaign(body); return; }
-    _renderConversation();
+    try { uiModule.scrollHistory(); } catch { /* no-op */ }
   } catch (e) {
-    // The `/campaigns` route itself soft-degrades to `engine_available:false`
-    // (handled above) rather than throwing, so a thrown error here is a real
-    // transport/auth failure talking to the WORKSPACE backend (session
-    // expired, workspace unreachable, or the browser-side timeout) — not the
-    // "no model connected" gate. Surface it as a genuine, retryable error with
-    // errText's kind-aware messaging (401 vs network vs timeout) instead of
-    // collapsing every failure into the "connect a model" gated copy.
-    body.innerHTML = errorHTML(errText(e));
-    wireRetry(body, openApplicantChat);
+    if (thinking) {
+      const b = thinking.querySelector('.body');
+      if (b) {
+        b.innerHTML = `<span style="opacity:0.8;">${esc(errText(e))}</span> `
+          + '<button type="button" class="cal-btn applicant-chat-retry" '
+          + 'style="margin-left:6px;">Retry</button>';
+        const retry = b.querySelector('.applicant-chat-retry');
+        if (retry) retry.addEventListener('click', () => {
+          // Resend the same message against the SAME bubble — do not append
+          // another user bubble, and reset it back to "thinking" first.
+          b.innerHTML = loadingHTML('Thinking…');
+          _sendToBubble(message, rawComposerValue, thinking);
+        });
+      }
+    }
+  } finally {
+    _sending = false;
+    if (input) input.focus();
   }
 }
+
+/**
+ * Send one Job Assistant turn through the engine proxy, rendering into the
+ * NATIVE chat thread. Called by chat.js's dispatch seam with the composer's
+ * raw value; returns false when nothing was sent (busy / empty / no job
+ * search yet) so the composer keeps the typed text.
+ */
+export async function sendEngineMessage(rawText) {
+  const rawComposerValue = rawText == null ? '' : String(rawText);
+  const message = rawComposerValue.trim();
+  if (!message || _sending) return false;
+  if (!_activeCampaignId) {
+    // Lazy load (deep-link straight into the session before the bar resolved).
+    try { await _loadCampaigns(); } catch { /* fall through to the guard below */ }
+  }
+  if (!_activeCampaignId) {
+    _toast('Pick or create a job search first');
+    _refreshBar();
+    return false;
+  }
+  // micro-interactions audit #84: starter prompts are an invitation for a
+  // blank thread — once the conversation actually starts they just eat
+  // vertical space, so hide them the first time a message goes out.
+  const startersHost = document.getElementById('applicant-starters');
+  if (startersHost) startersHost.style.display = 'none';
+  const userWrap = chatRenderer.addMessage('user', message);
+  _pruneBubbleActions(userWrap);
+  // A calm "thinking" pill instead of a bare word, so the wait reads as work,
+  // not a hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
+  const thinking = chatRenderer.addMessage('assistant', '', ASSISTANT_LABEL);
+  _pruneBubbleActions(thinking);
+  const tBody = thinking && thinking.querySelector('.body');
+  if (tBody) tBody.innerHTML = loadingHTML('Thinking…');
+  try { uiModule.scrollHistory(); } catch { /* no-op */ }
+  await _sendToBubble(message, rawComposerValue, thinking);
+  return true;
+}
+
+// ── Launchers / boot ─────────────────────────────────────────────────────────
 
 function _wireLauncher() {
   // Two launchers: the desktop sidebar item (#tool-assistant-btn) and the compact
@@ -792,6 +761,11 @@ function _boot() {
       clearInterval(iv);
     }
   }, 500);
+  // Mount/unmount the per-session extras as the active chat changes: the
+  // sessions.js dispatch seam covers every selectSession() path, and a cheap
+  // visibility-aware poll catches the few that bypass it (e.g. New Chat).
+  document.addEventListener('applicant:session-selected', _syncExtras);
+  pollVisible(_syncExtras, 2500);
 }
 
 if (document.readyState === 'loading') {
@@ -801,14 +775,35 @@ if (document.readyState === 'loading') {
 }
 
 // Hash routing (audit #7): '#chat' deep-links straight into the Job
-// Assistant — a refresh/shared-link/back-forward on that hash opens/closes
-// it. Registered at module-eval time (runs as soon as app.js's dynamic
-// import resolves, well before app.js calls hashRouter.initHashRouting()).
+// Assistant — openApplicantChat resolves the unified session and hands the
+// hash over to the native '#<sessionId>' form, so old links keep working.
+// Registered at module-eval time (runs as soon as the dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
 registerRoute('chat', { open: openApplicantChat, close: _close });
 
-const applicantChatModule = { openApplicantChat, closeApplicantChat };
+// Boot deep-link catch-up: this module loads lazily (assistant.js's dynamic
+// import), so the router's boot-time hash application can run BEFORE the
+// 'chat' registration above exists — leaving a '#chat' page load dead. If
+// the page is sitting on our token and nothing has opened it, honor it now
+// (the _openInFlight guard makes a double invocation harmless).
+try {
+  if (typeof window !== 'undefined' && (window.location.hash || '') === '#chat'
+      && !isEngineSessionActive()) {
+    openApplicantChat();
+  }
+} catch { /* no-op */ }
 
-// Expose for deep-links / other modules without creating import coupling.
+const applicantChatModule = {
+  openApplicantChat,
+  closeApplicantChat,
+  isEngineSession,
+  isEngineSessionActive,
+  sendEngineMessage,
+  decorateEngineMessage,
+};
+
+// Expose for the send dispatch in chat.js, the model-picker visibility check,
+// and deep-links / other modules — without creating import coupling.
 try { window.applicantChatModule = applicantChatModule; } catch { /* no-op */ }
 
 export default applicantChatModule;

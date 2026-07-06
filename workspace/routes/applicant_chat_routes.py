@@ -15,6 +15,13 @@ What the surface needs (all backed 1:1 by an engine endpoint group):
   (``GET /api/pending-actions/{id}``) and resolve one (``POST .../resolve``).
 * **Campaign state** — list campaigns / create one
   (``GET`` / ``POST /api/campaigns``) so the surface can pick a working campaign.
+* **The unified chat session** — resolve (or lazily create) the per-user Job
+  Assistant workspace session (``GET /session``) so the surface can open the
+  conversation in the NATIVE chat plane (chat-unification pass). The session is
+  a plain workspace ``Session`` row flagged by the :data:`ENGINE_SESSION_URL`
+  sentinel in ``endpoint_url`` — it appears in the normal Chats list, and
+  ``POST /message`` persists each turn into it (``session_id`` in the body)
+  so history survives reloads like any other chat.
 
 Note: the user-driven, non-destructive remote actions (request a final-approval
 ping; resume a run parked on a human account-creation step or a cleared
@@ -24,9 +31,11 @@ its own copies of those three routes, but nothing on the chat surface ever
 called them (dark-engine audit item 3, §B1); they were removed rather than left
 as a second, unused path to the same engine actions.
 
-This file is **additive** and disjoint from the workspace's own native chat /
-assistant surfaces (``chat_routes.py`` / ``assistant_routes.py``): it mounts a
-separate ``/api/applicant/chat`` prefix and leaves those untouched.
+This file mounts a separate ``/api/applicant/chat`` prefix and leaves the
+workspace's own native chat / assistant routers (``chat_routes.py`` /
+``assistant_routes.py``) untouched — the unification happens through the
+ordinary workspace session machinery (``core.session_manager``), which this
+router drives for the one flagged session only.
 
 Design notes:
 
@@ -45,14 +54,33 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
+from dataclasses import dataclass
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_engine_owner
+
+# NOTE: core.* imports stay function-local in this module (see the helpers
+# below) — importing the core package walks its heavy __init__ chain (LLM
+# core, auth, session manager) and can touch the database at import time,
+# which would break this router's hermetic, engine-faked tests.
 
 logger = logging.getLogger(__name__)
+
+
+#: Sentinel ``endpoint_url`` that flags the per-user Job Assistant workspace
+#: session (chat-unification pass). The front-end identifies the session by
+#: this value (``applicantChat.js`` ``isEngineSessionActive``) and dispatches
+#: its sends to the engine proxy instead of the LLM streaming path; it is not
+#: a real endpoint and is never dialled.
+ENGINE_SESSION_URL = "applicant://engine"
+#: User-facing session name + assistant label ("model" column) for that session.
+ENGINE_SESSION_NAME = "Job assistant"
+ENGINE_SESSION_MODEL = "Job assistant"
 
 
 # --- request bodies ---------------------------------------------------------
@@ -61,6 +89,11 @@ logger = logging.getLogger(__name__)
 class ChatIn(BaseModel):
     campaign_id: str
     message: str
+    #: Optional workspace session to persist this turn into (the unified Job
+    #: Assistant session resolved via ``GET /session``). Must belong to the
+    #: caller and carry the :data:`ENGINE_SESSION_URL` sentinel — anything
+    #: else 404s before the engine is called.
+    session_id: Optional[str] = None
 
 
 class ConfirmIn(BaseModel):
@@ -216,7 +249,139 @@ def _scrub_confirm_reply(raw: dict) -> dict:
     }
 
 
-def setup_applicant_chat_routes() -> APIRouter:
+# --- unified Job Assistant session helpers ----------------------------------
+
+
+@dataclass
+class _ChatTurnMessage:
+    """Duck-typed stand-in for :class:`core.models.ChatMessage`.
+
+    ``SessionManager.add_message`` only needs ``role`` / ``content`` /
+    ``metadata`` (plus the dataclass's ``get``/``to_dict`` surface used by the
+    history serializer). Used when the core package is unimportable — its
+    import connects to the database, which the hermetic tests deliberately
+    point at an unreachable host.
+    """
+
+    role: str
+    content: str
+    metadata: Optional[dict] = None
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+    def to_dict(self) -> dict:
+        result = {"role": self.role, "content": self.content}
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
+
+
+def _chat_message_cls():
+    """The real workspace ChatMessage when core is importable, else the shim."""
+    try:
+        from core.models import ChatMessage as WorkspaceChatMessage
+
+        return WorkspaceChatMessage
+    except Exception:
+        return _ChatTurnMessage
+
+
+def _find_engine_session_id(session_manager, owner: str) -> Optional[str]:
+    """Locate the owner's existing Job Assistant session (sentinel-flagged).
+
+    The DB is the authoritative source (the manager's in-memory cache only
+    holds the ~100 most recent non-empty sessions); the cache is a fallback
+    for environments where the DB is unavailable (hermetic tests).
+    """
+    try:
+        from core.database import SessionLocal, Session as DbSession
+
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(DbSession)
+                .filter(
+                    DbSession.owner == owner,
+                    DbSession.endpoint_url == ENGINE_SESSION_URL,
+                    DbSession.archived == False,  # noqa: E712
+                )
+                .order_by(DbSession.created_at.desc())
+                .first()
+            )
+            if row:
+                return row.id
+            return None
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("job-assistant session DB lookup failed; using cache", exc_info=True)
+    for s in getattr(session_manager, "sessions", {}).values():
+        if (
+            getattr(s, "owner", None) == owner
+            and getattr(s, "endpoint_url", "") == ENGINE_SESSION_URL
+            and not getattr(s, "archived", False)
+        ):
+            return s.id
+    return None
+
+
+def _require_engine_chat_session(session_manager, session_id: str, owner: str):
+    """Resolve ``session_id`` and require it to be the caller's own
+    sentinel-flagged Job Assistant session. 404 otherwise — a foreign or
+    ordinary chat session can never receive engine-proxied turns."""
+    try:
+        session = session_manager.get_session(session_id)
+    except Exception:
+        session = None
+    if (
+        session is None
+        or getattr(session, "owner", None) != owner
+        or getattr(session, "endpoint_url", "") != ENGINE_SESSION_URL
+    ):
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return session
+
+
+def _persist_chat_turn(session_manager, session_id: str, user_text: str, reply: dict) -> None:
+    """Append the user turn + the engine's reply to the unified session.
+
+    The assistant message carries the scrubbed job-action payload under
+    ``metadata.applicant`` so the native renderer's decoration seam
+    (``chatRenderer.addMessage`` → ``applicantChat.decorateEngineMessage``)
+    can rebuild the inline chips on a history reload, and
+    ``character_name`` so the bubble is labelled "Job assistant" like the
+    live turn. Best-effort: a persistence hiccup must never eat a reply the
+    engine already produced."""
+    extras = {
+        key: value
+        for key, value in (
+            ("gaps", reply.get("gaps")),
+            ("proposed_changes", reply.get("proposed_changes")),
+            ("control_actions", reply.get("control_actions")),
+        )
+        if value
+    }
+    assistant_meta: dict = {
+        "model": ENGINE_SESSION_MODEL,
+        "character_name": ENGINE_SESSION_NAME,
+    }
+    if extras:
+        assistant_meta["applicant"] = extras
+    try:
+        message_cls = _chat_message_cls()
+        session_manager.add_message(session_id, message_cls("user", user_text))
+        session_manager.add_message(
+            session_id,
+            message_cls("assistant", reply.get("message") or "", metadata=assistant_meta),
+        )
+    except Exception:
+        logger.warning(
+            "could not persist job-assistant turn into session %s", session_id, exc_info=True
+        )
+
+
+def setup_applicant_chat_routes(session_manager=None) -> APIRouter:
     router = APIRouter(prefix="/api/applicant/chat", tags=["applicant-chat"])
 
     # -- status -----------------------------------------------------------
@@ -232,6 +397,49 @@ def setup_applicant_chat_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             available = await engine.engine_available()
         return {"engine_available": available}
+
+    # -- unified chat session ----------------------------------------------
+
+    @router.get("/session")
+    async def resolve_chat_session(request: Request) -> dict:
+        """Resolve (or lazily create) the per-user Job Assistant chat session.
+
+        Mirrors ``/api/assistant/session`` (the personal assistant's pinned
+        CrewMember session): the rail launcher calls this, then opens the
+        returned id through the NATIVE chat surface (``selectSession``), so
+        the Job Assistant conversation lives in the same Chats list as every
+        other chat. Gated by ``require_engine_owner`` — the engine is
+        single-tenant, so only the owner account gets this surface.
+        """
+        owner = require_engine_owner(request)
+        if not owner:
+            # Trusted-loopback calls with no user context can't own a chat.
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        if session_manager is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Chat sessions are unavailable right now — please try again shortly.",
+            )
+        sid = _find_engine_session_id(session_manager, owner)
+        created = False
+        if sid:
+            # Ensure it's hydrated into the manager cache so /api/sessions
+            # lists it (the cache only preloads recent non-empty sessions).
+            try:
+                session_manager.get_session(sid)
+            except Exception:
+                logger.debug("could not hydrate job-assistant session %s", sid, exc_info=True)
+        else:
+            sid = str(uuid.uuid4())
+            session_manager.create_session(
+                session_id=sid,
+                name=ENGINE_SESSION_NAME,
+                endpoint_url=ENGINE_SESSION_URL,
+                model=ENGINE_SESSION_MODEL,
+                owner=owner,
+            )
+            created = True
+        return {"session_id": sid, "created": created}
 
     # -- campaigns --------------------------------------------------------
 
@@ -280,12 +488,23 @@ def setup_applicant_chat_routes() -> APIRouter:
         Returns the reply, identified gaps, and any proposed attribute/criteria
         changes. Integral/sensitive proposals carry ``requires_confirmation`` and
         are NOT auto-applied — the surface confirms them via ``/confirm``.
+
+        With ``session_id`` set (the unified Job Assistant session from
+        ``GET /session``), the turn is also persisted into that workspace
+        session — validated as the caller's own sentinel-flagged session
+        BEFORE the engine is called — so the conversation survives reloads
+        through the native ``/api/history`` path like any other chat.
         """
-        _require_user(request)
+        owner = _require_user(request)
         if not (body.message or "").strip():
             raise HTTPException(status_code=400, detail="Message is required")
         if not (body.campaign_id or "").strip():
             raise HTTPException(status_code=400, detail="A campaign is required")
+        sid = (body.session_id or "").strip()
+        if sid:
+            if session_manager is None:
+                raise HTTPException(status_code=404, detail="Chat session not found")
+            _require_engine_chat_session(session_manager, sid, owner)
         async with ApplicantEngineClient() as engine:
             try:
                 result = await engine.chat(
@@ -295,7 +514,10 @@ def setup_applicant_chat_routes() -> APIRouter:
                 raise _engine_http_error(exc) from exc
         # Whitelist user-facing fields, then strip any internal identifiers
         # (campaign UUID etc.) that survive in free-text before forwarding (#317).
-        return scrub_engine_reply(_scrub_chat_reply(result or {}))
+        reply = scrub_engine_reply(_scrub_chat_reply(result or {}))
+        if sid:
+            _persist_chat_turn(session_manager, sid, body.message, reply)
+        return reply
 
     @router.post("/confirm")
     async def confirm_change(body: ConfirmIn, request: Request) -> dict:

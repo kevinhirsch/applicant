@@ -1665,6 +1665,16 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       }
     }
 
+    // Session-type dispatch seam: announce the active session change so
+    // feature modules can mount/unmount their per-session extras (the Job
+    // Assistant listens for this to add its job-search bar + composer hint
+    // when its engine-backed session becomes active — see applicantChat.js).
+    try {
+      document.dispatchEvent(new CustomEvent('applicant:session-selected', {
+        detail: { id, meta: meta || null },
+      }));
+    } catch (e) { console.warn('session-selected dispatch failed:', e); }
+
   } catch (error) {
     console.error('Error in selectSession:', error);
     uiModule.showError('Failed to load session: ' + error.message);

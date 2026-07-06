@@ -358,8 +358,12 @@ def test_non_escape_key_never_triggers_close(node_available):
 # Surfaces that used to wire BOTH initModalA11y AND a redundant raw local
 # `keydown` Escape listener on the same modal element (the raw listener would
 # bypass the new arbiter and double-fire closeFn).
+# (applicantChat.js was originally in this list; the chat-unification pass
+# retired its modal entirely — the Job Assistant now opens a session in the
+# NATIVE chat surface, so it has no modal, no initModalA11y, and nothing for
+# the Escape arbiter to arbitrate. test_applicant_round1_remainder_chat.py
+# guards that the modal stays gone.)
 _DEDUPED_SURFACES = [
-    "applicantChat.js",
     "applicantActivity.js",
     "applicantGallery.js",
     "applicantResults.js",
