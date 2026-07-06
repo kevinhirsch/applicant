@@ -562,7 +562,7 @@ test('_wireDeliverNow (finding #46) reports "nothing held" in plain language whe
 
   await btn._handler();
 
-  assert.ok(h.getToastCalls().includes('Nothing was being held.'));
+  assert.ok(h.getToastCalls().includes('Nothing was being held back by quiet hours.'));
 });
 
 test('_wireDeliverNow (finding #46) re-enables the button and toasts an error message if the release fails', async () => {

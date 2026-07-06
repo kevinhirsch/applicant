@@ -326,6 +326,13 @@ def test_clicking_the_trigger_opens_the_overlay(node_available):
 
 
 def test_renders_the_five_real_tools_from_the_proxy(node_available):
+    """#110/#111: the engine's raw tool ids (``list_campaigns``, ``health``)
+    and stock ``List all campaigns.``-style descriptions used to leak
+    straight into the UI as unreadable snake_case, and out of step with the
+    rest of the product's "job search" wording. The overlay now relabels
+    each tool it's given for a plain-language reader -- still exactly the
+    tools the proxy returned (never fabricated or dropped), just not shown
+    as machine identifiers."""
     tools_payload = {
         "engine_available": True,
         "count": 2,
@@ -341,13 +348,19 @@ def test_renders_the_five_real_tools_from_the_proxy(node_available):
         await new Promise((r) => setTimeout(r, 20));
         const html = document.getElementById('applicant-capabilities-list').innerHTML;
         console.log(JSON.stringify({{
-          hasListCampaigns: html.includes('list_campaigns'),
-          hasListCampaignsDesc: html.includes('List all campaigns.'),
-          hasHealth: html.includes('health'),
+          hasCampaignsLabel: /job search/i.test(html),
+          hasHealthLabel: html.includes('running'),
+          leaksRawListCampaignsId: html.includes('list_campaigns'),
+          leaksRawSnakeCaseId: /get_attributes|get_applications|get_pending_actions/.test(html),
         }}));
     """
     out = _run_node(script)
-    assert out == {"hasListCampaigns": True, "hasListCampaignsDesc": True, "hasHealth": True}
+    assert out == {
+        "hasCampaignsLabel": True,
+        "hasHealthLabel": True,
+        "leaksRawListCampaignsId": False,
+        "leaksRawSnakeCaseId": False,
+    }
 
 
 def test_empty_tool_list_shows_a_designed_empty_state_not_a_blank_panel(node_available):

@@ -459,7 +459,14 @@ function _renderRail() {
   // pro…"). `.ao-rail-compact` is a single "Step N of M · Title" line that CSS
   // shows ONLY under the narrow breakpoint (swapping in for the tab strip, which
   // is hidden there) — always legible regardless of how long a step title is.
-  const compact = `<span class="ao-rail-compact" aria-hidden="true">Step ${_stepIndex + 1} of ${STEPS.length} · ${esc(cur.title)}</span>`;
+  // #22/#115: "Your profile" already renders its own finer-grained progress line
+  // in the body (`_intakeProgressHTML` — "Your profile — section N of 12"), so
+  // showing this coarser "Step N of M · Your profile" line at the same time reads
+  // as two conflicting counters on a phone. Skip the compact line for that one
+  // step; the intake's own line already names the step and shows where you are.
+  const compact = cur.key === 'onboarding'
+    ? ''
+    : `<span class="ao-rail-compact" aria-hidden="true">Step ${_stepIndex + 1} of ${STEPS.length} · ${esc(cur.title)}</span>`;
   const steps = STEPS.map((step, i) => {
     const done = step.done(_status);
     const isCur = i === _stepIndex;
@@ -1120,7 +1127,7 @@ async function _renderChannels() {
       const n = (res && typeof res.count === 'number') ? res.count : 0;
       qhDeliverMsg.textContent = n > 0
         ? `Released ${n} held notification${n === 1 ? '' : 's'}.`
-        : 'Nothing was being held.';
+        : 'Nothing was being held back by quiet hours.';
       qhDeliverMsg.className = 'admin-success';
       _toast(qhDeliverMsg.textContent);
     } catch (e) {
@@ -1601,6 +1608,11 @@ const SECTION_FORMS = {
   },
   references: {
     title: 'References',
+    // #25: the "+ Add another …" button lowercases `title` for its label, which
+    // reads fine for the mass nouns "work history"/"education" but produced the
+    // grammatically-off "+ Add another references" for this plural section title
+    // — `addLabel` gives the singular form the button actually needs.
+    addLabel: 'reference',
     // D52: references are needed by only a minority of applications, and only at
     // submit time — not before first value — so this section now sits LAST in
     // INTAKE_SECTIONS (see the reorder note there) and says so plainly.
@@ -1832,7 +1844,7 @@ function _renderRepeatSection(key, spec, saved) {
     <h2 class="ao-step-title">${esc(spec.title)}</h2>
     ${spec.desc ? `<p class="ao-step-desc">${esc(spec.desc)}</p>` : ''}
     <div id="ao-repeat-list">${entries.map((e, i) => _repeatEntryCard(spec, e, i)).join('')}</div>
-    <button type="button" class="cal-btn" id="ao-repeat-add" style="margin-top:8px;">+ Add another ${esc(spec.title.toLowerCase())}</button>
+    <button type="button" class="cal-btn" id="ao-repeat-add" style="margin-top:8px;">+ Add another ${esc(spec.addLabel || spec.title.toLowerCase())}</button>
     <div id="ao-intake-msg"></div>
   `);
   _setFoot(`
@@ -2089,12 +2101,12 @@ function _renderBaseResume(saved) {
     <p class="ao-step-desc">Optional but recommended: upload your current résumé and I’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell me what you want in chat. You can edit every field afterward.</p>
     <div class="admin-card">
       <div class="settings-row">
-        <button type="button" class="cal-btn" id="ao-resume-pick">Choose your resume…</button>
+        <button type="button" class="cal-btn" id="ao-resume-pick">Choose your résumé…</button>
         <input id="ao-resume-file" type="file" accept=".docx,.doc,.pdf,.rtf,.txt,.md" style="display:none;" />
       </div>
       <div class="attach-strip" id="ao-resume-strip"></div>
     </div>
-    <div id="ao-resume-status">${saved && saved.document_path ? '<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">A resume is already on file. Re-upload to replace it.</p>' : ''}</div>
+    <div id="ao-resume-status">${saved && saved.document_path ? '<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">A résumé is already on file. Re-upload to replace it.</p>' : ''}</div>
     <div id="ao-conflicts"></div>
     <div id="ao-preview"></div>
     <div id="ao-resume-msg"></div>
@@ -2450,7 +2462,10 @@ async function _finish() {
     // silently — nobody consented to it and nobody was told. State it plainly as
     // a completion RECEIPT, with a pointer to where it's adjustable, right where
     // the user is already reading "what happens next".
-    const receiptLine = 'By default, Applicant targets up to 15 new applications a day (never more than 30) — every one reviewed by you before it ships. Adjust the pace any time in Campaigns.';
+    // #102: "Campaigns" isn't a destination anywhere in the nav — the Settings
+    // tab this points to is named "Job Search" (applicantCampaignSettings.js),
+    // matching the "search" wording the rest of the product uses.
+    const receiptLine = 'By default, Applicant targets up to 15 new applications a day (never more than 30) — every one reviewed by you before it ships. Adjust the pace any time in Settings → Job Search.';
     // D73: when the model is connected but profile essentials are still missing,
     // the old copy buried the fix in a sentence with no way to act on it. Give it
     // a real jump button back into "Your profile", matching the jump-button

@@ -128,6 +128,30 @@ function _liveKeybinds() {
   return { ..._FALLBACK_KEYBINDS, ...(live || {}) };
 }
 
+// Mirrors settings.js's own OPEN_TOOL_NAV_IDS / _toolShortcutIsReachable.
+// #107: a few "Open X" actions target tools this deployment doesn't surface
+// in the nav (Cookbook/Notes/Tasks/Theme are hidden via `style="display:
+// none"` in index.html). Most are already dropped by the "only show bound
+// combos" filter below since they default unbound, but if a user ever did
+// bind one, this keeps it out of the cheat-sheet too rather than pointing
+// at something unreachable. Checked live against the DOM, not a hardcoded
+// list, so it can't drift from what the nav actually shows.
+const _OPEN_TOOL_NAV_IDS = {
+  open_calendar: 'tool-calendar-btn', open_compare: 'tool-compare-btn',
+  open_cookbook: 'tool-cookbook-btn', open_research: 'tool-research-btn',
+  open_gallery: 'tool-gallery-btn', open_library: 'tool-library-btn',
+  open_memory: 'tool-memory-btn', open_notes: 'tool-notes-btn',
+  open_tasks: 'tool-tasks-btn', open_theme: 'tool-theme-btn',
+};
+
+function _toolShortcutIsReachable(action) {
+  const navId = _OPEN_TOOL_NAV_IDS[action];
+  if (!navId) return true;
+  const btn = typeof document !== 'undefined' && document.getElementById(navId);
+  if (!btn) return false;
+  try { return getComputedStyle(btn).display !== 'none'; } catch { return true; }
+}
+
 function _rowHTML(action, combo) {
   const label = _LABELS[action] || action;
   const display = _formatCombo(combo);
@@ -150,6 +174,7 @@ function _buildBodyHTML() {
   const categorySections = _CATEGORIES.map((cat) => {
     const rows = cat.keys
       .filter((k) => kb[k]) // only show bound combos — unbound (empty) actions have no shortcut to show
+      .filter(_toolShortcutIsReachable) // #107: never advertise a bound key for a tool that isn't in the nav
       .map((k) => _rowHTML(k, kb[k]))
       .join('');
     return _sectionHTML(cat.name, rows);
