@@ -197,7 +197,12 @@ def test_proxy_router_file_exists_and_is_owner_scoped():
     assert TRACKER_ROUTES_PY.exists(), "expected workspace/routes/applicant_tracker_routes.py"
     src = _read(TRACKER_ROUTES_PY)
     assert "def setup_applicant_tracker_routes()" in src
-    assert "require_user(request)" in src
+    # DISC-15b: the write endpoints are gated by the shared engine-owner gate
+    # (``_require_owner`` -> ``require_engine_owner``), not the plain
+    # auth-only ``require_user`` this assertion originally checked for -- that
+    # older gate was insufficient on a single-tenant engine (see
+    # test_applicant_crossuser_write_isolation_disc15b.py).
+    assert "_require_owner(request)" in src
     # The write must validate the caller-supplied application id against this
     # request's own campaign fan-out before forwarding (CLAUDE.md: never trust
     # a caller-supplied input to opt a safety check in).

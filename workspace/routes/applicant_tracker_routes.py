@@ -32,6 +32,15 @@ Owner-scoping mirrors the sibling proxies:
   deployment), so this check is the ONLY scoping boundary and it is enforced here,
   server-side, not merely by omitting a picker from the UI.
 
+Cross-account isolation, write endpoints (DISC-15b): the id-ownership fan-out
+above is only IDOR protection against foreign ids -- since the fan-out itself
+has no owner concept to filter on, it was trivially satisfied for ANY
+authenticated workspace account, so a second account could still resolve and
+mutate the real owner's applications. Every mutator (``outcome``, ``archive``,
+``mark-submitted``, ``detect-submission``, ``scan-email``, ``retry``,
+``override-block``) is now additionally gated by ``_require_owner`` (the
+shared ``require_engine_owner``), the same gate the read endpoints already use.
+
 Every engine failure degrades soft: an unreachable engine returns
 ``engine_available: false`` with a well-formed empty body; a setup gate returns
 ``gated: true`` with the engine's own message; no campaign / no applications yet
@@ -118,7 +127,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_engine_owner, require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -126,23 +135,27 @@ logger = logging.getLogger(__name__)
 # --- helpers ----------------------------------------------------------------
 
 
-def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
-
-
 def _require_owner(request: Request) -> str:
-    """Require the engine-owner account (DISC-15) for read/list endpoints.
+    """Require the engine-owner account (DISC-15 / DISC-15b) for every
+    endpoint below, both read and write.
 
     The engine has no owner concept at all (single-tenant per deployment), so
     the tracker board / stuck / blocked / pending-confirmation reads and their
-    per-application drill-downs below must be gated by
+    per-application drill-downs must be gated by
     ``src.auth_helpers.require_engine_owner`` rather than the plain
-    auth-only ``_require_user`` — otherwise any other authenticated workspace
+    auth-only ``require_user`` — otherwise any other authenticated workspace
     account (not just the real deployment owner) could read the owner's
     application-tracking data. Mirrors the fix already applied to the
     notification inbox / pending-actions feed in
     ``applicant_portal_routes.py``.
+
+    The 7 mutators (``outcome``, ``archive``, ``mark-submitted``,
+    ``detect-submission``, ``scan-email``, ``retry``, ``override-block``) use
+    this SAME gate (DISC-15b): their own ``application_id`` fan-out check is
+    only IDOR protection against foreign ids and, on a single-tenant engine,
+    was trivially satisfied for ANY authenticated account -- this gate is the
+    one that actually keeps a second workspace account from mutating the real
+    owner's applications.
     """
     return require_engine_owner(request)
 
@@ -406,9 +419,9 @@ def setup_applicant_tracker_routes() -> APIRouter:
         well-formed ``applications`` list.
 
         Owner-scoped (DISC-15): gated by ``_require_owner`` (the shared
-        ``require_engine_owner``), not the plain auth-only ``_require_user``
-        -- the engine's tracker board is single-tenant, so any other
-        workspace account must not be able to read the real owner's board.
+        ``require_engine_owner``), not a plain auth-only check -- the
+        engine's tracker board is single-tenant, so any other workspace
+        account must not be able to read the real owner's board.
         """
         _require_owner(request)
         async with ApplicantEngineClient() as engine:
@@ -434,7 +447,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         caller cannot record an outcome against an application that never
         appeared in their own tracker board.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_application_ids(engine)
             if owned is None:
@@ -467,7 +480,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         legal (409 when it isn't, e.g. still sitting in the just-submitted
         "applied" bucket) -- this route only decides WHOSE application it is.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_application_ids(engine)
             if owned is None:
@@ -521,7 +534,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``_owner_pending_confirmation_application_ids`` fan-out BEFORE the
         write is forwarded -- never trust a caller-supplied id.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_pending_confirmation_application_ids(engine)
             if owned is None:
@@ -552,7 +565,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``_owner_pending_confirmation_application_ids`` fan-out BEFORE the
         request is forwarded -- never trust a caller-supplied id.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_pending_confirmation_application_ids(engine)
             if owned is None:
@@ -585,7 +598,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         caller cannot scan an email against an application that never appeared
         in their own tracker board.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_application_ids(engine)
             if owned is None:
@@ -730,7 +743,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         ``scan_email`` use above. A caller cannot retry an application that
         never appeared in their own stuck-applications panel.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_stuck_application_ids(engine)
             if owned is None:
@@ -820,7 +833,7 @@ def setup_applicant_tracker_routes() -> APIRouter:
         engine start prefill/materials generation on its next tick, the same
         redline approval still gates the actual final submission.
         """
-        _require_user(request)
+        _require_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_blocked_application_ids(engine)
             if owned is None:
