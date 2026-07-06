@@ -1397,6 +1397,44 @@ const _AUTO_WIRE = {
   'custom-preset-modal':  { rail: null,             sidebar: null },
 };
 
+// ── Compare launcher guard (SET-S1-1) ───────────────────────────────────────
+// 'compare-model-overlay' above (the vendored model-arena Compare) and
+// applicantCompare.js's OWN 'applicant-compare-modal' are wired to the exact
+// same launcher buttons (rail-compare / tool-compare-btn — the mapping just
+// above). Every one of those buttons therefore carries multiple independent,
+// uncoordinated click listeners: app.js's permanent `compareModule.
+// toggleMode()` handler (opens the vendored overlay), lazyLaunch.js's
+// dynamic-import placeholder, and — once loaded — applicantCompare.js's own
+// permanent listener. A single click fired more than one of these at once,
+// opening BOTH windows and leaving an orphaned vendored stoplight cluster
+// behind when only the Applicant one was closed.
+//
+// Guarded here rather than in each of those other files: the capture-phase
+// document click listener below (the same one that intercepts clicks on a
+// MINIMIZED tool's launcher) already runs before any bubble-phase listener
+// bound directly to the button, regardless of which of those listeners
+// attached first — so stopping the event here reliably wins and leaves only
+// the Applicant surface to open. The button ids are read off the mapping
+// above (rather than re-listed) so this guard can never drift from it.
+const _COMPARE_LAUNCHER_BTN_IDS = Object.values(_AUTO_WIRE['compare-model-overlay'] || {}).filter(Boolean);
+
+function _openApplicantCompareSurface() {
+  try {
+    if (window.applicantCompareModule
+        && typeof window.applicantCompareModule.openApplicantCompare === 'function') {
+      window.applicantCompareModule.openApplicantCompare();
+      return;
+    }
+  } catch (_) { /* fall through to the lazy-load hook below */ }
+  // Not loaded yet — lazyLaunch.js exposes exactly this hook for an
+  // already-eager module that wants to open one of its lazy surfaces without
+  // duplicating the dynamic-import wiring (see its own "Exposed so other
+  // already-eager modules..." comment).
+  try {
+    if (typeof window.__applicantLazyOpen === 'function') window.__applicantLazyOpen('compare');
+  } catch (_) { /* no-op — nothing left to fall back to */ }
+}
+
 function _autoRegister(id) {
   if (_state.has(id)) return _state.get(id);
   const wire = _AUTO_WIRE[id];
@@ -1493,6 +1531,16 @@ document.addEventListener('click', (e) => {
   const btn = e.target.closest('[id]');
   if (!btn) return;
   const btnId = btn.id;
+  // Compare's shared launcher buttons must open ONLY the Applicant surface
+  // (SET-S1-1 — see _COMPARE_LAUNCHER_BTN_IDS above) — stop here, before any
+  // other listener bound to this same button (the vendored compareModule
+  // toggle, lazyLaunch's placeholder) gets a chance to run.
+  if (_COMPARE_LAUNCHER_BTN_IDS.includes(btnId)) {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    _openApplicantCompareSurface();
+    return;
+  }
   for (const [modalId, s] of _state.entries()) {
     if (!s.isMinimized) continue;
     if (s.btnIds.includes(btnId)) {

@@ -19,7 +19,13 @@
 // the engine directly), creates no engine state, and degrades gracefully when the
 // engine is offline. Styling reuses the workspace design system (.modal /
 // .modal-content / .modal-header / .modal-body / .cal-btn / .close-btn /
-// .hwfit-loading / .applicant-status-strip).
+// .memory-toolbar-btn / .hwfit-loading / .applicant-status-strip). Refresh
+// deliberately does NOT reuse .close-btn (SR-S1-1): sharing that class made
+// the frosted theme render Refresh as a second, pixel-identical red
+// close-disc next to the real Close control -- .memory-toolbar-btn is the
+// same "small icon button in a modal header" treatment Portal/Vault/Today
+// already use for their own Refresh buttons, so it reads as an action, not
+// a window control.
 
 import uiModule from './ui.js';
 import {
@@ -245,7 +251,7 @@ function _ensureModalEl() {
           Activity
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="close-btn" id="applicant-activity-refresh" title="Refresh the activity feed" aria-label="Refresh the activity feed">
+          <button type="button" class="memory-toolbar-btn" id="applicant-activity-refresh" title="Refresh the activity feed" aria-label="Refresh the activity feed" style="width:26px;height:26px;padding:0;flex-shrink:0;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
           <button class="close-btn" id="applicant-activity-close" title="Close" aria-label="Close">
