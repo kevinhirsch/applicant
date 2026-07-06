@@ -162,7 +162,7 @@ function _neverDoesSectionHTML() {
 // record + the audit-log export, all of which already exist; this section
 // just explains what they are and links to where they're reachable.
 function _honestySectionHTML() {
-  const hasDebug = !!(window.applicantDebugModule && typeof window.applicantDebugModule.openApplicantDebug === 'function');
+  const hasDebug = !!(window.applicantActivityModule && typeof window.applicantActivityModule.openApplicantActivity === 'function');
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
       ${_sectionHead('Proof, not just promises')}
@@ -219,9 +219,9 @@ function _render(host) {
   if (debugBtn) {
     debugBtn.addEventListener('click', () => {
       try {
-        if (window.applicantDebugModule && typeof window.applicantDebugModule.openApplicantDebug === 'function') {
+        if (window.applicantActivityModule && typeof window.applicantActivityModule.openApplicantActivity === 'function') {
           _close();
-          window.applicantDebugModule.openApplicantDebug();
+          window.applicantActivityModule.openApplicantActivity();
           return;
         }
       } catch { /* fall through */ }
