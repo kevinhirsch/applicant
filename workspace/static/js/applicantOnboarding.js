@@ -788,6 +788,33 @@ async function _renderLLM() {
   const host = document.getElementById('ao-llm-manager');
   if (adm && typeof adm.mountEndpointManager === 'function' && host && adm.mountEndpointManager(host)) {
     _llmManagerMounted = true;
+    // ON-S2-1 (button salad): mountEndpointManager() force-expands BOTH the
+    // Local and API add sections (admin.js's _expandAddSections) so the
+    // manager is instantly usable — reasonable in Settings (opened by
+    // choice, one section at a time) but here it roughly doubles the
+    // buttons/toggles on screen the instant this step renders, stacked on
+    // top of the Added-Models list. Cap it back to ONE open provider section
+    // — Local, the simpler no-signup path — by driving admin.js's OWN
+    // already-wired toggle (a synthetic click on its header) rather than
+    // hand-editing the collapsed/aria state, so admin.js's localStorage-
+    // backed remembered open/closed state for next time stays correct.
+    const apiSection = host.querySelector('#adm-add-api');
+    if (apiSection && !apiSection.classList.contains('collapsed')) {
+      const apiToggle = apiSection.querySelector('.adm-section-toggle');
+      if (apiToggle) apiToggle.click();
+    }
+    // This is the SAME DOM node Settings uses (relocated, not recreated), so
+    // a per-endpoint model checklist a previous Settings visit left expanded
+    // would otherwise still be open here too. loadEndpoints() always
+    // *renders* that checklist collapsed from scratch, but defensively
+    // re-collapse any that are somehow already open before the user ever
+    // sees this step, so it never "appears at once" with everything else.
+    host.querySelectorAll('[data-adm-ep-models-panel]:not(.hidden)').forEach((panelEl) => {
+      panelEl.classList.add('hidden');
+      const row = panelEl.closest('[data-adm-ep-id]');
+      const chevron = row && row.querySelector('.admin-user-chevron');
+      if (chevron) { chevron.style.transform = ''; chevron.style.opacity = '0.3'; }
+    });
     // #14: the manager's real inputs (e.g. #adm-epLocalUrl / #adm-epUrl) don't
     // exist yet at the _setBody() call above — that call's own _restoreDraft
     // only found the empty `#ao-llm-manager` placeholder, so a draft saved from
@@ -1617,6 +1644,11 @@ const SECTION_FORMS = {
     // submit time — not before first value — so this section now sits LAST in
     // INTAKE_SECTIONS (see the reorder note there) and says so plainly.
     desc: 'Most applications don’t ask for these up front. Add them now, or skip — Applicant will ask only when a specific application actually needs one.',
+    // ON-S2-5: this section's own copy above says it's OK to leave blank, so
+    // an empty References must not hard-block "Save & continue" the way a
+    // required section does — see the `optional` check in
+    // _nextIntakeOrComplete()'s missing_sections handling.
+    optional: true,
     repeat: true,
     fields: [
       { name: 'name', label: 'Name', type: 'text' },
@@ -1669,7 +1701,11 @@ function _intakeProgressHTML(total) {
 function _fieldHTML(f, value, detailValue) {
   const v = value == null ? '' : value;
   if (f.type === 'textarea') {
-    return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><textarea class="settings-select" name="${esc(f.name)}" rows="3" style="resize:vertical;">${esc(v)}</textarea></div>`;
+    // ON-S3-5: 3 rows clipped a realistic answer (e.g. a real "Technical
+    // skills" list) on first view, hiding content the user had to scroll a
+    // tiny box to discover was even there. 6 rows shows a full skills/
+    // highlights list up front; `resize:vertical` still lets it grow further.
+    return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><textarea class="settings-select" name="${esc(f.name)}" rows="6" style="resize:vertical;">${esc(v)}</textarea></div>`;
   }
   if (f.type === 'yesno') {
     return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label>
@@ -2112,13 +2148,19 @@ function _renderBaseResume(saved) {
     <div id="ao-resume-msg"></div>
   `);
   _setFoot(`
-    <button class="cal-btn" id="ao-intake-back">Back</button>
+    ${_intakeIndex > 0 ? '<button class="cal-btn" id="ao-intake-back">Back</button>' : ''}
     ${_intakeSkipButtonHTML()}
     <button class="cal-btn cal-btn-primary" id="ao-resume-next" ${saved && saved.document_path ? '' : 'disabled'}>Continue</button>
   `);
   _wireIntakeSkip();
 
-  document.getElementById('ao-intake-back').onclick = () => {
+  // ON-S3-1: this is INTAKE_SECTIONS[0] ("section 1 of N") — same
+  // _intakeIndex > 0 guard every other intake section already applies to
+  // its own Back button (see _renderRepeatSection/_renderIntakeSection),
+  // so section 1 no longer shows an always-enabled Back that's a silent
+  // no-op (_intakeIndex can't go below 0).
+  const back = document.getElementById('ao-intake-back');
+  if (back) back.onclick = () => {
     _intakeIndex = Math.max(0, _intakeIndex - 1); _renderIntakeSection();
   };
 
@@ -2411,7 +2453,19 @@ async function _nextIntakeOrComplete() {
       return;
     }
     if (missing.length) {
-      const idx = INTAKE_SECTIONS.indexOf(missing[0]);
+      // ON-S2-5: a section marked `optional` in SECTION_FORMS (currently just
+      // References — its own on-screen copy says "add them now, or skip")
+      // must not hard-block completion just because it's still empty; that's
+      // exactly what the "Skip for now" button right next to "Save &
+      // continue" already lets you do. If every reported-missing section is
+      // one of these, finish the same way Skip does instead of bouncing the
+      // user back to a section its own copy told them they could skip.
+      const blocking = missing.filter((k) => !(SECTION_FORMS[k] && SECTION_FORMS[k].optional));
+      if (!blocking.length) {
+        await _finish();
+        return;
+      }
+      const idx = INTAKE_SECTIONS.indexOf(blocking[0]);
       _intakeIndex = idx >= 0 ? idx : 0;
       await _renderIntakeSection();
       // #26: the section we just jumped back to may not even render an
@@ -2419,7 +2473,7 @@ async function _nextIntakeOrComplete() {
       // which previously swallowed this message entirely — a toast is always
       // visible regardless of which section's markup is on screen, and the
       // per-section message is kept as a bonus where that container exists.
-      const msg = `Please finish "${_sectionLabel(missing[0])}" to continue.`;
+      const msg = `Please finish "${_sectionLabel(blocking[0])}" to continue.`;
       const inline = document.getElementById('ao-intake-msg');
       if (inline) inline.innerHTML = _err(esc(msg));
       _toast(msg);
