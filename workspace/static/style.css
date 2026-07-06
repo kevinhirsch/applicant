@@ -34037,15 +34037,37 @@ body.theme-frosted .ow-title {
   pointer-events: none;          /* the title never eats a drag/click */
 }
 /* ── macOS TRAFFIC LIGHTS (the colored exception — NOT glass-refracted) ────────*/
+/* ONE token set for EVERY window family (owner: the stoplights read wrong-sized /
+   off-hue / inconsistent between window kinds). The kit cluster (.ow-controls,
+   appkitWindow.js + the Portal/Chat/Today hybrids) AND the legacy .modal-header
+   controls (further down) consume these SAME custom properties — change a value
+   here and every titlebar follows. Canonical macOS: 12px discs, 8px inner gap
+   (20px pitch), close #FF5F57 / minimize #FEBC2E / zoom #28C840, subtle dark
+   inner ring; hues are IDENTICAL in light and dark themes (macOS never themes
+   the stoplight hues — only the unfocused/disabled grey tracks the theme ink).
+   Corpus note: the Tahoe desktop corpus measures 14pt discs at 24pt pitch on
+   retina; the web titlebar keeps the canonical 1x 12px/8px metric the kit
+   standardized on. */
+:root {
+  --stoplight-size: 12px;                  /* disc diameter — fixed, border-box, never ovals */
+  --stoplight-gap: 8px;                    /* inner gap between discs */
+  --stoplight-close: #ff5f57;              /* red    — close */
+  --stoplight-min: #febc2e;                /* yellow — minimize */
+  --stoplight-zoom: #28c840;               /* green  — the zoom slot (the dock toggle wears it) */
+  --stoplight-ring: rgba(0, 0, 0, 0.12);   /* subtle inner border on every disc */
+  --stoplight-glyph: rgba(0, 0, 0, 0.55);  /* glyph ink — revealed on cluster hover/focus */
+  --stoplight-idle: color-mix(in srgb, var(--fg, #fff) 26%, transparent);      /* unfocused-window grey */
+  --stoplight-disabled: color-mix(in srgb, var(--fg, #fff) 24%, transparent);  /* inert-control grey (solid disc, no glyph) */
+}
 /* The control cluster moves to the TOP-LEFT and the existing close/min buttons become
-   the two standard lights: close=red, minimize=yellow. ~12px discs, ~8px gaps, inset
-   from the corner (concentric). Glyphs appear on hover/focus of the cluster. Unfocused
-   → neutral grey (authentic macOS). The third (green/zoom/maximize) light is
+   the two standard lights: close=red, minimize=yellow. Glyphs appear on hover/focus of
+   the CLUSTER (authentic macOS: all glyphs reveal together when any light is hovered).
+   Unfocused → neutral grey (authentic macOS). The third (green/zoom/maximize) light is
    DELIBERATELY GONE (owner ruling): it was inert everywhere and only crowded the
    centered title at thin widths — close/minimize are the cluster now. */
 body.theme-frosted .ow-controls {
   order: -1;                     /* cluster to the LEFT of the (centered) title */
-  gap: 8px;
+  gap: var(--stoplight-gap);
   display: flex; align-items: center;
   margin-right: auto;            /* push the rest of the band away */
 }
@@ -34073,9 +34095,13 @@ body.theme-frosted .ow-controls .ow-dock  { order: 2; }   /* green  (rightmost) 
 body.theme-frosted .ow-controls .ow-close,
 body.theme-frosted .ow-controls .ow-min,
 body.theme-frosted .ow-controls .ow-dock {
-  width: 12px; height: 12px; min-width: 12px; min-height: 12px;
+  box-sizing: border-box;                      /* ring lives INSIDE the 12px disc */
+  flex: 0 0 auto;                              /* never flex-squashed into an oval */
+  width: var(--stoplight-size); height: var(--stoplight-size);
+  min-width: var(--stoplight-size); min-height: var(--stoplight-size);
+  max-width: var(--stoplight-size); max-height: var(--stoplight-size);
   border-radius: 50%; padding: 0; opacity: 1;
-  border: 0.5px solid rgba(0,0,0,0.22);
+  border: 1px solid var(--stoplight-ring);
   box-shadow: none;
   /* The button's OWN text node is collapsed to 0 (the glyph renders via ::before, a
      non-text decorative mark). font-size:0 means the responsive-matrix crowding sweep
@@ -34083,8 +34109,10 @@ body.theme-frosted .ow-controls .ow-dock {
      falsy), and the accessible name lives on aria-label, not visible 9px text. The kit's
      own `.ow-controls .ow-dock { font-size: .9rem }` rule (the legacy non-frosted glyph)
      is overridden here for the frosted traffic-light treatment. */
-  font-size: 0; line-height: 12px; text-indent: 0;
+  font-size: 0; line-height: var(--stoplight-size); text-indent: 0;
   position: relative;
+  /* hue swaps (focus/unfocus) fade; no transform/box-shadow bounce (lights don't move) */
+  transition: background-color .15s ease, filter .15s ease;
 }
 /* The visible macOS glyph is a DECORATIVE ::before (hover/focus only, ~9px — authentic
    macOS). A pseudo-element's content is NOT the element's textContent, so it is never
@@ -34106,22 +34134,39 @@ body.theme-frosted .ow-controls .ow-dock::before {
 }
 /* the dock arrow reads a touch larger so the tray bar is legible at 12px */
 body.theme-frosted .ow-controls .ow-dock::before { font-size: 10px; }
-body.theme-frosted .ow-titlebar:hover .ow-controls .ow-close::before,
-body.theme-frosted .ow-titlebar:hover .ow-controls .ow-min::before,
-body.theme-frosted .ow-titlebar:hover .ow-controls .ow-dock::before,
+/* Glyph reveal: hovering the CLUSTER (any light — the ::after hit strips extend the
+   hover zone) or keyboard focus inside it reveals ALL glyphs together — authentic
+   macOS group reveal, NOT a whole-titlebar hover. */
+body.theme-frosted .ow-controls:hover .ow-close::before,
+body.theme-frosted .ow-controls:hover .ow-min::before,
+body.theme-frosted .ow-controls:hover .ow-dock::before,
+body.theme-frosted .ow-controls:focus-within .ow-close::before,
+body.theme-frosted .ow-controls:focus-within .ow-min::before,
+body.theme-frosted .ow-controls:focus-within .ow-dock::before,
 body.theme-frosted .ow-controls button:focus-visible::before {
-  color: rgba(0,0,0,0.6);
+  color: var(--stoplight-glyph);
 }
-/* FOCUSED window → colored lights (green dock dot only ever exists on dockable windows) */
-body.theme-frosted .ow-window.ow-focused .ow-controls .ow-close { background: #ff5f57; }
-body.theme-frosted .ow-window.ow-focused .ow-controls .ow-min   { background: #febc2e; }
-body.theme-frosted .ow-window.ow-focused .ow-controls .ow-dock  { background: #28c840; }
-/* UNFOCUSED window → neutral grey lights (authentic macOS) */
-body.theme-frosted .ow-window:not(.ow-focused) .ow-controls .ow-close,
-body.theme-frosted .ow-window:not(.ow-focused) .ow-controls .ow-min,
-body.theme-frosted .ow-window:not(.ow-focused) .ow-controls .ow-dock {
-  background: color-mix(in srgb, var(--fg, #fff) 26%, transparent);
+/* DEFAULT → colored lights. The colored state is the base so every family that
+   composes .ow-controls gets it — including the .modal-based hybrids (Portal /
+   Job Assistant / Today), which never receive the kit's .ow-focused class but are,
+   as open modals, always the key surface. (Green dock dot only ever exists on
+   dockable windows.) */
+body.theme-frosted .ow-controls .ow-close { background: var(--stoplight-close); }
+body.theme-frosted .ow-controls .ow-min   { background: var(--stoplight-min); }
+body.theme-frosted .ow-controls .ow-dock  { background: var(--stoplight-zoom); }
+/* UNFOCUSED kit window → neutral grey lights (authentic macOS). Scoped to real
+   kit-stacked windows (:not(.modal)) — appkitWindow.js stamps .ow-focused on the
+   top of ITS stack only, so a .modal hybrid must not be greyed by omission. */
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-close,
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-min,
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls .ow-dock {
+  background: var(--stoplight-idle);
 }
+/* …and hovering an unfocused window's cluster re-lights it (macOS lets you aim at a
+   background window's controls without raising it first). */
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-close { background: var(--stoplight-close); }
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-min   { background: var(--stoplight-min); }
+body.theme-frosted .ow-window:not(.ow-focused):not(.modal) .ow-controls:hover .ow-dock  { background: var(--stoplight-zoom); }
 /* a11y: a crisp focus-visible RING on the traffic lights (keyboard focus must read even
    when the cluster is colored at rest). offset clears the 12px disc so the ring is legible;
    the disc's own glyph also reveals on :focus-visible (above). */
@@ -34131,42 +34176,158 @@ body.theme-frosted .ow-controls .ow-dock:focus-visible {
   outline: 2px solid var(--ow-ios-blue, #0a84ff);
   outline-offset: 2px;
 }
-/* the 44px hit region stays (inherited ::after); hover lift is gone (lights don't grow) */
-body.theme-frosted .ow-controls button:hover { transform: none; box-shadow: none; }
-/* A non-minimizable window's YELLOW light is greyed (dimmed, no glyph, not clickable —
-   the macOS greyed/inactive look): it's always rendered so the cluster keeps its shape,
-   so the disabled state shares this rule. (The green/maximize light was removed.) */
+/* A non-minimizable window's YELLOW light is greyed (a SOLID grey disc, no glyph, not
+   clickable — the macOS inactive-control look): it's always rendered so the cluster
+   keeps its shape, so the disabled state shares this rule. (The green/maximize light
+   was removed.) */
 body.theme-frosted .ow-controls .ow-min[disabled] {
-  background: color-mix(in srgb, var(--fg, #fff) 18%, transparent) !important;
-  opacity: 0.5; cursor: default; pointer-events: none; color: transparent !important;
+  background: var(--stoplight-disabled) !important;
+  cursor: default; pointer-events: none; color: transparent !important;
 }
+/* a disabled light NEVER reveals a glyph, even when the cluster is hovered */
+body.theme-frosted .ow-controls .ow-min[disabled]::before { content: none !important; }
+/* Shared plumbing for every light in the cluster (all .ow-controls buttons ARE
+   stoplights — close/min/dock is the kit's whole set). position anchors the hit
+   region; no glass-disc fill here (the hue rules above own the paint). */
 body.theme-frosted .ow-controls button {
-  width: 30px; height: 30px; min-width: 30px; min-height: 30px;  /* uniform discs */
-  border-radius: 50%;
-  background-color: color-mix(in srgb, var(--fg, #fff) 12%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 24%, transparent),
-              inset 0 0 0 .5px color-mix(in srgb, var(--fg, #fff) 14%, transparent);
-  opacity: .85;
   position: relative;
+  background-image: none;
 }
-/* the >=44px hit region (invisible) — WCAG 2.5.5 without bloating the visible disc */
+/* Invisible hit region: one non-overlapping strip per light — pitch-wide (disc + gap)
+   so neighbors never eat each other's clicks, 44px tall for the titlebar band
+   (WCAG 2.5.5 vertically without bloating the visible 12px disc). */
 body.theme-frosted .ow-controls button::after {
   content: ""; position: absolute; top: 50%; left: 50%;
-  width: 44px; height: 44px; transform: translate(-50%, -50%);
+  width: calc(var(--stoplight-size) + var(--stoplight-gap));
+  height: 44px; transform: translate(-50%, -50%);
 }
+/* macOS lights do NOT grow, lift, or recolor on hover — the glyph reveal (above) is
+   the hover signal; a PRESSED light darkens slightly. */
 body.theme-frosted .ow-controls button:hover,
 body.theme-frosted .ow-controls button:focus-visible {
-  opacity: 1;
-  background-color: color-mix(in srgb, var(--fg, #fff) 22%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 36%, transparent),
-              0 2px 8px rgba(0,0,0,.22);
-  transform: scale(1.08);
+  opacity: 1; transform: none; box-shadow: none;
 }
-body.theme-frosted .ow-controls button:active { transform: scale(0.92); transition-duration: .08s; }
-/* the close control reads its danger on hover (a warm accent glass) */
-body.theme-frosted .ow-controls .ow-close:hover {
-  background-color: color-mix(in srgb, var(--red, #e06c75) 60%, transparent);
-  color: var(--on-accent, #fff);
+body.theme-frosted .ow-controls button:active { transform: none; filter: brightness(0.8); }
+@media (prefers-reduced-motion: reduce) {
+  body.theme-frosted .ow-controls .ow-close,
+  body.theme-frosted .ow-controls .ow-min,
+  body.theme-frosted .ow-controls .ow-dock,
+  body.theme-frosted .ow-controls button { transition: none; }
+}
+
+/* ── LEGACY MODAL TITLEBARS → the SAME stoplights ─────────────────────────────
+   The pre-kit tool modals (Settings, Theme, Brain/Memory, Cookbook, Prompt,
+   Rename, the applicant* dialogs, …) draw their own header controls:
+   `.close-btn`/`.modal-close` (a square bordered ✖) plus the injected
+   `.modal-minimize-btn`/`.minimize-btn`. Under the frosted (default) chrome those
+   squares sat top-RIGHT while every kit window wore left-aligned macOS lights —
+   the owner-reported inconsistency. Same tokens, same geometry, same group
+   reveal: close = red, minimize = yellow, flex-ordered to the LEFT of the header
+   (the h4's own margin-right:auto keeps every other accessory pushed right,
+   unchanged). Scoped to .modal-header so standalone .close-btn chips elsewhere
+   are untouched. The .ow-titlebar hybrids (Portal / Job Assistant / Today) match
+   via the .ow-controls rules above; where a button carries both class families
+   the two rule sets agree token-for-token. */
+body.theme-frosted .modal-header .close-btn,
+body.theme-frosted .modal-header .modal-close,
+body.theme-frosted .modal-header .minimize-btn,
+body.theme-frosted .modal-header .modal-minimize-btn {
+  box-sizing: border-box;
+  flex: 0 0 auto;                              /* never flex-squashed into an oval */
+  width: var(--stoplight-size); height: var(--stoplight-size);
+  min-width: var(--stoplight-size); min-height: var(--stoplight-size);
+  max-width: var(--stoplight-size); max-height: var(--stoplight-size);
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--stoplight-ring);
+  box-shadow: none; opacity: 1;
+  /* collapse the literal ✖ / − text node — the glyph renders via ::before (same
+     crowding-sweep-safe technique as the kit cluster above) */
+  font-size: 0; line-height: var(--stoplight-size); text-indent: 0;
+  color: transparent;
+  position: relative;
+  transition: background-color .15s ease, filter .15s ease;
+}
+/* some headers ship an inline SVG inside the button (capabilities/shortcuts ✖,
+   the injected minimize dash) — the disc glyph replaces it */
+body.theme-frosted .modal-header .close-btn > svg,
+body.theme-frosted .modal-header .modal-close > svg,
+body.theme-frosted .modal-header .minimize-btn > svg,
+body.theme-frosted .modal-header .modal-minimize-btn > svg { display: none; }
+/* macOS order: red (close) leftmost, then yellow (minimize); the title h4 and its
+   margin-right:auto stay put, so accessories (Peek, Refresh, …) remain flush right. */
+body.theme-frosted .modal-header .close-btn,
+body.theme-frosted .modal-header .modal-close {
+  order: -3;
+  margin: 0 var(--stoplight-gap) 0 0;
+  background: var(--stoplight-close);
+}
+body.theme-frosted .modal-header .minimize-btn,
+body.theme-frosted .modal-header .modal-minimize-btn {
+  order: -2;
+  margin: 0 var(--space-3, 12px) 0 0;          /* clear the title */
+  margin-left: 0 !important;                   /* beat the injected inline auto-margin */
+  background: var(--stoplight-min);
+}
+/* glyphs — invisible at rest, same 9px marks as the kit cluster */
+body.theme-frosted .modal-header .close-btn::before,
+body.theme-frosted .modal-header .modal-close::before { content: "\00d7"; }  /* × */
+body.theme-frosted .modal-header .minimize-btn::before,
+body.theme-frosted .modal-header .modal-minimize-btn::before { content: "\2212"; }  /* − */
+body.theme-frosted .modal-header .close-btn::before,
+body.theme-frosted .modal-header .modal-close::before,
+body.theme-frosted .modal-header .minimize-btn::before,
+body.theme-frosted .modal-header .modal-minimize-btn::before {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; color: transparent; pointer-events: none;
+}
+/* group reveal: hovering ANY light in the header (there is no wrapper element in the
+   legacy headers, so :has() plays the .ow-controls:hover role) or keyboard focus on
+   one reveals ALL the header's glyphs together */
+body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .close-btn::before,
+body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-close::before,
+body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .minimize-btn::before,
+body.theme-frosted .modal-header:has(.close-btn:hover, .modal-close:hover, .minimize-btn:hover, .modal-minimize-btn:hover) .modal-minimize-btn::before,
+body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .close-btn::before,
+body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-close::before,
+body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .minimize-btn::before,
+body.theme-frosted .modal-header:has(.close-btn:focus-visible, .modal-close:focus-visible, .minimize-btn:focus-visible, .modal-minimize-btn:focus-visible) .modal-minimize-btn::before {
+  color: var(--stoplight-glyph);
+}
+/* no grow / no recolor on hover (glyphs are the signal); pressed = slightly darker */
+body.theme-frosted .modal-header .close-btn:hover,
+body.theme-frosted .modal-header .modal-close:hover,
+body.theme-frosted .modal-header .minimize-btn:hover,
+body.theme-frosted .modal-header .modal-minimize-btn:hover {
+  transform: none; box-shadow: none; color: transparent;
+}
+body.theme-frosted .modal-header .close-btn:active,
+body.theme-frosted .modal-header .modal-close:active,
+body.theme-frosted .modal-header .minimize-btn:active,
+body.theme-frosted .modal-header .modal-minimize-btn:active { filter: brightness(0.8); }
+/* keyboard focus ring — same treatment as the kit cluster */
+body.theme-frosted .modal-header .close-btn:focus-visible,
+body.theme-frosted .modal-header .modal-close:focus-visible,
+body.theme-frosted .modal-header .minimize-btn:focus-visible,
+body.theme-frosted .modal-header .modal-minimize-btn:focus-visible {
+  outline: 2px solid var(--ow-ios-blue, #0a84ff);
+  outline-offset: 2px;
+}
+/* invisible hit region — pitch-wide strip, 30px tall (the legacy headers are shorter
+   bands than the kit's 44px titlebar; the strip must not blanket the draggable header) */
+body.theme-frosted .modal-header .close-btn::after,
+body.theme-frosted .modal-header .modal-close::after,
+body.theme-frosted .modal-header .minimize-btn::after,
+body.theme-frosted .modal-header .modal-minimize-btn::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: calc(var(--stoplight-size) + var(--stoplight-gap));
+  height: 30px; transform: translate(-50%, -50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.theme-frosted .modal-header .close-btn,
+  body.theme-frosted .modal-header .modal-close,
+  body.theme-frosted .modal-header .minimize-btn,
+  body.theme-frosted .modal-header .modal-minimize-btn { transition: none; }
 }
 
 /* ── PROMINENT action (one per view): bright filled accent glass + crisp glyph ──*/
