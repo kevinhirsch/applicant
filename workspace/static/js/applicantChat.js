@@ -48,7 +48,7 @@ function _ensureChatHintRegistered() {
   if (_chatHintRegistered || !appkitChatHint || typeof appkitChatHint.register !== 'function') return;
   appkitChatHint.register(CHAT_HINT_KEY, {
     html: 'Ask me what needs your attention, or tell me about your preferences and ' +
-      "I'll keep them up to date. I never submit an application without your OK.",
+      "I’ll keep them up to date. I never submit an application without your OK.",
     gameBuildOnly: false,
   });
   _chatHintRegistered = true;
@@ -254,7 +254,7 @@ function _renderNoCampaign(body) {
       if (created && created.id) _activeCampaignId = created.id;
       _renderConversation();
     } catch (e) {
-      _toast(e.message || 'Could not create the job search');
+      _toast(errText(e) || 'Could not create the job search');
       btn.disabled = false;
       btn.textContent = 'Create';
     }
@@ -295,7 +295,7 @@ function _renderConversation() {
     <div id="applicant-composer" class="chat-input-bar" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
                 aria-label="Message the Job Assistant"
-                style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
+                style="flex:1;resize:none;overflow-y:auto;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
       <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send — or press Ctrl+Enter">Send</button>
     </div>
     <div style="text-align:right;font-size:10px;opacity:0.5;margin-top:2px;">⌘/Ctrl + Enter to send</div>`;
@@ -323,7 +323,10 @@ function _renderConversation() {
   // Gate the Send button on non-empty input (quick-wins #10): dim + disable until
   // there's something to send, and keep it in sync as the user types.
   input.addEventListener('input', _syncSendEnabled);
+  // micro-interactions audit #28: grow the composer with typed content.
+  input.addEventListener('input', () => _autoGrowComposer(input));
   _syncSendEnabled();
+  _autoGrowComposer(input);
 
   _renderStarters();
   _renderThreadIntro();
@@ -353,7 +356,18 @@ function _renderThreadIntro(seq) {
   thread.innerHTML = '';
   _appendMessage('assistant',
     'Hi — I can help with your job search. Ask me what needs your attention, ' +
-    "or tell me about your preferences and I'll keep them up to date.");
+    "or tell me about your preferences and I’ll keep them up to date.");
+}
+
+// micro-interactions audit #28: the composer used to be a fixed rows=2 box
+// with manual resize only, so a three-line question scrolled inside a
+// two-line window. Grow it with the content instead, capped at ~6 rows so a
+// long paste can't swallow the whole panel.
+const COMPOSER_MAX_HEIGHT = 132; // ~6 lines at this font-size/padding
+function _autoGrowComposer(input) {
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px';
 }
 
 // Enable/disable the Send button based on whether there's typed content, so an
@@ -380,6 +394,7 @@ function _prefillComposer(text) {
   input.focus();
   try { input.setSelectionRange(text.length, text.length); } catch { /* no-op */ }
   _syncSendEnabled();
+  _autoGrowComposer(input);
 }
 
 // A few tappable starter prompts so a blank composer reads as an invitation, not a
@@ -539,7 +554,7 @@ async function _sendToBubble(message, thinking) {
     }
     // Only clear the composer once the request actually succeeded — on
     // failure the typed text must survive so the user isn't forced to retype.
-    if (input && input.value === message) input.value = '';
+    if (input && input.value === message) { input.value = ''; _autoGrowComposer(input); }
   } catch (e) {
     if (thinking) {
       const b = thinking.querySelector('.body');
@@ -602,7 +617,7 @@ function _wireProposalButtons(container, proposals) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Confirm';
-        _toast(e.message || 'Could not save');
+        _toast(errText(e) || 'Could not save');
       }
     });
   });
@@ -636,7 +651,7 @@ function _wireCriteriaButtons(container, actions) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Confirm';
-        _toast(e.message || 'Could not save the search update');
+        _toast(errText(e) || 'Could not save the search update');
       }
     });
   });

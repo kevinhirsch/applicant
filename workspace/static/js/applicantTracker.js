@@ -71,7 +71,7 @@ const OUTCOME_OPTIONS = [
   { value: 'interview_invited', label: 'Got an interview' },
   { value: 'offer', label: 'Got an offer' },
   { value: 'rejected', label: 'Got rejected' },
-  { value: 'ghosted', label: "Haven't heard back" },
+  { value: 'ghosted', label: "Haven’t heard back" },
 ];
 
 const SIGNAL_LABEL = { interview_invited: 'Interview', offer: 'Offer' };
@@ -305,7 +305,7 @@ function _renderBoard(host, applications) {
   const html = BUCKETS.map((b) => _renderBucket(b, grouped[b.key])).filter(Boolean).join('');
   host.innerHTML = html || emptyHTML(
     'Nothing to track yet',
-    'Once your assistant submits an application, it shows up here so you can follow where it stands.',
+    'Once I submit an application, it shows up here so you can follow where it stands.',
   );
   host.querySelectorAll('[data-tracker-record]').forEach((select) => {
     select.addEventListener('change', () => _recordOutcome(select));
@@ -334,7 +334,7 @@ function _renderBoard(host, applications) {
 function _renderEmpty(host) {
   host.innerHTML = emptyHTML(
     'Nothing to track yet',
-    'Once your assistant submits an application, it shows up here — applied, awaiting a response, '
+    'Once I submit an application, it shows up here — applied, awaiting a response, '
     + 'an interview or offer, or a result — so you always know where things stand.',
   );
 }
@@ -342,7 +342,7 @@ function _renderEmpty(host) {
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
     'Tracker is offline',
-    'Your tracker will appear here once your assistant is connected and running.',
+    'Your tracker will appear here once I’m connected and running.',
   );
 }
 
@@ -385,7 +385,7 @@ function _renderStuckRow(app) {
     <div class="memory-item ow-list-row" data-stuck-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:6px 4px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
-        <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">Applicant couldn't resume this after ${esc(String(failures))} tries and paused work on it.</div>
+        <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">I couldn’t resume this after ${esc(String(failures))} tries and paused work on it.</div>
       </div>
       <button class="cal-btn" type="button" data-stuck-retry="${id}" ${busy ? 'disabled' : ''} aria-label="Retry ${label}">Retry now</button>
     </div>`;
@@ -435,7 +435,7 @@ async function _retryStuck(btn) {
   btn.textContent = 'Retrying…';
   try {
     await _post(`${API}/applications/${encodeURIComponent(id)}/retry`, {});
-    _toast("Retrying — Applicant will pick this back up on its next pass.");
+    _toast("Retrying — I’ll pick this back up on my next pass.");
     await _loadStuck();
   } catch (e) {
     _toast(errText(e));
@@ -530,7 +530,7 @@ async function _overrideBlocked(btn) {
   btn.textContent = 'Starting…';
   try {
     await _post(`${API}/applications/${encodeURIComponent(id)}/override-block`, {});
-    _toast('Got it — Applicant will start this application on its next pass.');
+    _toast('Got it — I’ll start this application on my next pass.');
     await _loadBlocked();
   } catch (e) {
     _toast(errText(e));
@@ -571,7 +571,7 @@ function _renderConfirmRow(app) {
         <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
         <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">Waiting to hear whether this was actually submitted.</div>
       </div>
-      <button class="cal-btn" type="button" data-confirm-detect="${id}" ${busy ? 'disabled' : ''} title="Ask Applicant to check the live session for a confirmation page" aria-label="Try auto-detect for ${label}">Try auto-detect</button>
+      <button class="cal-btn" type="button" data-confirm-detect="${id}" ${busy ? 'disabled' : ''} title="Ask me to check the live session for a confirmation page" aria-label="Try auto-detect for ${label}">Try auto-detect</button>
       <button class="cal-btn" type="button" data-confirm-submitted="${id}" ${busy ? 'disabled' : ''} aria-label="Mark ${label} as submitted">I submitted this</button>
     </div>`;
 }
@@ -647,7 +647,7 @@ async function _onDetectSubmission(btn) {
       _toast('Confirmed — this will show up on your tracker.');
       await Promise.all([_loadPendingConfirmation(), _load(false)]);
     } else {
-      _toast("Couldn't confirm it automatically — use \"I submitted this\" if you know for sure.");
+      _toast("Couldn’t confirm it automatically — use \"I submitted this\" if you know for sure.");
       btn.disabled = false;
       btn.textContent = origLabel;
     }
@@ -688,7 +688,7 @@ async function _load(showSpinner) {
 async function _recordOutcome(select) {
   const outcomeType = select.value;
   const applicationId = select.getAttribute('data-tracker-record');
-  if (!outcomeType || !applicationId) return;
+  if (!outcomeType || !applicationId || _busyIds.has(applicationId)) return;
   // Dark-engine audit item 11: the optional free-text reason input sits next
   // to the select on the SAME row -- only meaningful (and only forwarded)
   // when the owner is recording a rejection, so it never sends noise for the
@@ -722,6 +722,8 @@ async function _archiveApplication(btn) {
   if (!id || _busyIds.has(id)) return;
   _busyIds.add(id);
   btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Archiving…';
   try {
     await _post(`${API}/applications/${encodeURIComponent(id)}/archive`, {});
     _toast('Archived — it will no longer show as active.');
@@ -729,6 +731,7 @@ async function _archiveApplication(btn) {
   } catch (e) {
     _toast(errText(e));
     btn.disabled = false;
+    btn.textContent = origLabel;
   } finally {
     _busyIds.delete(id);
   }
@@ -778,7 +781,7 @@ async function _scanEmail(btn) {
     if (resultEl) {
       resultEl.textContent = (data && data.detected)
         ? 'Found some signal, but not confident enough to record automatically — use "Record what happened" above if you know for sure.'
-        : "Didn't recognize anything in that email.";
+        : "Didn’t recognize anything in that email.";
     }
   } catch (e) {
     if (resultEl) resultEl.textContent = errText(e);
@@ -1137,7 +1140,7 @@ async function _onSuggestionConfirm(btn) {
     if (resultEl) {
       resultEl.textContent = (scanData && scanData.detected)
         ? 'Found some signal, but not confident enough to record automatically.'
-        : "Didn't recognize anything in that email.";
+        : "Didn’t recognize anything in that email.";
     }
   } catch (e) {
     if (resultEl) resultEl.textContent = errText(e);
@@ -1161,7 +1164,7 @@ async function _onScreeningToggle(details) {
   const body = details.querySelector(`[data-screening-body="${id}"]`);
   if (!body) return;
   if (!campaignId) {
-    body.textContent = 'No campaign on this application yet.';
+    body.textContent = 'No search linked to this application yet.';
     return;
   }
   try {
@@ -1234,7 +1237,7 @@ async function _onPrepToggle(details) {
 
 function _renderPrepBody(body, data) {
   if (!data || data.generated !== true) {
-    body.textContent = "Prep notes aren't ready yet.";
+    body.textContent = "Prep notes aren’t ready yet.";
     return;
   }
   const notes = Array.isArray(data.notes) ? data.notes : [];
@@ -1328,8 +1331,8 @@ function _sandboxSessionHTML(url) {
     <div style="margin-top:6px;">
       <a class="cal-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer"
          style="display:inline-block;text-decoration:none;font-size:11px;"
-         title="Open the live browser session the assistant is using for this application">
-        Open live session
+         title="Watch the live browser view I’m using for this application">
+        Watch live
       </a>
     </div>`;
 }

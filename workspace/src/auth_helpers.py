@@ -136,6 +136,59 @@ def require_admin_for_impersonation(auth_mgr, target_owner: str) -> bool:
         return False
 
 
+def require_engine_owner(request: Request) -> str:
+    """Require the engine-owner account on engine-backed read/list surfaces
+    (DISC-15).
+
+    The Applicant engine is SINGLE-TENANT per deployment: it has no owner
+    concept at all, so every campaign, pending action, tracker row, and
+    activity entry it returns belongs to the ONE person this instance was set
+    up for -- not to whichever workspace account happens to be logged in.
+    Plain ``require_user`` (any authenticated user) is only IDOR protection
+    against foreign ids; it does NOT isolate cross-account, so a second,
+    unrelated workspace account could read the real owner's pending actions,
+    campaigns, tracker board, or activity feed.
+
+    Originally fixed for the notification inbox as
+    ``applicant_portal_routes._require_notification_owner`` (dark-engine audit
+    lens 10 #28); factored out here so every sibling proxy (pending,
+    campaigns, tracker, activity) can share the EXACT same gate instead of
+    re-deriving it.
+
+    Mirrors ``applicant_admin_routes.py``'s ``_require_admin``: in single-user
+    / unconfigured mode there is no admin distinction, so the lone owner
+    passes (matching the rest of the workspace) -- but only from a DIRECT
+    loopback connection when there is no session at all (mirrors
+    ``_require_admin``'s #228 hardening below). Once the workspace is
+    configured for MULTIPLE accounts, only an admin may reach these surfaces.
+    Fails closed: any failure resolving admin status denies rather than
+    allows.
+    """
+    owner = get_current_user(request)
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
+
+    if not configured:
+        if owner:
+            return owner
+        if is_trusted_loopback(request):
+            return ""
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if not owner:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        is_admin = bool(auth_mgr.is_admin(owner))
+    except Exception:  # defensive: never fail open on the gate itself
+        is_admin = False
+    if not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Your account can't access this job search's data.",
+        )
+    return owner
+
+
 def owner_filter(query, model_cls, user: str, *, include_shared: bool = True):
     """Filter `query` so only rows owned by `user` (and optionally null-owner
     'shared' rows) come through. No-op when `user` is empty (single-user
