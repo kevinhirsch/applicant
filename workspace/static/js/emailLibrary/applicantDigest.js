@@ -361,7 +361,7 @@ function _warningBadge(row) {
   if (checks.has('duplicate_cooldown')) {
     label = 'You already applied to a similar role at this company';
   } else if (checks.has('per_company_volume')) {
-    label = "You've hit today's application limit for this company";
+    label = "You’ve hit today’s application limit for this company";
   } else if (
     checks.has('eligibility_sponsorship')
     || checks.has('eligibility_no_sponsorship')
@@ -634,7 +634,7 @@ async function _onAlignment(campaignId, row, btn, card) {
     } else {
       const pct = Math.round(Math.max(0, Math.min(1, Number(data.score) || 0)) * 100);
       const bits = data.matched.slice(0, 6).map((m) => m.value).filter(Boolean);
-      line.textContent = `${pct}% match to past wins — shares ${bits.join(', ')} with roles you've landed before.`;
+      line.textContent = `${pct}% match to past wins — shares ${bits.join(', ')} with roles you’ve landed before.`;
     }
     card.appendChild(line);
   } catch (e) {
@@ -821,15 +821,26 @@ async function _onBulkApprove(panel) {
   }
 }
 
+// Preserves the shared decline reason across a FAILED bulk submit (DISC-10) —
+// same pattern as `_lastDeclineReasonByRow` above for the single-row Pass:
+// before this, a flaky batch POST lost the typed reason the moment the prompt
+// resolved, forcing a retype for the whole batch on retry. One reason covers
+// the whole batch, so a single shared slot (not keyed by row) is enough;
+// cleared once every row in the batch has gone through cleanly.
+let _lastBulkDeclineReason = '';
+
 async function _onBulkDecline(panel) {
   const sel = _selectionFor(panel);
   if (!sel.size) return;
   // Same mandatory-feedback rule as the single-row Pass: one shared reason
-  // covers the whole batch (the engine records it per application).
+  // covers the whole batch (the engine records it per application). Prefill
+  // with whatever was typed on a previous failed attempt so retrying never
+  // forces a retype.
   const reason = await styledPrompt(
     `Why pass on these ${sel.size} role${sel.size === 1 ? '' : 's'}? A short reason teaches me what to skip next time.`,
     {
       title: `Pass on ${sel.size} role${sel.size === 1 ? '' : 's'}`,
+      defaultValue: _lastBulkDeclineReason,
       placeholder: 'e.g. too junior, wrong location, not my stack',
       confirmText: 'Pass',
       cancelText: 'Keep these roles',
@@ -863,6 +874,11 @@ async function _onBulkDecline(panel) {
   }
   _setBulkBusy(panel, false);
   _updateBulkBar(panel);
+  if (fail) {
+    _lastBulkDeclineReason = reason.trim(); // preserve it for the retry
+  } else {
+    _lastBulkDeclineReason = '';            // whole batch succeeded — nothing left to preserve
+  }
   if (ok) {
     showToast(`Passed on ${ok} role${ok === 1 ? '' : 's'}${fail ? ` — ${fail} couldn’t be saved.` : ' — thanks, that helps the next round.'}`);
   } else {

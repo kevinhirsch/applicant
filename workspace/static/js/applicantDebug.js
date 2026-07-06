@@ -132,7 +132,7 @@ function _ensureModalEl() {
       <div class="modal-header">
         <h4 id="applicant-debug-title">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-          Activity
+          Activity &amp; controls
         </h4>
         <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">${CLOSE_SVG}</button>
       </div>
@@ -147,7 +147,7 @@ function _ensureModalEl() {
           </button>
           <div class="applicant-debug-overflow-menu hidden" id="applicant-debug-overflow-menu" role="menu">
             <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-download-log" role="menuitem" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
-            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the Job Assistant beside this window to ask about what's happening">Ask the assistant</button>
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the Job Assistant beside this window to ask about what’s happening">Ask the assistant</button>
           </div>
         </div>
       </div>
@@ -245,8 +245,8 @@ function _ensureModalEl() {
     try {
       if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
         window.applicantChatModule.openApplicantChat();
-      } else { _toast('The assistant is not available right now.'); }
-    } catch { _toast('Could not open the assistant.'); }
+      } else { _toast('I’m not available right now.'); }
+    } catch { _toast('I couldn’t open the assistant.'); }
   });
   _modalEl = modal;
   return modal;
@@ -276,7 +276,7 @@ function _body() { return _modalEl.querySelector('#applicant-debug-body'); }
 // their own sub-host so one section's offline/gated state doesn't blank out
 // its siblings (#86).
 function _renderOffline(msg, host) {
-  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
+  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'I can’t connect right now. This view will fill in once I’m back.')}</div>`;
 }
 
 // A GATED response (engine is UP, but setup is incomplete / a precondition isn't
@@ -284,7 +284,7 @@ function _renderOffline(msg, host) {
 // owner knows what to finish, instead of the misleading "not reachable" copy.
 function _renderGated(data, host) {
   const msg = (data && data.message)
-    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+    || 'Finish setup — connect a model and fill in your profile — and I can start working for you.';
   (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
 }
 
@@ -397,7 +397,7 @@ async function _renderTab() {
 // Map a kit error (with .kind) to a plain-language line for the retry card.
 function _errLine(err) {
   if (err && (err.kind === 'offline' || err.kind === 'network')) {
-    return 'The Applicant engine is not reachable right now. This view will fill in once it is connected.';
+    return 'I can’t connect right now. This view will fill in once I’m back.';
   }
   return errText(err);
 }
@@ -506,7 +506,7 @@ async function _showAppDetail(appId, triggerBtn) {
   try { outcomes = await _fetchJSON(`${ADMIN}/outcomes/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
   try { snapshot = await _fetchJSON(`${ADMIN}/snapshot/${encodeURIComponent(appId)}`); } catch { /* snapshot is optional */ }
   if (anyErr && !shots.screenshots.length && !(wf.completed_steps || wf.steps || []).length && !outcomes.outcomes.length) {
-    host.innerHTML = `<div class="admin-card">${_empty(anyErr.message || 'Could not load application details.')}</div>`;
+    host.innerHTML = `<div class="admin-card">${_empty(errText(anyErr))}</div>`;
     return;
   }
   const shotList = (shots.screenshots || []);
@@ -624,7 +624,7 @@ async function _markSubmitted(appId, btn) {
     _toast('Recorded — thanks, this helps the system learn.');
     _renderActivity();
   } catch (e) {
-    _toast(e.message || 'Could not record that right now.');
+    _toast(errText(e));
   } finally {
     _busySubmit = false;
     if (btn) btn.disabled = false;
@@ -849,7 +849,7 @@ function _variantNudge(variants) {
   const worstLabel = esc(_variantLabel(worst));
   const msg = worst.interview_rate > 0
     ? `${bestLabel} converts to interviews ${(best.interview_rate / worst.interview_rate).toFixed(1)}x more often than ${worstLabel} — consider using it more.`
-    : `${bestLabel} is converting to interviews while ${worstLabel} hasn't yet — consider using ${bestLabel} more.`;
+    : `${bestLabel} is converting to interviews while ${worstLabel} hasn’t yet — consider using ${bestLabel} more.`;
   return `<div class="admin-toggle-sub" style="opacity:0.85;margin:2px 0 10px;padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--color-success, #4caf50) 12%, transparent);">${msg}</div>`;
 }
 
@@ -905,7 +905,7 @@ const RUN_MODES = [
 // happening right now" note on the Run controls tab, so the same machine code
 // always reads the same way wherever it surfaces.
 const _SKIP_REASON_LABELS = {
-  budget_exhausted: "Today's application limit is reached — it'll resume tomorrow.",
+  budget_exhausted: "Today’s application limit is reached — it’ll resume tomorrow.",
   automated_work_gated: 'Waiting on setup — finish connecting a model and your profile before I can start new work.',
   campaign_not_found: 'That job search no longer exists.',
   run_mode_stop: 'Paused — your run schedule says to hold off starting new work right now.',
@@ -1051,7 +1051,7 @@ async function _renderRun() {
   // not narrating active work — head the card accordingly instead of the
   // generic "What the agent is doing" label.
   const skipReason = status.latest_stats && status.latest_stats.skip_reason;
-  const doingTitle = skipReason ? "Why nothing's happening right now" : 'What the agent is doing';
+  const doingTitle = skipReason ? "Why nothing’s happening right now" : 'What I’m doing';
   // lens 04 #61: a run already in flight (e.g. the user switched tabs and came
   // back) re-renders with the busy/Cancel state restored instead of a stale
   // idle "Run now" button that no longer reflects reality.
@@ -1099,7 +1099,7 @@ async function _renderRun() {
       _toast(`Saved. Daily target: ${res.throughput_target != null ? res.throughput_target : '—'}${res.hard_cap != null ? ` (cap ${res.hard_cap})` : ''}.`);
       _renderRun();
     } catch (e) {
-      _toast(e.message || 'Could not save run settings.');
+      _toast(errText(e));
     } finally {
       _busySave = false;
       if (saveBtn) saveBtn.disabled = false;
@@ -1137,7 +1137,7 @@ async function _renderRun() {
       // controller's `.aborted` flag is the one reliable signal that this was
       // a user-requested cancel, so check it before falling back to the
       // generic error message.
-      _toast(controller.signal.aborted ? 'Run cancelled.' : (e.message || 'Could not run now.'));
+      _toast(controller.signal.aborted ? 'Run cancelled.' : errText(e));
     } finally {
       if (_runAbortController === controller) _runAbortController = null;
       runNowBtn.disabled = false;
@@ -1159,7 +1159,7 @@ async function _renderRun() {
       await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/${paused ? 'resume' : 'pause'}`, {});
       _toast(paused ? 'Resumed automated work.' : 'Paused automated work.');
     } catch (e) {
-      _toast(e.message || 'Could not change run state.');
+      _toast(errText(e));
     } finally {
       pauseBtn.disabled = false;
       _renderRun();
@@ -1235,7 +1235,7 @@ async function _renderSources(host) {
         _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
-        _toast(e.message || 'Could not change that source.');
+        _toast(errText(e));
       } finally {
         cb.disabled = false;
       }
@@ -1267,7 +1267,7 @@ function _wireExploreBudget(host) {
       if (msg) msg.textContent = 'Saved.';
       _toast('Exploration budget saved.');
     } catch (e) {
-      if (msg) msg.textContent = e.message || 'Could not save that.';
+      if (msg) msg.textContent = errText(e);
     } finally {
       btn.disabled = false;
     }
@@ -1304,7 +1304,7 @@ async function _renderDetections(host) {
   const data = await _fetchJSON(`${ADMIN}/detections/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(undefined, host); return; }
   const entries = data.detections || [];
-  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Moments this job search's automated browsing was challenged or blocked by a site — so a pattern of blocks is visible instead of silently retried.</div>`;
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Moments this job search’s automated browsing was challenged or blocked by a site — so a pattern of blocks is visible instead of silently retried.</div>`;
   if (!entries.length) {
     host.innerHTML = intro + _empty('No detection events recorded for this job search yet.');
     return;
@@ -1342,7 +1342,7 @@ async function _renderTools(host) {
   // `.applicant-debug-list` section box, so the rows render directly (no
   // second nested list box).
   host.innerHTML =
-    `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn the assistant's tools on or off. Disabled tools are never used while it works.</div>` +
+    `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn my tools on or off. I never use a disabled tool.</div>` +
     tools.map((t) => {
       const key = t.key != null ? t.key : '';
       const label = t.label || key;
@@ -1366,7 +1366,7 @@ async function _renderTools(host) {
         _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
-        _toast(e.message || 'Could not change that tool.');
+        _toast(errText(e));
       } finally {
         cb.disabled = false;
       }
@@ -1437,7 +1437,7 @@ async function _renderBridge(host) {
   host = host || _body();
   const data = await _fetchJSON(`${ADMIN}/workspace-bridge`);
   if (data.engine_available === false) { _renderOffline(undefined, host); return; }
-  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Whether the assistant's background link to this workspace — used for calendar sync, deep research, and shared memory — is set up and actually working.</div>`;
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Whether my background link to this workspace — used for calendar sync, deep research, and shared memory — is set up and actually working.</div>`;
   if (!data.configured) {
     host.innerHTML = intro + _empty('Not set up yet — calendar sync, deep research, and shared memory are unavailable until it is.');
     return;
@@ -1467,7 +1467,7 @@ async function _renderCaptcha(host) {
   host = host || _body();
   const data = await _fetchJSON(`${ADMIN}/captcha-status`);
   if (data.engine_available === false) { _renderOffline(undefined, host); return; }
-  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">How the assistant handles a captcha it runs into while filling out an application.</div>`;
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">How I handle a captcha I run into while filling out an application.</div>`;
   const strategyLabel = _CAPTCHA_STRATEGY_LABELS[data.strategy] || data.strategy || 'Hand off to you';
   const rows = [
     ['Strategy', strategyLabel],
@@ -1536,7 +1536,7 @@ async function _renderUpdate(host) {
       <div style="font-weight:600;">Update Applicant</div>
       <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
         Runs the safe one-click update: backs up your data, applies the latest version, and restarts.
-        No command line needed. If updates aren't enabled on this install, it will tell you what it would do.
+        No command line needed. If updates aren’t enabled on this install, it will tell you what it would do.
       </div>
       <button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
       <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
@@ -1554,7 +1554,7 @@ async function _renderUpdate(host) {
       const res = await _post(`${OPS}/update/trigger`, {});
       if (out) out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
     } catch (e) {
-      if (out) out.textContent = e.message || 'Could not start the update right now.';
+      if (out) out.textContent = errText(e);
     } finally {
       updateBtn.disabled = false;
     }
@@ -1656,7 +1656,7 @@ function _setEngineBanner(modal, up) {
     banner.style.display = 'none';
     banner.textContent = '';
   } else {
-    banner.textContent = 'Not connected right now — this view will fill in once I\'m connected.';
+    banner.textContent = 'Not connected right now — this view will fill in once I’m connected.';
     banner.style.display = 'block';
   }
 }

@@ -228,6 +228,7 @@ def _redrive_pending(container) -> int:
     loop = getattr(container, "agent_loop", None)
     recovered = orch.recover_pending()
     redriven = 0
+    failed = 0
     for wf_id in recovered:
         try:
             if loop is not None:
@@ -235,8 +236,21 @@ def _redrive_pending(container) -> int:
             else:  # pragma: no cover - loop is always wired in the container
                 orch.start_workflow(WORKFLOW_NAME, wf_id)
             redriven += 1
-        except Exception as exc:  # pragma: no cover - defensive (already-running etc.)
-            log.info("redrive_skipped", workflow_id=wf_id, reason=str(exc))
+        except Exception as exc:  # defensive (already-running etc.) - a genuine anomaly
+            failed += 1
+            log.warning("redrive_skipped", workflow_id=wf_id, reason=str(exc))
+    if failed:
+        # A per-workflow warning above is easy to lose in log volume, so also emit one
+        # batch-level summary an operator (or automated deploy check) can alert on, and
+        # surface it on the process's boot-health snapshot (reusing the existing
+        # BootHealth/_boot_health singleton above, #48) so a batch of failed redrives is
+        # visible on /healthz too, not just buried in logs.
+        log.warning("redrive_failed_batch", failed=failed, redriven=redriven)
+        _boot_health.record(
+            "durable_recovery_redrives",
+            ok=False,
+            detail=f"{failed} of {len(recovered)} redrive(s) failed",
+        )
     return redriven
 
 

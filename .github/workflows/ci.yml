@@ -80,7 +80,8 @@ jobs:
                ':!workspace/tests/test_applicant_mind_help_lens12.py' \
                ':!workspace/tests/test_applicant_remote_help_lens12.py' \
                ':!workspace/tests/test_applicant_debug_help_lens12.py' \
-               ':!workspace/tests/test_applicant_gallery_intro_lens12.py'; then
+               ':!workspace/tests/test_applicant_gallery_intro_lens12.py' \
+               ':!workspace/tests/test_applicant_copy_digest_lens02.py'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi
@@ -97,7 +98,8 @@ jobs:
                ':!docs/adr/0006-agent-intelligence-port.md' \
                ':!workspace/tests/test_applicant_mind_help_lens12.py' \
                ':!workspace/tests/test_applicant_remote_help_lens12.py' \
-               ':!workspace/tests/test_applicant_gallery_intro_lens12.py'; then
+               ':!workspace/tests/test_applicant_gallery_intro_lens12.py' \
+               ':!workspace/tests/test_applicant_copy_digest_lens02.py'; then
             echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi
