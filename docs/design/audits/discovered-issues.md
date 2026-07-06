@@ -18,16 +18,6 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   path from wherever the file was lifted, now wrong. Cosmetic; fix on next touch of that file.
   Where: `workspace/core/middleware.py` (top-of-file comment). Status: open (surfaced fixing 03-perf).
 
-- **DISC-15b · high (security) · Cross-account WRITE isolation still open on campaigns/tracker.**
-  DISC-15 (below) closed the cross-account READ hole, but the WRITE endpoints in
-  `applicant_campaigns_routes.py` (`PATCH`, `POST /clone`, `DELETE`, `PUT /sources/{key}`) and
-  `applicant_tracker_routes.py` (the 7 POST mutators — record-outcome, archive, mark-submitted,
-  detect, retry, override-block, scan-email) still gate only on `require_user`. Because the engine
-  is single-tenant, the "id validated against the engine's own list" check is trivially satisfied
-  for ANY authenticated account, so a second workspace account can still MUTATE the owner's
-  campaigns/applications. Fix: apply `require_engine_owner` to those write endpoints too.
-  Where: `applicant_campaigns_routes.py`, `applicant_tracker_routes.py` (write endpoints).
-  Status: open (surfaced fixing DISC-15). **Sequence after the DISC-15 read fix merges** (shares the files).
 
 - **DISC-14 · low · Notifier reads the clock independently in three places.**
   `notify()`, `advance()`, `deliver_now()` each take/compute a timestamp, and `_build_rungs`
@@ -146,6 +136,15 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 ---
 
 ## Resolved
+
+- **DISC-15b · high (security) · Cross-account WRITE on campaigns/tracker proxies.**
+  The write endpoints (`applicant_campaigns_routes.py`: update/clone/delete/toggle-source;
+  `applicant_tracker_routes.py`: the 7 POST mutators) still gated only on `require_user` after
+  DISC-15 closed the reads — so a second workspace account could still MUTATE the owner's
+  campaigns/applications (single-tenant engine ⇒ the id-validation check is trivially satisfied).
+  Fixed by applying the shared `require_engine_owner` gate to every write endpoint on both files
+  (lone owner in single-user mode still passes; a second account gets 403 and the engine mutation
+  is never invoked). Status: **fixed** (batch-5 PR — `4f3b17a`, +8 write-isolation tests).
 
 - **DISC-15 · high (security) · Cross-account READ on pending/campaigns/tracker/activity proxies.**
   The sibling `applicant_*_routes.py` read proxies gated only on `require_user`; since the engine is

@@ -133,11 +133,11 @@ function _parseObservationLines(text) {
 function _renderIngestBox() {
   return `
     <div class="memory-section applicant-mind-ingest" style="margin-bottom:18px;">
-      <h4 style="margin:0 0 6px;">Tell it about yourself</h4>
+      <h4 style="margin:0 0 6px;">Tell me about yourself</h4>
       <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
         Paste anything — one detail per line, like <code>Location: Austin, TX</code>
-        or <code>Years of Python: 8</code>. Each line is checked against what the
-        assistant already knows: new details are saved, changes to a core detail
+        or <code>Years of Python: 8</code>. Each line is checked against what I
+        already know: new details are saved, changes to a core detail
         wait for your OK, and sensitive details (like EEO fields) are always
         skipped here — type those in directly instead.
       </div>
@@ -205,7 +205,7 @@ function _wireIngestBox() {
       input.value = '';
       _toast('Imported');
     } catch (e) {
-      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">${esc(e.message || 'Could not import that.')}</div>`;
+      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">${esc(errText(e) || 'Could not import that.')}</div>`;
     } finally {
       submit.disabled = false;
     }
@@ -299,9 +299,9 @@ function _renderCuration(curation) {
       <div>${summary}</div>${flag}
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button type="button" class="cal-btn applicant-mind-approve" data-id="${esc(p.id)}"
-            title="Save this — I'll remember it and use it going forward">Approve</button>
+            title="Save this — I’ll remember it and use it going forward">Approve</button>
         <button type="button" class="cal-btn applicant-mind-deny" data-id="${esc(p.id)}"
-            title="Throw this away — I won't remember it or change anything because of it">Dismiss</button>
+            title="Throw this away — I won’t remember it or change anything because of it">Dismiss</button>
       </div></li>`;
   }).join('') + `</ul>`;
 }
@@ -315,7 +315,7 @@ function _renderLessons(data) {
   if (!atsKeys.length) {
     return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
       No lessons learned yet — when a pre-fill attempt runs into trouble on a job
-      site, what the assistant figures out gets remembered here for next time.</div>`;
+      site, what I figure out gets remembered here for next time.</div>`;
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + atsKeys.map((ats) => {
     const items = grouped[ats] || [];
@@ -338,7 +338,7 @@ function _renderRoutines(data) {
   const rows = (data && data.routines) || [];
   if (!rows.length) {
     return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
-      No routines learned yet — after the assistant successfully fills out an
+      No routines learned yet — after I successfully fill out an
       application on a job site, the steps that worked get remembered here so the
       next application to that site goes faster.</div>`;
   }
@@ -354,7 +354,7 @@ function _renderRoutines(data) {
         <div style="opacity:0.7;">${steps} remembered step${steps === 1 ? '' : 's'}</div>
       </div>
       <div style="opacity:0.8;white-space:nowrap;" title="Times reused successfully vs. not">
-        ${wins} worked / ${losses} didn't
+        ${wins} worked / ${losses} didn’t
       </div>
     </li>`;
   }).join('') + `</ul>`;
@@ -370,7 +370,7 @@ function _renderFeedbackHistory(data) {
   if (!items.length) {
     return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
       Nothing recorded yet — when you decline a match with a reason, or redline a
-      generated résumé or answer, what you told it shows up here.</div>`;
+      generated résumé or answer, what you told me shows up here.</div>`;
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((f) => {
     const kindLabel = f.kind === 'decline' ? 'You declined a match' : 'You revised a document';
@@ -452,13 +452,20 @@ function _renderPlaybookEntries(ats, data) {
 async function _loadPlaybook(ats) {
   const resultEl = _body().querySelector('.applicant-mind-playbook-result');
   if (!resultEl) return;
+  // micro-interactions cross-cutting rule (busy/disabled guard on in-flight
+  // actions): the Load button had no guard, so an impatient double-click (or
+  // click during the apply-triggered reload) could stack two fetches.
+  const loadBtn = _body().querySelector('.applicant-mind-playbook-load');
+  if (loadBtn) loadBtn.disabled = true;
   resultEl.innerHTML = '<div style="opacity:0.7;">Loading…</div>';
   try {
     const data = await _fetchJSON(`${API}/playbooks/${encodeURIComponent(ats)}`);
     resultEl.innerHTML = _renderPlaybookEntries(ats, data);
     _wirePlaybookApply(ats);
   } catch (e) {
-    resultEl.innerHTML = `<div style="opacity:0.7;">${esc(e.message || 'Could not load that playbook.')}</div>`;
+    resultEl.innerHTML = `<div style="opacity:0.7;">${esc(errText(e) || 'Could not load that playbook.')}</div>`;
+  } finally {
+    if (loadBtn) loadBtn.disabled = false;
   }
 }
 
@@ -479,7 +486,7 @@ function _wirePlaybookApply(ats) {
       _toast('Playbook updated');
       await _loadPlaybook(ats);
     } catch (e) {
-      _toast(e.message || 'Could not update that playbook.');
+      _toast(errText(e) || 'Could not update that playbook.');
     } finally {
       btn.disabled = false;
     }
@@ -498,6 +505,9 @@ function _wirePlaybookBox() {
   };
   loadBtn.addEventListener('click', load);
   input.addEventListener('keydown', (ev) => {
+    // micro-interactions audit #15 (cross-cutting IME guard): don't submit on
+    // the Enter that merely commits an IME composition (CJK / dead-key input).
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === 'Enter') { ev.preventDefault(); load(); }
   });
 }
@@ -530,7 +540,7 @@ function _wireCurationButtons() {
         _toast('Saved');
         _removeMindRow(btn);
       } catch (e) {
-        _toast(e.message || 'Could not save that.');
+        _toast(errText(e) || 'Could not save that.');
         btn.disabled = false;
       }
     });
@@ -543,7 +553,7 @@ function _wireCurationButtons() {
         _toast('Dismissed');
         _removeMindRow(btn);
       } catch (e) {
-        _toast(e.message || 'Could not dismiss that.');
+        _toast(errText(e) || 'Could not dismiss that.');
         btn.disabled = false;
       }
     });
@@ -582,7 +592,7 @@ function _wireForgetButtons() {
           _removeMindRow(btn);
         }
       } catch (e) {
-        _toast(e.message || 'Could not forget that.');
+        _toast(errText(e) || 'Could not forget that.');
         btn.disabled = false;
       }
     });
@@ -619,7 +629,7 @@ function _wireSkillRows() {
         slot.innerHTML = _renderSkillBody(skill);
         slot.dataset.loaded = '1';
       } catch (e) {
-        slot.innerHTML = `<div style="opacity:0.7;">${esc(e.message || 'Could not open that playbook.')}</div>`;
+        slot.innerHTML = `<div style="opacity:0.7;">${esc(errText(e) || 'Could not open that playbook.')}</div>`;
       }
     };
     row.addEventListener('click', open);
@@ -684,7 +694,7 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Saved playbooks</h4>
         <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
           A playbook is a set of steps I write for myself after working through something
-          tricky — I check the relevant one before doing similar work again, so I don't
+          tricky — I check the relevant one before doing similar work again, so I don’t
           have to relearn the same lesson twice.
         </div>
         ${_renderSkills(skills)}

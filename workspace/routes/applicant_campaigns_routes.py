@@ -23,6 +23,15 @@ real owner) could read the one deployment owner's campaign config, discovery
 sources, and audit trail. Mirrors the fix already applied to the notification
 inbox and pending-actions feed in ``applicant_portal_routes.py``.
 
+Cross-account isolation, write endpoints (DISC-15b): the "id validated against
+the owner's own campaign list" check on ``PATCH``/``clone``/``DELETE``/
+``sources/{key}`` below is only IDOR protection against foreign ids -- since
+the engine is single-tenant, that check was trivially satisfied for ANY
+authenticated account (the fan-out itself has no owner concept to filter on),
+so a second workspace account could still resolve and mutate the real owner's
+campaigns. All four write endpoints are now additionally gated by the same
+``require_engine_owner`` the reads use above.
+
 Endpoints (all under ``/api/applicant/campaigns``):
 
 * ``GET  /api/applicant/campaigns``                       — campaigns + config.
@@ -51,7 +60,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import require_engine_owner, require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +124,13 @@ def setup_applicant_campaigns_routes() -> APIRouter:
     async def update_campaign(
         request: Request, campaign_id: str, body: UpdateCampaignIn
     ) -> dict:
-        """Rename / archive / re-tune a campaign (owner-scoped)."""
-        require_user(request)
+        """Rename / archive / re-tune a campaign (owner-scoped).
+
+        Owner-scoped (DISC-15b): gated by ``require_engine_owner`` rather than
+        plain ``require_user`` -- see the module docstring's "write endpoints"
+        note above for why the id-ownership check alone was not enough.
+        """
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:
@@ -143,8 +157,11 @@ def setup_applicant_campaigns_routes() -> APIRouter:
         instead of rebuilding it by hand. A caller can only clone a campaign
         they own; the reserved system campaign is never in the owner's list so
         it can never be a clone source here either.
+
+        Owner-scoped (DISC-15b): gated by ``require_engine_owner`` (see
+        ``update_campaign`` above).
         """
-        require_user(request)
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:
@@ -168,8 +185,11 @@ def setup_applicant_campaigns_routes() -> APIRouter:
         parsed PII, generated materials, application history, banked credentials).
         A caller can only delete a campaign they own; the reserved system campaign
         is never in the owner's list so it can never be targeted here either.
+
+        Owner-scoped (DISC-15b): gated by ``require_engine_owner`` (see
+        ``update_campaign`` above).
         """
-        require_user(request)
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:
@@ -254,8 +274,12 @@ def setup_applicant_campaigns_routes() -> APIRouter:
     async def toggle_source(
         request: Request, campaign_id: str, source_key: str, body: ToggleSourceIn
     ) -> dict:
-        """Enable/disable a discovery source for a campaign (owner-scoped)."""
-        require_user(request)
+        """Enable/disable a discovery source for a campaign (owner-scoped).
+
+        Owner-scoped (DISC-15b): gated by ``require_engine_owner`` (see
+        ``update_campaign`` above).
+        """
+        require_engine_owner(request)
         async with ApplicantEngineClient() as engine:
             owned = await _owner_campaign_ids(engine)
             if owned is None:
