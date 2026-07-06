@@ -395,14 +395,19 @@ if AUTH_ENABLED:
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
             # --- Cookie-based session auth ---
+            # Single lookup: get_username_for_token runs the same locked
+            # expiry/orphan-user checks as validate_token and hands back the
+            # username directly, so there's no need to take the sessions
+            # lock twice (once to check validity, once to fetch the name).
             token = request.cookies.get(SESSION_COOKIE)
-            if not auth_manager.validate_token(token):
+            username = auth_manager.get_username_for_token(token)
+            if not username:
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(url="/login", status_code=302)
 
             # Attach current username to request state for downstream routes
-            request.state.current_user = auth_manager.get_username_for_token(token)
+            request.state.current_user = username
             request.state.api_token = False
             return await call_next(request)
 
@@ -495,6 +500,20 @@ class _RevalidatingStatic(StaticFiles):
 app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
+# Owner-lookup cache for the ownership check below (perf lens 03 #48):
+# generated-image filenames are content hashes (the bytes never change once
+# written), and a gallery grid re-requests the same handful of filenames
+# repeatedly (thumbnails, repeat opens). Rather than opening a fresh
+# SessionLocal + running the ownership query on every single request, cache
+# the resolved owner for a short TTL so repeat loads of the same image skip
+# the DB round trip entirely. TTL (not "forever") keeps this correct if a
+# previously null-owner row gets swept to the admin owner shortly after
+# creation (see the hourly null-owner sweep in src/app_initializer.py).
+_IMAGE_OWNER_CACHE: dict[str, tuple[str | None, float]] = {}
+_IMAGE_OWNER_CACHE_TTL = 60.0
+_IMAGE_OWNER_CACHE_MAX = 4096
+
+
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
@@ -509,19 +528,29 @@ async def serve_generated_image(filename: str, request: Request):
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
     try:
+        import time as _time
         from src.auth_helpers import get_current_user
-        from core.database import SessionLocal as _SL, GalleryImage as _GI
         _user = get_current_user(request)
         if _user:
-            _db = _SL()
-            try:
-                _row = _db.query(_GI).filter(_GI.filename == filename).first()
-                # Generated-but-not-yet-imported images have no row → allow.
-                # Row exists with a different owner → 404 (don't confirm existence).
-                if _row is not None and _row.owner and _row.owner != _user:
-                    raise HTTPException(status_code=404, detail="Image not found")
-            finally:
-                _db.close()
+            _now = _time.monotonic()
+            _cached = _IMAGE_OWNER_CACHE.get(filename)
+            if _cached is not None and (_now - _cached[1]) < _IMAGE_OWNER_CACHE_TTL:
+                _owner = _cached[0]
+            else:
+                from core.database import SessionLocal as _SL, GalleryImage as _GI
+                _db = _SL()
+                try:
+                    _row = _db.query(_GI).filter(_GI.filename == filename).first()
+                    # Generated-but-not-yet-imported images have no row → allow (owner None).
+                    _owner = _row.owner if _row is not None else None
+                finally:
+                    _db.close()
+                if len(_IMAGE_OWNER_CACHE) >= _IMAGE_OWNER_CACHE_MAX:
+                    _IMAGE_OWNER_CACHE.clear()
+                _IMAGE_OWNER_CACHE[filename] = (_owner, _now)
+            # Row exists with a different owner → 404 (don't confirm existence).
+            if _owner and _owner != _user:
+                raise HTTPException(status_code=404, detail="Image not found")
     except HTTPException:
         raise
     except Exception:
@@ -1175,12 +1204,20 @@ async def startup_event():
         try:
             import httpx
             endpoints = model_discovery.get_endpoints() if model_discovery else []
-            for ep in endpoints[:5]:
-                url = ep.get("url", "").replace("/chat/completions", "/models")
-                if url:
+            urls = [
+                ep.get("url", "").replace("/chat/completions", "/models")
+                for ep in endpoints[:5]
+            ]
+            urls = [u for u in urls if u]
+            if not urls:
+                return
+            # One client for the whole cycle (up to 5 endpoints) instead of a
+            # fresh AsyncClient per endpoint — avoids re-doing connector/pool
+            # setup 5x every 60s for what's otherwise just a GET each.
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for url in urls:
                     try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
+                        await client.get(url)
                         logger.info(f"Warmup ping OK: {url}")
                     except Exception as e:
                         logger.debug(f"Warmup ping failed for endpoint: {e}")

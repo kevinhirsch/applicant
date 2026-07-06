@@ -108,15 +108,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add standard security headers to all responses."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Generate a per-request nonce for inline scripts
-        nonce = secrets.token_hex(16)
+        path = request.url.path
+        # Generate a per-request nonce for inline scripts. Only the handful of
+        # HTML-serving routes (`/`, `/login`, and their deep-link siblings via
+        # `_serve_html_with_nonce` in app.py) ever read `request.state.csp_nonce`
+        # to stamp it into a shipped page's `{{CSP_NONCE}}` placeholder. Every
+        # `/static/*` asset (~162 JS/CSS modules per page load, per the perf
+        # audit) is served straight from disk and never consults it, and the
+        # CSP header a non-HTML asset response carries is inert anyway (CSP is
+        # enforced against the navigated document, not each sub-resource
+        # fetch) — so skip the `secrets.token_hex` call for that whole path
+        # prefix instead of paying it on every single asset request.
+        if path.startswith("/static/"):
+            nonce = ""
+        else:
+            nonce = secrets.token_hex(16)
         request.state.csp_nonce = nonce
 
         # --- CSRF: refuse cross-origin state-changing /api/* requests ---
         # Safe methods (GET/HEAD/OPTIONS) and the token-gated internal channel
         # are exempt; everything else under /api/ that relies on the session
         # cookie must pass a same-origin check.
-        path = request.url.path
         if (
             request.method not in ("GET", "HEAD", "OPTIONS")
             and path.startswith("/api/")
