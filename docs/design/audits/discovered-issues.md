@@ -13,6 +13,29 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
 ## Open
 
+- **DISC-15 · high (security) · Cross-user isolation gap likely extends to other proxies.**
+  The notification-inbox owner-scope fix (lens 10 #28) closed one hole, but the same class
+  affects the sibling `applicant_*_routes.py` proxies (`/pending`, campaigns, tracker, activity):
+  they gate with `require_user` + "id validated against `list_campaigns()`" — but the engine is
+  single-tenant, so `list_campaigns()` returns the SAME data to every workspace account, so that
+  check is only IDOR protection against foreign ids, NOT cross-account isolation. A second
+  workspace account can likely read the owner's pending actions / campaigns / tracker board today.
+  Fix: apply the same owner-scope gate (`_require_notification_owner`-style) to those proxies.
+  Where: `workspace/routes/applicant_portal_routes.py` (`/pending`), `applicant_campaigns_routes.py`,
+  `applicant_tracker_routes.py`, `applicant_activity_routes.py`.
+  Status: open (surfaced fixing lens 10 #28). **Sequence after the #28 fix merges** (shares the file).
+
+- **DISC-14 · low · Notifier reads the clock independently in three places.**
+  `notify()`, `advance()`, `deliver_now()` each take/compute a timestamp, and `_build_rungs`
+  takes its OWN later clock read for `due_at` — so a stale timestamp reused across them can make
+  every rung's `due_at` look microseconds in the future and skip firing (a real footgun hit and
+  fixed while doing lens 10 #9). Thread one `now` value through `notify()`→`_build_rungs()`→`_fire_due()`.
+  Where: `src/applicant/adapters/notification/apprise_notifier.py`. Status: open.
+
+- **DISC-16 · low · Reverse-direction `owner` kwargs are never populated.**
+  `workspace/src/applicant_engine.py`'s `owner=` kwargs (engine→workspace calendar/email/research/
+  memory callbacks) are passed by no caller, so that channel is unattributed. Status: open.
+
 - **DISC-5 · med · Deep-research inner-hop transport timeout may still be short.**
   Lens 04 #10 gave the front-door research *route* a long read timeout, but the
   engine→workspace research *callback* hop (the workspace-callback discovery adapter on
