@@ -2455,9 +2455,13 @@ async function _finish() {
   if (!missing.length) {
     const applyMissing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
     const ready = !!s.apply_ready || applyMissing.length === 0;
+    // B2 / gate-fix: be honest. Only the fully-ready state says "all set"; when the
+    // apply-readiness gate is still closed the heading + copy say the search is NOT
+    // running yet and name exactly what's left (the ONE server-truth apply_missing).
+    const heading = ready ? 'You’re all set.' : 'Almost ready.';
     const readyLine = ready
       ? "I’m ready to start applying for you."
-      : `I’m set up. Before I start applying I still need: ${esc(applyMissing.join(', '))} — tell me in chat or add a résumé any time, and I’ll begin on my own.`;
+      : `I’m set up, but I’m not searching yet. Before I can start I still need: ${esc(applyMissing.join(', '))} — tell me in chat or add a résumé any time, and I’ll begin on my own.`;
     // D71: the default throughput (15/day, capped at 30) otherwise takes effect
     // silently — nobody consented to it and nobody was told. State it plainly as
     // a completion RECEIPT, with a pointer to where it's adjustable, right where
@@ -2473,7 +2477,7 @@ async function _finish() {
     const profileJumpBtn = (!ready && applyMissing.length)
       ? '<button class="cal-btn" id="ao-finish-profile" style="margin-top:14px;">Complete your profile</button>'
       : '';
-    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set.</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
+    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">${esc(heading)}</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
     // First-light payoff: this is the ONE screen that means setup is genuinely
     // done (llm_configured, nothing left gating it) — mark it so _dismiss() knows
@@ -2554,15 +2558,23 @@ function _openHomeBaseAfterSetup() {
   // rhythm, not just unlock nav — so the user leaves setup already knowing
   // Applicant searches continuously, digests arrive on their own, and
   // anything needing a decision waits in Pending rather than vanishing.
+  // Gate-fix honesty: only promise "I'll keep searching around the clock" when the
+  // apply-readiness gate is actually open. If essentials are still missing, say so
+  // — the Portal home base we're handing off to now tells the same truth.
+  const applyReady = !!(_status && (_status.apply_ready
+    || (Array.isArray(_status.apply_missing) && _status.apply_missing.length === 0)));
+  const readyToast = 'You’re all set — I’ll keep searching around the clock. Your digest '
+    + 'will arrive on its own, and anything that needs you waits right '
+    + 'here in Pending, your home base.';
+  const notYetToast = 'You’re set up — but I’m not searching yet. Finish the last essentials '
+    + 'in Pending (your home base) and I’ll start on my own. Anything that needs you '
+    + 'waits there too.';
   try {
     if (window.uiModule && typeof window.uiModule.showToast === 'function') {
-      window.uiModule.showToast(
-        'You’re all set — I’ll keep searching around the clock. Your digest '
-          + 'will arrive on its own, and anything that needs you waits right '
-          + 'here in Pending, your home base.',
-        { duration: 6000 });
+      window.uiModule.showToast(applyReady ? readyToast : notYetToast, { duration: 6000 });
     } else {
-      _toast('You’re all set — Applicant is getting to work.');
+      _toast(applyReady ? 'You’re all set — Applicant is getting to work.'
+        : 'You’re set up — finish the last essentials in Pending to start your search.');
     }
   } catch { /* the toast is a nice-to-have; never let it block the hand-off */ }
   try {

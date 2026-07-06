@@ -272,3 +272,90 @@ def test_typed_intake_section_upserts_attributes(svc_and_storage):
 
     stored = storage.attributes.list_for_campaign(CampaignId(CID))
     assert any(a.name == "full_name" and a.value == "Jane Q" for a in stored)
+
+
+# --- wizard profile sections reach the apply-readiness gate (gate-fix) --------
+
+
+def _wire_criteria(svc, storage):
+    from applicant.application.services.criteria_service import CriteriaService
+
+    criteria = CriteriaService(storage, llm=None)
+    svc.set_criteria_service(criteria)
+    return criteria
+
+
+@pytest.mark.unit
+def test_wizard_profile_sections_populate_gate_criteria(svc_and_storage):
+    """The typed wizard sections (target roles / work mode / locations / salary /
+    skills) must land in the search criteria the apply-readiness gate reads — not
+    only the attribute cloud. Without this the gate can never open from the wizard."""
+    svc, storage, _store = svc_and_storage
+    criteria = _wire_criteria(svc, storage)
+
+    # Exactly the shapes the front-door wizard sends (SECTION_FORMS field names).
+    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"titles": "Software Engineer, Staff Engineer"})
+    svc.save_section(CID, IntakeSection.LOCATION, {"work_mode": "remote / hybrid", "current_location": "Austin, TX"})
+    svc.save_section(CID, IntakeSection.COMPENSATION, {"salary_floor": "120000"})
+    svc.save_section(CID, IntakeSection.KEY_ATTRIBUTES, {"technical_skills": "python, fastapi"})
+
+    got = criteria.get_criteria(CampaignId(CID))
+    assert "Software Engineer" in got.titles and "Staff Engineer" in got.titles
+    assert "remote" in got.work_modes and "hybrid" in got.work_modes
+    assert got.locations == ("Austin, TX",)  # not split on the comma into two
+    assert got.salary_floor == 120000
+    assert "python" in got.keywords and "fastapi" in got.keywords
+
+
+@pytest.mark.unit
+def test_completing_required_set_flips_ready_to_apply_true(svc_and_storage, tmp_path):
+    """End-to-end: filling work-mode + locations + salary + titles + skills + a
+    résumé through the wizard flips apply_readiness ready true (the gate opens)."""
+    svc, storage, _store = svc_and_storage
+    _wire_criteria(svc, storage)
+
+    # Brand-new campaign: nothing is ready yet.
+    assert svc.is_ready_to_apply(CID) is False
+
+    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"titles": "Software Engineer"})
+    svc.save_section(CID, IntakeSection.LOCATION, {"work_mode": "remote", "current_location": "Remote"})
+    svc.save_section(CID, IntakeSection.COMPENSATION, {"salary_floor": "120000"})
+    svc.save_section(CID, IntakeSection.KEY_ATTRIBUTES, {"technical_skills": "python"})
+
+    # Criteria are complete now, but the résumé essential is still missing.
+    r = svc.apply_readiness(CID)
+    from applicant.core.rules.apply_readiness import LABEL_RESUME
+
+    assert r.ready is False and r.missing == (LABEL_RESUME,)
+
+    # Supply the last essential — a real résumé ingest.
+    p = tmp_path / "resume.txt"
+    p.write_text(_RESUME, encoding="utf-8")
+    svc.ingest_base_resume(CID, str(p))
+
+    # Now — and only now — the gate opens.
+    assert svc.is_ready_to_apply(CID) is True
+    assert svc.apply_readiness(CID).ready is True
+
+
+@pytest.mark.unit
+def test_free_text_criteria_field_reaches_gate_as_statement(svc_and_storage):
+    """The wizard's free-text 'Describe your ideal role' field (named ``criteria``)
+    folds into the human-readable statement that stands in for titles + keywords."""
+    svc, storage, _store = svc_and_storage
+    criteria = _wire_criteria(svc, storage)
+
+    svc.save_section(
+        CID,
+        IntakeSection.CAMPAIGN_CRITERIA,
+        {"criteria": "Remote senior python roles paying at least 120k"},
+    )
+
+    got = criteria.get_criteria(CampaignId(CID))
+    assert got.human_readable == "Remote senior python roles paying at least 120k"
+    # The statement covers target roles + key skills; only work mode / locations /
+    # salary / résumé remain, so those two essentials are no longer flagged.
+    from applicant.core.rules.apply_readiness import LABEL_KEY_SKILLS, LABEL_TARGET_ROLES
+
+    missing = svc.apply_readiness(CID).missing
+    assert LABEL_TARGET_ROLES not in missing and LABEL_KEY_SKILLS not in missing

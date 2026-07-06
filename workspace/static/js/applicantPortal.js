@@ -91,6 +91,26 @@ let _lastBadgeCount = 0;
 // applied-today count, the next scheduled action) instead of a static sentence.
 // Null until loaded / when there's nothing concrete to report — never fabricated.
 let _agentPulse = null;
+// The engine's real apply-readiness gate, read from the same `/pending` payload
+// (product-honesty). The home base must NEVER claim it's "searching" while the
+// gate is closed. Tri-state booleans start `null` (unknown: an older engine or a
+// failed status read) so we neither falsely claim "running" nor hard-assert "not
+// running". `apply_missing` is the ONE server-truth "what's left" list the wizard
+// finish + chat also report, so all three agree.
+let _gate = { automated_work_allowed: null, apply_ready: null, apply_missing: [] };
+
+// The search is genuinely running only when the engine says automated work is
+// allowed — the ONLY signal that means "I'm actually out there searching".
+function _searchRunning() { return _gate.automated_work_allowed === true; }
+// The gate is known-closed (setup unfinished): applying is blocked. `null`
+// (unknown) is deliberately NOT closed, so an older engine degrades to today's
+// calm empty state rather than a false "not running" alarm.
+function _gateClosed() {
+  return _gate.automated_work_allowed === false || _gate.apply_ready === false;
+}
+function _applyMissing() {
+  return Array.isArray(_gate.apply_missing) ? _gate.apply_missing.filter(Boolean) : [];
+}
 
 
 
@@ -661,7 +681,13 @@ function _partOfDay() {
 function _greetingLine(pendingCount) {
   const when = _partOfDay();
   const n = Number(pendingCount) || 0;
-  if (n <= 0) return `Good ${when}. You’re all clear — I’ll bring anything that needs you right here.`;
+  if (n <= 0) {
+    // Product-honesty: "you're all clear" implies I'm out there working. Only say
+    // it when the search is genuinely running; if the gate is closed, tell the
+    // truth so an empty queue never reads as a search that isn't happening.
+    if (_gateClosed()) return `Good ${when}. Your search isn’t running yet — let’s finish setting it up.`;
+    return `Good ${when}. You’re all clear — I’ll bring anything that needs you right here.`;
+  }
   if (n === 1) return `Good ${when}. One thing is waiting for you below.`;
   return `Good ${when}. ${n} things are waiting for you below.`;
 }
@@ -1110,6 +1136,10 @@ function _agentPulseLine() {
   const next = _agentPulse && _agentPulse.next;
   const nextLine = (next && typeof next.sentence === 'string') ? next.sentence.trim() : '';
   if (nextLine) return nextLine;
+  // Honest fallback: only claim active searching when the gate is genuinely open.
+  // (This line normally shows only in the gate-open empty state, but guard it too
+  // so the words can never contradict the real gate.)
+  if (_gateClosed()) return 'Waiting on a few setup essentials before I can start.';
   return 'Searching and preparing applications for you';
 }
 
@@ -1195,6 +1225,57 @@ function _renderEmpty(body) {
       </div>
       ${_neverDoesHTML()}
     </div>`;
+}
+
+// Choose the honest "nothing waiting" state: the calm "I'm searching in the
+// background" empty state ONLY when the apply-readiness gate is genuinely open;
+// otherwise the truthful "your search isn't running yet" state. This is the
+// product-honesty fix — the home base must never show a green "searching" signal
+// while the engine's own gate says automated work is blocked.
+function _renderVacant(body) {
+  if (_gateClosed()) { _renderNotRunning(body); return; }
+  _renderEmpty(body);
+}
+
+// The honest "not running yet" home state: the search is NOT happening because
+// the apply-readiness gate is closed, and here is exactly what's still needed
+// (the ONE server-truth `apply_missing`, the same list the wizard finish + chat
+// report). Distinct neutral chrome (a paused clock, not the green success check)
+// and a "Finish setup" CTA that reuses the same launcher the gated state uses.
+function _renderNotRunning(body) {
+  const missing = _applyMissing();
+  const list = missing.length
+    ? `<ul style="margin:10px 0 0;padding-left:18px;font-size:12px;line-height:1.6;color:color-mix(in srgb, var(--fg) 78%, transparent);">
+         ${missing.map((m) => `<li>${esc(m)}</li>`).join('')}
+       </ul>`
+    : '';
+  body.innerHTML = `
+    <div style="padding:48px 24px 24px;text-align:center;">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:14px;"><circle cx="12" cy="12" r="10"/><polyline points="12 7 12 12 15 14"/></svg>
+      <div style="max-width:400px;margin:0 auto;text-align:left;">
+        <div style="font-size:14px;font-weight:600;color:var(--fg);margin-bottom:6px;">Your search isn't running yet</div>
+        <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb, var(--fg) 68%, transparent);">
+          I'm not searching or sending anything yet — I can't start until a few
+          essentials are in place. Finish these and I'll begin on my own.
+        </div>
+        ${list}
+        <button type="button" class="cal-btn cal-btn-primary" id="applicant-portal-notrunning-setup" style="margin-top:14px;">Finish setup</button>
+      </div>
+      ${_neverDoesHTML()}
+    </div>`;
+  const setupBtn = body.querySelector('#applicant-portal-notrunning-setup');
+  if (setupBtn) {
+    setupBtn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') {
+          window.launchApplicantSetup();
+          _close();
+          return;
+        }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up Applicant');
+    });
+  }
 }
 
 // ── Row rendering ──────────────────────────────────────────────────────────────
@@ -1589,7 +1670,7 @@ function _restoreDraftInputs(body, drafts) {
 function _renderList(body) {
   const drafts = _captureDraftInputs(body);
   const infos = _infoNotifs();
-  if (!_items.length && !infos.length) { _renderEmpty(body); return; }
+  if (!_items.length && !infos.length) { _renderVacant(body); return; }
   const actionRows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
   const notifRows = infos.map((n) => _renderNotifRow(n)).join('');
   // "Approve all N" appears only when there are 2+ digest-approval rows to clear
@@ -1770,7 +1851,7 @@ function _removeRow(host, id) {
   _setBadge(_items.length + _infoNotifs().length);
   _renderGreeting(_items.length);
   if (!host.querySelector('.applicant-portal-row') && !host.querySelector('.applicant-portal-notif')) {
-    _renderEmpty(host);
+    _renderVacant(host);
   }
 }
 
@@ -2172,7 +2253,7 @@ function _removeNotifRow(host, id) {
   _notifs = _notifs.filter((n) => String(n.id) !== String(id));
   _setBadge(_items.length + _infoNotifs().length);
   if (!host.querySelector('.applicant-portal-row') && !host.querySelector('.applicant-portal-notif')) {
-    _renderEmpty(host);
+    _renderVacant(host);
   }
 }
 
@@ -2365,6 +2446,14 @@ async function _load(showSpinner) {
       return;
     }
     _items = (data && data.items) || [];
+    // Capture the real apply-readiness gate so the home status is honest: only
+    // claim "searching" when automated work is truly allowed (product-honesty).
+    _gate = {
+      automated_work_allowed:
+        (data && typeof data.automated_work_allowed === 'boolean') ? data.automated_work_allowed : null,
+      apply_ready: (data && typeof data.apply_ready === 'boolean') ? data.apply_ready : null,
+      apply_missing: (data && Array.isArray(data.apply_missing)) ? data.apply_missing : [],
+    };
     _lastPendingCount = _items.length;
     _renderGreeting(_items.length);
     _setBadge(_items.length + _infoNotifs().length);

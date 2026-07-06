@@ -19,6 +19,7 @@ explicit confirmation (FR-FB-3). EEO answers are stored sensitive and default to
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from applicant.core.entities.attribute import Attribute
@@ -66,6 +67,14 @@ _IDENTITY_FORM_FIELD = {
     "email": "email",
     "phone": "phone",
 }
+
+#: Split a free-text list-ish answer (comma / newline / semicolon separated) into
+#: clean terms. Used to turn the wizard's typed "Software Engineer, Staff Engineer"
+#: titles and "python, fastapi" skills into the tuple the search criteria hold.
+_TERM_SPLIT_RE = re.compile(r"[,\n;]+")
+#: Work mode is commonly written with a slash ("remote / hybrid"), so it also
+#: splits on "/" (and "|") in addition to the separators above.
+_WORK_MODE_SPLIT_RE = re.compile(r"[,\n;/|]+")
 
 
 class OnboardingService:
@@ -170,12 +179,20 @@ class OnboardingService:
     def _bridge_section_to_engine(
         self, campaign_id: str, section: IntakeSection, data: dict[str, Any]
     ) -> None:
-        """Flow saved intake into CriteriaService / the attribute cloud (#6)."""
+        """Flow saved intake into CriteriaService / the attribute cloud (#6).
+
+        The typed profile sections that collect the required-to-apply essentials
+        (target roles / work mode / locations / salary floor / key skills) are ALSO
+        mapped onto the search criteria the apply-readiness gate reads — otherwise the
+        wizard collects them but the gate never sees them and completing onboarding
+        can never flip ``automated_work_allowed`` true (product-honesty gate fix).
+        """
         try:
             if section is IntakeSection.CAMPAIGN_CRITERIA:
                 self._bridge_criteria(campaign_id, data)
             else:
                 self._bridge_attributes(campaign_id, section, data)
+                self._bridge_profile_criteria(campaign_id, section, data)
         except Exception:  # pragma: no cover - never let the bridge break intake save
             log.warning(
                 "onboarding_bridge_failed", campaign_id=campaign_id, section=section.value
@@ -192,8 +209,14 @@ class OnboardingService:
                 changes[key] = list(val) if not isinstance(val, list) else val
         if data.get("salary_floor") not in (None, ""):
             changes["salary_floor"] = data["salary_floor"]
-        if data.get("human_readable"):
-            changes["human_readable"] = data["human_readable"]
+        # The wizard's free-text "Describe your ideal next role" field is named
+        # ``criteria``; fold it into the human-readable statement the apply-readiness
+        # gate treats as standing in for typed titles/keywords, so a free-text-only
+        # (chat-style) setup still reaches the gate. An explicit ``human_readable``
+        # (a programmatic/criteria-editor caller) wins when both are present.
+        statement = data.get("human_readable") or data.get("criteria")
+        if statement:
+            changes["human_readable"] = str(statement)
         if not changes:
             return
         # confirm=True: onboarding is the user's own explicit intake, so integral
@@ -221,6 +244,80 @@ class OnboardingService:
                 is_integral=is_integral,
                 confirm=True,
             )
+
+    def _bridge_profile_criteria(
+        self, campaign_id: str, section: IntakeSection, data: dict[str, Any]
+    ) -> None:
+        """Map typed profile-section fields onto the search criteria the gate reads.
+
+        The apply-readiness gate (``apply_readiness`` below) is computed ONLY from the
+        campaign's search criteria (titles / work modes / locations / salary floor /
+        keywords / free-text statement). The wizard, however, collects those essentials
+        under the profile sections — target roles, "Location & work mode", compensation,
+        and skills — whose values otherwise land only in the attribute cloud, which the
+        gate does not read. Without this bridge, a user can fill every required field and
+        the gate stays shut forever (the reported product-honesty bug). Each section owns
+        distinct criteria fields, so a per-section edit never clobbers another section's.
+        Nothing is fabricated — every value is the user's own typed answer.
+        """
+        if self._criteria_service is None:
+            return
+        changes: dict[str, Any] = {}
+        if section is IntakeSection.TARGET_ROLES:
+            titles = self._split_terms(data.get("titles"))
+            titles += self._split_terms(data.get("adjacent_titles"))
+            if titles:
+                changes["titles"] = titles
+        elif section is IntakeSection.LOCATION:
+            work_modes = self._split_terms(
+                data.get("work_mode"), pattern=_WORK_MODE_SPLIT_RE
+            )
+            if work_modes:
+                changes["work_modes"] = work_modes
+            # ``current_location`` is a single place ("Austin, TX"); keep it intact
+            # rather than splitting it on the comma into two bogus locations.
+            location = str(data.get("current_location") or "").strip()
+            if location:
+                changes["locations"] = [location]
+        elif section is IntakeSection.COMPENSATION:
+            floor = self._parse_salary_floor(data.get("salary_floor"))
+            if floor is not None:
+                changes["salary_floor"] = floor
+        elif section is IntakeSection.KEY_ATTRIBUTES:
+            keywords = self._split_terms(data.get("technical_skills"))
+            if keywords:
+                changes["keywords"] = keywords
+        if not changes:
+            return
+        # confirm=True: onboarding is the user's own explicit intake, so integral
+        # criteria fields (titles/locations/salary_floor) are user-confirmed (FR-FB-3).
+        self._criteria_service.edit_criteria(
+            CampaignId(campaign_id), changes=changes, confirm=True
+        )
+
+    @staticmethod
+    def _split_terms(value: Any, *, pattern: re.Pattern = _TERM_SPLIT_RE) -> list[str]:
+        """Split a free-text list answer into clean terms (empty on no value)."""
+        if value in (None, ""):
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return [t.strip() for t in pattern.split(str(value)) if t.strip()]
+
+    @staticmethod
+    def _parse_salary_floor(value: Any) -> int | None:
+        """Parse a salary-floor answer to an int, or ``None`` when unset/unparseable.
+
+        Tolerant of currency/thousands formatting ("$120,000" -> 120000) because the
+        gate only needs a real floor to be present; the wizard's number input already
+        sends plain digits.
+        """
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        digits = re.sub(r"[^\d]", "", str(value))
+        return int(digits) if digits else None
 
     def complete(self, campaign_id: str) -> OnboardingState:
         rec = self._load(campaign_id)

@@ -20,6 +20,10 @@ class WorkHistoryEntry:
     start_date: str = ""
     end_date: str = ""
     location: str = ""
+    #: Achievement/bullet lines under this role, in document order. Previously
+    #: there was no field to hold these at all, so they were silently dropped
+    #: during extraction regardless of how well the rest of the entry parsed.
+    achievements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
