@@ -27,7 +27,7 @@ from applicant.core.rules.apply_readiness import (
     ApplyReadiness,
     evaluate_apply_readiness,
 )
-from applicant.core.rules.ats_parseability import check_render_parseability
+from applicant.core.rules.ats_parseability import check_upload_health
 from applicant.core.rules.field_normalization import values_match
 from applicant.core.rules.sensitive_fields import (
     DECLINE_TO_SELF_IDENTIFY,
@@ -464,27 +464,43 @@ class OnboardingService:
         self._store(campaign_id, rec)
 
         attrs = self._storage.attributes.list_for_campaign(CampaignId(campaign_id))
-        # Resume-health at upload (product-gaps #48 / activation backlog §7.5): reuse
-        # the existing ats_parseability self-check (issue #370) — previously only
-        # run on the GENERATED render right before submission — against the
-        # UPLOADED resume's own extractable text, so a formatting problem (no
-        # recoverable text layer, unreadable contact info, no recognizable section
-        # headers) is an instant signal at the moment of upload rather than a
-        # silent risk discovered only much later at submit time.
-        health = check_render_parseability(parsed.raw_text)
+        # Resume-health at upload (product-gaps #48 / activation backlog §7.5):
+        # a DERIVED verdict, computed from what this parse actually recovered
+        # (name / email / phone / section headers / recoverable text) — never an
+        # optimistic default. A résumé with no detectable name or contact info
+        # must surface an honest warning naming what's missing, not "looks good".
+        health = check_upload_health(
+            raw_text=parsed.raw_text,
+            full_name=parsed.full_name,
+            email=parsed.email,
+            phone=parsed.phone,
+        )
+        # HONESTY: "I read N details from your résumé" must count THIS parse, not
+        # the whole attribute cloud (which includes details gathered elsewhere).
+        parsed_field_count = (
+            int(bool(parsed.full_name))
+            + int(bool(parsed.email))
+            + int(bool(parsed.phone))
+            + len(parsed.skills)
+            + len(parsed.work_history)
+            + len(parsed.education)
+        )
         log.info(
             "base_resume_ingested",
             campaign_id=campaign_id,
             auto_applied=len(auto_applied),
             conflicts=len(conflicts),
-            resume_parseable=health.parseable,
+            parsed_field_count=parsed_field_count,
+            resume_health=health.verdict,
         )
         return ReconciliationResult(
             auto_applied=auto_applied,
             conflicts=conflicts,
             attribute_count=len(attrs),
+            parsed_field_count=parsed_field_count,
             parseable=health.parseable,
             parseability_issues=list(health.issues),
+            health_verdict=health.verdict,
         )
 
     def confirm_conflict(self, campaign_id: str, attribute: str, value: str) -> None:

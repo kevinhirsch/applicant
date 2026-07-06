@@ -185,6 +185,10 @@ async def ingest_base_resume(
     return {
         "auto_applied": getattr(result, "auto_applied", []),
         "attribute_count": getattr(result, "attribute_count", 0),
+        # HONESTY: the count of details extracted from THIS parse (what "I read N
+        # details from your résumé" may truthfully claim) — distinct from
+        # attribute_count, the campaign's whole attribute cloud.
+        "parsed_field_count": getattr(result, "parsed_field_count", 0),
         "conflicts": [
             {
                 "attribute": getattr(c, "attribute", None),
@@ -194,12 +198,14 @@ async def ingest_base_resume(
             for c in conflicts
         ],
         "requires_confirmation": bool(conflicts),
-        # Resume-health self-check at upload (activation backlog §7.5): the same
-        # ats_parseability rule used to gate submission of the GENERATED resume,
-        # run here against the UPLOADED resume's own text so a formatting risk is
-        # visible immediately instead of only at submit time.
+        # Resume-health verdict at upload: DERIVED from what the parse actually
+        # recovered (name / email / phone / section headers / text layer) — see
+        # core.rules.ats_parseability.check_upload_health. Defaults here are
+        # CONSERVATIVE: a result that never ran the check must read as unknown,
+        # never as a healthy résumé.
         "resume_health": {
-            "parseable": getattr(result, "parseable", True),
+            "verdict": getattr(result, "health_verdict", "") or "unknown",
+            "parseable": bool(getattr(result, "parseable", False)),
             "issues": list(getattr(result, "parseability_issues", None) or []),
         },
     }

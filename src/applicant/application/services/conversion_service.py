@@ -37,7 +37,13 @@ _DEFAULT_ENGINE = ENGINE_DOCX  # default until the user accepts the LaTeX previe
 
 @dataclass(frozen=True)
 class ConversionPreview:
-    """A compiled preview of the LaTeX conversion, presented for accept/reject."""
+    """A compiled preview of the LaTeX conversion, presented for accept/reject.
+
+    ``artifact_available`` mirrors the render's ground truth: True only when a
+    real PDF was compiled. When False, ``page_count`` is an internal estimate
+    and ``fidelity_ok`` reflects source-level checks only — the HTTP boundary
+    must not present either as properties of a document that exists.
+    """
 
     campaign_id: str
     storage_path: str
@@ -45,6 +51,7 @@ class ConversionPreview:
     fidelity_ok: bool
     notes: str
     tex_source: str = ""
+    artifact_available: bool = False
 
 
 class ConversionService:
@@ -87,6 +94,7 @@ class ConversionService:
             campaign_id=campaign_id,
             fidelity_ok=result.fidelity_ok,
             pages=result.page_count,
+            artifact_available=result.artifact_available,
         )
         return ConversionPreview(
             campaign_id=campaign_id,
@@ -95,6 +103,7 @@ class ConversionService:
             fidelity_ok=result.fidelity_ok,
             notes=result.notes,
             tex_source=tex_source,
+            artifact_available=result.artifact_available,
         )
 
     def accept(self, campaign_id: str) -> str:

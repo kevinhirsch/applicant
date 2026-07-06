@@ -484,12 +484,24 @@ const _RESUME_HEALTH_HINTS = [
     "We couldn’t pull readable text out of this file, so application systems may see a blank resume. If it’s a scanned image or uses text boxes/graphics for layout, try exporting a plain text-based PDF or Word doc instead.",
   ],
   [
+    'your name is not detectable',
+    "Your name isn’t detectable in the text — make sure it appears as plain text near the top, not inside a header image or graphic.",
+  ],
+  [
     'contact email is not recoverable',
     "Your email address isn’t detectable in the text — some systems may fail to capture it. Check that it isn’t inside a text box, header/footer image, or icon-only contact block.",
   ],
   [
+    'phone number is not detectable',
+    "A phone number isn’t detectable in the text — add one in plain text so application systems can capture it.",
+  ],
+  [
     'no recognizable section headers',
     'We didn’t find standard section headers (e.g. "Experience", "Education", "Skills") — using conventional headers helps automated systems parse your résumé correctly.',
+  ],
+  [
+    'very little text could be read',
+    'Only a small amount of text could be read from this file — it may not be a complete résumé, or most of the content may be stored as images.',
   ],
 ];
 
@@ -499,16 +511,47 @@ function _friendlyResumeHealthIssue(issue) {
 }
 
 function _resumeHealthHTML(res) {
-  const health = (res && res.resume_health) || {};
-  const issues = Array.isArray(health.issues) ? health.issues : [];
-  if (health.parseable !== false && !issues.length) {
+  const health = (res && res.resume_health) || null;
+  const issues = health && Array.isArray(health.issues) ? health.issues : [];
+  // HONESTY: "looks good" only on an EXPLICIT positive verdict computed by the
+  // engine (verdict === 'good', or an older engine's explicit parseable: true).
+  // A missing/unknown resume_health must read as "not assessed" — the absence
+  // of a bad verdict is never evidence of a good one.
+  const explicitlyGood = !!health && !issues.length
+    && (health.verdict === 'good' || (health.verdict == null && health.parseable === true));
+  if (explicitlyGood) {
     return '<p class="admin-success" style="font-size:0.82rem;margin:2px 0 8px;">Resume health: looks good — this résumé should read cleanly in most application-tracking systems.</p>';
+  }
+  if (!issues.length) {
+    return '<p style="font-size:0.82rem;margin:2px 0 8px;opacity:0.85;">Resume health: I couldn’t assess this file, so please double-check the profile fields I filled in.</p>';
   }
   const items = issues.map((i) => `<li>${esc(_friendlyResumeHealthIssue(i))}</li>`).join('');
   return `
     <p style="font-size:0.82rem;margin:2px 0 2px;opacity:0.85;">Resume health: a couple of things some application systems may struggle with —</p>
     <ul style="font-size:0.82rem;margin:0 0 8px 18px;opacity:0.85;">${items}</ul>
   `;
+}
+
+// Post-upload "what I read" line. HONESTY: the green success styling and the
+// "I read N details" claim are shown only when the engine reports a real,
+// non-trivial parse (parsed_field_count is what THIS parse extracted). A
+// trivially-empty parse is called out as a likely non-text résumé, and an
+// engine that doesn't report the count gets no number at all — never a
+// fabricated one.
+function _resumeReadSummaryHTML(res) {
+  const raw = res ? res.parsed_field_count : null;
+  const n = raw == null || !Number.isFinite(Number(raw)) ? null : Number(raw);
+  const style = 'font-size:0.86rem;margin:8px 0;';
+  if (n === null) {
+    return `<p style="${style}">I read your résumé — review the next steps and fix anything I got wrong.</p>`;
+  }
+  if (n === 0) {
+    return `<p style="${style}">I couldn’t read any details from this file — it may not be a text résumé. You can still type your profile into the next steps.</p>`;
+  }
+  if (n < 3) {
+    return `<p style="${style}">I could only read ${n} ${n === 1 ? 'detail' : 'details'} from this file — it may not be a text résumé. Please double-check the next steps.</p>`;
+  }
+  return `<p class="admin-success" style="${style}">I read ${n} details from your résumé and filled in the next steps for you to review.</p>`;
 }
 
 // Help marker. Uses the SAME `?` help-icon the rest of the workspace uses
@@ -2004,7 +2047,10 @@ function _renderBaseResume(saved) {
       try {
         _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
       } catch { /* keep last-known intake; prefill is best-effort */ }
-      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">I read ${res.attribute_count || 0} details from your résumé and filled in the next steps for you to review.</p>${_resumeHealthHTML(res)}`;
+      // HONESTY: the count is what THIS parse actually extracted
+      // (parsed_field_count, engine-derived) — not the whole profile's attribute
+      // count — and a near-empty parse must read as a warning, not a success.
+      st.innerHTML = `${_resumeReadSummaryHTML(res)}${_resumeHealthHTML(res)}`;
       if (res.requires_confirmation && (res.conflicts || []).length) {
         _renderConflicts(res.conflicts);
       } else {
@@ -2138,6 +2184,20 @@ async function _buildPreview() {
     return;
   } finally {
     if (_previewInFlight === req) _previewInFlight = null;
+  }
+  // HONESTY: "I built a polished version" may only describe a PDF the engine
+  // REALLY rendered. `artifact_available` is the engine's server-derived ground
+  // truth (real PDF bytes produced by an available toolchain); anything else —
+  // including an older engine that doesn't report the field — must NOT claim a
+  // polished version exists, offer "Use this version", or invent a page count.
+  if (!p || p.artifact_available !== true) {
+    const notesList = (Array.isArray(p && p.notes) ? p.notes : (p && p.notes ? [String(p.notes)] : []));
+    wrap.innerHTML = `
+      <div class="admin-card">
+        <p style="margin:0 0 8px;">I couldn’t build a polished preview of your résumé in this deployment, so I’ll keep using your original file.</p>
+        ${notesList.length ? `<ul style="font-size:0.82rem;opacity:0.85;">${notesList.map((n) => `<li>${esc(String(n))}</li>`).join('')}</ul>` : ''}
+      </div>`;
+    return;
   }
   {
     const note = p.fidelity_ok ? 'Looks like a faithful match.' : 'Some formatting may differ.';

@@ -47,10 +47,19 @@ def test_preview_with_explicit_source(client):
     assert res.status_code == 200
     body = res.json()
     assert body["campaign_id"] == "camp-conv-2"
-    # A real moderncv conversion + (stubbed) compile yields a storage path + page count.
-    assert body["storage_path"]
-    assert body["page_count"] >= 1
+    # HONESTY: artifact metadata is only reported for a PDF that was really
+    # built. On a host with the render toolchain the compile runs for real;
+    # without it the response must say so — and must NOT fabricate a storage
+    # path, page count, or a passing fidelity verdict.
     assert "fidelity_ok" in body
+    assert body["artifact_available"] in (True, False)
+    if body["artifact_available"]:
+        assert body["storage_path"]
+        assert body["page_count"] >= 1
+    else:
+        assert body["storage_path"] is None
+        assert body["page_count"] is None
+        assert body["fidelity_ok"] is False
 
 
 def test_accept_then_reject_flips_persisted_engine(client):
@@ -87,7 +96,11 @@ def test_preview_falls_back_to_uploaded_base_resume(client, tmp_path):
     assert res.status_code == 200
     body = res.json()
     assert body["campaign_id"] == cid
-    assert body["storage_path"]  # it converted the file content, not an empty string.
+    # HONESTY: storage_path is only reported when a real PDF exists.
+    if body["artifact_available"]:
+        assert body["storage_path"]
+    else:
+        assert body["storage_path"] is None
 
 
 def test_preview_unreadable_base_resume_is_swallowed(client, tmp_path, monkeypatch):
