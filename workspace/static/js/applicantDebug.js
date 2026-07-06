@@ -9,10 +9,14 @@
 // SR-S2-7: this window and its first tab used to both be called "Activity",
 // colliding with the separate, always-on "Activity" live feed elsewhere in the
 // nav. The window is titled "Run log" (matching its nav label) and the first
-// tab below is "Applications" — nothing here is named "Activity" anymore.
+// tab below is "Application history" — nothing here is named "Activity"
+// anymore. (Not "Applications" either — documentLibrary.js's own Document
+// Library modal already has an "Applications" tab of its own, for generated
+// résumés/cover letters; reusing that word here would just trade one
+// same-name collision for another.)
 //
 // What it shows (all plain-language, white-labeled, read-only unless noted):
-//   • Applications — per-application history for a campaign, with a drill-in to
+//   • Application history — per-application history for a campaign, with a drill-in to
 //                  that application's screenshots, workflow state and outcomes,
 //                  plus a one-click "I submitted this myself" (mark-submitted)
 //                  so manual/hand-off applications still teach the system.
@@ -88,10 +92,10 @@ const RUN_NOW_TIMEOUT_MS = 120000;
 // Config pane (see _renderConfig) instead of three separate top-level tabs.
 // SR-S2-7: the tab key ('activity') stays put — gating/tests key off it — only
 // its visible label changed, from "Activity" (a collision with the separate
-// live "Activity" feed) to "Applications" (this tab is the per-application
-// history list; see openApplicantDebugDetail's own comment).
+// live "Activity" feed) to "Application history" (this tab is the
+// per-application history list; see openApplicantDebugDetail's own comment).
 const TABS = [
-  ['activity', 'Applications'],
+  ['activity', 'Application history'],
   ['insights', 'Insights'],
   ['logs', 'Logs'],
   ['variants', 'Variants'],
