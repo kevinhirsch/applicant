@@ -182,6 +182,30 @@ function _clearButtonBusy(btn, orig) {
   if (orig != null) btn.textContent = orig;
 }
 
+// Micro-interactions lens 01 #47: the persistent Back/Skip nav already no-ops
+// while a step's own save is in flight (`if (!_busy) …` in each handler), but
+// gave no visual sign the click did nothing — mid-save, the nav looked live but
+// silently ignored clicks, reading as broken. `_busy` is a shared module flag
+// set by many different per-step handlers (not just _nextStep/_prevStep), so a
+// lightweight poll — rather than threading a callback through every save path —
+// keeps the persistent nav bar in sync for as long as the overlay is open.
+let _navBusyTimer = null;
+function _startNavBusyWatch() {
+  if (_navBusyTimer) return;
+  _navBusyTimer = setInterval(() => {
+    const back = document.getElementById('ao-back');
+    const skip = document.getElementById('ao-skip');
+    [back, skip].forEach((btn) => {
+      if (!btn) return;
+      btn.disabled = _busy;
+      btn.style.opacity = _busy ? '0.6' : '';
+    });
+  }, 150);
+}
+function _stopNavBusyWatch() {
+  if (_navBusyTimer) { clearInterval(_navBusyTimer); _navBusyTimer = null; }
+}
+
 // ── draft persistence (exhaustive2 lens 04 #52) ─────────────────────────────
 //
 // The wizard (and the Settings panels reusing its step renderers) had zero draft
@@ -408,7 +432,11 @@ function _renderRail() {
     const cls = `admin-tab ao-rail-step${done ? ' done' : ''}${isCur ? ' active' : ''}`;
     const mark = done ? '✓ ' : `${i + 1}. `;
     const badge = step.required ? ' <span class="ao-rail-req">Required</span>' : '';
-    return `<span class="${cls}" role="listitem" aria-disabled="true" aria-current="${isCur ? 'step' : 'false'}">${esc(mark)}${esc(step.title)}${badge}</span>`;
+    // Micro-interactions lens 01 #60: `aria-current="false"` is a literal string,
+    // not a boolean — some assistive tech announces the word "false" aloud. Omit
+    // the attribute entirely on non-current steps instead of setting it false.
+    const ariaCurrent = isCur ? ' aria-current="step"' : '';
+    return `<span class="${cls}" role="listitem" aria-disabled="true"${ariaCurrent}>${esc(mark)}${esc(step.title)}${badge}</span>`;
   }).join('');
   rail.innerHTML = compact + steps;
 }
@@ -453,15 +481,15 @@ function _err(html) {
 const _RESUME_HEALTH_HINTS = [
   [
     'no recoverable text layer',
-    "We couldn't pull readable text out of this file, so application systems may see a blank resume. If it's a scanned image or uses text boxes/graphics for layout, try exporting a plain text-based PDF or Word doc instead.",
+    "We couldn’t pull readable text out of this file, so application systems may see a blank resume. If it’s a scanned image or uses text boxes/graphics for layout, try exporting a plain text-based PDF or Word doc instead.",
   ],
   [
     'contact email is not recoverable',
-    "Your email address isn't detectable in the text — some systems may fail to capture it. Check that it isn't inside a text box, header/footer image, or icon-only contact block.",
+    "Your email address isn’t detectable in the text — some systems may fail to capture it. Check that it isn’t inside a text box, header/footer image, or icon-only contact block.",
   ],
   [
     'no recognizable section headers',
-    'We didn’t find standard section headers (e.g. "Experience", "Education", "Skills") — using conventional headers helps automated systems parse your resume correctly.',
+    'We didn’t find standard section headers (e.g. "Experience", "Education", "Skills") — using conventional headers helps automated systems parse your résumé correctly.',
   ],
 ];
 
@@ -474,7 +502,7 @@ function _resumeHealthHTML(res) {
   const health = (res && res.resume_health) || {};
   const issues = Array.isArray(health.issues) ? health.issues : [];
   if (health.parseable !== false && !issues.length) {
-    return '<p class="admin-success" style="font-size:0.82rem;margin:2px 0 8px;">Resume health: looks good — this resume should read cleanly in most application-tracking systems.</p>';
+    return '<p class="admin-success" style="font-size:0.82rem;margin:2px 0 8px;">Resume health: looks good — this résumé should read cleanly in most application-tracking systems.</p>';
   }
   const items = issues.map((i) => `<li>${esc(_friendlyResumeHealthIssue(i))}</li>`).join('');
   return `
@@ -845,7 +873,7 @@ async function _renderChannels() {
             <input id="ao-qh-end" class="settings-select" type="time" value="${esc(qh.end || '07:00')}" />
           </div>
           <div class="settings-row">
-            <label class="settings-label">Time zone ${_tip('An IANA name like America/Phoenix or Europe/London. Defaults to your browser\'s own time zone; leave blank to use UTC.')}</label>
+            <label class="settings-label">Time zone ${_tip('An IANA name like America/Phoenix or Europe/London. Defaults to your browser’s own time zone; leave blank to use UTC.')}</label>
             <input id="ao-qh-tz" class="settings-select" type="text" placeholder="UTC" value="${esc(qhTz)}" />
           </div>
           <div class="settings-row">
@@ -856,8 +884,8 @@ async function _renderChannels() {
             </select>
           </div>
           <div class="settings-row">
-            <label class="settings-label">&nbsp;</label>
-            <select id="ao-qh-email" class="settings-select">
+            <label class="settings-label" for="ao-qh-email" style="visibility:hidden;">During quiet hours (email)</label>
+            <select id="ao-qh-email" class="settings-select" aria-label="Email during quiet hours">
               <option value="hold"${(qh.channels && qh.channels.email === false) ? '' : ' selected'}>Hold email overnight</option>
               <option value="send"${(qh.channels && qh.channels.email === false) ? ' selected' : ''}>Send email anytime</option>
             </select>
@@ -1007,13 +1035,22 @@ async function _renderChannels() {
   const etSave = document.getElementById('ao-et-save');
   const etSaveMsg = document.getElementById('ao-et-save-msg');
   if (etSave) etSave.onclick = async () => {
-    const raw = parseInt(document.getElementById('ao-ch-email-timeout').value, 10);
+    const timeoutInput = document.getElementById('ao-ch-email-timeout');
+    const raw = parseInt(timeoutInput.value, 10);
     const minutes = Number.isFinite(raw) ? Math.max(1, Math.min(1440, raw)) : 15;
+    // Micro-interactions lens 01 #26: the clamp used to happen silently — typing
+    // 5000 saved as 1440 with no sign anything changed. Reflect the clamped
+    // value back into the field and say so, instead of a value that quietly
+    // disagrees with what's on screen.
+    const wasClamped = Number.isFinite(raw) && raw !== minutes;
+    timeoutInput.value = minutes;
     etSave.disabled = true;
     etSaveMsg.textContent = 'Saving…'; etSaveMsg.className = '';
     try {
       await _post(`${SETUP}/channels`, { email_timeout_minutes: minutes });
-      etSaveMsg.textContent = `Saved — I’ll email you after ${minutes} minutes.`;
+      etSaveMsg.textContent = wasClamped
+        ? `Capped at ${minutes} minutes — saved. I’ll email you after ${minutes} minutes.`
+        : `Saved — I’ll email you after ${minutes} minutes.`;
       etSaveMsg.className = 'admin-success';
     } catch (e) {
       etSaveMsg.textContent = "I couldn’t save that: " + (e.message || 'Try again shortly.'); etSaveMsg.className = 'admin-error';
@@ -1113,7 +1150,7 @@ async function _renderSandbox() {
             <label class="settings-label">API token ${_tip('A Proxmox API token id + its secret. The secret is sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
             <div style="display:flex;gap:6px;">
               <input id="ao-sb-tokenid" class="settings-select" type="text" placeholder="root@pam!applicant" value="${esc(conn.proxmox_token_id || '')}" style="flex:2;" />
-              <input id="ao-sb-tokensecret" class="settings-select" type="password" placeholder="secret" autocomplete="new-password" style="flex:1;" />
+              <input id="ao-sb-tokensecret" class="settings-select" type="password" placeholder="${cur.configured ? '•••• already saved — leave blank to keep' : 'secret'}" autocomplete="new-password" style="flex:1;" />
             </div>
           </div>
           <div class="settings-row">
@@ -1131,7 +1168,7 @@ async function _renderSandbox() {
             <label class="settings-label">RDP sign-in ${_tip('The Windows account you take over with. Password is sealed in the vault — leave blank to keep the saved one.')}</label>
             <div style="display:flex;gap:6px;">
               <input id="ao-sb-rdpuser" class="settings-select" type="text" placeholder="Administrator" value="${esc(conn.rdp_username || '')}" style="flex:1;" />
-              <input id="ao-sb-rdppass" class="settings-select" type="password" placeholder="password" autocomplete="new-password" style="flex:1;" />
+              <input id="ao-sb-rdppass" class="settings-select" type="password" placeholder="${cur.configured ? '•••• already saved — leave blank to keep' : 'password'}" autocomplete="new-password" style="flex:1;" />
             </div>
           </div>
           <div class="settings-row" id="ao-sb-web" style="display:${conn.takeover_method === 'web-console' ? 'flex' : 'none'}">
@@ -1255,13 +1292,13 @@ async function _renderFonts() {
   let installed = [];
   try { const f = await _fetchJSON(`${SETUP}/fonts`); installed = f.installed || []; } catch { installed = []; }
   _setBody(`
-    <h2 class="ao-step-title">Fonts ${_tip('To make your generated resume look exactly like yours, Applicant may need the fonts your resume uses. Upload a resume to check, then add any missing fonts. This step is optional — you can skip it.')}</h2>
-    <p class="ao-step-desc">Optional: check which fonts your resume needs and add any that are missing, so your generated resume keeps its look.</p>
+    <h2 class="ao-step-title">Fonts ${_tip('To make your generated résumé look exactly like yours, Applicant may need the fonts your résumé uses. Upload a résumé to check, then add any missing fonts. This step is optional — you can skip it.')}</h2>
+    <p class="ao-step-desc">Optional: check which fonts your résumé needs and add any that are missing, so your generated résumé keeps its look.</p>
     <div class="admin-card">
       <div class="settings-col">
         <label class="settings-label" style="min-width:0;">Check a résumé for required fonts</label>
         <div class="settings-row">
-          <button type="button" class="cal-btn" id="ao-font-pick">Choose a resume…</button>
+          <button type="button" class="cal-btn" id="ao-font-pick">Choose a résumé…</button>
           <input id="ao-font-detect" type="file" accept=".docx,.doc,.pdf,.rtf,.txt" style="display:none;" />
         </div>
         <div class="attach-strip" id="ao-font-strip"></div>
@@ -1506,7 +1543,7 @@ function _intakeProgressHTML(total) {
 // Intake fields reuse the shared `.settings-col`/`.settings-label`/
 // `.settings-select` form classes (same as Settings' field rows), so inputs,
 // selects and textareas match the rest of the app and track the theme.
-function _fieldHTML(f, value) {
+function _fieldHTML(f, value, detailValue) {
   const v = value == null ? '' : value;
   if (f.type === 'textarea') {
     return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><textarea class="settings-select" name="${esc(f.name)}" rows="3" style="resize:vertical;">${esc(v)}</textarea></div>`;
@@ -1527,11 +1564,18 @@ function _fieldHTML(f, value) {
       { value: 'decline to self-identify', label: 'Decline to self-identify' },
       { value: 'prefer to answer', label: 'Prefer to answer' },
     ];
+    // Micro-interactions lens 01 #22: the free-text detail used to render blank
+    // every time (a saved answer vanished on Back/resume) and stayed visible even
+    // while "Decline to self-identify" was selected, inviting text the selection
+    // says will be ignored. Rehydrate it from the saved `${name}__detail` value
+    // and only show it when the answer is actually "Prefer to answer".
+    const dv = detailValue == null ? '' : detailValue;
+    const showDetail = (v || 'decline to self-identify') === 'prefer to answer';
     return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label>
-      <select class="settings-select" name="${esc(f.name)}">
+      <select class="settings-select" name="${esc(f.name)}" data-eeo-select="${esc(f.name)}">
         ${opts.map((o) => `<option value="${esc(o.value)}"${(v || 'decline to self-identify') === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
       </select>
-      <input class="settings-select" name="${esc(f.name)}__detail" type="text" placeholder="Your answer (optional)" value="" style="margin-top:6px;" />
+      <input class="settings-select" name="${esc(f.name)}__detail" type="text" placeholder="Your answer (optional)" value="${esc(dv)}" style="margin-top:6px;${showDetail ? '' : 'display:none;'}" data-eeo-detail="${esc(f.name)}" />
       </div>`;
   }
   // D50 (compensation, currency): a small closed-option dropdown, same card/label
@@ -1551,7 +1595,15 @@ function _fieldHTML(f, value) {
   const datalistHTML = (f.list && Array.isArray(f.listOptions))
     ? `<datalist id="${esc(f.list)}">${f.listOptions.map((o) => `<option value="${esc(o)}"></option>`).join('')}</datalist>`
     : '';
-  return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><input class="settings-select" type="${esc(f.type)}" name="${esc(f.name)}" value="${esc(v)}"${placeholderAttr}${listAttr} />${datalistHTML}</div>`;
+  // Micro-interactions lens 01 #21: give mobile keyboards a hint from the
+  // field's own `type` (email/tel already set the right virtual keyboard in
+  // most browsers; `autocomplete` is the extra nudge some browsers key off
+  // instead) — additive, every other field type is unaffected.
+  const autocompleteAttr = f.type === 'email' ? ' autocomplete="email"'
+    : f.type === 'tel' ? ' autocomplete="tel"'
+    : f.type === 'number' ? ' inputmode="numeric"'
+    : '';
+  return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><input class="settings-select" type="${esc(f.type)}" name="${esc(f.name)}" value="${esc(v)}"${placeholderAttr}${listAttr}${autocompleteAttr} />${datalistHTML}</div>`;
 }
 
 // D46: LinkedIn/portfolio URLs typed without a scheme ("linkedin.com/in/me")
@@ -1719,7 +1771,7 @@ function _applyReadinessBanner() {
   const s = _status || {};
   if (s.apply_ready) {
     return `<div class="admin-card" style="border-left:3px solid var(--accent-ok, #4a9);">
-      <p style="margin:0;font-size:0.86rem;">I have what I need to start applying. Anything else here just makes your applications smoother — it's all optional.</p>
+      <p style="margin:0;font-size:0.86rem;">I have what I need to start applying. Anything else here just makes your applications smoother — it’s all optional.</p>
     </div>`;
   }
   const missing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
@@ -1761,7 +1813,7 @@ async function _renderIntakeSection() {
   const spec = SECTION_FORMS[key];
   if (spec.repeat) return _renderRepeatSection(key, spec, saved);
 
-  const fieldsHTML = spec.fields.map((f) => _fieldHTML(f, saved[f.name])).join('');
+  const fieldsHTML = spec.fields.map((f) => _fieldHTML(f, saved[f.name], saved[`${f.name}__detail`])).join('');
   _setBody(`
     ${_intakeProgressHTML(total)}
     <h2 class="ao-step-title">${esc(spec.title)}</h2>
@@ -1774,8 +1826,31 @@ async function _renderIntakeSection() {
     <button class="cal-btn cal-btn-primary" id="ao-intake-next">Save &amp; continue</button>
   `);
 
+  // Micro-interactions lens 01 #22: toggle each EEO detail input's visibility
+  // with its own select (rehydration itself happens in _fieldHTML above).
+  document.querySelectorAll('[data-eeo-select]').forEach((sel) => {
+    sel.onchange = () => {
+      const input = document.querySelector(`[data-eeo-detail="${sel.getAttribute('data-eeo-select')}"]`);
+      if (input) input.style.display = sel.value === 'prefer to answer' ? '' : 'none';
+    };
+  });
+
   const back = document.getElementById('ao-intake-back');
   if (back) back.onclick = () => { _intakeIndex = Math.max(0, _intakeIndex - 1); _renderIntakeSection(); };
+
+  // Micro-interactions lens 01 #23: the intake `<form>` had no submit handler,
+  // so plain Enter in a single-input section fell through to the browser's
+  // implicit-submission default (a page-navigating GET) instead of advancing
+  // the wizard like the persistent Save & continue button does.
+  const intakeForm = document.getElementById('ao-intake-form');
+  if (intakeForm) intakeForm.onsubmit = (e) => {
+    e.preventDefault();
+    const next = document.getElementById('ao-intake-next');
+    if (next && !next.disabled) next.click();
+  };
+  // Focus the first field so a keyboard/resumed user can start typing right away.
+  const firstField = intakeForm && intakeForm.querySelector('input, textarea, select');
+  if (firstField) firstField.focus();
 
   document.getElementById('ao-intake-next').onclick = async () => {
     if (_busy) return;
@@ -1806,8 +1881,8 @@ function _renderInlineFontPrompt(missing) {
   if (prev) prev.innerHTML = '';
   st.innerHTML = `
     <p style="color:var(--accent-warm, #d8a23a);font-size:0.86rem;margin:8px 0;">
-      Your resume uses fonts that aren't installed yet. Add them below so your
-      generated resume keeps its look.
+      Your résumé uses fonts that aren’t installed yet. Add them below so your
+      generated résumé keeps its look.
     </p>
     <p style="font-size:0.82rem;opacity:0.7;">Missing: ${esc(missing.join(', '))}</p>
     ${missing.map((m, i) => `
@@ -1919,7 +1994,7 @@ function _renderBaseResume(saved) {
 
   async function readResume(picker) {
     const st = document.getElementById('ao-resume-status');
-    st.innerHTML = '<p style="font-size:0.82rem;opacity:0.75;">Reading your resume…</p>';
+    st.innerHTML = '<p style="font-size:0.82rem;opacity:0.75;">Reading your résumé…</p>';
     try {
       await picker.uploadPending();      // chip + progress whirlpool, posts to /base-resume
       const res = picker.getLastResponse() || {};
@@ -1965,7 +2040,7 @@ function _renderBaseResume(saved) {
         document.getElementById('ao-resume-next').disabled = false;
       }
     } catch (e) {
-      st.innerHTML = _err(esc(e.message || 'Could not read the resume.'));
+      st.innerHTML = _err(esc(e.message || 'Could not read the résumé.'));
     }
   }
 
@@ -2309,6 +2384,7 @@ function _openHomeBaseAfterSetup() {
 }
 
 function _dismiss() {
+  _stopNavBusyWatch();
   // Tear down a11y bindings before removing the overlay from the DOM.
   if (_overlayA11yCleanup) { _overlayA11yCleanup(); _overlayA11yCleanup = null; }
   // Hand the shared endpoint manager back to Settings before tearing down the
@@ -2361,6 +2437,7 @@ export async function maybeLaunchOnboarding() {
     ? window.uiModule.initModalA11y(_overlay, _maybeDismiss)
     : null;
   _stepIndex = _firstIncompleteStep();
+  _startNavBusyWatch();
   // Pre-create the campaign once the LLM gate is open so onboarding resumes cleanly.
   if (status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
   await _renderStep();
@@ -2377,6 +2454,7 @@ export async function launchOnboarding() {
   _overlayA11yCleanup = window.uiModule && window.uiModule.initModalA11y
     ? window.uiModule.initModalA11y(_overlay, _maybeDismiss)
     : null;
+  _startNavBusyWatch();
   try { await _refreshStatus(); } catch { /* engine down — still show the wizard */ }
   if (_status && _status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
   _stepIndex = 0;
