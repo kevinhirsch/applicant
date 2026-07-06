@@ -157,86 +157,64 @@ def _campaign_label(campaign: dict) -> str:
     return str(campaign.get("name") or campaign.get("id") or "")
 
 
-# Plain-language labels for the engine's required intake sections, so the
-# "finish your profile" gap row names the SPECIFIC steps still to do instead of
-# raw codes. White-label: no FR-/NFR- jargon, no codenames.
-_SECTION_LABELS: dict[str, str] = {
-    "identity": "Identity",
-    "work_authorization": "Work authorization",
-    "location": "Location",
-    "target_roles": "Target roles",
-    "compensation": "Compensation",
-    "work_history": "Work history",
-    "education": "Education",
-    "references": "References",
-    "key_attributes": "Key attributes",
-    "eeo": "EEO (optional)",
-    "base_resume": "Base résumé",
-    "campaign_criteria": "Campaign criteria",
-}
+# The apply-readiness gate the engine computes (``GET /api/setup/status``):
+# whether the search can actually run yet (``apply_ready`` / ``automated_work_
+# allowed``) and, if not, the plain-language essentials still missing
+# (``apply_missing``). The Portal reads this so it can tell the TRUTH about
+# whether it's searching, and so its "what's left" list is the SAME one the
+# wizard-finish screen and the chat assistant report — never a third, disagreeing
+# list. White-label: the engine's ``apply_missing`` labels are already plain
+# language (target roles / work mode / locations / salary floor / …), no jargon.
+async def _gate_state(engine: ApplicantEngineClient) -> dict:
+    """Read the apply-readiness gate, best-effort (never sinks the pending feed).
 
-
-def _section_label(code: str) -> str:
-    """Friendly label for a section code; falls back to a title-cased code."""
-    code = str(code or "")
-    return _SECTION_LABELS.get(code, code.replace("_", " ").strip().capitalize() or code)
-
-
-async def _onboarding_gap_item(
-    engine: ApplicantEngineClient, campaign_list: list[dict]
-) -> Optional[dict]:
-    """Build the single persistent "finish your profile" row, or ``None``.
-
-    Reuses the engine's existing onboarding state (no new detection): for the
-    owner's campaigns, the first one whose intake still has missing sections
-    yields one synthetic pending item naming those specific steps. Returns
-    ``None`` when every campaign is complete (so the row clears on its own) or
-    when there is no campaign / the engine can't answer.
-
-    Perf lens 03, item #4: the per-campaign ``onboarding_state`` reads are fanned
-    out with ``asyncio.gather`` instead of one-at-a-time awaits. The loop bodies
-    are independent (each campaign's state is fetched and evaluated on its own —
-    the only cross-iteration coupling was "return the first incomplete one",
-    which is a short-circuit *optimization*, not a data dependency), so gathering
-    every campaign first and then picking the first incomplete one in the
-    original ``campaign_list`` order yields the identical result deterministically.
+    Returns ``{}`` when the engine can't answer or is too old to report readiness,
+    so the Portal simply omits the gate fields and degrades to its prior behavior.
     """
-    candidates = [
-        (campaign, str(campaign.get("id")))
-        for campaign in campaign_list
-        if isinstance(campaign, dict) and campaign.get("id")
-    ]
-    if not candidates:
+    reader = getattr(engine, "setup_status", None)
+    if not callable(reader):
+        return {}
+    try:
+        raw = await reader()
+    except Exception as exc:  # a status hiccup must never break the pending feed
+        logger.debug("portal: setup-status read failed: %s", exc)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {"automated_work_allowed": bool(raw.get("automated_work_allowed"))}
+    if "apply_ready" in raw:
+        out["apply_ready"] = bool(raw.get("apply_ready"))
+    if "apply_missing" in raw:
+        out["apply_missing"] = [
+            str(m) for m in (raw.get("apply_missing") or []) if isinstance(m, str)
+        ]
+    return out
+
+
+def _apply_gap_item(gate: dict, candidates: list) -> Optional[dict]:
+    """The single persistent "what's left before your search runs" row, or ``None``.
+
+    Derived from the apply-readiness essentials (``apply_missing``) — the SAME list
+    the wizard-finish screen and the chat assistant report — so all three agree.
+    Returns ``None`` once the gate is open (the search is genuinely running), when
+    readiness is unknown, or when there is no campaign, so the row clears itself.
+    ``candidates`` is the list of ``(campaign_id, campaign_name)`` tuples; the row
+    attaches to the first so its "Finish setup" jump lands on a real campaign.
+    """
+    if not gate or not gate.get("apply_missing"):
         return None
-    states = await asyncio.gather(
-        *(engine.onboarding_state(cid) for _campaign, cid in candidates),
-        return_exceptions=True,
-    )
-    for (campaign, cid), state in zip(candidates, states):
-        if isinstance(state, BaseException):
-            # Onboarding state is best-effort context for the gap row; a single
-            # failure must not sink the feed. Skip this campaign and try the next.
-            logger.debug("portal: onboarding state failed for %s: %s", cid, state)
-            continue
-        if not isinstance(state, dict):
-            continue
-        if state.get("complete"):
-            continue
-        missing = state.get("missing_sections") or []
-        missing = [str(s) for s in missing if isinstance(s, (str,))]
-        if not missing:
-            continue
-        return {
-            "id": "onboarding-incomplete",
-            "kind": "onboarding_incomplete",
-            "title": "Finish your profile",
-            "campaign_id": cid,
-            "campaign_name": _campaign_label(campaign),
-            "missing": [_section_label(code) for code in missing],
-            "missing_codes": missing,
-            "affordance": "complete",
-        }
-    return None
+    if gate.get("apply_ready") is True or gate.get("automated_work_allowed") is True:
+        return None
+    cid, cname = candidates[0] if candidates else ("", "")
+    return {
+        "id": "onboarding-incomplete",
+        "kind": "onboarding_incomplete",
+        "title": "Finish setup to start your search",
+        "campaign_id": cid,
+        "campaign_name": cname,
+        "missing": list(gate["apply_missing"]),
+        "affordance": "complete",
+    }
 
 
 def _shape_item(raw: dict, *, campaign_id: str, campaign_name: str) -> dict:
@@ -326,6 +304,10 @@ def setup_applicant_portal_routes() -> APIRouter:
                 for campaign in campaign_list
                 if isinstance(campaign, dict) and campaign.get("id")
             ]
+            # The real apply-readiness gate, so the Portal can tell the truth about
+            # whether the search is actually running (product-honesty). A single
+            # status read, best-effort — a failure just omits the gate fields.
+            gate = await _gate_state(engine)
             if candidates:
                 results = await asyncio.gather(
                     *(engine.list_pending_actions(cid) for cid, _cname in candidates),
@@ -345,15 +327,20 @@ def setup_applicant_portal_routes() -> APIRouter:
                         if isinstance(raw, dict):
                             items.append(_shape_item(raw, campaign_id=cid, campaign_name=cname))
 
-            # One persistent "finish your profile" row when the owner's intake is
-            # incomplete, naming the SPECIFIC missing steps. It clears on its own
-            # once every required section is filled (missing_sections empty), so it
-            # needs no emit/clear lifecycle. Prepend it so it sits atop the feed.
-            gap = await _onboarding_gap_item(engine, campaign_list)
+            # One persistent "what's left before your search runs" row, derived from
+            # the SAME apply-readiness essentials the wizard-finish screen and the
+            # chat assistant report (``apply_missing``) so all three agree. It clears
+            # itself once the gate opens (search running). Prepend it atop the feed.
+            gap = _apply_gap_item(gate, candidates)
             if gap is not None:
                 items.insert(0, gap)
 
-        return {"engine_available": True, "count": len(items), "items": items}
+        payload: dict = {"engine_available": True, "count": len(items), "items": items}
+        # Surface the gate so the front door renders an HONEST home status: "active /
+        # searching" only when automated work is truly allowed, otherwise "not running
+        # yet — here's what's left". Absent when the engine couldn't report it.
+        payload.update(gate)
+        return payload
 
     # -- lightweight badge count -------------------------------------------
 
@@ -368,12 +355,11 @@ def setup_applicant_portal_routes() -> APIRouter:
         /api/pending-actions/{campaign_id}/count`` (an integer-only response)
         concurrently across campaigns via ``asyncio.gather`` and sums them.
 
-        Deliberately skips the onboarding-gap detection walk
-        (``_onboarding_gap_item``'s per-campaign ``onboarding_state`` reads) —
-        that is exactly the fan-out this endpoint exists to avoid paying every
-        60s. A "finish your profile" gap (if any) still surfaces the moment the
-        owner opens the full Portal via ``GET /pending``, so the badge undercounts
-        by at most that one synthetic row while unconfigured, never after.
+        Deliberately skips the apply-readiness gate read (``_gate_state``) and the
+        synthetic "finish setup" gap row it drives — the badge counts only real
+        engine pending actions. That one synthetic row still surfaces the moment the
+        owner opens the full Portal via ``GET /pending``, so the badge undercounts by
+        at most that single row while setup is unfinished, never after.
 
         Owner-scoped (DISC-15): same gate as ``/pending`` above -- this is the
         same single-tenant pending-actions data, just summed to a count.

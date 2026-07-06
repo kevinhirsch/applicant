@@ -237,12 +237,18 @@ def test_preview_card_says_polished_version_of_resume_with_accent():
 def test_finish_screen_is_first_person_without_an_exclamation():
     js = _read(ONBOARDING_JS)
     assert "I’m ready to start applying for you." in js
+    # Gate-fix: the not-ready copy is honest that the search is NOT running yet and
+    # names the ONE server-truth apply_missing list.
     assert (
-        "I’m set up. Before I start applying I still need: "
+        "I’m set up, but I’m not searching yet. Before I can start I still need: "
         "${esc(applyMissing.join(', '))} — tell me in chat or add a résumé "
         "any time, and I’ll begin on my own."
     ) in js
-    assert "You’re all set.</h2>" in js
+    # The heading is honest per the apply-readiness gate: "all set" only when ready,
+    # "Almost ready." while essentials remain — rendered through the heading var.
+    assert "You’re all set." in js
+    assert "Almost ready." in js
+    assert "${esc(heading)}</h2>" in js
     assert "Applicant is ready to start applying for you." not in js
     assert "Applicant is set up. Before it starts applying" not in js
     assert "You’re all set!</h2>" not in js
