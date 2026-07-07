@@ -129,6 +129,35 @@ def _tokens(text: str) -> list[str]:
     return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 2]
 
 
+_MONTH3 = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
+_DATE_WORDS = {"present", "current", "now", "to", "through", "until", "ongoing",
+               "spring", "summer", "fall", "winter"}
+
+
+def _is_date_like(value: str) -> bool:
+    """True when ``value`` reads as a date/date-range (months, years, 'Present').
+
+    Gates the lenient token-subsumption fallback in the grounding check: ONLY a
+    date may match token-by-token ("Jun 2021" ~ source "June 2021"). Any other
+    value must appear contiguously in the source, otherwise a model could
+    recombine scattered résumé tokens ("Data" + "Engineer" + a company name from
+    another entry) into a phrase that never existed and have it accepted.
+    """
+    toks = _tokens(value)
+    if not toks:
+        return False
+    saw_datey = False
+    for t in toks:
+        if t.isdigit():
+            saw_datey = True
+            continue
+        if t in _DATE_WORDS or t[:3] in _MONTH3:
+            saw_datey = True
+            continue
+        return False
+    return saw_datey
+
+
 class LLMVerifiedResumeParser:
     """Decorator over :class:`ResumeParserPort` adding LLM verify-and-correct.
 
@@ -230,7 +259,7 @@ class LLMVerifiedResumeParser:
                 json_schema=_SCHEMA,
                 max_tokens=self._max_tokens,
             )
-            out, problem = self._validated(result.text)
+            out, problem = self._validated(result)
             attempts.append(
                 {
                     "start_tier": start_tier,
@@ -254,27 +283,58 @@ class LLMVerifiedResumeParser:
             )
         return self._merge(parsed, out, attempts=attempts, escalated=escalated)
 
-    def _validated(self, text: str) -> tuple[dict | None, str | None]:
-        """Parse + sanity-check a verify response; (out, None) or (None, reason)."""
-        m = re.search(r"\{.*\}", text or "", re.S)
-        if not m:
-            return None, "malformed_output"
+    def _json_candidates(self, result: Any):
+        """Yield candidate dicts from a completion, most-authoritative first.
+
+        The adapter already parses structured output when ``json_schema`` is given
+        (``LLMResult.structured``) — that is tried first, no re-parsing. For plain
+        text, mirror the adapter's defensive extraction: strip code fences, try the
+        whole string, then every balanced ``{...}`` span in document order (via the
+        adapter's brace-/string-aware scanner) — so a decoy object or brace-bearing
+        prose before the real JSON never sinks the response; the shape check in
+        :meth:`_validated` simply skips non-matching candidates.
+        """
+        structured = getattr(result, "structured", None)
+        if isinstance(structured, dict):
+            yield structured
+        text = (getattr(result, "text", "") or "").strip()
+        if not text:
+            return
+        fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+        if fence:
+            text = fence.group(1).strip()
         try:
-            out = json.loads(m.group(0))
+            whole = json.loads(text)
+            if isinstance(whole, dict):
+                yield whole
         except Exception:
-            return None, "malformed_output"
-        if not isinstance(out, dict) or not isinstance(out.get("work_history"), list):
-            return None, "malformed_output"
-        conf = out.get("confidence")
-        if not isinstance(conf, dict) or not conf:
-            return None, "malformed_output"
-        try:
-            low = min(float(v) for v in conf.values())
-        except Exception:
-            return None, "malformed_output"
-        if low < self._floor:
-            return None, "low_confidence"
-        return out, None
+            pass
+        from applicant.adapters.llm.openai_compatible import _balanced_object_spans
+
+        for span in _balanced_object_spans(text):
+            try:
+                obj = json.loads(span)
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                yield obj
+
+    def _validated(self, result: Any) -> tuple[dict | None, str | None]:
+        """Pick + sanity-check a verify response; (out, None) or (None, reason)."""
+        for out in self._json_candidates(result):
+            if not isinstance(out.get("work_history"), list):
+                continue  # decoy/partial object — keep scanning
+            conf = out.get("confidence")
+            if not isinstance(conf, dict) or not conf:
+                continue
+            try:
+                low = min(float(v) for v in conf.values())
+            except Exception:
+                continue
+            if low < self._floor:
+                return None, "low_confidence"
+            return out, None
+        return None, "malformed_output"
 
     # ── grounded merge (the slotting contract) ─────────────────────────────
     def _merge(
@@ -292,21 +352,24 @@ class LLMVerifiedResumeParser:
         def sourced(value: str) -> bool:
             """True when ``value`` traces to the source text.
 
-            Collapse-substring first (exact modulo case/punct/whitespace); then a
-            token-subsumption fallback so re-formatted values still pass — every
-            token of the value must prefix-match some source token ("Jun" ~ "June",
-            "Sept" ~ "September"), with numeric tokens required verbatim (years and
-            metrics never fuzzy-match).
+            Collapse-substring (exact modulo case/punct/whitespace) is the rule:
+            a title/company/skill/name must appear contiguously in the source. The
+            ONLY lenient path is for date-shaped values (see :func:`_is_date_like`),
+            where a token-subsumption check lets re-formatted dates pass ("Jun" ~
+            "June", "Sept" ~ "September") with numeric tokens required verbatim
+            (years never fuzzy-match). Restricting the fallback to dates prevents a
+            model from recombining scattered source tokens into a phrase that never
+            existed ("Data" + "Engineer" + some other entry's company) and having
+            it accepted as sourced.
             """
             cv = _collapse(value)
             if not cv:
                 return False
             if cv in csource:
                 return True
-            toks = _tokens(value)
-            if not toks:
+            if not _is_date_like(value):
                 return False
-            for t in toks:
+            for t in _tokens(value):
                 if t.isdigit():
                     if t not in source_tokens and not any(t in s for s in source_tokens):
                         return False

@@ -109,7 +109,13 @@ class FakeInner:
 
 
 class ScriptedLLM:
-    """Returns scripted responses in order; records every (start_tier, max_tokens)."""
+    """Returns scripted responses in order; records every (start_tier, max_tokens).
+
+    A ``dict`` response is delivered via ``LLMResult.structured`` (the adapter's
+    parsed-JSON path when ``json_schema`` is given) with garbage text, proving the
+    layer prefers the structured payload; a ``str`` is plain text; an ``Exception``
+    is raised.
+    """
 
     def __init__(self, responses: list[object]) -> None:
         self._responses = list(responses)
@@ -122,6 +128,13 @@ class ScriptedLLM:
         nxt = self._responses.pop(0)
         if isinstance(nxt, Exception):
             raise nxt
+        if isinstance(nxt, dict):
+            return LLMResult(
+                text="<thinking noise, not json>",
+                tier=start_tier,
+                model=f"fake-t{start_tier}",
+                structured=nxt,
+            )
         return LLMResult(text=str(nxt), tier=start_tier, model=f"fake-t{start_tier}")
 
 
@@ -226,6 +239,55 @@ def test_unsourced_values_are_dropped_and_counted():
     assert "Snowflake" not in out.skills
     dropped = " ".join(_verify_of(out)["unsourced_dropped"])
     assert "Globex" in dropped and "Snowflake" in dropped
+
+
+@pytest.mark.unit
+def test_structured_payload_is_preferred_over_text():
+    """When the adapter already parsed the JSON (LLMResult.structured, set on
+    json_schema calls), the layer uses it directly — a text field full of
+    reasoning noise cannot sink a good structured answer."""
+    llm = ScriptedLLM([GOOD_OUT])  # dict -> delivered via .structured, text is noise
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+    v = _verify_of(out)
+    assert v["verified"] is True
+    assert v["escalated"] is False
+    assert out.work_history[0].company == "Initech"
+
+
+@pytest.mark.unit
+def test_decoy_object_before_the_real_json_is_skipped():
+    """A leading decoy object / brace-bearing prose must not sink the response:
+    candidates are scanned in order and the shape check skips non-matching ones
+    (the review finding on greedy first-{...}-to-last-} extraction)."""
+    noisy = (
+        'Plan: {"draft": true} and note {"text": "a } brace in a string"} — result:\n'
+        + json.dumps(GOOD_OUT)
+    )
+    llm = ScriptedLLM([noisy])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+    v = _verify_of(out)
+    assert v["verified"] is True
+    assert v["escalated"] is False  # solved at tier 1 — no wasted escalation
+    assert out.work_history[0].title == "Senior Platform Engineer"
+
+
+@pytest.mark.unit
+def test_recombined_source_tokens_are_rejected_for_non_dates():
+    """The grounding fallback is DATE-ONLY (the review finding): a phrase whose
+    tokens all exist somewhere in the source but never contiguously ("Data" +
+    "Engineer" from one entry + "Initech" from another) must be dropped, while a
+    re-formatted date ("Feb 2018" ~ source "Feb 2018", "Jun 2021" ~ "June 2021")
+    still passes."""
+    tampered = json.loads(json.dumps(GOOD_OUT))
+    tampered["work_history"][0]["company"] = "Data Engineer Initech"  # recombination
+    tampered["work_history"][0]["start_date"] = "Jun 2021"  # reformatted date: OK
+    llm = ScriptedLLM([json.dumps(tampered)])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+
+    assert out.work_history[0].company == ""  # recombined phrase refused
+    assert out.work_history[0].start_date == "Jun 2021"  # date leniency intact
+    dropped = " ".join(_verify_of(out)["unsourced_dropped"])
+    assert "Data Engineer Initech" in dropped
 
 
 @pytest.mark.unit
