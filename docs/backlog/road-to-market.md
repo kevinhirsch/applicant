@@ -64,7 +64,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
-| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | IN PROGRESS |
+| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | PARTIAL — core+guard (PR #643) |
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
@@ -494,26 +494,29 @@ from scratch. Closest comparable product rewrites freely — we match that freed
 keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
 **Effort:** M · **Owner:** eng · **Depends on:** the existing truthfulness rules
 (`core/rules/truthfulness.py`), attribute cloud / provenance plumbing.
+**Status: PARTIAL — core + guard seam landed (PR #643); FE surfacing + Q&A-growth remain.**
 **DoR:**
 - [x] Policy defined (above). Fact-class = employers, titles, credentials/certs,
       technologies/skills, dates, numbers. Prose-class = everything else.
 **DoD:**
-- [ ] Guard behaviour becomes policy-driven (server-side setting): **balanced** default
-      = rephrasing/restructuring passes untouched; only fact-class tokens absent from
-      the truth cloud are flagged. **strict** remains available.
-- [ ] Flagged facts are **surfaced, not silently blocked**: they appear in
-      provenance/review as suggestions with one-tap "yes, that's true — add it to my
-      profile" (which grows the truth cloud via the existing Q&A/reconciliation path)
-      or "remove".
+- [x] Guard behaviour is policy-driven (server-side `TRUTH_POLICY`, default **balanced**):
+      rephrasing/restructuring passes untouched; only fact-class tokens absent from the
+      truth cloud are flagged; **strict** remains available. *(PR #643 —
+      `TruthPolicy`/`policy_blocks` in core; `assert_no_fabrication` policy-aware across
+      all three guard seams; wired via config → container.)*
+- [~] Flagged facts are **surfaced, not silently blocked** — the engine now **returns**
+      them (BALANCED never raises) and logs them; the review-UI surface with one-tap
+      "yes, that's true — add to my profile" / "remove" is the **remaining FE work**
+      (pairs with H4 visible-provenance).
 - [ ] The "asks questions to learn" behaviour is reachable: the onboarding/profile
       Q&A-conflicts flow surfaces gaps the LLM wants clarified (ties to the
       confirm-conflict endpoint that already exists).
-- [ ] Review-before-submit and the final-say invariant (P2-8) are unchanged — the human
-      still approves every send.
-- [ ] Tests updated: rewritten prose passes in balanced mode; an invented certification
-      is flagged as a suggestion (not dropped, not silently kept); strict mode still
-      hard-flags; P2-5's evidence claim re-worded to "rewrites freely, never invents
-      facts".
+- [x] Review-before-submit and the final-say invariant (P2-8) are unchanged — the human
+      still approves every send. *(Untouched; the loosening is safe precisely because of it.)*
+- [x] Tests: balanced surfaces vs. strict raises covered; the injection / persists-nothing
+      / never-bypasses scenarios now run under **strict** so that path stays covered.
+      Full hermetic engine suite green (3769 passed). *(P2-5 claim re-worded in the backlog;
+      the citable-evidence artifact itself is P2-5's own story.)*
 
 **Phase 1 spine:** P1-0 (first) → P1-1 → P1-1a (verify layer, after PR #642) ·
 {P1-3, P1-4, P1-6, P1-7} in parallel · P1-5 parallel · P1-13 (truth policy — unblocks
