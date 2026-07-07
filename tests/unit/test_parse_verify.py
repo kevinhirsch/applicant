@@ -365,6 +365,128 @@ def test_omitted_strong_entries_are_restored_not_silently_erased():
 
 
 @pytest.mark.unit
+def test_omitting_one_of_two_roles_at_the_same_company_still_restores_it():
+    """Entry-scoped coverage: a title or company appearing in ANOTHER kept entry
+    must not suppress restoration — only a single corrected entry carrying BOTH
+    identity fields accounts for a draft role (two roles at one company are two
+    entries; omitting one is still an omission)."""
+    source = (
+        "Jane Engineer\n\n"
+        "EXPERIENCE\n"
+        "Staff Engineer | Initech\n"
+        "June 2021 - Present\n\n"
+        "Senior Engineer | Initech\n"
+        "Feb 2018 - May 2021\n"
+    )
+    draft = ParsedResume(
+        full_name="Jane Engineer",
+        work_history=(
+            WorkHistoryEntry(title="Staff Engineer", company="Initech"),
+            WorkHistoryEntry(title="Senior Engineer", company="Initech"),
+        ),
+        raw_text=source,
+    )
+    out = {
+        "full_name": "Jane Engineer",
+        "work_history": [{"title": "Staff Engineer", "company": "Initech"}],
+        "education": [],
+        "skills": [],
+        "confidence": {"work_history": 0.95},
+        "corrections": [],
+    }
+    parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
+    v = _verify_of(parsed)
+    assert v["verified"] is True
+    titles = [w.title for w in parsed.work_history]
+    assert titles.count("Staff Engineer") == 1, "kept entry not duplicated"
+    assert "Senior Engineer" in titles, "same-company omitted role must be restored"
+    assert any("Senior Engineer" in r for r in v["restored_from_draft"])
+
+
+@pytest.mark.unit
+def test_renamed_company_in_one_entry_suppresses_duplicate_restoration():
+    """A correction that keeps the role under a shortened company name accounts
+    for the draft entry (shared 2+-token run inside the SAME corrected entry),
+    so no duplicate is restored."""
+    source = (
+        "Jane Engineer\n\n"
+        "EXPERIENCE\n"
+        "Lead Engineer | Wells Fargo (via TEKsystems)\n"
+        "June 2021 - Present\n"
+    )
+    draft = ParsedResume(
+        full_name="Jane Engineer",
+        work_history=(
+            WorkHistoryEntry(title="Lead Engineer", company="Wells Fargo (via TEKsystems)"),
+        ),
+        raw_text=source,
+    )
+    out = {
+        "full_name": "Jane Engineer",
+        "work_history": [{"title": "Lead Engineer", "company": "Wells Fargo"}],
+        "education": [],
+        "skills": [],
+        "confidence": {"work_history": 0.9},
+        "corrections": ["normalized company"],
+    }
+    parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
+    v = _verify_of(parsed)
+    assert v["verified"] is True
+    assert len(parsed.work_history) == 1, "renamed entry must not restore a duplicate"
+    assert v["restored_from_draft"] == []
+
+
+@pytest.mark.unit
+def test_education_line_misparsed_as_a_role_is_not_restored_into_work_history():
+    """Section-heading gate: the deterministic parser sometimes files an
+    education-section line as a strong-looking job (title+company, no bullets).
+    When the correction drops it and nothing accounts for it, it must NOT be
+    resurrected as a role — its source line sits under a non-work heading, so
+    it is prunable junk, not a lost job."""
+    draft = ParsedResume(
+        full_name="Jane Engineer",
+        work_history=(
+            WorkHistoryEntry(title="Senior Platform Engineer", company="Initech"),
+            # "BS Computer Science, State University" split into a fake job —
+            # its source line sits under EDUCATION & CERTIFICATIONS.
+            WorkHistoryEntry(title="BS Computer Science", company="State University"),
+        ),
+        education=(),
+        skills=("Python",),
+        raw_text=SOURCE,
+    )
+    out = json.loads(json.dumps(GOOD_OUT))
+    out["education"] = [out["education"][0]]  # keeps CKA, drops the BS entry entirely
+    parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
+    v = _verify_of(parsed)
+    assert v["verified"] is True
+    assert all("Computer Science" not in w.title for w in parsed.work_history), (
+        "an education line must not resurrect as a job"
+    )
+    assert v["restored_from_draft"] == []
+    # The genuine role kept by the correction is intact, once.
+    assert [w.title for w in parsed.work_history] == ["Senior Platform Engineer", "Data Engineer"]
+
+
+@pytest.mark.unit
+def test_non_finite_or_out_of_range_confidence_is_malformed_not_verified():
+    """NaN slips past the floor comparison (NaN < x is False) and 1.5 is not a
+    probability: both are untrustworthy self-reports — treated as malformed
+    output (escalate once, then honest deterministic fallback)."""
+    bad = json.loads(json.dumps(GOOD_OUT))
+    bad["confidence"] = {"contact": float("nan")}
+    worse = json.loads(json.dumps(GOOD_OUT))
+    worse["confidence"] = {"contact": 1.5}
+    llm = ScriptedLLM([bad, worse])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+    v = _verify_of(out)
+    assert v["verified"] is False
+    assert v["reason"] == "malformed_output"
+    assert len(llm.calls) == 2 and llm.calls[1]["start_tier"] == 2
+    assert out.work_history == DRAFT.work_history
+
+
+@pytest.mark.unit
 def test_late_binding_enables_verification_after_construction():
     """Container wiring order: the parser exists before the ladder; bind_llm()
     upgrades it in place (both onboarding services share the instance)."""

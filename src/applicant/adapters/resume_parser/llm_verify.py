@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import replace
 from typing import Any
@@ -358,10 +359,18 @@ class LLMVerifiedResumeParser:
             if not isinstance(conf, dict) or not conf:
                 continue
             try:
-                low = min(float(v) for v in conf.values())
+                vals = [float(v) for v in conf.values()]
             except Exception:
                 continue
-            if low < self._floor:
+            # Values must be sane self-reports: finite (NaN compares False
+            # against the floor and would slip through) and inside [0, 1].
+            # Key NAMES stay flexible on purpose — live models rename the
+            # areas despite the schema (the tier-2 smoke reported
+            # "work_history_titles_companies", not "work_history"), and a
+            # rigid key check would reject good output.
+            if not all(math.isfinite(v) and 0.0 <= v <= 1.0 for v in vals):
+                continue
+            if min(vals) < self._floor:
                 return None, "low_confidence"
             return out, None
         return None, "malformed_output"
@@ -490,11 +499,13 @@ class LLMVerifiedResumeParser:
         # restoration is gated hard, three ways:
         #   * only STRONG entries qualify (work: title AND company; education:
         #     a degree). Half-empty artifacts stay prunable.
-        #   * an entry the correction ACCOUNTED FOR anywhere — re-slotted into
+        #   * an entry ONE corrected entry accounts for — re-slotted into
         #     another section, kept under a corrected name — is not restored.
-        #     Coverage is token-sequence containment against every corrected
-        #     string, CROSS-section (a school mis-parsed as a role is covered
-        #     by the corrected education entry that now holds it).
+        #     Coverage is judged per corrected ENTRY (identity fields joined),
+        #     cross-section: a school mis-parsed as a job is covered by the
+        #     education entry that now holds it, but the same title or company
+        #     merely appearing SOMEWHERE never suppresses (two roles at one
+        #     company, one title at two companies — omitting one restores it).
         #   * an education degree must START a source line. The split parser
         #     carves degrees out mid-line (the pre-keyword text lands in
         #     institution), so its artifacts never do; real credential lines
@@ -504,14 +515,13 @@ class LLMVerifiedResumeParser:
         # parse, so they are cheap to keep: union them in.
         restored: list[str] = []
 
-        pool: list[list[str]] = [
+        entry_pool: list[list[str]] = [
             toks
-            for value in (
-                [v for r in roles for v in (r.title, r.company)]
-                + [v for g in education for v in (g.degree, g.institution)]
-                + list(skills)
+            for joined in (
+                [f"{r.title} {r.company}" for r in roles]
+                + [f"{g.degree} {g.institution}" for g in education]
             )
-            if (toks := _tokens(value))
+            if (toks := _tokens(joined))
         ]
 
         def _seq_in(needle: list[str], hay: list[str]) -> bool:
@@ -520,42 +530,87 @@ class LLMVerifiedResumeParser:
                 hay[i : i + n] == needle for i in range(len(hay) - n + 1)
             )
 
-        def _accounted(*fields: str) -> bool:
-            for f in fields:
-                toks = _tokens(f)
-                if not toks:
-                    continue
-                # Forward: the draft field survives inside a corrected string.
-                # Reverse: a corrected string sits inside the draft field —
-                # multi-token only, so a lone skill token can't claim a role.
-                if any(
-                    _seq_in(toks, p) or (len(p) > 1 and _seq_in(p, toks))
-                    for p in pool
-                ):
-                    return True
-            return False
+        def _field_in(field: str, entry: list[str]) -> bool:
+            toks = _tokens(field)
+            if not toks:
+                return True  # an empty field can't argue against coverage
+            if _seq_in(toks, entry):
+                return True
+            # A corrected rename keeps part of the original ("Wells Fargo (via
+            # TEKsystems)" → "Wells Fargo"): a shared run of 2+ tokens counts.
+            return any(_seq_in(toks[i : i + 2], entry) for i in range(len(toks) - 1))
 
-        clines = [c for ln in parsed.raw_text.splitlines() if (c := _collapse(ln))]
+        def _entry_accounted(*fields: str) -> bool:
+            live = [f for f in fields if _tokens(f)]
+            if not live:
+                return True
+            return any(
+                all(_field_in(f, entry) for f in live) for entry in entry_pool
+            )
+
+        source_lines = parsed.raw_text.splitlines()
+        cline_list = [_collapse(ln) for ln in source_lines]
+        clines = [c for c in cline_list if c]
 
         def _line_initial(value: str) -> bool:
             cv = _collapse(value)
             return bool(cv) and any(ln.startswith(cv) for ln in clines)
+
+        def _under_nonwork_heading(value: str) -> bool:
+            """True when ``value``'s source line sits under an unambiguous
+            non-work section heading (EDUCATION / CERTIFICATIONS / SKILLS…).
+
+            The deterministic work parser ignores headings, so a bullet-less
+            "role" filed under one of these is a mis-sectioned non-job line —
+            prunable, not a lost role. Deliberately conservative: a heading
+            must be short (≤4 words), shouty (≥60% uppercase letters), and
+            name a non-work section without any work word — anything less
+            certain answers False and the entry stays restorable, because a
+            visibly-noisy restoration beats silently losing a real role.
+            """
+            cv = _collapse(value)
+            idx = next((i for i, cl in enumerate(cline_list) if cv and cv in cl), None)
+            if idx is None:
+                return False
+            for i in range(idx - 1, -1, -1):
+                raw = source_lines[i].strip()
+                if not raw or len(raw.split()) > 4:
+                    continue
+                alpha = [c for c in raw if c.isalpha()]
+                if not alpha or sum(c.isupper() for c in alpha) / len(alpha) < 0.6:
+                    continue
+                low = raw.lower()
+                nonwork = any(k in low for k in (
+                    "educat", "certif", "training", "skill", "award", "honor", "license",
+                ))
+                work = any(k in low for k in (
+                    "experience", "employment", "work", "career", "professional",
+                ))
+                if nonwork or work:
+                    return nonwork and not work
+            return False
 
         for w in parsed.work_history:
             if not (w.title and w.company):
                 continue  # weak/junk draft entry — the correction may prune it
             if len(roles) >= _MAX_ROLES:
                 break
-            if not _accounted(w.title, w.company):
-                roles.append(w)
-                restored.append(f"role:{w.title[:40]} @ {w.company[:30]}")
+            # Suppression needs title AND company carried by one corrected entry.
+            if _entry_accounted(w.title, w.company):
+                continue
+            if not w.achievements and _under_nonwork_heading(w.title):
+                continue  # a bullet-less "role" from the education/certs section
+            roles.append(w)
+            restored.append(f"role:{w.title[:40]} @ {w.company[:30]}")
 
         for e in parsed.education:
             if not e.degree or not _line_initial(e.degree):
                 continue  # split artifact or half-empty — the correction may prune it
             if len(education) >= _MAX_EDU:
                 break
-            if not _accounted(e.degree, e.institution):
+            # The credential NAME is the identity — an institution kept under a
+            # different credential is a different credential.
+            if not _entry_accounted(e.degree):
                 education.append(e)
                 restored.append(f"education:{e.degree[:40]}")
 
@@ -577,8 +632,9 @@ class LLMVerifiedResumeParser:
             "corrections": [c for c in (out.get("corrections") or []) if isinstance(c, str)][:20],
             "unsourced_dropped": dropped[:20],
             # Draft data the correction omitted but this layer kept (visible in
-            # review, H2: a restoration is never silent).
-            "restored_from_draft": restored[:20],
+            # review, H2: a restoration is never silent — so never truncated;
+            # the section caps above already bound this list).
+            "restored_from_draft": restored,
         }
         return replace(
             parsed,
