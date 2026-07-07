@@ -108,6 +108,10 @@ AI playground.
       header, tok/s, %-context chip, per-message edit/delete controls, or composer model
       picker. (Raw-LLM path stays reachable via Compare/model list, unchanged.)
 - [ ] Non-product workspace modules are hidden from default nav/rail/commands.
+- [ ] **Padlocks → absence:** engine-gated sections (Results, Documents, Gallery, Profile,
+      Daily updates, Chat, etc.) no longer render a lock icon when unavailable — they
+      *appear* once they become real (setup complete / data exists). A padlock reads as
+      "broken/paywalled"; appearing reads as "the product grows as I use it."
 - [ ] Known mislabeled window titles fixed (Documents window no longer titled "Library";
       Daily updates window no longer titled "Email").
 - [ ] A test asserts the Applicant chat surface renders **no** model-name literals.
@@ -156,11 +160,12 @@ must wait until P0-3/P0-4/P0-5 land (or baselines get blessed twice).
 ### P1-0 — Revoke & rotate exposed secrets *(pulled from #53 — do first)*
 **As** the owner, **I want** all previously-exposed API keys revoked and secret
 scanning in CI **so that** no leaked credential survives into demo/seed artifacts.
-**Effort:** S · **Owner:** both · **Depends on:** —
+**Effort:** S · **Owner:** both · **Depends on:** — · **Status: IN PROGRESS**
 **DoR:** List of keys/locations to check (project history + the live demo DB's
 configured key).
 **DoD:**
-- [ ] All previously-exposed OpenRouter (and any other) keys revoked at the provider.
+- [x] All previously-exposed OpenRouter (and any other) keys revoked at the provider.
+      *(owner-confirmed revoked.)*
 - [ ] The demo/dev DB carries no real key; seed (P0-2) never emits one.
 - [ ] CI runs a secret-scanning step that fails on committed credentials.
 
@@ -328,6 +333,25 @@ the channel exists even before automation.
 **DoD:**
 - [ ] Discovery marks Easy Apply-able postings; the digest shows the channel per role.
 - [ ] Zero automation/login risk introduced by this step (detection only).
+
+### P1-12 — Give each engine capability a narrative FE home
+**As** a user, **I want** the engine's deeper capabilities to appear intuitively inside
+the sections I already use **so that** the powerful backend maps onto the front-end
+instead of hiding behind jargon or dead windows.
+*(This is the owner's central concern: "the BE is conceptually great… it just doesn't map
+into FE intuitively." It's the connective tissue P0-3/P0-4/P0-5 set up — made explicit so
+no built capability stays FE-invisible.)*
+**Effort:** M · **Owner:** eng · **Depends on:** P0-2, P0-3, P0-5
+**DoR:** Confirmed capability→section mapping: screening-answer library, follow-up
+drafting, ghosting detection, weekly recap, and the learning/outcomes loop.
+**DoD:**
+- [ ] Each named capability is surfaced in its narrative home — Today (what needs you /
+      what I did overnight), Tracker (per-application status incl. ghosting + drafted
+      follow-ups), Activity (the live feed incl. learning adjustments), Daily updates
+      (the weekly recap) — **not** as a new standalone window.
+- [ ] Each is discoverable by following the loop, without documentation.
+- [ ] The reachability audit (traceability docs) is re-checked so no built capability
+      remains FE-invisible.
 
 **Phase 1 spine:** P1-0 (first) → P1-1 → {P1-3, P1-4, P1-6, P1-7} in parallel · P1-5
 parallel · P1-8 → P1-9 → P1-10 (competitive track) · P1-11 seeds the Easy Apply track ·
@@ -556,6 +580,30 @@ testimonial collection; then the expansion decisions — self-hosted app-store l
 ledger); takeover fallback on checkpoint/2FA; explicit consent; recorded safe run.
 
 ---
+
+# Deferred with intent (recorded, not scheduled for v1)
+
+These were discussed and **deliberately cut or postponed** — recorded here so the
+decision and its rationale aren't lost, and don't resurface as "did we consider X?".
+Each is a fast-follow or later-version candidate, not an oversight.
+
+- **Interview prep pack** *(fast-follow · M)* — we detect interviews and calendar them,
+  then stop. A per-interview prep pack (likely questions derived from the JD + your
+  profile, answer drafts via the existing chat) closes that loop. I recommended it as a
+  pre-launch feature, but it was **not** among the four the owner prioritized for v1 —
+  strong v1.1 candidate.
+- **Networking / recruiter outreach / referrals** *(defer)* — a different product muscle
+  (a CRM); off-strategy for a review-first apply engine. State the deferral on the public
+  roadmap so it reads as a choice.
+- **Salary data / negotiation content** *(defer)* — data-licensing/scraping burden, low
+  differentiation vs. the core loop.
+- **H1B / visa-sponsorship filter** *(fast-follow · M)* — niche but *decisive* for that
+  audience; feasible later as a discovery criterion from public H-1B datasets.
+- **From-scratch résumé builder** *(v1.1)* — the flow assumes an uploaded résumé, so
+  first-time job seekers bounce. Acceptable v1 cut **if** the landing page (P4-1) targets
+  experienced switchers; revisit for v1.1.
+- **Full LinkedIn Easy Apply autopilot** — not cut, but intentionally post-launch and
+  flagged; tracked as **P5-6** (depends on the assisted mode P2-14).
 
 # Cross-phase experience & quality (schedule alongside their phase)
 
