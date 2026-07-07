@@ -47,6 +47,11 @@ cd workspace && npm test                                # front-end JS unit suit
 python -m compileall -q workspace/app.py workspace/routes workspace/src   # workspace syntax
 node --check workspace/static/js/<file>.js              # front-end has no bundler — node --check only
 ```
+The JS suite (`workspace/tests/js/*.test.js`) does not import the modules — it **slices the real
+function bodies out of the shipped source** (brace-balanced extraction) and executes them headlessly,
+and several Python front-door tests assert exact source composition (e.g. the post-upload
+`st.innerHTML` template must compose specific helpers in order). Renaming a helper or reordering a
+template breaks those tests **by design** — update the harness together with the code.
 To **boot the front-door locally** for UI / playtest work, install the vendored deps into the root
 env once (`uv pip install -r workspace/requirements.txt`), then run it pointed at the engine:
 ```bash
@@ -62,7 +67,8 @@ surface, click every control, classify findings, run-until-green) for full-produ
 
 Deploy / stack:
 ```bash
-docker compose -f docker/docker-compose.prod.yml config         # validate compose
+POSTGRES_PASSWORD=x APPLICANT_INTERNAL_TOKEN=x \
+  docker compose -f docker/docker-compose.prod.yml config       # validate compose (required vars need dummies, as in CI)
 bash scripts/proxmox-deploy.sh                                  # one-liner: create Proxmox VM + provision
 bash scripts/install.sh --apply                                 # bring up the Compose stack (dry-run without --apply)
 bash scripts/update.sh --apply                                  # git-sync → backup → build → migrate → restart → heartbeat
@@ -89,6 +95,18 @@ injected into every loop — NOT on the instance, or it silently resets each tic
 in the core: review-before-submit and the pre-fill stop-boundary mean the engine **cannot**
 self-authorize a final submit. Enforce such guards server-side (e.g. the fabrication guard derives
 its own ground truth) — never rely on a caller-supplied input to opt a safety check in.
+
+Two truth-preserving layers sit on that foundation. **Parse-verify** (`adapters/resume_parser/
+llm_verify.py`, `PARSE_VERIFY_ENABLED`): résumé ingest wraps the deterministic parser in
+`LLMVerifiedResumeParser`, which asks the tier ladder to re-slot every value and then enforces the
+slotting contract — every corrected value must trace to a local window of the source text, grounding
+holes refill from the draft, omissions restore only under entry-scoped/heading-gated rules, and every
+drop/restoration is counted in `extra["verify"]` (which flows intake → base-resume upload response →
+the wizard's "double-check" line). Like the scheduler note above, wiring ORDER matters: the container
+builds the parser before the LLM ladder exists, so the model is late-bound via `bind_llm()`.
+**Truth policy** (`core/rules/truthfulness.py`, `TRUTH_POLICY`): generated materials run under a
+server-side `TruthPolicy` — `balanced` (default) surfaces flagged facts for review, `strict` blocks —
+chosen in `MaterialService`, never by a caller.
 
 **The bridge (bidirectional):**
 - workspace → engine: `workspace/src/applicant_engine.py` (`ApplicantEngineClient`, `ENGINE_URL`,
@@ -194,14 +212,26 @@ exercised by the real `compose up --build` at deploy time.
    **squash-merged**, so after each merge the working branch diverges from `main` (its commits are not
    `main`'s squashed one) and `git push` is rejected non-fast-forward — the merged work is already in
    `main`, so realign with `git fetch origin main && git reset --hard origin/main` before continuing
-   (force-push to rewrite shared history is blocked).
+   (force-push to rewrite shared history is blocked). Every PR is reviewed by two bots (Greptile
+   posts runnable T-Rex repros; CodeRabbit runs an assertive profile): treat findings as real review —
+   fix or reply with reasoning on the thread and resolve it. A finding's *proposed fix* can be wrong
+   in detail while its defect is real (e.g. a suggested exact-key check that live model behavior
+   contradicts) — verify against live behavior before adopting the suggestion verbatim.
+
+6. **Honesty invariants (the H-series).** Nothing degrades silently. The absence of a check must
+   never render as a check (an unverified parse says so, and why); automated corrections, drops, and
+   restorations surface in metadata and UI; user-facing claims count only what actually happened
+   ("I read N details" = this parse, never the whole attribute cloud). The full H1–H5 set is the
+   founder-trust launch gate — Phase 1.5 in `docs/backlog/road-to-market.md`.
 
 See `workspace/CLAUDE.md` for the vendored app's internals, `docs/spec/master-spec.md` for the
 requirement set, and `docs/playtest-protocol.md` for the repeatable front-door audit + UI-regression
 playbook (stand up the live stack, the five HCI lenses, the contract sweep, and the automated
 monkey/crawl).
 
-**Live status & backlog.** `docs/delivery-status.md` is the per-phase "done" summary;
+**Live status & backlog.** `docs/backlog/road-to-market.md` is the master road-to-market backlog —
+every story with DoR/DoD and a Status column in its index table; flip statuses and check DoD boxes
+as work lands. `docs/delivery-status.md` is the per-phase "done" summary;
 `docs/traceability.md` maps requirements to engine + front-door reachability. The UX-hardening
 backlog is the 12-lens `docs/design/audits/exhaustive2/` set, tracked in that dir's
 `CLOSURE-STATUS.md` (per-lens closed / mechanical-remaining / feature-heavy-ask-first). Bugs found

@@ -2,10 +2,13 @@
 
 Single source of "done" truth: a per-phase delivery summary for Applicant.
 **All phases are merged to `main`:** engine phases 0–4, a production-hardening remediation
-pass that followed an honest re-audit, and the **front-door (Phase 5)** lift-and-shift of
-the operator UI onto the white-labeled workspace app plus a reachability re-audit. The
-engine's hermetic default test lane is green — `uv run pytest -q` reports **2436 passed**
-with 26 integration-gated skips.
+pass that followed an honest re-audit, the **front-door (Phase 5)** lift-and-shift of
+the operator UI onto the white-labeled workspace app plus a reachability re-audit, and the
+first slice of the **founder-trust track** (road-to-market Phase 1.5: truth policy,
+parse-verify, honest wizard surfacing — see the section below). The engine's hermetic
+lane is green — **3,794 passed** (2026-07-07, the unreachable-`DATABASE_URL` command in
+`CLAUDE.md`) with 26 integration-gated skips on the full lane (count guarded by a
+meta-test).
 
 > **Done means reachable.** A requirement is delivered only when it is reachable/operable
 > in the white-labeled workspace **front door** (`workspace/`), not merely when the engine
@@ -31,7 +34,8 @@ for the phase plan and exit criteria.
 | Phase 4 | 539 |
 | Production-hardening remediation | 594 |
 | Production-hardening re-audit | 2436 |
-| Front-door UX-hardening pass (current) | **3704 engine + 2647 front-door** |
+| Front-door UX-hardening pass | 3704 engine + 2647 front-door |
+| Founder-trust slice: truth policy + parse-verify + surfacing (current) | **3794 engine + 2714 front-door + 45 front-end JS** |
 
 (Integration tests skip by default — they require live external boundaries. One engine test,
 `test_the_secretstorage_layer_roundtrips…`, fails only in a CWD-relative-SQLite local env and
@@ -233,9 +237,35 @@ each against the actual `src/` code (file:line in [traceability.md](traceability
 | **Credentials / screenshots not persisted; digest email pull-only.** | `PgCredentialStore` persists libsodium-sealed rows to Postgres and a fresh instance unseals them (survives restart, FR-VAULT-1); screenshots persisted via the storage repo + migration (FR-LOG-2); digest email is actually SENT (FR-DIG-2); source-yield / converting-signature / attr-reuse producers wired (FR-DISC-5, FR-LEARN-5/6, FR-ATTR-5). |
 | **Render fidelity was a passthrough; egress/redaction were seams only.** | Real docx→moderncv conversion via the vendored Jinja2 template + LaTeX escaping (FR-RESUME-3/3a/4); real `fc-cache` shell-out + auto compile/convert when the engine is present (FR-FONT-2); residential egress threaded into the real browser launch with a datacenter-refusal guardrail + honest caveat (FR-STEALTH-4/5); value-based secret redaction (FR-OBS-1); pending-action producers, criteria/attribute editor surfaces, per-task LLM tier (FR-UI-3/6, FR-LLM-4). |
 
+### Founder-trust track — first slice (road-to-market Phase 1.5)
+
+The master backlog is [backlog/road-to-market.md](backlog/road-to-market.md) (every story
+with DoR/DoD and a live Status column); the honesty invariants H1–H5 + the PAG-1 personal
+acceptance gate defined there govern launch. Landed so far:
+
+- **Truth policy (P1-13 core, PR #643).** The fabrication guard became a server-side
+  fact-gate: `TruthPolicy` (`core/rules/truthfulness.py`, `TRUTH_POLICY`) — `balanced`
+  (default) surfaces flagged facts for review instead of blocking; `strict` keeps the hard
+  fail. The injection / persists-nothing / bypass tests still run under strict. FE
+  surfacing of flagged facts (one-tap add-to-profile) remains open.
+- **Parse-verify layer (P1-1a, PR #644 — six adversarial review rounds).**
+  `LLMVerifiedResumeParser` re-slots every base-résumé value through the tier ladder under
+  the slotting contract: window-scoped grounding (nothing assembles across section
+  boundaries), one-tier escalation on low confidence / malformed output, entry-scoped +
+  heading-gated restoration (a partial correction can neither erase real history nor
+  resurrect split-artifact junk), grounding holes refilled from the draft twin, per-area
+  confidence validation. Live-proven repeatedly on a real résumé through the production
+  ladder (both tiers observed answering; zero unsourced values; zero false restorations).
+- **Honest surfacing (PR #727).** The upload response carries the persisted `verify` block
+  and the wizard's post-upload message renders it: green "Double-checked" with per-area
+  confidence + `corrections` + `restored_from_draft` (capped at 5 with "and N more"), or
+  "Not double-checked (why)" — the absence of a check never renders as a check (H2).
+- **Window-chrome baseline (P0-1, PR #640)** and the **road-to-market backlog itself
+  (PR #641)** merged earlier in the same push.
+
 ## Boundaries that require a live deployment
 
-The 24 default skips are not gaps — they exercise real external systems behind
+The 26 default skips are not gaps — they exercise real external systems behind
 integration-gated boundaries: DBOS/Postgres durable execution, real browser
 (patchright/playwright), live job boards, real TeX (lualatex/xelatex) + LibreOffice docx
 conversion, a live Neko remote session, and live Discord/SMTP delivery. The hermetic lane

@@ -205,6 +205,9 @@ async def ingest_base_resume(
             detail=f"Could not parse the uploaded base resume: {exc}",
         ) from exc
     conflicts = getattr(result, "conflicts", None) or []
+    # The verify read-back also touches storage (get_state hits the SQL-backed
+    # store on real deployments) — keep it OFF the event loop like the parse.
+    verify = await asyncio.to_thread(_base_resume_verify, svc, campaign_id)
     return {
         "auto_applied": getattr(result, "auto_applied", []),
         "attribute_count": getattr(result, "attribute_count", 0),
@@ -235,7 +238,7 @@ async def ingest_base_resume(
         # ran and what it changed, read back from the persisted intake record —
         # the review UI shows this next to the read summary so an unverified
         # parse is never mistaken for a checked one (H2).
-        "verify": _base_resume_verify(svc, campaign_id),
+        "verify": verify,
     }
 
 

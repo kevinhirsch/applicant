@@ -210,7 +210,7 @@ test('_parseVerifyHTML: a verified parse gets the green confirmation plus correc
     verify: {
       verified: true,
       corrections: ['split title|company', 'recovered second role'],
-      restored_from_draft: ['role:Data Engineer @ Hooli', 'skill:SQL'],
+      restored_from_draft: ['role:Data Engineer @ Hooli', 'skill:SQL', 'contact:phone 555'],
     },
   });
   assert.ok(html.includes('admin-success'), 'verified must render the success style');
@@ -218,6 +218,7 @@ test('_parseVerifyHTML: a verified parse gets the green confirmation plus correc
   assert.ok(html.includes('split title|company'), 'corrections must be listed');
   assert.ok(html.includes('Job: Data Engineer @ Hooli'), 'restored role renders with a friendly label');
   assert.ok(html.includes('Skill: SQL'), 'restored skill renders with a friendly label');
+  assert.ok(html.includes('Contact: phone 555'), 'restored contact renders with a friendly label');
 });
 
 test('_parseVerifyHTML: long lists cap at 5 with an honest "and N more"', () => {

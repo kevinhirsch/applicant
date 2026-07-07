@@ -599,6 +599,7 @@ function _friendlyVerifyItem(item) {
   if (s.startsWith('role:')) return `Job: ${s.slice(5)}`;
   if (s.startsWith('education:')) return `Education: ${s.slice(10)}`;
   if (s.startsWith('skill:')) return `Skill: ${s.slice(6)}`;
+  if (s.startsWith('contact:')) return `Contact: ${s.slice(8)}`;
   return s;
 }
 

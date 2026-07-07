@@ -63,3 +63,27 @@ the floor model runs locally.
   frontier ceiling, gated by *studies like this one* per workload class.
 - **Next study:** tailoring/rewrite quality (feeds P2-6 eval harness) — the same
   method, applied to the generation side under the P1-13 truth policy.
+
+## Postscript — what actually shipped (same day)
+
+The layer landed as PR #644 (engine) + #727 (wizard surfacing) after six adversarial
+review rounds, and the deployed semantics are **stricter than the prototype this study
+measured**. Differences that matter if you re-run or extend the study:
+
+- **Grounding is window-scoped**, not whole-document: a corrected value must trace to one
+  run of ≤3 consecutive non-empty source lines (blank lines are hard boundaries), so
+  nothing can be assembled across sections; only date-shaped values get token-subsumption,
+  same-window, digits exact.
+- **A partial correction can neither erase nor pollute.** Omitted strong draft entries
+  restore only under entry-scoped coverage (both identity fields carried by ONE corrected
+  entry suppress) plus a line-initial rule for degrees and a section-heading gate for
+  bullet-less "roles" — live runs on the study's own résumé showed the deterministic
+  draft's split artifacts must never resurrect. Grounding holes (title kept, hallucinated
+  employer dropped) refill from the draft twin instead of duplicating.
+- **Confidence is validated**: finite, in [0,1], and every content area must be scored —
+  key NAMES stay stem-flexible because live tier-2 runs renamed the areas
+  (`work_history_titles_companies`, `education_certifications`, `skills_extraction`).
+- **Observed in production-path smokes:** tier 1 (the local-floor class) sometimes answers
+  perfectly and sometimes hits the reasoning trap → the one-tier escalation fired exactly
+  as designed; run-to-run the model may re-slot a mis-sectioned line or drop it — both
+  paths are handled. Every drop/restoration surfaces in `extra["verify"]` and the wizard.
