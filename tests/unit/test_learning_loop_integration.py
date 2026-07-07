@@ -122,13 +122,14 @@ class _Memory:
         self.recall = recall
 
 
-def _material(agent_memory, *, llm=None, storage=None) -> MaterialService:
+def _material(agent_memory, *, llm=None, storage=None, truth_policy=None) -> MaterialService:
     return MaterialService(
         storage or InMemoryStorage(),
         llm=llm or _CapturingLLM(),
         resume_tailoring=LatexTailor(),
         embedding=LocalEmbedding(),
         agent_memory=agent_memory,
+        truth_policy=truth_policy,
     )
 
 
@@ -260,7 +261,10 @@ def test_approved_authority_claiming_memory_never_causes_fabrication():
             "building large-scale distributed systems."
         )
     )
-    svc = _material(_Memory(mem, skills), llm=fabricating)
+    # STRICT: even an approved authority-claiming memory can't cause fabrication — the
+    # guard hard-blocks the invented employer/credential. (BALANCED surfaces it for
+    # review instead; the human approves every send either way.)
+    svc = _material(_Memory(mem, skills), llm=fabricating, truth_policy="strict")
     with pytest.raises(TruthfulnessViolation):
         svc.generate_cover_letter(
             CampaignId(new_id()),

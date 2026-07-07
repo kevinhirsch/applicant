@@ -72,11 +72,15 @@ from applicant.core.rules.sensitive_fields import (
     decide_sensitive_fill,
 )
 from applicant.core.rules.truthfulness import (
+    DEFAULT_TRUTH_POLICY,
+    TruthPolicy,
     VoiceProfile,
     candidate_claim_tokens,
+    coerce_truth_policy,
     extract_voice_profile,
     find_banned_phrases,
     normalize_emdashes,
+    policy_blocks,
     strip_banned_phrases,
     unsupported_claims,
     unsupported_prose_claims,
@@ -146,10 +150,19 @@ class MaterialService:
         research_service=None,
         research_enabled: bool = True,
         review_base_url: str = "/review",
+        truth_policy: TruthPolicy | str | None = None,
     ) -> None:
         self._storage = storage
         self._config_store = config_store
         self._llm = llm
+        # P1-13 truth policy (owner directive). BALANCED (default): the model may
+        # freely rewrite/restructure; invented *facts* are SURFACED (returned to the
+        # caller for the review UI) rather than hard-blocked — safe because a human
+        # approves every send. STRICT keeps the historical hard-fail. A bad value
+        # coerces to the safe default.
+        self._truth_policy: TruthPolicy = (
+            DEFAULT_TRUTH_POLICY if truth_policy is None else coerce_truth_policy(truth_policy)
+        )
         # Silent-degradation diagnostics (#246): the generation pipeline has many
         # defensive ``except`` blocks that let it degrade rather than crash. Counting
         # them — and surfacing a diagnostic once they cross a threshold within one
@@ -673,22 +686,40 @@ class MaterialService:
         return unsupported_claims(true_source, generated)
 
     def assert_no_fabrication(
-        self, true_source: str, generated: str, *, prose: bool = False
-    ) -> None:
-        """Raise ``TruthfulnessViolation`` if ``generated`` adds an unsupported claim.
+        self,
+        true_source: str,
+        generated: str,
+        *,
+        prose: bool = False,
+        policy: TruthPolicy | None = None,
+    ) -> list[str]:
+        """Check ``generated`` for claims absent from the candidate's true history.
 
-        A generated bullet that names a skill/term absent from the candidate's true
-        history is a fabrication (FR-RESUME-2, NFR-TRUTH-1). Wired into every
-        generation + revision pass. ``prose=True`` selects the cover-letter/essay
-        check (entity-shaped claims only); see :meth:`detect_fabrication`.
+        Returns the flagged (unsupported) fact tokens — always, so the caller can
+        SURFACE them as suggestions to confirm — and, under the STRICT truth policy,
+        raises ``TruthfulnessViolation`` on any flag (the historical hard-fail,
+        FR-RESUME-2 / NFR-TRUTH-1). Under BALANCED (the default, P1-13) it never
+        raises: the model may freely rewrite, and invented facts are returned for the
+        review UI rather than blocked — safe because a human approves every send.
+        ``prose=True`` selects the cover-letter/essay check (entity-shaped claims
+        only); see :meth:`detect_fabrication`.
         """
         flagged = self.detect_fabrication(true_source, generated, prose=prose)
-        if flagged:
+        effective = policy or self._truth_policy
+        if policy_blocks(flagged, effective):
             raise TruthfulnessViolation(
                 f"Generated material claims {flagged!r} which is absent from the "
                 "candidate's real history: adaptation reframes, it "
                 "never fabricates a skill, title, date, or qualification."
             )
+        if flagged:
+            log.info(
+                "truth_policy=%s surfaced %d unsupported fact(s) for review: %r",
+                effective.value,
+                len(flagged),
+                flagged,
+            )
+        return flagged
 
     # === fit scoring / selection (FR-RESUME-6/7) ==========================
     def score_fit(

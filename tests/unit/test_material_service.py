@@ -40,6 +40,20 @@ def svc(storage) -> MaterialService:
     )
 
 
+@pytest.fixture
+def strict_svc(storage) -> MaterialService:
+    """MaterialService under STRICT truth policy — the fabrication guard HARD-BLOCKS.
+    Verifies the strict enforcement path still holds after P1-13 made BALANCED the
+    default (BALANCED surfaces invented facts for review instead of blocking)."""
+    return MaterialService(
+        storage,
+        llm=None,
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+        truth_policy="strict",
+    )
+
+
 def _add_variant(storage, cid, *, approved=True, sig="Python", parent=None) -> ResumeVariant:
     v = ResumeVariant(
         id=ResumeVariantId(new_id()),
@@ -163,11 +177,20 @@ def test_cap_limits_library_sprawl(svc, storage):
     assert len(approved) <= VARIANT_CAP
 
 
-# === truthfulness on generation + revision (FR-RESUME-2) ==================
+# === truthfulness on generation + revision (FR-RESUME-2, P1-13) ===========
 @pytest.mark.unit
-def test_fabrication_rejected_on_generation(svc):
+def test_fabrication_surfaced_by_default_blocked_in_strict(svc):
+    """P1-13 truth policy. BALANCED (default): an invented fact is SURFACED (returned
+    for review), never silently blocked or kept — a human approves every send. STRICT
+    retains the historical hard-fail."""
+    from applicant.core.rules.truthfulness import TruthPolicy
+
+    flagged = svc.assert_no_fabrication("Python and SQL.", "Expert in Kubernetes.")
+    assert any("kubernet" in f.lower() for f in flagged), "invented fact must be surfaced"
     with pytest.raises(TruthfulnessViolation):
-        svc.assert_no_fabrication("Python and SQL.", "Expert in Kubernetes.")
+        svc.assert_no_fabrication(
+            "Python and SQL.", "Expert in Kubernetes.", policy=TruthPolicy.STRICT
+        )
 
 
 # === #17: LLM-injected fabrication on select_or_generate is gated ==========
@@ -291,13 +314,16 @@ def test_revision_runs_fabrication_guard_without_caller_true_source(storage):
     entity-shaped fabrication ("Microsoft"/"2015") even with no caller true_source."""
     llm = _GenThenFabricateLLM()
     svc = MaterialService(
-        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding(),
+        truth_policy="strict",
     )
     cid = CampaignId(new_id())
     doc = svc.generate_cover_letter(
         cid, ApplicationId(new_id()), "Shipped a data platform; reduced deploy time.", ["Python"],
     )
-    # No true_source passed (mirrors the front-door turn) — guard must still run.
+    # No true_source passed (mirrors the front-door turn) — the derived guard must still
+    # RUN (not be bypassed). Under STRICT it hard-fails on the new fabrication; under
+    # BALANCED the same detection surfaces it for review instead of blocking.
     with pytest.raises(TruthfulnessViolation):
         svc.apply_turn(doc.id, "free_text", "Add my leadership experience.")
 
@@ -338,10 +364,12 @@ def test_select_or_generate_rejects_llm_injected_fabrication(storage):
     TruthfulnessViolation (the fabrication gate now runs on generated variant bodies
     against the candidate's TRUE source, not source-to-self)."""
     svc = MaterialService(
-        storage, llm=_FabricatingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+        storage, llm=_FabricatingLLM(), resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(), truth_policy="strict",
     )
     cid = CampaignId(new_id())
     # No approved parent clears threshold -> fork + generate via the (fabricating) LLM.
+    # STRICT: the injected unsupported skill hard-fails. (BALANCED surfaces it instead.)
     with pytest.raises(TruthfulnessViolation):
         svc.select_or_generate(
             cid, JobPostingId(new_id()), ["Kubernetes", "Rust"], BASE
@@ -407,13 +435,14 @@ def test_reframe_truthfully_reemphasizes_supported_terms_only(svc):
 
 
 @pytest.mark.unit
-def test_fabrication_rejected_on_revision_turn(svc, storage):
+def test_fabrication_rejected_on_revision_turn_strict(strict_svc, storage):
     cid = CampaignId(new_id())
     aid = new_id()
-    doc = svc.generate_cover_letter(cid, aid, "I built Python pipelines.", ["Python"])
-    # A revision that injects a fabricated skill is rejected when truth is known.
+    doc = strict_svc.generate_cover_letter(cid, aid, "I built Python pipelines.", ["Python"])
+    # STRICT: a revision that injects a fabricated skill is hard-rejected when truth is
+    # known. (BALANCED would instead surface it for review — a human approves every send.)
     with pytest.raises(TruthfulnessViolation):
-        svc.apply_turn(
+        strict_svc.apply_turn(
             doc.id, "add", "Expert in Kubernetes orchestration",
             true_source="I built Python pipelines.",
         )

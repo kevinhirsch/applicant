@@ -304,9 +304,16 @@ def reframed_no_k8s(p3ctx):
 
 @then("attempting to inject a Kubernetes claim is rejected as a truthfulness violation")
 def inject_k8s_rejected(p3ctx, material):
+    # STRICT pins the hard-reject. Under the P1-13 BALANCED default the injected claim
+    # is surfaced for review instead of blocked (a human approves every send); the
+    # reframe path itself never *adds* a missing skill in either mode.
+    from applicant.core.rules.truthfulness import TruthPolicy
+
     fabricated = p3ctx["true_source"] + "\nExpert in Kubernetes orchestration."
     with pytest.raises(TruthfulnessViolation):
-        material.assert_no_fabrication(p3ctx["true_source"], fabricated)
+        material.assert_no_fabrication(
+            p3ctx["true_source"], fabricated, policy=TruthPolicy.STRICT
+        )
 
 
 @given("generated material containing an em-dash")

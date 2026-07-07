@@ -75,7 +75,11 @@ def _service(llm):
     from applicant.application.services.material_service import MaterialService
 
     storage = InMemoryStorage()
-    svc = MaterialService(storage, llm=llm)
+    # These scenarios pin the fail-CLOSED persistence contract (a fabricated claim
+    # persists nothing) — that is the STRICT truth policy. Under the P1-13 BALANCED
+    # default the same detection instead SURFACES the claim for review (a human
+    # approves every send); STRICT is what "persists nothing" asserts.
+    svc = MaterialService(storage, llm=llm, truth_policy="strict")
     return svc, storage
 
 

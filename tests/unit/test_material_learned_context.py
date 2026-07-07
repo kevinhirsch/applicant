@@ -78,13 +78,14 @@ class _Recall:
         return self._hits[:limit]
 
 
-def _svc(agent_memory=None, *, llm=None, storage=None) -> MaterialService:
+def _svc(agent_memory=None, *, llm=None, storage=None, truth_policy=None) -> MaterialService:
     return MaterialService(
         storage or InMemoryStorage(),
         llm=llm or _CapturingLLM(),
         resume_tailoring=LatexTailor(),
         embedding=LocalEmbedding(),
         agent_memory=agent_memory,
+        truth_policy=truth_policy,
     )
 
 
@@ -222,7 +223,10 @@ def test_truthfulness_guard_holds_against_a_fabricating_skill():
             "building large-scale distributed systems."
         )
     )
-    svc = _svc(_Memory(skills=skills), llm=fabricating)
+    # STRICT: the guard derives its own ground truth and HARD-BLOCKS the invented
+    # employer/credential regardless of the learned hint. (BALANCED surfaces it for
+    # review — a human approves every send.)
+    svc = _svc(_Memory(skills=skills), llm=fabricating, truth_policy="strict")
     with pytest.raises(TruthfulnessViolation):
         svc.generate_cover_letter(
             _cid(), _aid(), TRUE_SOURCE, ["leadership"], role_requires=True

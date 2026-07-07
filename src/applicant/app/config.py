@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="", alias="LLM_MODEL")
 
+    # Truth policy for the material fabrication guard (P1-13). "balanced" (default):
+    # the model may freely rewrite/restructure; invented *facts* are surfaced for
+    # review, not hard-blocked (safe — a human approves every send). "strict": any
+    # unsupported fact hard-fails generation (the historical behaviour).
+    truth_policy: str = Field(default="balanced", alias="TRUTH_POLICY")
+
     # Context management (FR-MIND-8, FR-MIND-13). Token budget over which the LLM
     # adapter compresses/evicts MIDDLE turns (the system tier + most recent turns
     # are always kept). 64000 (~250k chars) is a sensible default for multi-turn
