@@ -207,16 +207,23 @@ class TestReuseScreeningAnswer:
         assert doc.approved is False  # still routed through the review gate
         assert "pipelines" in (doc.content or "")
 
-    def test_reuse_never_bypasses_the_truthfulness_guard(self, svc, storage):
+    def test_reuse_never_bypasses_the_truthfulness_guard(self, storage):
         # A library entry can, in principle, go stale (edited manually, or a
         # future campaign's true source no longer supports it). Reuse must
         # RE-VERIFY at the persistence boundary, exactly like a fresh
-        # generation -- never trust the stored text as pre-cleared.
+        # generation -- never trust the stored text as pre-cleared. Under STRICT the
+        # re-verify HARD-BLOCKS an unsupported reuse; under BALANCED the same check
+        # surfaces it for review (a human approves every send). This asserts the
+        # guard is never *bypassed* on reuse — the strict path proves it runs.
         from applicant.core.entities.screening_answer_library import (
             ScreeningAnswerLibraryEntry,
         )
         from applicant.core.ids import ScreeningAnswerLibraryEntryId
 
+        svc = MaterialService(
+            storage, llm=None, resume_tailoring=LatexTailor(),
+            embedding=LocalEmbedding(), truth_policy="strict",
+        )
         cid, aid = _seed_application(storage)
         storage.screening_answer_library.upsert(
             ScreeningAnswerLibraryEntry(

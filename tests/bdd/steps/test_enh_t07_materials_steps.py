@@ -342,8 +342,15 @@ def generated_claims_absent_skill(t07ctx):
 
 @then("the fabrication guard rejects it rather than degrading silently")
 def fabrication_rejected(t07ctx):
+    # STRICT pins the hard-reject contract. Under the P1-13 BALANCED default the same
+    # detection surfaces the claim for review instead of raising (a human approves
+    # every send); the guard still RUNS either way — it never degrades silently.
+    from applicant.core.rules.truthfulness import TruthPolicy
+
     with pytest.raises(TruthfulnessViolation):
-        t07ctx["svc"].assert_no_fabrication(t07ctx["true_source"], t07ctx["generated"])
+        t07ctx["svc"].assert_no_fabrication(
+            t07ctx["true_source"], t07ctx["generated"], policy=TruthPolicy.STRICT
+        )
 
 
 @when("a variant is generated from a truthful source toward a job description")

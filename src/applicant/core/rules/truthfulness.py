@@ -616,3 +616,53 @@ def grade_unsupported_claims(
     else:
         grade = FabricationGrade.VIOLATION
     return grade, flagged
+
+
+# === truth policy (P1-13, owner directive) ================================
+#
+# The guard historically HARD-BLOCKED generation on any unsupported entity token.
+# The owner's policy is looser and, critically, safe because a human approves every
+# send (review-before-submit + the final-say invariant): the model may freely
+# rewrite/restructure prose; it must not invent *facts* (employers, titles,
+# credentials, technologies, dates, numbers) — but invented facts are SURFACED as
+# suggestions to confirm, not silently blocked or silently kept.
+#
+#   BALANCED (default) — rewriting is free; flagged facts are surfaced (never raise).
+#                        Nothing ships unreviewed, so "surface not block" is safe.
+#   STRICT             — the historical behaviour: any flagged fact hard-fails.
+
+
+class TruthPolicy(str, Enum):
+    """How the fabrication guard acts on flagged (unsupported) claims."""
+
+    BALANCED = "balanced"
+    STRICT = "strict"
+
+
+DEFAULT_TRUTH_POLICY = TruthPolicy.BALANCED
+
+
+def coerce_truth_policy(value: object) -> TruthPolicy:
+    """Best-effort parse of a config value into a TruthPolicy (default BALANCED).
+
+    Accepts a TruthPolicy, its string value, or anything else (→ default). Never
+    raises — a bad setting degrades to the safe-but-permissive default rather than
+    crashing generation.
+    """
+    if isinstance(value, TruthPolicy):
+        return value
+    try:
+        return TruthPolicy(str(value).strip().lower())
+    except Exception:
+        return DEFAULT_TRUTH_POLICY
+
+
+def policy_blocks(flagged: list[str], policy: TruthPolicy) -> bool:
+    """Whether flagged facts should HARD-BLOCK generation under ``policy``.
+
+    STRICT blocks on any flagged fact; BALANCED never blocks (the caller surfaces
+    the flags as suggestions instead). Pure; deterministic; no I/O.
+    """
+    if not flagged:
+        return False
+    return policy is TruthPolicy.STRICT

@@ -1164,6 +1164,7 @@ def build_container(settings: Settings | None = None) -> Container:
 
     material_service = MaterialService(
         storage,
+        truth_policy=settings.truth_policy,
         llm=llm,
         resume_tailoring=latex_tailor,
         embedding=embedding,
@@ -1446,6 +1447,7 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         mat = MaterialService(
             tick_storage,
+            truth_policy=settings.truth_policy,
             llm=llm,
             resume_tailoring=latex_tailor,
             embedding=embedding,
@@ -1658,6 +1660,7 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
             req_storage,
+            truth_policy=settings.truth_policy,
             llm=llm,
             resume_tailoring=latex_tailor,
             embedding=embedding,
