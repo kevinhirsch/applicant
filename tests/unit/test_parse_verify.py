@@ -291,6 +291,38 @@ def test_recombined_source_tokens_are_rejected_for_non_dates():
 
 
 @pytest.mark.unit
+def test_boundary_spanning_phrase_is_rejected():
+    """Grounding is window-scoped, never whole-document-flattened: a phrase that
+    only exists because two different sections happen to be adjacent after
+    collapsing the entire document ("Phoenix, AZ" from the contact line +
+    "EXPERIENCE" the section header, separated by a blank line) must be dropped
+    even though the flattened document contains it contiguously."""
+    tampered = json.loads(json.dumps(GOOD_OUT))
+    tampered["skills"].append("Phoenix AZ Experience")  # crosses a blank-line boundary
+    llm = ScriptedLLM([json.dumps(tampered)])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+
+    assert "Phoenix AZ Experience" not in out.skills
+    assert "Phoenix AZ Experience" in " ".join(_verify_of(out)["unsourced_dropped"])
+
+
+@pytest.mark.unit
+def test_mixed_source_date_is_rejected():
+    """The date leniency is window-scoped too: "Jun 18" must NOT ground by taking
+    "Jun" from one role's date line (June 2021) and "18" from another's (Feb
+    2018) — all tokens must come from the same local window, and numeric tokens
+    must match a window token exactly."""
+    tampered = json.loads(json.dumps(GOOD_OUT))
+    tampered["work_history"][0]["start_date"] = "Jun 18"  # tokens from two date lines
+    llm = ScriptedLLM([json.dumps(tampered)])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+
+    assert out.work_history[0].start_date == ""  # refused, surfaced as dropped
+    assert "Jun 18" in " ".join(_verify_of(out)["unsourced_dropped"])
+    # The same-window reformat stays accepted (proven in the recombination test).
+
+
+@pytest.mark.unit
 def test_late_binding_enables_verification_after_construction():
     """Container wiring order: the parser exists before the ladder; bind_llm()
     upgrades it in place (both onboarding services share the instance)."""

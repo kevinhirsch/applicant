@@ -36,6 +36,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from applicant.adapters.llm.openai_compatible import balanced_object_spans
 from applicant.ports.driven.llm import ChatMessage, LLMError, LLMNotConfigured
 from applicant.ports.driven.resume_parser import (
     EducationEntry,
@@ -132,6 +133,35 @@ def _tokens(text: str) -> list[str]:
 _MONTH3 = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
 _DATE_WORDS = {"present", "current", "now", "to", "through", "until", "ongoing",
                "spring", "summer", "fall", "winter"}
+
+
+def _source_windows(raw: str, max_window: int = 3) -> list[str]:
+    """Every run of 1..``max_window`` consecutive non-empty source lines.
+
+    The grounding check matches values against these LOCAL windows instead of the
+    whole document collapsed to one string. Windows tolerate what real extraction
+    does to real résumés — a value hard-wrapped across adjacent lines, a
+    title|company pair split by the layout — while refusing document-flattening
+    artifacts: a blank line is a HARD boundary (section break), so a phrase can
+    never be assembled from parts of different sections, and nothing beyond a few
+    adjacent lines ever concatenates. Deliberate tolerance: a phrase spanning
+    adjacent lines *within* one block (one visual entry) still grounds — that is
+    a mis-slot at worst, never an invented fact from elsewhere in the document.
+    """
+    blocks: list[list[str]] = [[]]
+    for ln in (raw or "").splitlines():
+        if ln.strip():
+            blocks[-1].append(ln)
+        elif blocks[-1]:
+            blocks.append([])
+    windows: list[str] = []
+    for block in blocks:
+        n = len(block)
+        for i in range(n):
+            for w in range(1, max_window + 1):
+                if i + w <= n:
+                    windows.append(" ".join(block[i : i + w]))
+    return windows
 
 
 def _is_date_like(value: str) -> bool:
@@ -309,9 +339,7 @@ class LLMVerifiedResumeParser:
                 yield whole
         except Exception:
             pass
-        from applicant.adapters.llm.openai_compatible import _balanced_object_spans
-
-        for span in _balanced_object_spans(text):
+        for span in balanced_object_spans(text):
             try:
                 obj = json.loads(span)
             except Exception:
@@ -345,38 +373,46 @@ class LLMVerifiedResumeParser:
         attempts: list[dict[str, Any]],
         escalated: bool,
     ) -> ParsedResume:
-        csource = _collapse(parsed.raw_text)
-        source_tokens = set(_tokens(parsed.raw_text))
+        windows = _source_windows(parsed.raw_text)
+        cwindows = [_collapse(w) for w in windows]
+        wtokens = [set(_tokens(w)) for w in windows]
         dropped: list[str] = []
 
         def sourced(value: str) -> bool:
-            """True when ``value`` traces to the source text.
+            """True when ``value`` traces to ONE local window of the source text.
 
-            Collapse-substring (exact modulo case/punct/whitespace) is the rule:
-            a title/company/skill/name must appear contiguously in the source. The
-            ONLY lenient path is for date-shaped values (see :func:`_is_date_like`),
-            where a token-subsumption check lets re-formatted dates pass ("Jun" ~
-            "June", "Sept" ~ "September") with numeric tokens required verbatim
-            (years never fuzzy-match). Restricting the fallback to dates prevents a
-            model from recombining scattered source tokens into a phrase that never
-            existed ("Data" + "Engineer" + some other entry's company) and having
-            it accepted as sourced.
+            Grounding is window-scoped (see :func:`_source_windows`): a value must
+            match inside a single run of a few adjacent lines — never against the
+            whole document flattened, which would accept phrases assembled across
+            section boundaries. Collapse-substring (exact modulo case/punct/
+            whitespace) is the rule for titles/companies/skills/names. The ONLY
+            lenient path is date-shaped values (:func:`_is_date_like`), where
+            token-subsumption lets re-formatted dates pass ("Jun" ~ "June") — but
+            all tokens must come from the SAME window (no "Jun 18" assembled from
+            two different date lines) and numeric tokens must match a window token
+            exactly (years never fuzzy-match).
             """
             cv = _collapse(value)
             if not cv:
                 return False
-            if cv in csource:
+            if any(cv in cw for cw in cwindows):
                 return True
             if not _is_date_like(value):
                 return False
-            for t in _tokens(value):
-                if t.isdigit():
-                    if t not in source_tokens and not any(t in s for s in source_tokens):
-                        return False
-                    continue
-                if not any(s.startswith(t) or t.startswith(s) for s in source_tokens):
-                    return False
-            return True
+            toks = _tokens(value)
+            for wt in wtokens:
+                ok = True
+                for t in toks:
+                    if t.isdigit():
+                        if t not in wt:
+                            ok = False
+                            break
+                    elif not any(s.startswith(t) or t.startswith(s) for s in wt):
+                        ok = False
+                        break
+                if ok:
+                    return True
+            return False
 
         def keep(value: object, label: str) -> str:
             v = str(value or "").strip()
