@@ -30,8 +30,11 @@ résumé, key, and submissions. Don't conflate their ordering.
   (H1–H5) so the owner can *see* it's honest → **dogfood continuously** (don't wait for the
   end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
   than any speculative polish, and reorders everything behind it.
-- **Now (eng):** finish P1-0 (CI secret-scanning) · P0-3 Today-as-page · H1 (receipts-not-
-  narration) + H3 (full-fidelity review) — the two invariants with no dependencies.
+- **Now (eng):** P1-13 (loosen the guard to a fact-gate — owner directive, unblocks
+  tailoring) · P1-1a (wire the studied verify layer into onboarding) · finish P1-0 (CI
+  secret-scanning) · H1 (receipts-not-narration) + H3 (full-fidelity review).
+- **Studies:** `docs/studies/` — parse-verify tier study **done & green** (free local
+  floor suffices; reasoning must be off). Next study: tailoring/rewrite quality (P2-6).
 - **Now (you):** provision a fresh model key + drop your real résumé so the real instance
   can stand up · P1-2 employer trial signups (longest external lead) · P4-7 name check.
 - **Market track (behind the gate):** P0-2 demo mode → P0-4/P0-5 → P0-6 (bless last) →
@@ -49,6 +52,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | IN PROGRESS |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | — |
+| P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | IN PROGRESS — study green, PR #642 open |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | — |
 | P1-4 | Notifications out of the box | M | eng | — |
@@ -60,6 +64,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
+| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | IN PROGRESS |
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
@@ -278,12 +283,43 @@ first digest in under 10 minutes **so that** I reach value before I give up.
 - [ ] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
       achievements** (the onboarding review previously omitted parsed achievements).
 - [ ] The single-year education parse renders correctly; a bad parse has an explicit
-      "edit" path so it never silently poisons applications.
+      "edit" path so it never silently poisons applications. *(Deterministic layer
+      hardened against the owner's real résumé — modern multi-column/sidebar PDF, split
+      title|company lines, location/noise filtering, certifications section — PR #642.
+      The LLM verify layer on top is P1-1a.)*
 - [ ] Today shows an essentials checklist (model / profile / notifications) until the
       apply-readiness gate opens, with one-tap wizard resume.
 - [ ] A "what happens next" card explains the first digest + approval flow.
 - [ ] A stopwatch test from fresh install to "digest scheduled + profile parsed + channel
       set" completes under 10 minutes; every failure state on that path has a recovery action.
+
+### P1-1a — LLM parse-verify layer over the deterministic résumé parse
+**As** a new user, **I want** an LLM to check and correct the parsed résumé — slotting
+every value from my real-world résumé into the right field — **so that** onboarding
+survives the infinite variety of real résumés instead of only the formats the
+deterministic parser anticipates.
+*(Owner direction: the LLM oversees quality on everything; slotting source strings into
+the right fields is not generation — it runs autonomously, no confirmation ceremony.
+Study: `docs/studies/2026-07-07-parse-verify-tier-study.md` — all four tier models
+produced a **perfect** corrected parse of the owner's real résumé with **zero** invented
+strings; the free local floor (reasoning off) was the fastest.)*
+**Effort:** M · **Owner:** eng · **Depends on:** PR #642 (deterministic layer), an LLM
+endpoint (local floor or router key); P1-13 for the shared truth policy.
+**DoR:**
+- [x] Tier study complete and green (see study doc).
+- [x] Escalation signal chosen: per-area confidence (< ~0.8) or malformed/schema-violating
+      output → escalate one tier (floor → GLM 5.2 / DeepSeek class).
+**DoD:**
+- [ ] Onboarding ingest runs: deterministic parse → verify call on the configured floor
+      model with **reasoning disabled/capped** (the study's one deployment trap) →
+      corrected parse replaces the draft.
+- [ ] Escalates one tier on low confidence or malformed output; logs which tier answered.
+- [ ] Offline/no-model fallback = deterministic parse only, with a visible "not verified"
+      notice (honesty invariant H2 — no silent degrade).
+- [ ] The review UI shows the corrected fields, per-area confidence, and the model's
+      corrections list (pairs with the achievements-preview item in P1-1).
+- [ ] Tests: unit + contract on recorded fixtures (no live LLM in CI); one live smoke
+      behind an env flag.
 
 ### P1-2 — Prove the loop on real boards *(start account setup immediately — longest lead)*
 **As** the owner, **I want** recorded end-to-end proof runs on real ATS platforms
@@ -446,9 +482,44 @@ drafting, ghosting detection, weekly recap, and the learning/outcomes loop.
 - [ ] The reachability audit (traceability docs) is re-checked so no built capability
       remains FE-invisible.
 
-**Phase 1 spine:** P1-0 (first) → P1-1 → {P1-3, P1-4, P1-6, P1-7} in parallel · P1-5
-parallel · P1-8 → P1-9 → P1-10 (competitive track) · P1-11 seeds the Easy Apply track ·
-P1-2 spans the whole phase (external lead time).
+### P1-13 — Truth policy: free rewriting over a fact-gate *(owner directive)*
+**As** the owner, **I want** the fabrication guard loosened so the LLM can freely
+rewrite résumé and career prose while invented *facts* are surfaced as suggestions
+**so that** materials read their strongest without ever inventing career history from
+scratch.
+*(Owner's policy, verbatim intent: the LLM oversees quality on EVERYTHING; it may
+rewrite parts of the résumé and career history; it can ask questions to learn more and
+speak more effectively about real experiences; it does not fabricate career history
+from scratch. Closest comparable product rewrites freely — we match that freedom and
+keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
+**Effort:** M · **Owner:** eng · **Depends on:** the existing truthfulness rules
+(`core/rules/truthfulness.py`), attribute cloud / provenance plumbing.
+**DoR:**
+- [x] Policy defined (above). Fact-class = employers, titles, credentials/certs,
+      technologies/skills, dates, numbers. Prose-class = everything else.
+**DoD:**
+- [ ] Guard behaviour becomes policy-driven (server-side setting): **balanced** default
+      = rephrasing/restructuring passes untouched; only fact-class tokens absent from
+      the truth cloud are flagged. **strict** remains available.
+- [ ] Flagged facts are **surfaced, not silently blocked**: they appear in
+      provenance/review as suggestions with one-tap "yes, that's true — add it to my
+      profile" (which grows the truth cloud via the existing Q&A/reconciliation path)
+      or "remove".
+- [ ] The "asks questions to learn" behaviour is reachable: the onboarding/profile
+      Q&A-conflicts flow surfaces gaps the LLM wants clarified (ties to the
+      confirm-conflict endpoint that already exists).
+- [ ] Review-before-submit and the final-say invariant (P2-8) are unchanged — the human
+      still approves every send.
+- [ ] Tests updated: rewritten prose passes in balanced mode; an invented certification
+      is flagged as a suggestion (not dropped, not silently kept); strict mode still
+      hard-flags; P2-5's evidence claim re-worded to "rewrites freely, never invents
+      facts".
+
+**Phase 1 spine:** P1-0 (first) → P1-1 → P1-1a (verify layer, after PR #642) ·
+{P1-3, P1-4, P1-6, P1-7} in parallel · P1-5 parallel · P1-13 (truth policy — unblocks
+tailoring/rewrite work) · P1-8 → P1-9 → P1-10 (competitive track) · P1-11 seeds the
+Easy Apply track · P1-12 after P0-3/P0-5 · P1-2 spans the whole phase (external lead
+time).
 
 ---
 
@@ -568,9 +639,11 @@ authenticated-endpoint sweep).
       moderncv, and all bundled deps).
 
 ### P2-5 — Fabrication-guard evidence
-**Effort:** S · **Owner:** eng · **Depends on:** —
-**DoD:** The guard's tests are turned into a citable "never invents your experience"
-claim with a reproducible artifact.
+**Effort:** S · **Owner:** eng · **Depends on:** P1-13 (aligns the claim to the loosened policy)
+**DoD:** The guard's tests are turned into a citable **"rewrites freely, never invents
+facts"** claim (employers, titles, credentials, dates, numbers) with a reproducible
+artifact — the honest, defensible line under the P1-13 truth policy, not an
+over-broad "never rewrites" promise the product does not make.
 
 ### P2-6 — LLM output eval harness *(product-value protection — was the biggest gap)*
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (fixtures)
