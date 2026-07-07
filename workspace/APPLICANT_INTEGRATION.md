@@ -102,7 +102,10 @@ question, selector, url, explicit_answer} · `POST /aggressiveness`
 
 **onboarding** (`/api/onboarding`): `GET /{campaign_id}` ·
 `POST /{campaign_id}/section` {section, data} · `POST /{campaign_id}/complete` ·
-`POST /{campaign_id}/base-resume` (file upload) ·
+`POST /{campaign_id}/base-resume` (file upload — the response carries `resume_health`
+plus a `verify` block, the engine's LLM parse-verify outcome {verified, reason,
+confidence, corrections, restored_from_draft} that the wizard renders as its
+"double-checked / not double-checked (why)" line) ·
 `POST /{campaign_id}/confirm-conflict` {attribute, value}
 
 **attributes** (`/api/attributes`): `GET /` · `GET /{campaign_id}` ·

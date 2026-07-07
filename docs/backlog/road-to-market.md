@@ -30,9 +30,10 @@ résumé, key, and submissions. Don't conflate their ordering.
   (H1–H5) so the owner can *see* it's honest → **dogfood continuously** (don't wait for the
   end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
   than any speculative polish, and reorders everything behind it.
-- **Now (eng):** P1-13 (loosen the guard to a fact-gate — owner directive, unblocks
-  tailoring) · P1-1a (wire the studied verify layer into onboarding) · finish P1-0 (CI
-  secret-scanning) · H1 (receipts-not-narration) + H3 (full-fidelity review).
+- **Now (eng):** P1-13 FE surfacing (flagged facts, one-tap add-to-profile — the core
+  fact-gate is merged) · finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
+  + H3 (full-fidelity review). *(P1-1a is DONE: engine PR #644 + wizard double-check
+  surfacing — the parse-verify layer runs on every base-résumé ingest.)*
 - **Studies:** `docs/studies/` — parse-verify tier study **done & green** (free local
   floor suffices; reasoning must be off). Next study: tailoring/rewrite quality (P2-6).
 - **Now (you):** provision a fresh model key + drop your real résumé so the real instance
@@ -52,7 +53,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | IN PROGRESS |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | — |
-| P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | CORE LANDED — FE review-surfacing remains |
+| P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | — |
 | P1-4 | Notifications out of the box | M | eng | — |
@@ -309,16 +310,20 @@ endpoint (local floor or router key); P1-13 for the shared truth policy.
 - [x] Tier study complete and green (see study doc).
 - [x] Escalation signal chosen: per-area confidence (< ~0.8) or malformed/schema-violating
       output → escalate one tier (floor → GLM 5.2 / DeepSeek class).
-**DoD:**
-- [ ] Onboarding ingest runs: deterministic parse → verify call on the configured floor
+**DoD:** *(engine merged as PR #644 after six adversarial review rounds — grounding is
+window-scoped, restoration is entry-scoped + heading-gated, grounding holes refill from
+the draft twin, confidence must score every area; wizard surfacing landed right after)*
+- [x] Onboarding ingest runs: deterministic parse → verify call on the configured floor
       model with **reasoning disabled/capped** (the study's one deployment trap) →
       corrected parse replaces the draft.
-- [ ] Escalates one tier on low confidence or malformed output; logs which tier answered.
-- [ ] Offline/no-model fallback = deterministic parse only, with a visible "not verified"
-      notice (honesty invariant H2 — no silent degrade).
-- [ ] The review UI shows the corrected fields, per-area confidence, and the model's
-      corrections list (pairs with the achievements-preview item in P1-1).
-- [ ] Tests: unit + contract on recorded fixtures (no live LLM in CI); one live smoke
+- [x] Escalates one tier on low confidence or malformed output; logs which tier answered.
+- [x] Offline/no-model fallback = deterministic parse only, with a visible "not verified"
+      notice (honesty invariant H2 — no silent degrade): the wizard's post-upload message
+      says "Not double-checked (why)" from the response's `verify` block.
+- [x] The review UI shows the corrected fields (the prefilled steps), per-area confidence,
+      and the model's `corrections` + `restored_from_draft` lists, each capped at 5 with an
+      "and N more" indicator (pairs with the achievements-preview item in P1-1).
+- [x] Tests: unit + contract on recorded fixtures (no live LLM in CI); one live smoke
       behind an env flag.
 
 ### P1-2 — Prove the loop on real boards *(start account setup immediately — longest lead)*

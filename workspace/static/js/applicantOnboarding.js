@@ -579,6 +579,79 @@ function _resumeHealthHTML(res) {
   `;
 }
 
+// Parse-verify ("double-check") line. HONESTY: the green confirmation shows
+// only when the engine explicitly reports verified: true; anything else says
+// the reading was NOT double-checked and why — the absence of a check is never
+// dressed up as one. What the check changed (corrections) and what it kept
+// from the first read (restorations) surface here so no change is silent.
+const _VERIFY_REASON_COPY = {
+  no_model: 'no model is connected yet',
+  disabled: 'automatic double-checking is turned off',
+  model_error: 'I couldn’t reach your model',
+  malformed_output: 'your model couldn’t confirm the reading',
+  low_confidence: 'your model wasn’t confident about the reading',
+  empty_source: 'no text could be read from the file',
+  verify_error: 'the double-check hit an unexpected error',
+};
+
+function _friendlyVerifyItem(item) {
+  const s = String(item || '');
+  if (s.startsWith('role:')) return `Job: ${s.slice(5)}`;
+  if (s.startsWith('education:')) return `Education: ${s.slice(10)}`;
+  if (s.startsWith('skill:')) return `Skill: ${s.slice(6)}`;
+  if (s.startsWith('contact:')) return `Contact: ${s.slice(8)}`;
+  return s;
+}
+
+// Per-area confidence, grouped by stem because live models rename the areas
+// ("work_history_titles_companies" et al). Each area shows its LOWEST matching
+// score — the conservative read, same semantics as the engine's floor.
+const _CONF_AREAS = [
+  ['work', 'work history'],
+  ['educat', 'education'],
+  ['skill', 'skills'],
+  ['contact', 'contact'],
+];
+
+function _confidenceSummary(conf) {
+  if (!conf || typeof conf !== 'object') return '';
+  const parts = [];
+  for (const [stem, label] of _CONF_AREAS) {
+    const vals = Object.entries(conf)
+      .filter(([k, val]) => k.toLowerCase().includes(stem) && Number.isFinite(Number(val)))
+      .map(([, val]) => Number(val));
+    if (vals.length) parts.push(`${label} ${Math.round(Math.min(...vals) * 100)}%`);
+  }
+  if (!parts.length) return '';
+  return ` <span style="opacity:0.75;">(confidence: ${esc(parts.join(', '))})</span>`;
+}
+
+function _verifyListHTML(label, items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  const shown = items.slice(0, 5).map((c) => `<li>${esc(_friendlyVerifyItem(c))}</li>`).join('');
+  const more = items.length > 5 ? `<li>…and ${items.length - 5} more</li>` : '';
+  return `
+    <p style="font-size:0.82rem;margin:2px 0 2px;opacity:0.85;">${label}</p>
+    <ul style="font-size:0.82rem;margin:0 0 8px 18px;opacity:0.85;">${shown}${more}</ul>`;
+}
+
+function _parseVerifyHTML(res) {
+  const v = (res && res.verify) || null;
+  // An older engine that reports nothing gets silence — never a guessed verdict.
+  if (!v || typeof v !== 'object') return '';
+  const base = 'font-size:0.82rem;margin:2px 0 8px;';
+  if (v.verified === true) {
+    const fixed = _verifyListHTML('The double-check also tidied up:', v.corrections);
+    const kept = _verifyListHTML(
+      'Kept from the first read — worth a quick look:',
+      v.restored_from_draft,
+    );
+    return `<p class="admin-success" style="${base}">Double-checked: a model re-read the original file and confirmed how everything was filed.${_confidenceSummary(v.confidence)}</p>${fixed}${kept}`;
+  }
+  const why = _VERIFY_REASON_COPY[v.reason] || 'it could not be run';
+  return `<p style="${base}opacity:0.85;">Not double-checked (${esc(why)}) — the details below came straight from the file, so please review them.</p>`;
+}
+
 // Post-upload "what I read" line. HONESTY: the green success styling and the
 // "I read N details" claim are shown only when the engine reports a real,
 // non-trivial parse (parsed_field_count is what THIS parse extracted). A
@@ -2195,7 +2268,7 @@ function _renderBaseResume(saved) {
       // HONESTY: the count is what THIS parse actually extracted
       // (parsed_field_count, engine-derived) — not the whole profile's attribute
       // count — and a near-empty parse must read as a warning, not a success.
-      st.innerHTML = `${_resumeReadSummaryHTML(res)}${_resumeHealthHTML(res)}`;
+      st.innerHTML = `${_resumeReadSummaryHTML(res)}${_parseVerifyHTML(res)}${_resumeHealthHTML(res)}`;
       if (res.requires_confirmation && (res.conflicts || []).length) {
         _renderConflicts(res.conflicts);
       } else {
