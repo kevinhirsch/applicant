@@ -88,7 +88,7 @@
   // the rim clearly bends the backdrop, the center stays crisp.
   var SCALE = 58;            // px max displacement at the rim — REFRACTION 1.00 (strong lensing)
   var SCALE_REDUCED = 30;    // calmer lensing under prefers-reduced-motion
-  var RADIUS = 22;           // corner radius the lens hugs — tracks style.css --ow-glass-radius
+  var RADIUS = 14;           // corner radius the lens hugs — tracks style.css --ow-glass-radius (16px)
                              // (26px); kept slightly under so the band sits INSIDE the visible
                              // corner rather than outside it (was 18, stale against the old 22px).
   var EDGE = 26;             // refraction band width inward from each edge (px) — a touch wider
