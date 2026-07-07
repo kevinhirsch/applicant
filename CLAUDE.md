@@ -170,9 +170,11 @@ just the host:
 - **Durable orchestration**: `dbos` is an **optional** extra (`durable-orchestration`); the default
   `ORCHESTRATOR_BACKEND=shim` (in-process checkpoints) needs nothing extra. Select `dbos` only to
   co-reside workflow state in Postgres.
-- **MCP surface**: `fastapi-mcp` is an **optional** extra (`uv sync --extra mcp`). `app/routers/mcp.py`
-  guards its import, so the engine mounts the MCP endpoints **only** when the extra is installed —
-  absent it, that surface is silently off (same which-it-or-degrade pattern as the shell-outs above).
+- **MCP surface**: `app/routers/mcp.py` `mount_mcp()` **always** mounts the native read-only
+  `/mcp/tools` + `/mcp/tools/call` JSON surface (no extra needed; consequential actions are
+  default-denied there, same review gates as HTTP). The **optional** `fastapi-mcp` extra
+  (`uv sync --extra mcp`) gates only the streaming (SSE) transport — absent it, that transport
+  alone is off (logged at INFO).
 
 The integration tests for these paths are `@pytest.mark.integration` and **skip when the dep is absent**
 — a skip is a signal that the *deployed image* needs that dependency, not just a quirk of the test box.
