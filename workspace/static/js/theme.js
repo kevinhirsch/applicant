@@ -589,7 +589,7 @@ export const GLASS_TIERS = ['off', 'frosted', 'full'];
 // SVG refraction) and 'off' (flat panels) remain opt-in via Settings. @supports
 // gives a solid-panel fallback where backdrop-filter is unavailable, and
 // prefers-reduced-motion strips motion but keeps the frost.
-const DEFAULT_GLASS_TIER = 'off';
+const DEFAULT_GLASS_TIER = 'full';
 
 /** Apply a glass tier ('off' | 'frosted' | 'full'). The SOLE writer of the
  *  `theme-frosted`/`glass-full` body classes that the style.css frost material
