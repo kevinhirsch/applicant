@@ -178,6 +178,11 @@ class Settings(BaseSettings):
     # unsupported fact hard-fails generation (the historical behaviour).
     truth_policy: str = Field(default="balanced", alias="TRUTH_POLICY")
 
+    # P1-1a: LLM verify-and-correct over the deterministic résumé parse (slotting).
+    # ON by default; degrades to the deterministic parse with an honest not-verified
+    # marker when no model is configured. Set 0/false to force deterministic-only.
+    parse_verify_enabled: bool = Field(default=True, alias="PARSE_VERIFY_ENABLED")
+
     # Context management (FR-MIND-8, FR-MIND-13). Token budget over which the LLM
     # adapter compresses/evicts MIDDLE turns (the system tier + most recent turns
     # are always kept). 64000 (~250k chars) is a sensible default for multi-turn

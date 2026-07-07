@@ -129,7 +129,7 @@ def _try_load_object(candidate: str) -> dict[str, Any] | None:
     return None
 
 
-def _balanced_object_spans(text: str):
+def balanced_object_spans(text: str):
     """Yield every balanced ``{...}`` substring, brace-/string-aware.
 
     Scans left-to-right tracking brace depth while skipping braces that appear
@@ -137,6 +137,10 @@ def _balanced_object_spans(text: str):
     Each top-level balanced object is yielded in document order, so a decoy
     ``{...}`` before the real object is tried first and a later parseable object
     is still reachable.
+
+    PUBLIC contract: also consumed by the résumé parse-verify layer
+    (``adapters/resume_parser/llm_verify.py``) for defensive extraction of a
+    model's JSON answer — rename/removal breaks that adapter, not just this one.
     """
     depth = 0
     start = -1
@@ -184,7 +188,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     if whole is not None:
         return whole
     # Scan balanced-brace candidates in document order; first parseable wins.
-    for candidate in _balanced_object_spans(text):
+    for candidate in balanced_object_spans(text):
         obj = _try_load_object(candidate)
         if obj is not None:
             return obj
