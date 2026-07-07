@@ -173,7 +173,10 @@ def test_good_response_corrects_the_draft_and_records_metadata():
 
 @pytest.mark.unit
 def test_low_confidence_escalates_exactly_one_tier():
-    low = dict(GOOD_OUT, confidence={"contact": 1.0, "work_history": 0.5})
+    low = dict(
+        GOOD_OUT,
+        confidence={"contact": 1.0, "work_history": 0.5, "education": 1.0, "skills": 1.0},
+    )
     llm = ScriptedLLM([json.dumps(low), json.dumps(GOOD_OUT)])
     parser = LLMVerifiedResumeParser(FakeInner(), llm)
     out = parser.parse("resume.pdf")
@@ -391,7 +394,7 @@ def test_omitting_one_of_two_roles_at_the_same_company_still_restores_it():
         "work_history": [{"title": "Staff Engineer", "company": "Initech"}],
         "education": [],
         "skills": [],
-        "confidence": {"work_history": 0.95},
+        "confidence": {"work_history": 0.95, "education": 1.0, "skills": 1.0},
         "corrections": [],
     }
     parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
@@ -426,7 +429,7 @@ def test_renamed_company_in_one_entry_suppresses_duplicate_restoration():
         "work_history": [{"title": "Lead Engineer", "company": "Wells Fargo"}],
         "education": [],
         "skills": [],
-        "confidence": {"work_history": 0.9},
+        "confidence": {"work_history": 0.9, "education": 1.0, "skills": 1.0},
         "corrections": ["normalized company"],
     }
     parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
@@ -474,9 +477,9 @@ def test_non_finite_or_out_of_range_confidence_is_malformed_not_verified():
     probability: both are untrustworthy self-reports — treated as malformed
     output (escalate once, then honest deterministic fallback)."""
     bad = json.loads(json.dumps(GOOD_OUT))
-    bad["confidence"] = {"contact": float("nan")}
+    bad["confidence"] = {"work_history": float("nan"), "education": 1.0, "skills": 1.0}
     worse = json.loads(json.dumps(GOOD_OUT))
-    worse["confidence"] = {"contact": 1.5}
+    worse["confidence"] = {"work_history": 1.5, "education": 1.0, "skills": 1.0}
     llm = ScriptedLLM([bad, worse])
     out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
     v = _verify_of(out)
@@ -484,6 +487,42 @@ def test_non_finite_or_out_of_range_confidence_is_malformed_not_verified():
     assert v["reason"] == "malformed_output"
     assert len(llm.calls) == 2 and llm.calls[1]["start_tier"] == 2
     assert out.work_history == DRAFT.work_history
+
+
+@pytest.mark.unit
+def test_confidence_must_score_every_content_area():
+    """Per-area contract: a lone {"contact": 0.95} must not vouch for work/
+    education/skills it never scored — that response is escalation material."""
+    contact_only = json.loads(json.dumps(GOOD_OUT))
+    contact_only["confidence"] = {"contact": 0.95}
+    llm = ScriptedLLM([contact_only, json.dumps(GOOD_OUT)])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+    v = _verify_of(out)
+    assert v["verified"] is True, "escalation retry with full scoring succeeds"
+    assert v["escalated"] is True
+    assert v["attempts"][0]["problem"] == "malformed_output"
+
+
+@pytest.mark.unit
+def test_renamed_confidence_areas_are_accepted():
+    """Live models rename the confidence areas despite the schema (observed:
+    "work_history_titles_companies", "education_certifications",
+    "skills_extraction") — stem-matching accepts them; a rigid key check would
+    reject a good live response."""
+    renamed = json.loads(json.dumps(GOOD_OUT))
+    renamed["confidence"] = {
+        "full_name": 1.0,
+        "contact_info": 1.0,
+        "work_history_titles_companies": 0.99,
+        "work_history_achievements": 0.98,
+        "education_certifications": 0.97,
+        "skills_extraction": 0.98,
+    }
+    llm = ScriptedLLM([renamed])
+    out = LLMVerifiedResumeParser(FakeInner(), llm).parse("r.pdf")
+    v = _verify_of(out)
+    assert v["verified"] is True
+    assert v["escalated"] is False
 
 
 @pytest.mark.unit

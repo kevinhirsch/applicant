@@ -358,16 +358,22 @@ class LLMVerifiedResumeParser:
             conf = out.get("confidence")
             if not isinstance(conf, dict) or not conf:
                 continue
+            # Confidence is PER-AREA: every content section must be scored by
+            # SOME key — a lone {"contact": x} must not vouch for work/
+            # education/skills it never scored. Key NAMES stay stem-flexible
+            # because live models rename the areas despite the schema (a
+            # tier-2 smoke reported "work_history_titles_companies" and
+            # "education_certifications"); a model that conforms to neither
+            # the schema nor the stems is escalation material, not trusted.
+            keys = " ".join(k.lower() for k in conf if isinstance(k, str))
+            if not all(stem in keys for stem in ("work", "educat", "skill")):
+                continue
             try:
                 vals = [float(v) for v in conf.values()]
             except Exception:
                 continue
             # Values must be sane self-reports: finite (NaN compares False
             # against the floor and would slip through) and inside [0, 1].
-            # Key NAMES stay flexible on purpose — live models rename the
-            # areas despite the schema (the tier-2 smoke reported
-            # "work_history_titles_companies", not "work_history"), and a
-            # rigid key check would reject good output.
             if not all(math.isfinite(v) and 0.0 <= v <= 1.0 for v in vals):
                 continue
             if min(vals) < self._floor:
