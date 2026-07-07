@@ -20,11 +20,22 @@ stories with a **Definition of Ready (DoR)** and **Definition of Done (DoD)**.
 
 ## Current focus (Now → Next)
 
-- **Now (eng):** P0-2 seeded demo mode → P0-3 Today-as-page · finish P1-0 (CI secret-scanning step).
-- **Now (you):** P1-2 employer trial signups (longest external lead) · P2-14 LinkedIn
-  account + consent stance · P4-7 name check (cheap now, painful later).
-- **Next:** P0-4 + P0-5 → P0-6 (bless baselines last) → the Phase 1 parallel set
-  (P1-1 / P1-3 / P1-4 / P1-6 / P1-7) + the competitive track (P1-8 → P1-9 → P1-10).
+Two tracks. The **founder-trust track** is the spine and the launch gate; the **market
+track** runs behind it. Note: **demo mode (P0-2) ≠ the founder dogfood (PAG-1)** — P0-2 is
+synthetic data for screenshots/sales; PAG-1 runs on a *real* instance with the owner's real
+résumé, key, and submissions. Don't conflate their ordering.
+
+- **Founder-trust track (the priority):** stand up a real instance on the owner's data →
+  get the loop working on it (P1-1 on real data) → build the honesty invariants
+  (H1–H5) so the owner can *see* it's honest → **dogfood continuously** (don't wait for the
+  end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
+  than any speculative polish, and reorders everything behind it.
+- **Now (eng):** finish P1-0 (CI secret-scanning) · P0-3 Today-as-page · H1 (receipts-not-
+  narration) + H3 (full-fidelity review) — the two invariants with no dependencies.
+- **Now (you):** provision a fresh model key + drop your real résumé so the real instance
+  can stand up · P1-2 employer trial signups (longest external lead) · P4-7 name check.
+- **Market track (behind the gate):** P0-2 demo mode → P0-4/P0-5 → P0-6 (bless last) →
+  competitive track (P1-8 → P1-9 → P1-10). Nothing here launches until PAG-1 passes.
 
 ## Index — all stories at a glance
 
@@ -49,6 +60,12 @@ stories with a **Definition of Ready (DoR)** and **Definition of Done (DoD)**.
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
+| H1 | Honesty: receipts, not narration | M | eng | — |
+| H2 | Honesty: no silent underdelivery | M | eng | — |
+| H3 | Honesty: full-fidelity review | S | eng | — |
+| H4 | Honesty: visible provenance | M | eng | — |
+| H5 | Honesty: calibrated copy | S | eng | — |
+| PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
 | P2-1 | Terms of Use / ToS posture | M | you+eng | — |
 | P2-2 | Privacy policy + rights | M | eng/you | — |
 | P2-3 | Security pass | M | eng | — |
@@ -432,6 +449,84 @@ drafting, ghosting detection, weekly recap, and the learning/outcomes loop.
 **Phase 1 spine:** P1-0 (first) → P1-1 → {P1-3, P1-4, P1-6, P1-7} in parallel · P1-5
 parallel · P1-8 → P1-9 → P1-10 (competitive track) · P1-11 seeds the Easy Apply track ·
 P1-2 spans the whole phase (external lead time).
+
+---
+
+# Phase 1.5 — Personal Acceptance Gate (the founder dogfood; the launch go/no-go)
+
+The **final move before market is the owner using Applicant on their own real job
+search until they trust it.** This is not demo mode (P0-2, which is *synthetic* data for
+screenshots/sales) — it runs on a **real** instance: real Postgres, the owner's real
+résumé, a real model key, real criteria, real reviewed submissions.
+
+The gate proves three things at once that nothing else in the plan does: **efficacy**
+(did it help the owner get responses?), **demand** (would the owner pay for what it did?),
+and **trust** (is it honest and legible enough to rely on?). Its purpose is to replace
+*anxiety* with *calibrated confidence* — so the honesty invariants below matter as much as
+raw quality. You can trust a tool that is honest about being imperfect; you cannot trust
+one that might be lying, however good it is.
+
+## Honesty invariants (build/prove during Phase 1; each kills one specific fear)
+
+The engine already leans honest — the weekly recap **omits** outcomes it lacks rather than
+fabricating zeros (`digest_service.py`), the **fabrication guard** is a core rule
+(`truthfulness.py`), and generated docs carry **provenance** (`LearnedProvenance`). These
+stories *prove it holds everywhere* and *make it visible* — the P1-12 FE-mapping idea aimed
+at trust instead of features.
+
+### H1 — Receipts, not narration *(kills: overpromise)*
+**Effort:** M · **Owner:** eng · **Depends on:** —
+**DoD:** Every number/claim the owner reads (Today "what I did", Activity feed, Tracker
+counts, digest/recap) is a projection of **recorded actions**, never an LLM describing what
+it thinks it did. An audit confirms no claim-path narrates; a test pins it.
+
+### H2 — No silent underdelivery *(kills: underdeliver)*
+**Effort:** M · **Owner:** eng · **Depends on:** P1-3 (health panel)
+**DoD:** Every degrade is loud, per-action: a tailoring stub-fallback, an empty source, an
+incomplete prefill, a skipped step all say so at the item level — never ship a quiet
+generic result that reads as success. Extends P1-3 from boot-state to per-action.
+
+### H3 — Full-fidelity review *(kills: the embarrassing send)*
+**Effort:** S · **Owner:** eng · **Depends on:** —
+**DoD:** Before every submit the owner sees the **literal** payload — exact résumé, exact
+cover letter, every screening answer verbatim — not a summary. Tested against the
+review-before-submit boundary (ties to P2-8).
+
+### H4 — Visible provenance *(kills: "it made something up in my name")*
+**Effort:** M · **Owner:** eng · **Depends on:** H3
+**DoD:** The review screen traces each generated line to the owner's real history (the
+fabrication guard + `LearnedProvenance` made legible); anything unsourced is flagged, not
+hidden.
+
+### H5 — Calibrated copy *(kills: overpromise at the words layer)*
+**Effort:** S · **Owner:** eng · **Depends on:** P1-3
+**DoD:** Every promise in the UI is audited against actual capability state — if TeX isn't
+in the running image it does not claim "beautifully typeset PDFs"; if a source is down it
+doesn't imply full coverage. Trust breaks at the words layer, so this is load-bearing.
+
+### PAG-1 — Run the gate on the owner's real search
+**As** the owner, **I want** to run Applicant on my own real job search until I'd
+recommend its output unprompted **so that** I launch on evidence, not hope — and without
+the anxiety that it overpromises or underdelivers.
+**Effort:** L (elapsed, mostly owner-time) · **Owner:** both · **Depends on:** H1–H5,
+P1-1, P1-2, real model key + the owner's real résumé.
+**DoR:**
+- A real (non-demo) instance stood up: real Postgres, owner résumé imported, fresh model
+  key, real criteria.
+- A **launch threshold N** agreed (e.g. "≥20 real applications where every claim held true
+  and I'd have sent each unprompted").
+**DoD:**
+- [ ] **Practice:** run on roles the owner does *not* care about; for each, the receipt
+      matches reality (H1) and the output is genuinely send-worthy.
+- [ ] **Live:** graduate to roles the owner *does* care about, approving every send via
+      full-fidelity review (H3).
+- [ ] **Outcome tracking:** the owner's own funnel (applied → response → interview → offer)
+      is instrumented — this number is the efficacy proof, the go/no-go, and testimonial #1.
+- [ ] **Go/no-go:** market only after the threshold N is met with every claim holding true.
+      A failed claim resets the count and files a bug.
+
+**Launch gate rule:** no public launch (Phase 4/5) until PAG-1 passes. Trust & honesty
+(H1–H5 green) is a non-negotiable launch criterion alongside the legal blockers (P2-1, P2-4).
 
 ---
 
