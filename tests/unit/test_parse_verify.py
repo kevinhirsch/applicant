@@ -163,6 +163,10 @@ def test_good_response_corrects_the_draft_and_records_metadata():
     assert v["confidence"]["work_history"] == 0.95
     assert v["corrections"]
     assert v["model"] == "fake-t1" and v["tier"] == 1
+    # The draft's weak/junk entries ("DENVER, CO" with no company) were pruned by
+    # the correction and must NOT be resurrected by the omission guard.
+    assert v["restored_from_draft"] == []
+    assert all("DENVER" not in w.title for w in out.work_history)
     # One call, at the ladder floor, with the generous budget (the study's trap).
     assert llm.calls == [{"start_tier": 1, "max_tokens": 6000, "n_messages": 2}]
 
@@ -320,6 +324,44 @@ def test_mixed_source_date_is_rejected():
     assert out.work_history[0].start_date == ""  # refused, surfaced as dropped
     assert "Jun 18" in " ".join(_verify_of(out)["unsourced_dropped"])
     # The same-window reformat stays accepted (proven in the recombination test).
+
+
+@pytest.mark.unit
+def test_omitted_strong_entries_are_restored_not_silently_erased():
+    """The silent-omission guard: a shape-valid, confident response that OMITS a
+    strong deterministic entry (both title and company; a degree; a parsed skill)
+    must not erase it — the entry is restored and the restoration is surfaced in
+    the verify metadata. Weak/junk draft entries stay prunable (previous test)."""
+    strong_draft = ParsedResume(
+        full_name="Jane Engineer",
+        email="jane@example.com",
+        phone="555",
+        work_history=(
+            WorkHistoryEntry(title="Senior Platform Engineer", company="Initech"),
+            WorkHistoryEntry(title="Data Engineer", company="Hooli",
+                             start_date="Feb 2018", end_date="May 2021"),
+        ),
+        education=(
+            EducationEntry(degree="BS Computer Science", institution="State University"),
+        ),
+        skills=("Python", "SQL"),
+        raw_text=SOURCE,
+    )
+    omitting = json.loads(json.dumps(GOOD_OUT))
+    omitting["work_history"] = [omitting["work_history"][0]]  # drops the Hooli role
+    omitting["education"] = [omitting["education"][0]]  # drops the BS degree
+    omitting["skills"] = ["Python", "Terraform"]  # drops SQL
+
+    llm = ScriptedLLM([json.dumps(omitting)])
+    out = LLMVerifiedResumeParser(FakeInner(strong_draft), llm).parse("r.pdf")
+
+    v = _verify_of(out)
+    assert v["verified"] is True
+    assert any(w.company == "Hooli" for w in out.work_history), "strong role restored"
+    assert any("Computer Science" in e.degree for e in out.education), "degree restored"
+    assert "SQL" in out.skills, "parsed skill unioned back"
+    joined = " ".join(v["restored_from_draft"])
+    assert "Hooli" in joined and "BS Computer Science" in joined and "SQL" in joined
 
 
 @pytest.mark.unit

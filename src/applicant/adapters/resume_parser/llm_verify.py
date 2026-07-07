@@ -350,7 +350,9 @@ class LLMVerifiedResumeParser:
     def _validated(self, result: Any) -> tuple[dict | None, str | None]:
         """Pick + sanity-check a verify response; (out, None) or (None, reason)."""
         for out in self._json_candidates(result):
-            if not isinstance(out.get("work_history"), list):
+            # Full shape check (not just work_history): a decoy/partial object
+            # missing any required section is skipped, not accepted.
+            if not all(isinstance(out.get(k), list) for k in ("work_history", "education", "skills")):
                 continue  # decoy/partial object — keep scanning
             conf = out.get("confidence")
             if not isinstance(conf, dict) or not conf:
@@ -479,6 +481,91 @@ class LLMVerifiedResumeParser:
                 seen.add(key)
                 skills.append(v)
 
+        # ── silent-omission guard ────────────────────────────────────────────
+        # A shape-valid, confident response may simply OMIT items the
+        # deterministic parse recovered; replacing the section wholesale would
+        # silently erase real history at ingest. But the draft is not clean
+        # either — the deterministic parser emits split artifacts (a "degree"
+        # carved out of a role title mid-line; a school parsed as a job), so
+        # restoration is gated hard, three ways:
+        #   * only STRONG entries qualify (work: title AND company; education:
+        #     a degree). Half-empty artifacts stay prunable.
+        #   * an entry the correction ACCOUNTED FOR anywhere — re-slotted into
+        #     another section, kept under a corrected name — is not restored.
+        #     Coverage is token-sequence containment against every corrected
+        #     string, CROSS-section (a school mis-parsed as a role is covered
+        #     by the corrected education entry that now holds it).
+        #   * an education degree must START a source line. The split parser
+        #     carves degrees out mid-line (the pre-keyword text lands in
+        #     institution), so its artifacts never do; real credential lines
+        #     ("BS Computer Science, State University") always do.
+        # Every restoration is surfaced in the verify metadata (H2: nothing
+        # silent). Deterministic skills come from an explicit skills-section
+        # parse, so they are cheap to keep: union them in.
+        restored: list[str] = []
+
+        pool: list[list[str]] = [
+            toks
+            for value in (
+                [v for r in roles for v in (r.title, r.company)]
+                + [v for g in education for v in (g.degree, g.institution)]
+                + list(skills)
+            )
+            if (toks := _tokens(value))
+        ]
+
+        def _seq_in(needle: list[str], hay: list[str]) -> bool:
+            n = len(needle)
+            return 0 < n <= len(hay) and any(
+                hay[i : i + n] == needle for i in range(len(hay) - n + 1)
+            )
+
+        def _accounted(*fields: str) -> bool:
+            for f in fields:
+                toks = _tokens(f)
+                if not toks:
+                    continue
+                # Forward: the draft field survives inside a corrected string.
+                # Reverse: a corrected string sits inside the draft field —
+                # multi-token only, so a lone skill token can't claim a role.
+                if any(
+                    _seq_in(toks, p) or (len(p) > 1 and _seq_in(p, toks))
+                    for p in pool
+                ):
+                    return True
+            return False
+
+        clines = [c for ln in parsed.raw_text.splitlines() if (c := _collapse(ln))]
+
+        def _line_initial(value: str) -> bool:
+            cv = _collapse(value)
+            return bool(cv) and any(ln.startswith(cv) for ln in clines)
+
+        for w in parsed.work_history:
+            if not (w.title and w.company):
+                continue  # weak/junk draft entry — the correction may prune it
+            if len(roles) >= _MAX_ROLES:
+                break
+            if not _accounted(w.title, w.company):
+                roles.append(w)
+                restored.append(f"role:{w.title[:40]} @ {w.company[:30]}")
+
+        for e in parsed.education:
+            if not e.degree or not _line_initial(e.degree):
+                continue  # split artifact or half-empty — the correction may prune it
+            if len(education) >= _MAX_EDU:
+                break
+            if not _accounted(e.degree, e.institution):
+                education.append(e)
+                restored.append(f"education:{e.degree[:40]}")
+
+        for s in parsed.skills:
+            key = _collapse(s)
+            if key and key not in seen and len(skills) < _MAX_SKILLS:
+                seen.add(key)
+                skills.append(s)
+                restored.append(f"skill:{s[:30]}")
+
         last = attempts[-1]
         verify = {
             "verified": True,
@@ -489,6 +576,9 @@ class LLMVerifiedResumeParser:
             "confidence": out.get("confidence") or {},
             "corrections": [c for c in (out.get("corrections") or []) if isinstance(c, str)][:20],
             "unsourced_dropped": dropped[:20],
+            # Draft data the correction omitted but this layer kept (visible in
+            # review, H2: a restoration is never silent).
+            "restored_from_draft": restored[:20],
         }
         return replace(
             parsed,
@@ -496,7 +586,8 @@ class LLMVerifiedResumeParser:
             email=email,
             phone=phone,
             # A corrected section replaces the draft only when it survived grounding
-            # with content; an empty correction never erases deterministic data.
+            # with content; an empty correction never erases deterministic data, and
+            # the silent-omission guard above restores strong entries it left out.
             work_history=tuple(roles) or parsed.work_history,
             education=tuple(education) or parsed.education,
             skills=tuple(skills) or parsed.skills,
