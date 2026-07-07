@@ -15,6 +15,81 @@ stories with a **Definition of Ready (DoR)** and **Definition of Done (DoD)**.
   *additional* acceptance criteria.
 - Phases are roughly sequential; items within a phase are ordered by dependency.
   The dependency spine is drawn at the end of each phase.
+- The **index** just below is the at-a-glance backlog. Maintain its Status column as
+  stories move (`—` → IN PROGRESS → DONE); per-story detail lives in the phase sections.
+
+## Current focus (Now → Next)
+
+- **Now (eng):** P0-2 seeded demo mode → P0-3 Today-as-page · finish P1-0 (CI secret-scanning step).
+- **Now (you):** P1-2 employer trial signups (longest external lead) · P2-14 LinkedIn
+  account + consent stance · P4-7 name check (cheap now, painful later).
+- **Next:** P0-4 + P0-5 → P0-6 (bless baselines last) → the Phase 1 parallel set
+  (P1-1 / P1-3 / P1-4 / P1-6 / P1-7) + the competitive track (P1-8 → P1-9 → P1-10).
+
+## Index — all stories at a glance
+
+| ID | Story | Effort | Owner | Status |
+|----|-------|--------|-------|--------|
+| P0-1 | Window-chrome baseline merged | S | eng | DONE |
+| P0-2 | Seeded demo mode | M | eng | — |
+| P0-3 | Today becomes a page | M | eng | — |
+| P0-4 | De-workspace the surface | M | eng | — |
+| P0-5 | Empty states that sell | S–M | eng | — |
+| P0-6 | Visual regression harness | M | eng | — |
+| P1-0 | Secrets: revoke + CI scanning | S | both | IN PROGRESS |
+| P1-1 | Onboarding TTFV < 10 min | M | eng | — |
+| P1-2 | Real-board proof runs | L | both | — |
+| P1-3 | Honest health panel | M | eng | — |
+| P1-4 | Notifications out of the box | M | eng | — |
+| P1-5 | Rescue stranded hardening waves | M | eng | — |
+| P1-6 | Cost & pace guardrails | M | eng | — |
+| P1-7 | Backup / restore / export | M | eng | — |
+| P1-8 | Keyword / ATS match score | S | eng | — |
+| P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
+| P1-10 | Multi-campaign base profiles | M | eng | — |
+| P1-11 | Easy Apply: detect & tag | S | eng | — |
+| P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
+| P2-1 | Terms of Use / ToS posture | M | you+eng | — |
+| P2-2 | Privacy policy + rights | M | eng/you | — |
+| P2-3 | Security pass | M | eng | — |
+| P2-4 | License compliance | S | eng+you | — |
+| P2-5 | Fabrication-guard evidence | S | eng | — |
+| P2-6 | LLM output eval harness | M | eng | — |
+| P2-7 | Sensitive-question policy | M | eng | — |
+| P2-8 | Final-say invariant test | S | eng | — |
+| P2-9 | App-door hardening | M | eng | — |
+| P2-10 | ATS-parseability proof | M | eng | — |
+| P2-11 | Local-only private mode | M | eng | — |
+| P2-12 | Durability drills | M | eng | — |
+| P2-13 | Source reliability matrix | M | eng | — |
+| P2-14 | Easy Apply: assisted mode | M | both | — |
+| P3-1 | Install on tested targets | M–L | eng | — |
+| P3-2 | Requirements & model matrix | S–M | eng | — |
+| P3-3 | Business model + licensing | M | you+eng | — |
+| P3-4 | Docs site | M | eng | — |
+| P3-5 | Release engineering | M | eng | — |
+| P3-6 | Workspace DB migrations | M | eng | — |
+| P3-7 | Platform matrix | S–M | eng+you | — |
+| P3-8 | Digest deliverability | S–M | eng | — |
+| P4-1 | Positioning statement | S | you+eng | — |
+| P4-2 | Landing page | M | eng | — |
+| P4-3 | Proof assets | M | eng+you | — |
+| P4-4 | Competitive teardown | M | eng | — |
+| P4-5 | Early-access cohort | M | you+eng | — |
+| P4-6 | Pricing validation | S | you | — |
+| P4-DEC-1 | Source-available decision | — | you | — |
+| P4-DEC-2 | Takeover scope decision | — | you | — |
+| P4-7 | Name check | S | you | — |
+| P5-1 | Support machinery | M | eng | — |
+| P5-2 | Pre-written FAQs | M | eng | — |
+| P5-3 | Opt-in telemetry | S–M | eng | — |
+| P5-4 | Launch sequence | M | you+eng | — |
+| P5-5 | Post-launch flywheel | ongoing | both | — |
+| P5-6 | Easy Apply autopilot | L | eng | — |
+| X-1 | Mobile golden-path audit | M | eng | — |
+| X-2 | Cross-browser smoke | S–M | eng | — |
+| X-3 | Performance budget | M | eng | — |
+| X-4 | Accessibility pass | M | eng | — |
 
 ## Universal Definition of Done (applies to every story)
 
@@ -64,7 +139,8 @@ comes from consistent, non-empty data.
   Documents, Gallery, Profile, Daily updates, Calendar, Run log, chat).
 - Agreement that seed runs against both in-memory and Postgres.
 **DoD:**
-- [ ] `DEMO_MODE=1` seed loads: 5 applications across the 5 stages; a digest of ~6
+- [ ] `DEMO_MODE=1` seed loads: 5 applications, one per stage (discovered → prefilled →
+      waiting-on-you → submitted → interview); a digest of ~6
       scored roles each with a visible match rationale; 1 tailored résumé with a real
       redline diff (add + subtract + free-text edit); 1 interview event; ~15
       activity-feed entries; momentum + streak numbers; 2–3 Portal "waiting on you" items.
@@ -74,7 +150,7 @@ comes from consistent, non-empty data.
       removes all of it with no residue.
 - [ ] Re-running the seed is idempotent (no duplicate rows).
 - [ ] The seed path is unreachable when `DEMO_MODE` is unset (guarded + tested).
-- [ ] No secret/API key is ever written into seed data (ties to P0-0/​#53).
+- [ ] No secret/API key is ever written into seed data (ties to P1-0).
 
 ### P0-3 — Today becomes a page (not a modal)
 **As** a user, **I want** Today to be the app's home *page* rather than a floating
@@ -157,7 +233,7 @@ must wait until P0-3/P0-4/P0-5 land (or baselines get blessed twice).
 
 # Phase 1 — Product completeness
 
-### P1-0 — Revoke & rotate exposed secrets *(pulled from #53 — do first)*
+### P1-0 — Revoke & rotate exposed secrets *(do first)*
 **As** the owner, **I want** all previously-exposed API keys revoked and secret
 scanning in CI **so that** no leaked credential survives into demo/seed artifacts.
 **Effort:** S · **Owner:** both · **Depends on:** — · **Status: IN PROGRESS**
@@ -183,7 +259,7 @@ first digest in under 10 minutes **so that** I reach value before I give up.
       round-trip and reports the failure *reason* (bad key / unreachable / no models)
       with recovery copy.
 - [ ] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
-      achievements** (closes existing task #25).
+      achievements** (the onboarding review previously omitted parsed achievements).
 - [ ] The single-year education parse renders correctly; a bad parse has an explicit
       "edit" path so it never silently poisons applications.
 - [ ] Today shows an essentials checklist (model / profile / notifications) until the
@@ -278,7 +354,7 @@ that** an irreplaceable job search is never lost.
 - [ ] A scripted backup → destroy volumes → restore drill on the compose stack passes
       clean (app returns whole).
 
-### P1-8 — Résumé↔JD keyword / ATS match score *(competitive gap #1)*
+### P1-8 — Résumé↔JD keyword / ATS match score *(competitive: match transparency)*
 **As** a user, **I want** to see how well each tailored résumé covers the job's
 keywords **so that** I trust the tailoring and can approve gap-fixes.
 **Effort:** S · **Owner:** eng · **Depends on:** P0-2 (digest/review fixtures)
@@ -292,7 +368,7 @@ coverage agreed.
       never auto-inserted (honours the fabrication guard); a suggested term flows through
       the existing redline approve path.
 
-### P1-9 — Save-a-job-from-any-page capture *(competitive gap #2)*
+### P1-9 — Save-a-job-from-any-page capture *(competitive: capture)*
 **As** a user, **I want** to drop any job URL into Applicant **so that** roles I find
 myself enter the same reviewed pipeline.
 **Effort:** S (+S) · **Owner:** eng · **Depends on:** P0-2; discovery parse/score path on `main`
@@ -305,7 +381,7 @@ parse/score (intake endpoint to be added — currently no direct-URL intake exis
       cookie (no browser-extension packaging/store review for v1).
 - [ ] A pasted or bookmarked posting appears scored in Pending within ~1 minute.
 
-### P1-10 — Multiple base profiles = light up multi-campaign *(competitive gap #4)*
+### P1-10 — Multiple base profiles = light up multi-campaign *(competitive: parallel tracks)*
 **As** a user targeting different tracks, **I want** separate campaigns each with its
 own base résumé **so that** e.g. "PM-track" and "Eng-track" run independently.
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2, P0-3 (Today filters by campaign)
@@ -325,7 +401,7 @@ own base résumé **so that** e.g. "PM-track" and "Eng-track" run independently.
 - [ ] Two campaigns run side by side with different base résumés and separate
       digests/pacing.
 
-### P1-11 — LinkedIn Easy Apply: detect & tag *(competitive gap #3, step A)*
+### P1-11 — LinkedIn Easy Apply: detect & tag *(competitive: Easy Apply, step A)*
 **As** a user, **I want** Easy Apply-able roles flagged in my digest **so that** I know
 the channel exists even before automation.
 **Effort:** S · **Owner:** eng · **Depends on:** P0-2
