@@ -496,6 +496,56 @@ class LLMVerifiedResumeParser:
                 seen.add(key)
                 skills.append(v)
 
+        def _seq_in(needle: list[str], hay: list[str]) -> bool:
+            n = len(needle)
+            return 0 < n <= len(hay) and any(
+                hay[i : i + n] == needle for i in range(len(hay) - n + 1)
+            )
+
+        # ── grounding hole-fill ─────────────────────────────────────────────
+        # Grounding can punch a HOLE in a corrected entry: the title grounds,
+        # a hallucinated company/issuer is dropped, and a half-entry survives.
+        # The draft twin — anchored on the SAME surviving field, by strict
+        # token-sequence containment either way — refills the hole in place
+        # with deterministic source text (grounded by construction). Without
+        # this, the restore pass below would append the full draft entry NEXT
+        # TO its half-corrected twin (a duplicate role), and a degree-only
+        # correction would silently shed the draft's institution.
+        def _anchored(a: str, b: str) -> bool:
+            ta, tb = _tokens(a), _tokens(b)
+            return _seq_in(ta, tb) or _seq_in(tb, ta)
+
+        for i, r in enumerate(roles):
+            if bool(r.title) == bool(r.company):
+                continue  # complete — nothing to fill
+            for w in parsed.work_history:
+                if not (w.title and w.company):
+                    continue
+                if _anchored(r.title, w.title) if r.title else _anchored(r.company, w.company):
+                    roles[i] = WorkHistoryEntry(
+                        title=r.title or w.title,
+                        company=r.company or w.company,
+                        location=r.location or w.location,
+                        start_date=r.start_date or w.start_date,
+                        end_date=r.end_date or w.end_date,
+                        achievements=r.achievements or w.achievements,
+                    )
+                    break
+
+        for i, g in enumerate(education):
+            if bool(g.degree) == bool(g.institution):
+                continue  # complete — nothing to fill
+            for e in parsed.education:
+                if not (e.degree and e.institution):
+                    continue
+                if _anchored(g.degree, e.degree) if g.degree else _anchored(g.institution, e.institution):
+                    education[i] = EducationEntry(
+                        degree=g.degree or e.degree,
+                        institution=g.institution or e.institution,
+                        end_year=g.end_year or e.end_year,
+                    )
+                    break
+
         # ── silent-omission guard ────────────────────────────────────────────
         # A shape-valid, confident response may simply OMIT items the
         # deterministic parse recovered; replacing the section wholesale would

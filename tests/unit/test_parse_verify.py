@@ -490,6 +490,55 @@ def test_non_finite_or_out_of_range_confidence_is_malformed_not_verified():
 
 
 @pytest.mark.unit
+def test_grounding_hole_in_a_corrected_role_is_refilled_not_duplicated():
+    """When grounding drops a hallucinated company, the surviving half-entry is
+    refilled from its draft twin (same-field anchor) instead of the restore
+    pass appending the full draft entry next to it as a duplicate."""
+    draft = ParsedResume(
+        full_name="Jane Engineer",
+        work_history=(WorkHistoryEntry(title="Senior Platform Engineer", company="Initech"),),
+        raw_text=SOURCE,
+    )
+    out = json.loads(json.dumps(GOOD_OUT))
+    out["work_history"] = [
+        {
+            "title": "Senior Platform Engineer",
+            "company": "Globex Consulting LLC",  # hallucinated — fails grounding
+            "location": "Phoenix, AZ",
+            "start_date": "June 2021",
+            "end_date": "Present",
+        }
+    ]
+    parsed = LLMVerifiedResumeParser(FakeInner(draft), ScriptedLLM([out])).parse("r.pdf")
+    v = _verify_of(parsed)
+    assert v["verified"] is True
+    assert any("Globex" in d for d in v["unsourced_dropped"])
+    assert len(parsed.work_history) == 1, "hole refilled in place, not duplicated"
+    assert parsed.work_history[0].title == "Senior Platform Engineer"
+    assert parsed.work_history[0].company == "Initech"
+    assert parsed.work_history[0].location == "Phoenix, AZ"  # corrected fields kept
+    assert v["restored_from_draft"] == []
+
+
+@pytest.mark.unit
+def test_grounding_hole_in_a_corrected_education_entry_refills_the_institution():
+    """A degree-only correction (its hallucinated issuer failed grounding) must
+    not silently shed the draft's institution — the twin refills it."""
+    out = json.loads(json.dumps(GOOD_OUT))
+    out["education"] = [
+        {"name": "Certified Kubernetes Administrator (CKA)", "issuer": "", "year": "2022"},
+        {"name": "BS Computer Science", "issuer": "Springfield Technical College", "year": "2017"},
+    ]
+    parsed = LLMVerifiedResumeParser(FakeInner(), ScriptedLLM([out])).parse("r.pdf")
+    v = _verify_of(parsed)
+    assert v["verified"] is True
+    assert any("Springfield" in d for d in v["unsourced_dropped"])
+    bs = next(e for e in parsed.education if "Computer Science" in e.degree)
+    assert bs.institution == "State University", "draft institution refills the hole"
+    assert v["restored_from_draft"] == []
+
+
+@pytest.mark.unit
 def test_confidence_must_score_every_content_area():
     """Per-area contract: a lone {"contact": 0.95} must not vouch for work/
     education/skills it never scored — that response is escalation material."""
