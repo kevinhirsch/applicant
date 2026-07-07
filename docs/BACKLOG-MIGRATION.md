@@ -8,17 +8,17 @@ All items from `docs/backlog/road-to-market.md` have been migrated to GitHub Iss
 ## Summary
 
 - **Phase 0:** 6 issues (P0-1 through P0-6)
-- **Phase 1:** 14 issues (P1-0 through P1-13, plus P1-1a)
+- **Phase 1:** 15 issues (P1-0 through P1-13, plus P1-1a)
 - **Phase 1.5 (Honesty Invariants):** 6 issues (H1-H5, PAG-1)
 - **Phase 2:** 14 issues (P2-1 through P2-14)
 - **Phase 3:** 8 issues (P3-1 through P3-8)
-- **Phase 4:** 11 issues (P4-1 through P4-7, P4-DEC-1, P4-DEC-2)
+- **Phase 4:** 9 issues (P4-1 through P4-7, P4-DEC-1, P4-DEC-2)
 - **Phase 5:** 6 issues (P5-1 through P5-6)
 - **Cross-phase:** 4 issues (X-1 through X-4)
 - **Deferred:** 5 issues
 - **Owner Decisions:** 9 issues
 
-**Total: 83 GitHub issues created**
+**Total: 82 GitHub issues created**
 
 ## Issue Ranges
 
