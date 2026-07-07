@@ -144,7 +144,7 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'glass';
+const DEFAULT_THEME = 'light';
 const LS_KEY = 'applicant-theme';
 const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 

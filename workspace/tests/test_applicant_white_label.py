@@ -82,7 +82,9 @@ KEEP_SIDEBAR_IDS = [
     "tool-assistant-btn",
     "tool-compare-btn",
     "tool-debug-btn",
-    "tool-trust-btn",
+    # Trust was removed from the nav (user-driven); Themes was pulled onto the
+    # sidebar out of Settings (both emitted by applicantNav.js's NAV array).
+    "tool-theme-nav-btn",
 ]
 
 # Vendored AI-media / agent-training Settings cards. Each toggle input must sit

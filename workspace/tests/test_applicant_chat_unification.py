@@ -146,12 +146,19 @@ def test_new_chat_affordances_are_claimed_for_the_assistant():
     assert m, "expected the launcher-id list"
     ids = m.group(1)
     for launcher in (
-        "sidebar-brand-btn",
         "sidebar-new-chat-btn",
         "rail-new-session",
         "mobile-new-chat-btn",
     ):
         assert launcher in ids, f"expected {launcher} to open the assistant"
+    # The wordmark is HOME now, not a chat affordance — it must NOT open a chat;
+    # it is declared separately as the Home launcher.
+    assert "sidebar-brand-btn" not in ids, (
+        "the wordmark is the Home launcher, not a new-chat affordance"
+    )
+    assert re.search(r"HOME_LAUNCHER_ID = 'sidebar-brand-btn'", src), (
+        "the wordmark must be declared the Home launcher"
+    )
     # Document-capture interception (wins regardless of module load order).
     assert re.search(
         r"document\.addEventListener\('click', _interceptNewChatClick, true\)", src
@@ -164,6 +171,10 @@ def test_new_chat_affordances_are_claimed_for_the_assistant():
     )
     assert "openApplicantChat()" in body
     assert "stopPropagation()" in body
+    # The wordmark routes to Today (the Portal home base), not the chat.
+    assert "HOME_LAUNCHER_ID" in body and "tool-portal-btn" in body, (
+        "the wordmark interception must open Today (the Portal home base)"
+    )
 
 
 def test_unification_probe_is_owner_gated_via_the_session_endpoint():

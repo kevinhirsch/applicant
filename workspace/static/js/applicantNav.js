@@ -46,6 +46,7 @@ const ICON = {
   trust:    '<path d="M12 2 4 5v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V5z"/><path d="M9 12l2 2 4-4"/>',
   update:   '<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="3" x2="12" y2="16"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  theme:    '<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
 };
 
 // ── the ONE ordered navigation model ────────────────────────────────────────
@@ -107,7 +108,11 @@ const NAV = [
   { group: 'utilities', items: [
     { rail: null, side: 'tool-compare-btn', railId: 'rail-applicant-compare', label: 'Compare', icon: 'compare', title: 'Compare — put two models or drafts side by side' },
     { rail: null, side: 'tool-debug-btn', railId: 'rail-debug', label: 'Run log', icon: 'runlog', title: 'Run log — application history, run controls, and updates' },
-    { rail: null, side: 'tool-trust-btn', railId: 'rail-trust', label: 'Trust', icon: 'trust', title: 'How Applicant protects you — the final say, my promises, and your data' },
+    // Themes — pulled out of Settings onto the sidebar so the look & colors are a
+    // one-click destination. Both doors open the same picker (#theme-modal): the
+    // sidebar item forwards to the hidden #tool-theme-btn via `delegate`, and the
+    // collapsed-rail twin #rail-theme is wired to it in app.js `_railToolMap`.
+    { rail: null, side: 'tool-theme-nav-btn', railId: 'rail-theme', label: 'Themes', icon: 'theme', title: 'Themes — change the look and colors', delegate: 'tool-theme-btn' },
   ] },
   { spacer: true },
   { group: 'bottom', items: [

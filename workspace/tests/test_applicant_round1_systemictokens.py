@@ -194,21 +194,20 @@ def test_hamburger_btn_has_focus_visible_ring():
 # ── #11: appkitGlass.js SVG-lens RADIUS synced to --ow-glass-radius (documented
 #         proportional undershoot — 22, not an exact match to the 26px CSS var) ──
 
-def test_svg_lens_radius_synced_to_26px_glass_radius():
+def test_svg_lens_radius_synced_to_glass_radius():
     """RADIUS (the corner radius the SVG-refraction squircle profile is built
-    around) was stale at 18 against style.css's --ow-glass-radius, which was
-    bumped to 26px. It's now 22 — deliberately still under 26 (a documented
-    proportional undershoot so the lens band sits inside the visible corner),
-    so this pins the exact expected value rather than equality with the CSS
-    var."""
+    around) tracks style.css's --ow-glass-radius. That var was tightened from
+    26px to 16px (cleaner, less-bubbly windows — owner feedback), so the lens
+    RADIUS drops in step to 14 — deliberately still under 16 (a documented
+    proportional undershoot so the lens band sits inside the visible corner)."""
     src = _read(APPKIT_GLASS_JS)
     m = re.search(r"var RADIUS\s*=\s*(\d+);", src)
     assert m, "expected a `var RADIUS = <n>;` declaration"
-    assert m.group(1) == "22", f"expected RADIUS to be 22, got {m.group(1)}"
-    # And the CSS var it tracks is documented at 26px (sanity: the two must
+    assert m.group(1) == "14", f"expected RADIUS to be 14, got {m.group(1)}"
+    # And the CSS var it tracks is documented at 16px (sanity: the two must
     # differ, or the "proportional undershoot" comment above is a lie).
     css = _read(STYLE_CSS)
-    assert "--ow-glass-radius: 26px;" in css
+    assert "--ow-glass-radius: 16px;" in css
 
 
 # ── #12: --tap-min: 44px is a real token, not just a var() fallback ────────────

@@ -760,9 +760,13 @@ export async function sendEngineMessage(rawText) {
 // native behavior since the engine is single-tenant).
 
 const NEW_CHAT_LAUNCHER_IDS = [
-  'sidebar-brand-btn', 'sidebar-new-chat-btn', 'chat-new-btn',
+  'sidebar-new-chat-btn', 'chat-new-btn',
   'rail-new-session', 'mobile-new-chat-btn',
 ];
+
+// The wordmark is HOME, not a chat launcher — clicking "Applicant" returns you
+// to Today (the Pending/Portal home base), it does NOT spin up a new chat.
+const HOME_LAUNCHER_ID = 'sidebar-brand-btn';
 
 let _unifiedPrimary = false;
 
@@ -779,6 +783,13 @@ function _relabelNewChatLaunchers() {
   const newChatItem = document.getElementById('sidebar-new-chat-btn');
   const label = newChatItem && newChatItem.querySelector('.grow');
   if (label && /new chat/i.test(label.textContent || '')) label.textContent = 'Chat';
+  // The wordmark is Home now — retitle it away from the static "New chat".
+  const brand = document.getElementById(HOME_LAUNCHER_ID);
+  if (brand) {
+    const homeTitle = 'Applicant — back to Today';
+    brand.title = homeTitle;
+    if (brand.getAttribute('aria-label')) brand.setAttribute('aria-label', homeTitle);
+  }
 }
 
 async function _probeUnifiedPrimary() {
@@ -796,12 +807,21 @@ function _interceptNewChatClick(e) {
   if (!_unifiedPrimary) return;
   const target = e.target;
   if (!target || typeof target.closest !== 'function') return;
-  const hit = target.closest(NEW_CHAT_LAUNCHER_IDS.map((id) => `#${id}`).join(', '));
+  const hit = target.closest(
+    [HOME_LAUNCHER_ID, ...NEW_CHAT_LAUNCHER_IDS].map((id) => `#${id}`).join(', '),
+  );
   if (!hit) return;
   // Capture phase on document: stop the event before app.js's own handlers
   // (which would set up a pending direct-LLM chat) ever see it.
   e.preventDefault();
   e.stopPropagation();
+  // The wordmark goes HOME (Today/Portal); every other launcher opens the chat.
+  if (hit.id === HOME_LAUNCHER_ID) {
+    const home = document.getElementById('tool-portal-btn')
+      || document.getElementById('rail-portal');
+    if (home) home.click();
+    return;
+  }
   openApplicantChat();
 }
 

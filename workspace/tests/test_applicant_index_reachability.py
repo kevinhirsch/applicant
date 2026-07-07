@@ -55,63 +55,33 @@ def _read_nav() -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 1. lens 12 #5 -- the Trust Center is wired into the shell.
+# 1. The standalone "Trust" nav item was removed (user-driven).
 # ══════════════════════════════════════════════════════════════════════════
+#
+# The wordmark-adjacent "Trust" launcher read as an unexplained button. It was
+# removed from the nav; its safety message is contextual instead — the Portal's
+# "you approve every application before it's sent — you're always in control"
+# line and the onboarding wizard. The applicantTrust.js module still ships but is
+# dormant (no launcher wires to it), so nothing 404s and it can be re-surfaced
+# later without re-plumbing.
 
 
-def test_trust_center_module_script_is_loaded():
+def test_trust_center_module_script_still_ships_dormant():
+    # The module remains loaded (harmless, unwired) so a future re-surfacing
+    # needs no re-plumbing — but it must NOT be reachable from the nav.
     src = _read()
     assert '<script type="module" src="/static/js/applicantTrust.js"></script>' in src
 
 
-def test_trust_center_launcher_element_exists_with_the_expected_id():
-    """Pass 2a: tool-trust-btn is no longer static markup in index.html -- it
-    is emitted by applicantNav.js's `_sidebarItem()` from the NAV array's
-    utilities group into the `#applicant-sidebar-nav` mount point. Assert it
-    for real against the NAV array, the same id applicantTrust.js's own
-    `_wireLaunchers()` will find via `document.getElementById('tool-trust-btn')`
-    once renderNav has run."""
+def test_trust_center_is_intentionally_not_a_nav_destination():
+    """Guard the removal so it isn't reflexively re-added: no NAV entry, no rail
+    twin for Trust. (User feedback: the button read as unexplained.)"""
     nav_src = _read_nav()
-    assert re.search(r"\bside:\s*'tool-trust-btn'", nav_src), (
-        "expected a NAV item with side: 'tool-trust-btn' in applicantNav.js"
+    assert not re.search(r"side:\s*'tool-trust-btn'", nav_src), (
+        "the Trust nav item was intentionally removed — do not re-add it to NAV"
     )
-
-
-def test_trust_center_launcher_is_a_sibling_list_item_in_the_tools_section():
-    src = _read()
-    tools_section = re.search(
-        r'<div class="section" id="tools-section">.*?</div>\s*</div>\s*<div class="sidebar-user-bar"',
-        src,
-        re.S,
-    )
-    assert tools_section, "expected to find the Tools section list-items block"
-    body = tools_section.group(0)
-    # tool-trust-btn itself is rendered by applicantNav.js (Pass 2a), not
-    # static here -- but the mount point it renders into must still be a
-    # descendant of the Tools section (the structural anchor that makes it a
-    # sibling of the other launchers at runtime: the mount is
-    # `display:contents`, so the emitted list-items sit alongside e.g.
-    # #tool-library-btn in the real DOM).
-    assert 'id="applicant-sidebar-nav"' in body, (
-        "expected the #applicant-sidebar-nav mount point inside the Tools section"
-    )
-
-    # Matches the sibling launcher markup convention (e.g. #tool-assistant-btn,
-    # #tool-portal-btn): a `list-item` div with an icon + a `.grow` label span
-    # -- now emitted by the shared `_sidebarItem()` template from the NAV
-    # array's tool-trust-btn entry.
-    nav_src = _read_nav()
-    launcher = re.search(
-        r"\{\s*rail:\s*null,\s*side:\s*'tool-trust-btn'[^}]*\}",
-        nav_src,
-        re.S,
-    )
-    assert launcher, "expected the tool-trust-btn NAV entry (utilities group)"
-    label_m = re.search(r"label:\s*'([^']+)'", launcher.group(0))
-    assert label_m, "expected a label field on the tool-trust-btn NAV entry"
-    assert label_m.group(1) == "Trust", (
-        f"expected the Trust launcher's visible label to read 'Trust' "
-        f"(renamed from 'Trust Center'), got {label_m.group(1)!r}"
+    assert "rail-trust" not in nav_src, (
+        "the Trust rail twin was intentionally removed"
     )
 
 

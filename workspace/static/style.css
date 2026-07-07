@@ -18056,6 +18056,13 @@ body.gallery-selecting .gallery-dl-btn,
   flex-direction: column;
   gap: 2px;
   background: color-mix(in srgb, var(--fg) 2%, transparent);
+  /* The category list can be taller than the modal (17 tabs across 6 groups) —
+     let it scroll on its own instead of overflowing past the modal's bottom edge
+     (the "settings has no scrollbar" report). min-height:0 lets this flex child
+     shrink below its content height so overflow-y can actually engage. */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
@@ -32332,6 +32339,20 @@ body.theme-frosted {
   --theme-bg-raw: var(--bg);
 }
 
+/* FLAT (glass-off) LIGHT themes — same light-on-light hazard as the frosted case
+   above, but the `body.theme-frosted` fix never reaches them (no frosted class).
+   A flat LIGHT theme (light bg ⇒ NOT stamped `applicant-theme-dark`) with the
+   default glass tier OFF paints every var(--chrome-ink) site (window titles,
+   .cal-btn labels, settings-nav labels, section headers) near-white on a solid
+   near-white panel. Mirror the dark chrome-ink ramp here so the flat light
+   default is legible. Flat DARK themes keep the :root near-white ink (correct on
+   their dark panels); the frosted override still wins for glass. */
+body:not(.theme-frosted):not(.applicant-theme-dark) {
+  --chrome-ink: #16191f;
+  --chrome-ink-2: rgba(22, 25, 31, 0.68);
+  --chrome-ink-3: rgba(22, 25, 31, 0.45);
+}
+
 body.theme-frosted #sidebar,
 body.theme-frosted .modal-content,
 body.theme-frosted .doclib-modal-content,
@@ -33796,7 +33817,7 @@ body.theme-frosted #minimized-dock .minimized-dock-chip {
 :root {
   /* Apple-language tokens. The luminous edge = a bright top-rim highlight; the      */
   /* float shadow = soft elevation; the radii are larger + concentric.              */
-  --ow-glass-radius: 26px;          /* window/surface radius (very rounded, Apple)  */
+  --ow-glass-radius: 16px;          /* window/surface radius (clean, not bubbly)    */
   --ow-glass-radius-inner: 16px;    /* concentric inner-control radius (nested)     */
   --ow-glass-edge: color-mix(in srgb, var(--fg, #fff) 55%, transparent);
   /* #770: ONE canonical luminous EDGE for glass chrome — a SUBTLE fixed faint white,
@@ -38023,3 +38044,132 @@ body.theme-frosted .search-popup {
 body.theme-frosted .search-overlay {
   background: color-mix(in srgb, #000 26%, transparent);
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   WINDOW-CHROME CLEANUP (owner feedback, live)
+   Keep the frosted glass + animated wallpaper, but drop the fussy macOS window
+   treatment that read as broken: the boxy dim/blur "gray box with hard edges"
+   behind a window, and the traffic-light stoplights. Appended last so it wins
+   source-order ties. Desktop only — the mobile bottom-sheet is untouched.
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 769px) {
+  /* 1) No scrim BOX. The applicant tool windows were offset to the chat area
+     (left: rail+sidebar), so the modal's own dim+blur painted only that region
+     as a rounded gray rectangle with a hard edge at the sidebar. Make them
+     FULL-VIEWPORT with a SUBTLE, uniform dim instead — no box, no hard edge, no
+     rounded scrim. The window (.modal-content) still frosts its own backdrop and
+     centers on the whole viewport (clear of the 240px sidebar). */
+  #applicant-portal-modal,
+  #applicant-chat-modal,
+  #applicant-vault-modal,
+  #applicant-remote-modal,
+  #settings-modal,
+  #theme-modal,
+  #email-lib-modal {
+    left: 0 !important;
+    width: 100% !important;
+    /* A stronger uniform dim so the busy chat MUTES behind the translucent glass
+       window (a light dim let the chat text bleed through the frosted card). */
+    background: color-mix(in srgb, #000 44%, transparent) !important;
+    background-image: none !important;
+    -webkit-backdrop-filter: blur(2px) !important;
+    backdrop-filter: blur(2px) !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* 2) One clean close button instead of the red/yellow traffic-light cluster.
+     Keep the macOS top-left slot (title stays centered), drop EVERY control but
+     close (minimize/dock and any stray badge), and restyle close as a quiet
+     neutral square that turns red on hover. */
+  .ow-controls > *:not(.ow-close) { display: none !important; }
+  .ow-controls .ow-min,
+  .ow-controls .ow-dock { display: none !important; }
+  .ow-controls .ow-close {
+    width: 24px !important; height: 24px !important;
+    min-width: 24px !important; max-width: 24px !important;
+    min-height: 24px !important; max-height: 24px !important;
+    border-radius: 6px !important;
+    background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+    border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent) !important;
+    box-shadow: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0 !important;
+    transition: background-color .12s ease !important;
+  }
+  /* Always-visible × glyph (the kit only revealed it on cluster hover). */
+  .ow-controls .ow-close::before {
+    content: "\00d7" !important;
+    font-size: 15px !important;
+    line-height: 1 !important;
+    color: var(--fg) !important;
+    opacity: 0.7 !important;
+  }
+  .ow-controls .ow-close:hover {
+    background: #ff5f57 !important;
+    border-color: #ff5f57 !important;
+  }
+  .ow-controls .ow-close:hover::before { color: #fff !important; opacity: 1 !important; }
+  .ow-controls .ow-close:focus-visible {
+    outline: 2px solid var(--sys-blue, #0a84ff) !important;
+    outline-offset: 2px !important;
+  }
+
+  /* 2b) The OTHER stoplight family: legacy modal-header controls (Settings,
+     capabilities, etc.) render .close-btn / .modal-close as a red macOS disc and
+     .minimize-btn / .modal-minimize-btn as a yellow one, absolutely pinned
+     top-left. Same cleanup: hide minimize, drop the left gutter, and restyle
+     close as the same quiet neutral square (top-RIGHT via normal flow). */
+  .modal-header .minimize-btn,
+  .modal-header .modal-minimize-btn { display: none !important; }
+  .modal-header:has(.close-btn, .modal-close, .minimize-btn, .modal-minimize-btn) {
+    padding-left: 12px !important;
+  }
+  .modal-header .close-btn,
+  .modal-header .modal-close {
+    position: static !important;
+    transform: none !important;
+    margin: 0 0 0 auto !important;   /* flush right */
+    width: 24px !important; height: 24px !important;
+    min-width: 24px !important; max-width: 24px !important;
+    min-height: 24px !important; max-height: 24px !important;
+    border-radius: 6px !important;
+    background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+    border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    color: var(--fg) !important;
+  }
+  .modal-header .close-btn::before,
+  .modal-header .modal-close::before {
+    content: "\00d7" !important;
+    position: static !important;
+    font-size: 15px !important;
+    line-height: 1 !important;
+    color: var(--fg) !important;
+    opacity: 0.7 !important;
+  }
+  .modal-header .close-btn:hover,
+  .modal-header .modal-close:hover {
+    background: #ff5f57 !important;
+    border-color: #ff5f57 !important;
+  }
+  .modal-header .close-btn:hover::before,
+  .modal-header .modal-close:hover::before { color: #fff !important; opacity: 1 !important; }
+
+  /* 3) Kill the top "white block": the directional luminous sheen band read as a
+     distinct lighter strip at the top of glass surfaces. Flatten it to a single
+     even theme tint so the surface is uniform top-to-bottom. */
+  body.theme-frosted .ow-window .modal-content,
+  body.theme-frosted .modal-content,
+  body.theme-frosted .admin-card {
+    background-image:
+      linear-gradient(0deg,
+        color-mix(in srgb, var(--theme-bg-raw, var(--panel)) 12%, transparent),
+        color-mix(in srgb, var(--theme-panel-raw, var(--panel)) 12%, transparent)) !important;
+  }
+}
+
