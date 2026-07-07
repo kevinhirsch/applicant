@@ -9,6 +9,7 @@ gate (FR-UI-5) like the rest of the application surface.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import tempfile
 from pathlib import Path
@@ -23,6 +24,8 @@ from applicant.app.deps import (
     require_llm_configured,
 )
 from applicant.ports.driving.onboarding import IntakeSection
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/onboarding",
@@ -141,6 +144,26 @@ def complete(campaign_id: str, svc=Depends(get_onboarding_service)) -> dict:
     return _state_dict(state)
 
 
+def _base_resume_verify(svc, campaign_id: str) -> dict:
+    """The persisted parse-verify block for a campaign's base résumé.
+
+    Read back from the intake record (the same source the review UI trusts).
+    Conservative default: anything missing or unreadable reads as NOT verified —
+    never as a checked parse.
+    """
+    get_state = getattr(svc, "get_state", None)
+    if get_state is None:
+        return {"verified": False}
+    try:
+        intake = getattr(get_state(campaign_id), "intake", None) or {}
+        verify = (intake.get("base_resume") or {}).get("verify")
+        if isinstance(verify, dict) and verify:
+            return verify
+    except Exception:  # pragma: no cover - defensive: surfacing must never break ingest
+        log.exception("could not read the base-resume verify block")
+    return {"verified": False}
+
+
 @router.post("/{campaign_id}/base-resume")
 async def ingest_base_resume(
     campaign_id: str,
@@ -208,6 +231,11 @@ async def ingest_base_resume(
             "parseable": bool(getattr(result, "parseable", False)),
             "issues": list(getattr(result, "parseability_issues", None) or []),
         },
+        # Parse-verify outcome (P1-1a): whether the model-checked slotting pass
+        # ran and what it changed, read back from the persisted intake record —
+        # the review UI shows this next to the read summary so an unverified
+        # parse is never mistaken for a checked one (H2).
+        "verify": _base_resume_verify(svc, campaign_id),
     }
 
 

@@ -94,13 +94,14 @@ def _resume_health_block() -> str:
 def test_read_resume_appends_resume_health_to_the_same_confirmation_message():
     src = _src()
     m = re.search(
-        r"st\.innerHTML = `\$\{_resumeReadSummaryHTML\(res\)\}\$\{([^}]+)\}`;",
+        r"st\.innerHTML = `\$\{_resumeReadSummaryHTML\(res\)\}"
+        r"\$\{_parseVerifyHTML\(res\)\}\$\{_resumeHealthHTML\(res\)\}`;",
         src,
     )
-    assert m, "the post-upload confirmation assignment must exist"
-    assert m.group(1).strip() == "_resumeHealthHTML(res)", (
-        "resume health must be appended INTO the existing confirmation message "
-        "(same st.innerHTML assignment), not rendered as a separate step/element"
+    assert m, (
+        "the post-upload confirmation must compose read-summary + parse-verify "
+        "+ resume-health INTO the one st.innerHTML assignment (same message, "
+        "not separate steps/elements)"
     )
     # HONESTY: the confirmation must not read the attribute-cloud total — the
     # "I read N details" claim counts only what THIS parse extracted.

@@ -173,3 +173,107 @@ test('maybeLaunchOnboarding (#27, regression guard) still launches for a genuine
   assert.ok(h.getCalls().includes('_buildOverlay'), 'expected _buildOverlay to run when nothing suppresses launch');
   assert.equal(h.getOverlayCount(), 1, 'expected exactly one overlay to be appended');
 });
+
+// ── parse-verify ("double-check") surfacing — _parseVerifyHTML ──────────────
+//
+// P1-1a reachability: the engine's verify block (verified / reason /
+// corrections / restored_from_draft) must render honestly in the wizard.
+// Same extract-and-execute pattern: the REAL helper bodies run against a
+// real-behaving esc() stub, so copy drift or a dropped honesty guard goes red.
+
+function buildVerifyHarness() {
+  const objStart = SRC.indexOf('const _VERIFY_REASON_COPY = {');
+  if (objStart === -1) throw new Error('_VERIFY_REASON_COPY not found in applicantOnboarding.js');
+  const copyMap = 'const _VERIFY_REASON_COPY = '
+    + extractBalanced(SRC, SRC.indexOf('{', objStart)) + ';';
+  const areasStart = SRC.indexOf('const _CONF_AREAS = [');
+  if (areasStart === -1) throw new Error('_CONF_AREAS not found in applicantOnboarding.js');
+  const areas = SRC.slice(areasStart, SRC.indexOf('];', areasStart) + 2);
+  const src = [
+    // Real-behaving escape stub (the module's esc comes from an import).
+    'const esc = (s) => String(s)'
+    + '.replace(/&/g, "&amp;").replace(/</g, "&lt;")'
+    + '.replace(/>/g, "&gt;").replace(/"/g, "&quot;");',
+    copyMap,
+    areas,
+    extractFunction(SRC, '_confidenceSummary'),
+    extractFunction(SRC, '_friendlyVerifyItem'),
+    extractFunction(SRC, '_verifyListHTML'),
+    extractFunction(SRC, '_parseVerifyHTML'),
+    'return _parseVerifyHTML;',
+  ].join('\n');
+  return new Function(src)();
+}
+
+test('_parseVerifyHTML: a verified parse gets the green confirmation plus corrections and kept items', () => {
+  const html = buildVerifyHarness()({
+    verify: {
+      verified: true,
+      corrections: ['split title|company', 'recovered second role'],
+      restored_from_draft: ['role:Data Engineer @ Hooli', 'skill:SQL'],
+    },
+  });
+  assert.ok(html.includes('admin-success'), 'verified must render the success style');
+  assert.ok(html.includes('Double-checked'), 'verified must say it was double-checked');
+  assert.ok(html.includes('split title|company'), 'corrections must be listed');
+  assert.ok(html.includes('Job: Data Engineer @ Hooli'), 'restored role renders with a friendly label');
+  assert.ok(html.includes('Skill: SQL'), 'restored skill renders with a friendly label');
+});
+
+test('_parseVerifyHTML: long lists cap at 5 with an honest "and N more"', () => {
+  const corrections = Array.from({ length: 8 }, (_, i) => `fix number ${i}`);
+  const html = buildVerifyHarness()({ verify: { verified: true, corrections } });
+  assert.ok(html.includes('fix number 4'), 'the first five corrections render');
+  assert.ok(!html.includes('fix number 5'), 'the sixth is folded into the count');
+  assert.ok(html.includes('and 3 more'), 'the fold is announced, never silent');
+});
+
+test('_parseVerifyHTML: an unverified parse says WHY and never shows success styling', () => {
+  const render = buildVerifyHarness();
+  const html = render({ verify: { verified: false, reason: 'model_error' } });
+  assert.ok(html.includes('Not double-checked'), 'unverified must say so');
+  assert.ok(html.includes('reach your model'), 'the reason copy renders');
+  assert.ok(!html.includes('admin-success'), 'no success styling on an unchecked parse');
+  const unknown = render({ verify: { verified: false, reason: 'something_new' } });
+  assert.ok(unknown.includes('could not be run'), 'unknown reasons fall back honestly');
+});
+
+test('_parseVerifyHTML: an older engine with no verify block renders silence, not a guess', () => {
+  const render = buildVerifyHarness();
+  assert.equal(render({}), '');
+  assert.equal(render(null), '');
+});
+
+test('_parseVerifyHTML: correction text is HTML-escaped', () => {
+  const html = buildVerifyHarness()({
+    verify: { verified: true, corrections: ['<script>alert(1)</script>'] },
+  });
+  assert.ok(!html.includes('<script>'), 'raw markup must not pass through');
+  assert.ok(html.includes('&lt;script&gt;'), 'markup renders escaped');
+});
+
+test('_parseVerifyHTML: per-area confidence renders with friendly labels, grouped by stem', () => {
+  const objStart = SRC.indexOf('const _CONF_AREAS = [');
+  assert.ok(objStart !== -1, '_CONF_AREAS must exist');
+  const src = [
+    'const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");',
+    SRC.slice(objStart, SRC.indexOf('];', objStart) + 2),
+    extractFunction(SRC, '_confidenceSummary'),
+    'return _confidenceSummary;',
+  ].join('\n');
+  const summary = new Function(src)();
+  // The renamed live-model key shapes group under their friendly stems, and each
+  // area reports its LOWEST matching score (the conservative read).
+  const html = summary({
+    work_history_titles_companies: 0.99,
+    work_history_achievements: 0.98,
+    education_certifications: 0.97,
+    skills_extraction: 0.98,
+  });
+  assert.ok(html.includes('work history 98%'), 'work areas group to the lowest score');
+  assert.ok(html.includes('education 97%'));
+  assert.ok(html.includes('skills 98%'));
+  assert.ok(!html.includes('work_history_titles_companies'), 'raw keys never render');
+  assert.equal(summary({}), '', 'no scores, no claim');
+  assert.equal(summary(null), '', 'missing confidence renders silence');
+});

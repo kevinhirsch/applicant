@@ -192,3 +192,50 @@ async def test_router_dict_mirrors_service_parseability_verdict(tmp_path):
         "parseable": False,
         "issues": ["contact email is not recoverable"],
     }
+    # A service that exposes no intake state reads as NOT verified — never as
+    # a checked parse.
+    assert out["verify"] == {"verified": False}
+
+
+# ---------------------------------------------------------------------------
+# Parse-verify surfacing (P1-1a) — the upload response carries the verify block
+# ---------------------------------------------------------------------------
+
+
+def test_base_resume_upload_response_carries_an_honest_verify_block(client):
+    """In this hermetic app the configured model endpoint is unreachable, so
+    the parse-verify layer must report NOT verified with a reason — the
+    response never silently pretends the parse was checked (H2)."""
+    cid = _make_campaign(client)
+    r = client.post(
+        f"/api/onboarding/{cid}/base-resume",
+        files={"file": ("resume.txt", io.BytesIO(_CLEAN_RESUME.encode()), "text/plain")},
+    )
+    assert r.status_code == 200
+    verify = r.json().get("verify")
+    assert isinstance(verify, dict), "upload response must surface the verify block"
+    assert verify["verified"] is False
+    assert verify.get("reason"), "an unchecked parse must say WHY it is unchecked"
+
+
+def test_base_resume_verify_helper_reads_the_persisted_intake_block():
+    """The router reads the verify outcome back from the persisted intake
+    record (the same source of truth the review UI trusts)."""
+    from applicant.app.routers.onboarding import _base_resume_verify
+
+    block = {"verified": True, "model": "m", "tier": 2, "corrections": ["split title"]}
+
+    class _State:
+        intake = {"base_resume": {"verify": block}}
+
+    class _Svc:
+        def get_state(self, _cid):
+            return _State()
+
+    assert _base_resume_verify(_Svc(), "c") == block
+
+    class _EmptySvc:
+        def get_state(self, _cid):
+            return type("S", (), {"intake": {}})()
+
+    assert _base_resume_verify(_EmptySvc(), "c") == {"verified": False}
