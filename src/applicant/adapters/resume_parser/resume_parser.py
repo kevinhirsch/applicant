@@ -100,6 +100,14 @@ _SKILL_SEPARATORS = frozenset(",;•·‧・|")
 #: last-resort fallback in ``_split_title_company`` after every named
 #: separator has failed to match.
 _COLUMN_GAP_RE = re.compile(r" {2,}")
+#: A "City, ST" location — one or more words, a comma, then a 2-letter (US) state
+#: code (optionally dotted). Common Word/Google-Docs résumé layout puts the role
+#: TITLE + company on one line and "LOCATION – DATE - DATE" on the NEXT line
+#: ("Lead Scrum Master – Wells Fargo" / "PHOENIX, AZ – SEPTEMBER 2025 - PRESENT").
+#: Without recognising the location, the text before the date on the date line
+#: ("PHOENIX, AZ") was mis-read as the title/company and the real title line above
+#: was never consulted (the look-back only fired when that text was empty).
+_LOCATION_RE = re.compile(r"^[A-Za-z.'\-]+(?:[ .][A-Za-z.'\-]+)*,\s*[A-Za-z]{2}\.?$")
 
 
 class ResumeParser:
@@ -265,7 +273,7 @@ class ResumeParser:
         # that carries its title/company ("header"). The header is usually the
         # date line itself (same-line layout) but can be an earlier line (the
         # "Title, Company" / date-on-next-line layout) via the look-back.
-        matches: list[tuple[int, re.Match, int, str]] = []
+        matches: list[tuple[int, re.Match, int, str, str]] = []
         for idx, line in enumerate(body):
             dm = _DATE_RANGE_RE.search(line)
             if not dm:
@@ -276,16 +284,27 @@ class ResumeParser:
             # ends so the company never renders as "Acme Corp (" (FR-RESUME-3 fidelity).
             before = line[: dm.start()].strip(" \t,-–—|([{")
             header_idx = idx
+            location = ""
             if not before:
                 # Common layout: "Title, Company" on its own line, the date range on
                 # the NEXT line. The title/company is therefore on the immediately
                 # preceding non-empty, non-date line — look back and attribute it,
                 # otherwise the entry renders as "\cventry{2021 - Present}{}{}...".
                 header_idx, before = self._look_back_title_company(body, idx)
-            matches.append((idx, dm, header_idx, before))
+            elif _LOCATION_RE.match(before):
+                # "LOCATION – DATE" date line (Word/Docs layout): the text before the
+                # date is the CITY, ST — not the title/company, which sits on the line
+                # above. Keep the location for the entry and look back for the header.
+                location = before
+                lb_idx, lb_before = self._look_back_title_company(body, idx)
+                if lb_before:
+                    header_idx, before = lb_idx, lb_before
+                else:
+                    before = ""  # no header found — don't keep the location as title
+            matches.append((idx, dm, header_idx, before, location))
 
         entries: list[WorkHistoryEntry] = []
-        for i, (date_idx, dm, _header_idx, before) in enumerate(matches):
+        for i, (date_idx, dm, _header_idx, before, location) in enumerate(matches):
             title, company = self._split_title_company(before)
             # Defensive: the split can still leave a trailing bracket on either field
             # when the separator sat between the date and the bracket.
@@ -310,6 +329,7 @@ class ResumeParser:
                     company=company,
                     start_date=dm.group(1).strip(),
                     end_date=dm.group(2).strip(),
+                    location=location,
                     achievements=achievements,
                 )
             )
@@ -338,7 +358,7 @@ class ResumeParser:
 
     @staticmethod
     def _split_title_company(text: str) -> tuple[str, str]:
-        for sep in (" at ", " @ ", ", ", " | ", "\t", " - "):
+        for sep in (" – ", " — ", " at ", " @ ", ", ", " | ", "\t", " - "):
             if sep in text:
                 left, right = text.split(sep, 1)
                 return left.strip(), right.strip()

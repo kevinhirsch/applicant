@@ -393,3 +393,24 @@ def test_work_history_heading_variant_is_recognized(parser, tmp_path):
     assert {w.company for w in parsed.work_history} == {"Acme Corp", "Globex Industries"}
     assert len(parsed.education) == 1
     assert parsed.education[0].degree == "A.A. Computer Information Systems"
+
+
+def test_work_entry_location_on_date_line_recovers_title_company(parser, tmp_path):
+    """Word/Docs layout: 'Title – Company' on one line, 'CITY, ST – DATE' on the
+    next. The location on the date line must NOT be mistaken for the title/company
+    (the prior bug read title='CITY', company='ST'); the real header is the line
+    above, and the location is captured into its own field."""
+    resume = tmp_path / "r.txt"
+    resume.write_text(
+        "Jane Roe\njane@example.com\n\n"
+        "PROFESSIONAL EXPERIENCE\n"
+        "Lead Engineer – Globex Corp\n"
+        "AUSTIN, TX – JANUARY 2022 - PRESENT\n"
+        "  • shipped things\n"
+    )
+    parsed = parser.parse(str(resume))
+    e = next(w for w in parsed.work_history if "Lead Engineer" in w.title)
+    assert e.title == "Lead Engineer"
+    assert e.company == "Globex Corp"
+    assert e.location == "AUSTIN, TX"
+    assert any("shipped things" in a for a in e.achievements)
