@@ -26,6 +26,7 @@ from applicant.adapters.fonts.font_installer import FontInstaller
 from applicant.adapters.llm.openai_compatible import OpenAICompatibleLLM
 from applicant.adapters.notification.apprise_notifier import AppriseNotifier
 from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
+from applicant.adapters.resume_parser.llm_verify import LLMVerifiedResumeParser
 from applicant.adapters.resume_parser.resume_parser import ResumeParser
 from applicant.adapters.resume_tailoring.base_resume_provider import BaseResumeProvider
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
@@ -575,7 +576,16 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials = InMemoryCredentialStore(settings.credential_keyfile)
 
     # Onboarding service (FR-ONBOARD): resumable intake + attribute-cloud bootstrap.
-    resume_parser = ResumeParser()
+    # The deterministic parser is wrapped by the LLM parse-verify layer (P1-1a): the
+    # draft parse is checked/corrected by the configured model so real-world résumé
+    # layouts slot into the right fields (study: docs/studies/2026-07-07-parse-verify-
+    # tier-study.md). The LLM ladder is built LATER in this function, so the model is
+    # late-bound via bind_llm() further down; until then — and whenever no model is
+    # configured — the wrapper returns the deterministic parse with an honest
+    # not-verified marker instead of failing ingest.
+    resume_parser = LLMVerifiedResumeParser(
+        ResumeParser(), enabled=settings.parse_verify_enabled
+    )
     onboarding_service = OnboardingService(
         storage=storage,
         config_store=config_store,
@@ -775,6 +785,10 @@ def build_container(settings: Settings | None = None) -> Container:
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).
     setup_service.register_llm_config_change_hook(llm.refresh_ladder)
+    # P1-1a: late-bind the ladder into the parse-verify layer (the parser was built
+    # before ``llm`` existed). The singleton resolves its ladder lazily, so a model
+    # connected at runtime is picked up on the next résumé ingest automatically.
+    resume_parser.bind_llm(llm, enabled=settings.parse_verify_enabled)
     # FR-MIND-8/-13: upgrade the context summarizer to the CHEAP, OPTIONAL cheap-model
     # path now that ``llm`` exists. Defensive: ``build_llm_summarizer`` returns the
     # deterministic heuristic when no model is configured, so the hermetic lane stays

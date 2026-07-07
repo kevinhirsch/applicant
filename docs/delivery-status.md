@@ -5,7 +5,7 @@ Single source of "done" truth: a per-phase delivery summary for Applicant.
 pass that followed an honest re-audit, and the **front-door (Phase 5)** lift-and-shift of
 the operator UI onto the white-labeled workspace app plus a reachability re-audit. The
 engine's hermetic default test lane is green — `uv run pytest -q` reports **2436 passed**
-with 25 integration-gated skips.
+with 26 integration-gated skips.
 
 > **Done means reachable.** A requirement is delivered only when it is reachable/operable
 > in the white-labeled workspace **front door** (`workspace/`), not merely when the engine
@@ -49,7 +49,7 @@ for the bug ledger. It also closed the cross-user isolation thread (single-tenan
 The **3704 hermetic engine tests prove the logic** of every requirement against fakes / in-memory
 adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
 conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
-the **25 integration-gated skips** cover those and run only on a live deployment with the
+the **26 integration-gated skips** cover those and run only on a live deployment with the
 matching toolchain/service present (live Postgres/DBOS, a real browser + chromium binary,
 live job boards, real TeX/LibreOffice, a live Neko session, live Discord/SMTP). The
 production code paths for those boundaries exist and are wired — only their live execution is

@@ -553,6 +553,12 @@ class OnboardingService:
             "detected_fonts": list(parsed.detected_fonts),
             "parsed": True,
             "raw_text": parsed.raw_text,
+            # P1-1a: the LLM parse-verify outcome (verified flag, per-area
+            # confidence, corrections, model/tier, or an honest not-verified
+            # reason) — the review UI reads this so a user can see WHETHER the
+            # parse was checked and what changed, and an unverified parse is
+            # loudly unverified rather than silently trusted (H2).
+            "verify": dict(parsed.extra.get("verify") or {"verified": False}),
         }
         rec["intake"] = intake
         done = set(rec.get("sections_complete", []))

@@ -52,7 +52,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | IN PROGRESS |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | — |
-| P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | IN PROGRESS — study green, PR #642 open |
+| P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | CORE LANDED — FE review-surfacing remains |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | — |
 | P1-4 | Notifications out of the box | M | eng | — |
