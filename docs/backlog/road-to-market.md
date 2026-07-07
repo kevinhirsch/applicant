@@ -133,7 +133,7 @@ A story is not done until ALL of these hold, in addition to its own DoD:
 
 ---
 
-# Phase 0 — Baseline
+# Phase 0
 
 ### P0-1 — Merge the window-chrome / nav / Settings baseline
 **As** the team, **I want** the light-glass chrome, Home wordmark, Themes-on-sidebar,
@@ -248,7 +248,7 @@ must wait until P0-3/P0-4/P0-5 land (or baselines get blessed twice).
 
 ---
 
-# Phase 1 — Product completeness
+# Phase 1
 
 ### P1-0 — Revoke & rotate exposed secrets *(do first)*
 **As** the owner, **I want** all previously-exposed API keys revoked and secret
@@ -452,7 +452,7 @@ P1-2 spans the whole phase (external lead time).
 
 ---
 
-# Phase 1.5 — Personal Acceptance Gate (the founder dogfood; the launch go/no-go)
+# Phase 1.5
 
 The **final move before market is the owner using Applicant on their own real job
 search until they trust it.** This is not demo mode (P0-2, which is *synthetic* data for
@@ -530,7 +530,7 @@ P1-1, P1-2, real model key + the owner's real résumé.
 
 ---
 
-# Phase 2 — Trust, legal, security & the deeper product-value proofs
+# Phase 2
 
 *(Detailed at story level here because several items are launch-blocking and were the
 "gaps people hit at the end.")*
@@ -638,7 +638,7 @@ surfaced in UI (ties to P1-3); expectations documented.
 
 ---
 
-# Phase 3 — Packaging & distribution
+# Phase 3
 
 ### P3-1 — One-command install, tested targets
 **Effort:** M–L · **Owner:** eng · **Depends on:** Phase 1 complete
@@ -679,7 +679,7 @@ channel; SPF/DKIM guidance shipped for the SMTP path.
 
 ---
 
-# Phase 4 — Go-to-market
+# Phase 4
 
 ### P4-1 — Positioning: name the enemy
 **Effort:** S · **Owner:** you + eng · **DoD:** A one-sentence positioning statement
@@ -721,7 +721,7 @@ self-hosted-store collision check for "Applicant" complete; go/no-go on the name
 
 ---
 
-# Phase 5 — Launch & operate
+# Phase 5
 
 ### P5-1 — Support machinery
 **Effort:** M · **Owner:** eng · **DoD:** Issue templates + a redacted diagnostic-bundle
