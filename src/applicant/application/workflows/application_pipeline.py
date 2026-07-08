@@ -90,6 +90,15 @@ class PipelineContext:
     #: OUTSIDE the checkpointed ``material`` step on every re-drive (#1) so a stale
     #: cached "not approved" can never park the pipeline before the recv gate forever.
     material_approved: Callable[[], bool] | None = None
+    #: -> str|None: the application's CURRENT persisted §7 state (read live from
+    #: storage — the durable source of truth). Mirrors ``material_approved`` (#1):
+    #: consulted OUTSIDE the checkpointed ``prefill`` step whenever that step served
+    #: a CACHED hand-off, so a stale checkpoint can never lock the pipeline at the
+    #: wall on an orchestrator that cannot clear a completed step (Greptile P1 on
+    #: PR #767: the DBOS adapter exposes no ``clear``, so the run loop's
+    #: checkpoint-clear-on-handoff silently no-ops there). ``None`` (default)
+    #: preserves the exact prior behavior (side_effects-only resumption tests).
+    persisted_state: Callable[[], str | None] | None = None
     #: -> str|None: notify the user the app awaits final approval (returns notify handle).
     request_final_approval: Callable[[], Any] | None = None
     #: -> dict: record the submission/outcome once approval is delivered.
@@ -169,13 +178,51 @@ def run_pipeline(
     out: dict[str, Any] = {"workflow_id": workflow_id}
 
     # 1. Open sandbox + maximal pre-fill (one checkpointed step). ------------
+    executed_this_pass = {"prefill": False}
+
     def _prefill() -> dict:
+        executed_this_pass["prefill"] = True
         sink.append("prefill")
         if ctx is not None and ctx.prefill is not None:
             return ctx.prefill()
         return {"state": "AWAITING_FINAL_APPROVAL"}
 
     prefill_result = orchestrator.run_step(workflow_id, "prefill", _prefill)
+
+    # Greptile P1 (PR #767): a CACHED hand-off must not be trusted blindly. The run
+    # loop clears the checkpoint after a pre-fill hand-off so the next drive re-runs
+    # the step — but only on orchestrators that expose ``clear`` (the shim). On a
+    # backend without it (the DBOS adapter has no ``clear``, and DBOS's exactly-once
+    # step recording cannot be reset through its public API), the stale checkpointed
+    # hand-off would replay on every re-drive FOREVER, so an application could never
+    # leave the wall even after the human resolved it — the exact lockout the P2-12
+    # CAPTCHA drill first found on the shim. Mirror the ``material_approved`` (#1)
+    # pattern: when the step was served from cache AND it claims a hand-off, re-read
+    # the PERSISTED §7 state (the durable source of truth) live:
+    #   * still parked at a hand-off  -> re-drive pre-fill LIVE (``ctx.prefill`` —
+    #     the run loop's closure picks the targeted ``resume_after_*`` entry, #4);
+    #   * already past the wall       -> trust the persisted state and continue
+    #     (the checkpoint is only a cache of it).
+    # No live source wired (``persisted_state=None`` — the side_effects-only
+    # resumption tests) keeps the exact prior cached behavior.
+    if (
+        _is_handoff(prefill_result.get("state"))
+        and not executed_this_pass["prefill"]
+        and ctx is not None
+        and ctx.persisted_state is not None
+    ):
+        live_state = ctx.persisted_state()
+        if _is_handoff(live_state) and ctx.prefill is not None:
+            log.info(
+                "prefill_handoff_checkpoint_stale_redriving_live",
+                workflow_id=workflow_id,
+                cached_state=prefill_result.get("state"),
+                live_state=live_state,
+            )
+            prefill_result = _prefill()
+        elif live_state is not None and not _is_handoff(live_state):
+            prefill_result = {"state": live_state}
+
     out["prefill"] = prefill_result
 
     # Human-in-the-loop hand-off: yield + stop this pass (FR-AGENT-4/6, FR-DUR-4).

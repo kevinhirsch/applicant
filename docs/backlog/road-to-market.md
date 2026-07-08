@@ -1211,6 +1211,14 @@ in the same change; the other two passed as designed:
       `AgentLoop`) while parked at the wall — resumability comes from the
       PERSISTED `Application.status`, not the durable-orchestration checkpoint.
       See `docs/known-issues.md` ("stale-checkpoint hand-off lockout", resolved).
+      Review follow-up (Greptile P1): the clear-on-handoff only exists on backends
+      exposing `clear` (the DBOS adapter has none), so the pipeline additionally
+      re-reads the persisted §7 state live whenever the checkpointed prefill step
+      serves a cached hand-off (`PipelineContext.persisted_state`, mirroring the
+      `material_approved` #1 pattern) — drilled with a fake orchestrator LACKING
+      `clear` (`TestDrillHandoffWithoutClear`). The DBOS-only residual above the
+      step layer (completed-workflow result caching) is filed as
+      `docs/known-issues.md` K8.
 - [x] **Take a source offline** — PASSED (restart/tick-survival). One discovery
       source erroring never loses another source's results (the well-behaved
       aggregator contract, H2-honest per-source outcome persisted) — deep H2

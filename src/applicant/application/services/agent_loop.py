@@ -1474,12 +1474,22 @@ class AgentLoop:
             if self._capacity is not None:
                 self._capacity.release_sandbox(str(aid))
 
+        def _persisted_state() -> str | None:
+            # Greptile P1 (PR #767): the live §7 state for the pipeline's
+            # stale-cached-hand-off re-check (``PipelineContext.persisted_state``) —
+            # so an orchestrator without ``clear`` (the DBOS adapter) can still
+            # resume an application off the wall.
+            current = self._storage.applications.get(aid) or app
+            status = getattr(current, "status", None)
+            return status.value if status is not None else None
+
         return PipelineContext(
             application_id=str(aid),
             prefill=_prefill,
             material_warranted=_material_warranted,
             prepare_material=_prepare_material,
             material_approved=_material_approved,
+            persisted_state=_persisted_state,
             request_final_approval=_request_approval,
             submit=_submit,
             teardown=_teardown,
@@ -1896,11 +1906,25 @@ class AgentLoop:
         return f"application:{application_id}"
 
     def _clear_checkpoint(self, application_id: ApplicationId) -> None:
-        """Remove a terminal workflow's durable checkpoint (DUR-2). Defensive."""
+        """Remove a terminal workflow's durable checkpoint (DUR-2). Defensive.
+
+        Greptile P1 (PR #767): not every backend supports this — the DBOS adapter
+        exposes no ``clear`` (DBOS's exactly-once step/workflow recording has no
+        public reset). On such a backend this is a no-op, but a LOUD one (H-series:
+        nothing degrades silently): correctness does not depend on it — the
+        pipeline's ``persisted_state`` re-check (``application_pipeline.run_pipeline``)
+        is the backend-agnostic guard against a stale checkpointed hand-off — this
+        clear is the cache-hygiene fast path where available.
+        """
         if self._orch is None:
             return
         clear = getattr(self._orch, "clear", None)
         if clear is None:
+            log.warning(
+                "checkpoint_clear_unsupported",
+                application_id=str(application_id),
+                orchestrator=type(self._orch).__name__,
+            )
             return
         try:
             clear(self._workflow_id(application_id))

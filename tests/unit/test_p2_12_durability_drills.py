@@ -416,6 +416,116 @@ class TestDrillCaptchaWall:
         assert app.status == ApplicationState.AWAITING_FINAL_APPROVAL
 
 
+# === Drill 3b: the CAPTCHA wall on a backend WITHOUT ``clear`` ==================
+@pytest.mark.unit
+class TestDrillHandoffWithoutClear:
+    """Greptile P1 (PR #767): the run loop's checkpoint-clear-on-handoff only works
+    on orchestrators exposing ``clear`` — the DBOS adapter has none (DBOS's
+    exactly-once recording has no public reset), so on that backend the stale
+    checkpointed prefill hand-off replayed forever. The backend-agnostic guard is
+    the pipeline's ``persisted_state`` live re-check (mirrors ``material_approved``
+    #1): when the checkpointed prefill step serves a CACHED hand-off, the live §7
+    state decides — still parked, re-drive pre-fill live; already past the wall,
+    trust the persisted state and continue. This drill proves it with a fake
+    orchestrator that durably caches step results and deliberately LACKS ``clear``.
+
+    Honest scope note (docs/known-issues.md K8): on real DBOS a further residual
+    remains ABOVE the step layer — a completed workflow's whole RESULT is cached by
+    workflow id, so a same-id re-drive does not re-execute the body at all; fixing
+    that needs per-attempt workflow executions (its own story). This test pins the
+    step-checkpoint half, which is exactly the layer Greptile's finding names.
+    """
+
+    class _NoClearOrchestrator:
+        """Minimal durable-orchestration double: caches step results by
+        ``(workflow_id, step_name)`` like every real backend, persists mailboxes,
+        and — the point — exposes NO ``clear``."""
+
+        def __init__(self):
+            self._workflows = {}
+            self._steps: dict[tuple[str, str], object] = {}
+            self._mailbox: dict[tuple[str, str], list] = {}
+
+        def register_workflow(self, name, fn):
+            self._workflows[name] = fn
+
+        def start_workflow(self, name, workflow_id, *args, **kwargs):
+            fn = self._workflows[name]
+            result = fn(self, workflow_id, *args, **kwargs)
+
+            class _Handle:
+                def __init__(self, r):
+                    self._r = r
+
+                def result(self):
+                    return self._r
+
+            return _Handle(result)
+
+        def run_step(self, workflow_id, step_name, fn):
+            key = (workflow_id, step_name)
+            if key in self._steps:
+                return self._steps[key]  # exactly-once: cached, never re-run
+            result = fn()
+            self._steps[key] = result
+            return result
+
+        def send(self, workflow_id, topic, payload):
+            self._mailbox.setdefault((workflow_id, topic), []).append(payload)
+
+        def recv(self, workflow_id, topic, timeout=None):
+            box = self._mailbox.get((workflow_id, topic), [])
+            return box.pop(0) if box else None
+
+    def test_handoff_does_not_replay_stale_without_clear(self):
+        from datetime import UTC, datetime
+
+        storage = InMemoryStorage()
+        orch = self._NoClearOrchestrator()
+        assert not hasattr(orch, "clear")  # the defect's precondition, pinned
+        cid = _make_campaign(storage)
+        _approve_posting(storage, cid)
+        spy = TestDrillCaptchaWall._SeqCaptchaPrefill()
+        submission = _FakeSubmission()
+
+        loop = AgentLoop(
+            storage=storage,
+            agent_run_service=AgentRunService(storage),
+            scoring_service=_FakeScoring(),
+            digest_service=_FakeDigest(),
+            prefill_service=spy,
+            submission_service=submission,
+            orchestrator=orch,
+        )
+        loop._resume_backoff_seconds = 0
+
+        # Tick 1: hit the wall; the hand-off is checkpointed and CANNOT be cleared.
+        loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+        app = storage.applications.list_for_campaign(cid)[0]
+        assert app.status == ApplicationState.BLOCKED_DETECTION
+        assert spy.calls == ["prefill_application"]
+        assert (f"application:{app.id}", "prefill") in orch._steps  # stale cache exists
+
+        # Tick 2: the checkpoint still says hand-off (no clear happened), but the
+        # pipeline's live persisted-state re-check re-drives pre-fill through the
+        # targeted resume entry point (#4) instead of replaying the stale cache.
+        loop.run_once(cid, now=datetime(2026, 6, 16, 0, 1, tzinfo=UTC))
+        assert spy.calls == ["prefill_application", "resume_after_detection"]
+        app = storage.applications.list_for_campaign(cid)[0]
+        assert app.status == ApplicationState.AWAITING_FINAL_APPROVAL
+
+        # Tick 3: the stale hand-off cache STILL exists (nothing could clear it) —
+        # the live state (past the wall) is trusted instead, so the delivered
+        # approval flows through to a real recorded submission.
+        orch.send(
+            f"application:{app.id}", FINAL_APPROVAL_TOPIC, {"decision": "finished_by_engine"}
+        )
+        loop.run_once(cid, now=datetime(2026, 6, 16, 0, 2, tzinfo=UTC))
+        assert str(app.id) in submission.recorded
+        # And pre-fill was NOT wastefully re-walked once past the wall.
+        assert spy.calls == ["prefill_application", "resume_after_detection"]
+
+
 # === Drill 4: take a source offline =============================================
 @pytest.mark.unit
 class TestDrillSourceOffline:
