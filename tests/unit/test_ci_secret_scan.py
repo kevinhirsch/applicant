@@ -74,6 +74,16 @@ def test_flags_a_real_looking_openai_style_key(tmp_path):
     assert any("config.py" in f for f in findings)
 
 
+def test_flags_a_hyphenated_openrouter_style_key(tmp_path):
+    # Real OpenRouter keys are sk-or-v1-<hex> — the payload contains hyphens,
+    # which the original pattern missed entirely (the incident provider!).
+    repo = _init_repo(tmp_path)
+    key = "sk-" + "or-v1-" + "0123456789abcdef" * 3
+    _write_and_track(repo, "settings.py", 'OPENROUTER_API_KEY = "' + key + '"\n')
+    findings = _run_scan_against(repo)
+    assert any("settings.py" in f for f in findings)
+
+
 def test_flags_a_github_token_and_a_pem_private_key(tmp_path):
     repo = _init_repo(tmp_path)
     _write_and_track(repo, "deploy.env", "GH_TOKEN=ghp_" + "a" * 40 + "\n")

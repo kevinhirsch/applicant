@@ -43,7 +43,12 @@ _EXCLUDED_NAMES = {"uv.lock", "package-lock.json"}
 # just a provider prefix, so illustrative snippets and structural
 # redaction/censor regexes elsewhere in the repo don't trip this.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("OpenAI/OpenRouter/Anthropic-style secret key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    # Payload allows hyphens/underscores: real OpenRouter keys are
+    # sk-or-v1-<hex> and real Anthropic keys are sk-ant-api03-<base64ish> —
+    # a [A-Za-z0-9]-only payload silently misses both. Illustrative snippets
+    # ("sk-or-...", "sk-ant-...") still fail the 20-char minimum. The final
+    # char is required alnum so trailing prose hyphens don't extend a match.
+    ("OpenAI/OpenRouter/Anthropic-style secret key", re.compile(r"\bsk-[A-Za-z0-9_-]{19,}[A-Za-z0-9]\b")),
     ("GitHub personal/OAuth/app token", re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{36,}\b")),
     ("GitHub fine-grained PAT", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("GitLab personal access token", re.compile(r"\bglpat-[A-Za-z0-9\-_]{20,}\b")),
