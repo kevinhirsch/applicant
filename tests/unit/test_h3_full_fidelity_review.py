@@ -268,6 +268,25 @@ def test_failed_refresh_keeps_the_previous_reviewed_snapshot(tmp_path):
     assert after.answers == before.answers
 
 
+def test_refresh_without_a_boundary_capture_stays_honestly_empty(tmp_path):
+    """res=None refresh with NO existing reviewed snapshot must record nothing —
+    a snapshot built from live materials alone carries zero literal answers yet
+    would read as has_snapshot=true (Greptile on #746)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    loop, app, _fa, _cid = _park_at_gate(storage, orch)
+
+    # Simulate the boundary capture having failed and been swallowed.
+    storage.submission_snapshots.delete_for_application(app.id)
+    assert storage.submission_snapshots.get_for_application(app.id) is None
+
+    loop._record_presubmit_snapshot(app, None)
+
+    assert storage.submission_snapshots.get_for_application(app.id) is None, (
+        "no boundary capture -> the preview must keep its honest empty state"
+    )
+
+
 # --- reviewed == submitted (byte-identical promotion) -------------------------
 
 

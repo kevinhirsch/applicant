@@ -1986,6 +1986,13 @@ class AgentLoop:
             existing = repo.get_for_application(app.id)
             if existing is not None and existing.stage != STAGE_REVIEWED:
                 return  # submitted evidence is immutable (H3 invariant)
+            if res is None and existing is None:
+                # Refresh pass with NOTHING to refresh: the boundary-time capture
+                # failed (and was loudly swallowed). Building a snapshot from live
+                # app/material data alone would carry zero literal answers yet
+                # read as has_snapshot=true — an incomplete payload masquerading
+                # as full fidelity. Keep the honest empty state instead (H3).
+                return
             # NOTE: the old reviewed snapshot is deleted at the END, only once the
             # replacement is fully built — a failure anywhere in the build below
             # must leave the owner with the PREVIOUS reviewed payload, never with
