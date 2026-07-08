@@ -235,3 +235,82 @@ def test_snapshot_pre_submit_404_from_engine_is_empty(monkeypatch):
     body = r.json()
     assert body["engine_available"] is True
     assert body["has_snapshot"] is False
+
+
+# --- H3 (full-fidelity review): the capture stage passes through -------------
+
+
+def test_snapshot_stage_reviewed_passes_through(client):
+    """The engine now records a provisional ``stage: "reviewed"`` snapshot AT the
+    review stop-boundary (H3) — the preview needs the stage to say honestly
+    whether it is showing what WILL be sent or what WAS sent."""
+    FakeEngine.snapshots = {
+        "app-1": {
+            "application_id": "app-1",
+            "answers": {"Why this role?": "Because it fits."},
+            "stage": "reviewed",
+        }
+    }
+    r = client.get("/api/applicant/snapshot/app-1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_snapshot"] is True
+    assert body["stage"] == "reviewed"
+
+
+def test_snapshot_stage_defaults_empty_when_engine_omits_it(client):
+    FakeEngine.snapshots = {"app-1": {"application_id": "app-1", "answers": {"q": "a"}}}
+    body = client.get("/api/applicant/snapshot/app-1").json()
+    assert body["stage"] == ""
+    # The soft-degrade empty body carries the field too (stable shape).
+    FakeEngine.raises["app-2"] = EngineError("not found", status=404)
+    body = client.get("/api/applicant/snapshot/app-2").json()
+    assert body["stage"] == ""
+
+
+# --- H3 hardening: the snapshot is the OWNER's literal application -----------
+#
+# Mirrors test_applicant_crossuser_isolation_disc15.py's two-account convention:
+# the engine is single-tenant, so once the workspace is configured for multiple
+# accounts only the owner/admin may read the snapshot (require_engine_owner).
+
+
+class _AuthMgr:
+    def __init__(self, *, configured: bool, admins: set | None = None):
+        self.is_configured = configured
+        self._admins = set(admins or ())
+
+    def is_admin(self, user: str) -> bool:
+        return user in self._admins
+
+
+def _make_configured_app(user: str, admins=("owner",)) -> FastAPI:
+    app = FastAPI()
+    app.state.auth_manager = _AuthMgr(configured=True, admins=admins)
+
+    @app.middleware("http")
+    async def _auth(request, call_next):
+        request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(setup_applicant_snapshot_routes())
+    return app
+
+
+def test_snapshot_non_owner_second_account_is_denied(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    FakeEngine.snapshots = {"app-1": {"application_id": "app-1", "answers": {"q": "a"}}}
+    c = TestClient(_make_configured_app("intruder"))
+    r = c.get("/api/applicant/snapshot/app-1")
+    assert r.status_code in (401, 403)
+    # The engine was never consulted for the denied account.
+    assert ("submission_snapshot", "app-1") not in FakeEngine.calls
+
+
+def test_snapshot_owner_account_still_passes(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    FakeEngine.snapshots = {"app-1": {"application_id": "app-1", "answers": {"q": "a"}}}
+    c = TestClient(_make_configured_app("owner"))
+    r = c.get("/api/applicant/snapshot/app-1")
+    assert r.status_code == 200
+    assert r.json()["has_snapshot"] is True
