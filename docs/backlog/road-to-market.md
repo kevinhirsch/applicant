@@ -59,7 +59,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-4 | Notifications out of the box | M | eng | — |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | — |
-| P1-7 | Backup / restore / export | M | eng | — |
+| P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
 | P1-8 | Keyword / ATS match score | S | eng | — |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
@@ -453,12 +453,16 @@ that** an irreplaceable job search is never lost.
 **DoR:** Confirmed data locations (Postgres, workspace `data/`, config) and that
 `update.sh` already has a pre-migration backup step to share code with.
 **DoD:**
-- [ ] `scripts/backup.sh` produces one tarball (Postgres dump + workspace data + config);
+- [x] `scripts/backup.sh` produces one tarball (Postgres dump + workspace data + config);
       `restore.sh` documented; wired into `update.sh`'s pre-migration step.
-- [ ] Settings → Account "Download my data" exports a zip (applications CSV+JSON,
+- [x] Settings → Account "Download my data" exports a zip (applications CSV+JSON,
       documents, profile, activity) that opens in Excel and a text editor.
 - [ ] A scripted backup → destroy volumes → restore drill on the compose stack passes
-      clean (app returns whole).
+      clean (app returns whole). **NEEDS DEPLOY VERIFICATION** — `scripts/backup-restore-drill.sh`
+      is written and its control flow is covered hermetically
+      (`tests/unit/test_backup_restore_drill_script.py`, fake `docker` on `PATH`), but
+      actually running `--confirm-destroy` against a live compose stack (real
+      Postgres + volumes) has not been done — see PR for issue #659.
 
 ### P1-8 — Résumé↔JD keyword / ATS match score *(competitive: match transparency)*
 **As** a user, **I want** to see how well each tailored résumé covers the job's

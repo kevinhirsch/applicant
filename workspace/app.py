@@ -1028,6 +1028,14 @@ app.include_router(setup_applicant_followups_routes())
 from routes.applicant_capabilities_routes import setup_applicant_capabilities_routes
 app.include_router(setup_applicant_capabilities_routes())
 
+# Owner data export (P1-7, issue #659) — owner-scoped proxy (/api/applicant/export)
+# that bundles the owner's applications (CSV + JSON), documents (metadata + any
+# compiled résumé PDFs), profile (attribute cloud), and recent activity into one
+# downloadable zip. Backs Settings -> Account's "Download my data". Auth-protected
+# (require_engine_owner), owner-scoped; adds no engine logic.
+from routes.applicant_export_routes import setup_applicant_export_routes
+app.include_router(setup_applicant_export_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

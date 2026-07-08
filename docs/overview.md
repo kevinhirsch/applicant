@@ -123,6 +123,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/onboarding-intake.md`](onboarding-intake.md) | Workday-ready onboarding intake schema |
 | [`docs/voice-and-truthfulness.md`](voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
+| [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 
 ---
@@ -244,6 +245,15 @@ bash scripts/update.sh --rollback --apply   # restore the most recent DB backup
 The same flow is invokable from the **in-UI Update button** on the Activity/debug
 surface with no CLI (FR-OOBE-4); real dispatch is guarded behind
 `APPLICANT_UPDATE_ENABLED=1`, otherwise it reports a safe dry-run.
+
+## Backup, restore, and data export
+
+`scripts/backup.sh` / `scripts/restore.sh` produce/restore ONE full tarball
+(Postgres + the front-door UI's own data + the deploy config), sharing code
+with `update.sh`'s own pre-migration backup step; `scripts/backup-restore-drill.sh`
+automates a live backup → destroy volumes → restore verification. Owners get
+their own copy via Settings → Account → "Download my data" (applications,
+documents, profile, activity). See [`docs/backup-restore.md`](backup-restore.md).
 
 ## Configuration (environment variables)
 

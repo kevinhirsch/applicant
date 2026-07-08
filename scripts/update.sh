@@ -374,6 +374,19 @@ else
 fi
 # Rotate old backups so daily dumps cannot fill the disk (issue #282).
 prune_backups
+
+# P1-7 (issue #659): ALSO produce one full tarball backup (this same Postgres
+# dump + the front-door UI's own workspace data/ + the deploy config), sharing
+# the dump/export/bundle logic with scripts/backup.sh via
+# scripts/lib/backup-common.sh (CLAUDE.md principle #1 — lift-and-shift, not a
+# second implementation) rather than re-running pg_dump a second time here
+# (--reuse-db-dump passes it the file above). This is a genuine ADDITION, not a
+# replacement: the DB-only dump above (and its restore_dump/--rollback path) is
+# untouched and remains the update flow's real migration-safety net. A failure
+# producing the fuller tarball is logged but never aborts the update.
+if ! "${REPO_ROOT}/scripts/backup.sh" $([[ "${APPLY}" -eq 1 ]] && echo --apply) --reuse-db-dump "${DUMP_FILE}"; then
+  echo "Full tarball backup (scripts/backup.sh) failed — continuing; the database dump above is still a valid rollback point." >&2
+fi
 else
   log "1/5 No migration in this update — skipping the database backup (schema untouched)."
 fi
