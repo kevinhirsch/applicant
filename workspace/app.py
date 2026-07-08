@@ -503,6 +503,43 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
+# Service worker with release cache-busting (P0-6 DoD 5): serve sw.js with the
+# CACHE_NAME stamped by a content fingerprint of the shipped static assets, so
+# every release byte-changes the worker, refreshes the precache, and drops the
+# previous release's caches — no manual CACHE_NAME bump required. Registered
+# BEFORE the /static mount so it wins the route match. `no-cache` keeps the
+# browser's SW update check revalidating instead of trusting a cached copy.
+@app.get("/static/sw.js")
+async def serve_service_worker():
+    import anyio
+
+    from src.sw_version import static_asset_fingerprint, stamp_sw_cache_name
+
+    static_dir = abs_join(BASE_DIR, "static")
+
+    def _read_and_stamp() -> str:
+        # Sync file walk + hash — off the event loop, same as the
+        # _RevalidatingStatic read above. Recomputed per request on purpose:
+        # this route is hit once per SW update check, and the dev flow edits
+        # static files without a restart, so a process-lifetime memo would
+        # serve a stale fingerprint.
+        with open(abs_join(static_dir, "sw.js"), "r", encoding="utf-8") as fh:
+            source = fh.read()
+        return stamp_sw_cache_name(source, static_asset_fingerprint(static_dir))
+
+    try:
+        stamped = await anyio.to_thread.run_sync(_read_and_stamp)
+    except OSError:
+        # A broken deploy artifact (missing, unreadable, or a directory)
+        # should read as a clean 404, not a traceback.
+        return Response(content="service worker not found", status_code=404, media_type="text/plain")
+    return Response(
+        content=stamped,
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
