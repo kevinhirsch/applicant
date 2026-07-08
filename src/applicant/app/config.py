@@ -583,6 +583,21 @@ class Settings(BaseSettings):
     llm_smart_routing_prefer_local: bool = Field(
         default=True, alias="LLM_SMART_ROUTING_PREFER_LOCAL"
     )
+    # --- Verified local-only private mode (P2-11) ----------------------------
+    # When ON, the engine's LLM ladder REFUSES every tier whose base_url is not
+    # an on-box/private-network host (core/rules/private_endpoints.py — strict
+    # host classification, NOT the router's loose local-preference heuristic).
+    # This is a hard privacy mode, not a preference: non-private tiers are
+    # dropped at ladder construction inside SetupService, so the SAME filter
+    # governs the effective ladder, the LLM-configured gate, and setup-status —
+    # a stranded cloud-only config honestly reports "not configured" instead of
+    # silently keeping a cloud fallback (H2). The stored tier config is left
+    # untouched; turning the mode off restores it. What still leaves the box in
+    # this mode (job-board discovery queries, the automation browser submitting
+    # what the user approved, opt-in notification fan-out) is documented in
+    # docs/private-mode.md — the mode's claim is precisely "profile/job data
+    # never goes to a third-party LLM API".
+    llm_local_only: bool = Field(default=False, alias="LLM_LOCAL_ONLY")
 
     # --- Pre-submit safety (G07) --------------------------------------------
     # Scam/ghost-job detection: maximum allowed age (in days) for a listing.

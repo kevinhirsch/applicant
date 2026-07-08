@@ -284,6 +284,13 @@ acceptance gate defined there govern launch. Landed so far:
   reverse proxy documented with copy-paste Caddy/Traefik/nginx snippets
   (`docs/reverse-proxy-https.md`). Tests:
   `workspace/tests/test_applicant_appdoor_hardening.py`.
+- **Verified local-only private mode (P2-11).** `LLM_LOCAL_ONLY=true` hard-drops
+  non-private model tiers at the single ladder chokepoint (`SetupService.build_ladder`,
+  strict host classifier in `core/rules/private_endpoints.py`), and the LLM gate +
+  setup-status apply the same filter — a cloud-only config honestly reads
+  "not configured" rather than keeping a silent cloud fallback. The honest contract
+  (including what still leaves the box) is `docs/private-mode.md`; assertion suite
+  `tests/unit/test_local_only_private_mode.py`.
 
 ## Boundaries that require a live deployment
 

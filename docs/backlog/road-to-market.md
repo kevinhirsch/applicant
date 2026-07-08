@@ -82,7 +82,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
 | P2-10 | ATS-parseability proof | M | eng | — |
-| P2-11 | Local-only private mode | M | eng | — |
+| P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
 | P2-12 | Durability drills | M | eng | — |
 | P2-13 | Source reliability matrix | M | eng | — |
 | P2-14 | Easy Apply: assisted mode | M | both | — |
@@ -1074,8 +1074,23 @@ result is a citable "ATS-safe" claim.
 
 ### P2-11 — Verified local-only private mode
 **Effort:** M · **Owner:** eng · **Depends on:** local model path
-**DoD:** A tested configuration where no profile/job data leaves the box (local model
-only); documented + asserted.
+**Status: DONE** — `LLM_LOCAL_ONLY=true` is a HARD mode, not a preference: the
+tier ladder is filtered at its single construction point (`SetupService.build_ladder`,
+strict host classifier in `core/rules/private_endpoints.py` — loopback/RFC-1918/
+link-local IPs, `localhost`/`.local`/`.lan`/`.internal`/`.home.arpa`, single-label
+Docker hosts; `ollama.example.com` is refused), and the LLM-configured gate +
+setup-status apply the SAME filter, so a cloud-only config honestly reads
+"not configured" instead of keeping a silent cloud fallback (H2). Stored config
+untouched; smart routing can only reorder surviving tiers, never reintroduce one;
+embeddings were already always on-box. Status payload gains `llm_local_only`.
+The honest contract — including what still leaves the box (job-board queries,
+the approved submissions themselves, opt-in notifications) — is
+`docs/private-mode.md`; assertion suite `tests/unit/test_local_only_private_mode.py`.
+**DoD:** A tested configuration where every LLM request stays on-box or on a
+private-network endpoint — profile/job data never reaches a third-party model
+API; documented + asserted. *(Done as above; what still egresses by design —
+job-board queries, approved submissions, opt-in notifications — is stated in
+docs/private-mode.md.)*
 
 ### P2-12 — Durability drills
 **Effort:** M · **Owner:** eng · **Depends on:** P1-2

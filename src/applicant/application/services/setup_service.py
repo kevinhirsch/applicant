@@ -301,10 +301,17 @@ class SetupService:
         onboarding_gate: Callable[[], bool] | None = None,
         channels_gate: Callable[[], bool] | None = None,
         sandbox_backend: str = "local",
+        local_only: bool = False,
     ) -> None:
         self._store = config_store or InMemoryAppConfigStore()
         self._credentials = credentials
         self._llm_preconfigured = llm_configured
+        # P2-11 verified local-only private mode: when True, tiers whose
+        # base_url is not an on-box/private-network host are dropped from the
+        # EFFECTIVE ladder and from the LLM-configured gate — here, in the one
+        # service both read, so status can never claim a model the ladder
+        # would refuse (H2). Stored config is never rewritten by the mode.
+        self._local_only = local_only
         self._fonts_ready = False
         self._onboarding_complete = False
         # Real gates: onboarding completion (FR-ONBOARD-2) + channels (FR-OOBE-3).
@@ -1358,9 +1365,40 @@ class SetupService:
         # Re-arm the live LLM adapter so a runtime ladder edit/reorder applies at once.
         self._fire_llm_config_change()
 
+    @property
+    def local_only(self) -> bool:
+        """True when the P2-11 local-only private mode is active."""
+        return self._local_only
+
+    def _effective_tiers(self, tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The tiers the engine may actually USE (P2-11).
+
+        In local-only mode, tiers on non-private hosts are excluded — from the
+        ladder AND the gate, so the two can never disagree. Relative order of
+        the surviving tiers is preserved. Outside the mode this is an identity.
+        """
+        if not self._local_only:
+            return tiers
+        from applicant.core.rules.private_endpoints import is_private_host_url
+
+        kept = [t for t in tiers if is_private_host_url(t.get("base_url", ""))]
+        dropped = [t for t in tiers if t not in kept]
+        if dropped:
+            log.info(
+                "llm_local_only_tiers_excluded",
+                dropped=[t.get("model", t.get("base_url", "?")) for t in dropped],
+                kept=len(kept),
+            )
+        return kept
+
     def build_ladder(self) -> TierLadder | None:
-        """Materialize a :class:`TierLadder` from persisted config (with secrets)."""
-        tiers = self._load_tiers()
+        """Materialize a :class:`TierLadder` from persisted config (with secrets).
+
+        In local-only private mode (P2-11) non-private tiers are excluded here —
+        the single ladder source — so no consumer (boot, runtime re-resolve,
+        smart-routing reorder) can ever walk a cloud rung while the mode is on.
+        """
+        tiers = self._effective_tiers(self._load_tiers())
         if not tiers:
             return None
         configs = [
@@ -1424,8 +1462,17 @@ class SetupService:
 
     # --- gate + step advance ---------------------------------------------
     def is_setup_gate_open(self) -> bool:
-        """True once the LLM gate is satisfied (FR-UI-5)."""
-        return bool(self._load_tiers()) or self._llm_preconfigured
+        """True once the LLM gate is satisfied (FR-UI-5).
+
+        In local-only private mode (P2-11) only a PRIVATE-host tier opens the
+        gate, and the env-preconfigured shortcut is ignored (the boot seeding
+        turns env config into a stored tier, which then passes through the
+        same filter) — so "configured" always means "a model the mode allows".
+        """
+        tiers = self._effective_tiers(self._load_tiers())
+        if self._local_only:
+            return bool(tiers)
+        return bool(tiers) or self._llm_preconfigured
 
     def is_automated_work_allowed(self) -> bool:
         """True only when automated applying may begin (FR-UI-5, FR-ONBOARD-2).
