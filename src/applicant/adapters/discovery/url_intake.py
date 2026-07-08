@@ -20,8 +20,11 @@ render as a fetch).
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 from applicant.observability.logging import get_logger
 
@@ -208,6 +211,46 @@ def extract_posting_metadata(html_text: str) -> dict:
     return out
 
 
+#: Bound on how many redirect hops the live fetcher follows — each hop is
+#: re-validated by the SSRF guard below, so a public page can never bounce the
+#: request onto an internal service.
+_MAX_REDIRECTS = 5
+
+
+class BlockedFetchTarget(ValueError):
+    """The URL (or a redirect hop) points at a non-public network target."""
+
+
+def _assert_public_http_url(url: str) -> None:
+    """SSRF guard for the live URL-intake fetch (server-side, per CLAUDE.md).
+
+    The URL is owner-supplied, but the fetch runs FROM the engine container —
+    without this, ``http://api:8000/...``, ``http://169.254.169.254/...`` (cloud
+    metadata), or a public URL that *redirects* there would let the intake lane
+    reach internal services. Every address the hostname resolves to must be
+    globally routable; anything private/loopback/link-local/reserved is refused.
+    (Residual DNS-rebinding TOCTOU is out of scope for this guard — the fetch is
+    a single bounded GET and the result is only ever parsed as posting text.)
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise BlockedFetchTarget(f"unsupported scheme: {parsed.scheme!r}")
+    host = parsed.hostname or ""
+    if not host:
+        raise BlockedFetchTarget("URL carries no hostname")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise BlockedFetchTarget(f"hostname does not resolve: {host!r}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global or ip.is_multicast:
+            raise BlockedFetchTarget(
+                f"refusing to fetch a non-public address ({host!r} -> {ip})"
+            )
+
+
 # --- LIVE fetcher (network boundary — live deployments only) -----------------
 class LiveUrlPostingFetcher:
     """Real single-URL page fetcher (P1-9). Only used when DISCOVERY_LIVE is on —
@@ -222,10 +265,27 @@ class LiveUrlPostingFetcher:
         import httpx  # lazy: real network dependency
 
         proxy = self._proxies[0] if self._proxies else None
+        # Redirects are followed MANUALLY so every hop passes the SSRF guard —
+        # httpx's auto-follow would happily bounce a public posting URL onto an
+        # internal service before we ever saw the Location header.
         with httpx.Client(
-            timeout=self._timeout, proxy=proxy, follow_redirects=True
+            timeout=self._timeout, proxy=proxy, follow_redirects=False
         ) as client:
-            resp = client.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
+            target = url
+            resp = None
+            for _hop in range(_MAX_REDIRECTS + 1):
+                _assert_public_http_url(target)
+                resp = client.get(target, headers={"Accept": "text/html,application/xhtml+xml"})
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location", "")
+                    if not loc:
+                        break
+                    target = str(httpx.URL(target).join(loc))
+                    continue
+                break
+            else:
+                log.warning("url_intake_too_many_redirects", url=url)
+                return {}
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "")
             if "html" not in content_type.lower():

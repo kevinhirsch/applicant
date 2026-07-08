@@ -213,3 +213,105 @@ def test_service_title_falls_back_to_url_slug():
 
     assert _title_from_url("https://x.test/jobs/staff-platform-engineer-99") == "Staff Platform Engineer"
     assert _title_from_url("https://x.test/") == "Job posting at x.test"
+
+
+# --- SSRF guard on the live fetcher (Greptile finding on #740) ---------------
+
+
+def test_ssrf_guard_blocks_internal_and_metadata_targets(monkeypatch):
+    """Owner-supplied URLs must never let the engine fetch internal services."""
+    import socket as _socket
+
+    from applicant.adapters.discovery.url_intake import (
+        BlockedFetchTarget,
+        _assert_public_http_url,
+    )
+
+    def fake_getaddrinfo(host, port, **kwargs):
+        table = {
+            "api": "172.18.0.4",            # docker service name -> private
+            "metadata.internal": "169.254.169.254",  # cloud metadata, link-local
+            "localhost": "127.0.0.1",
+            "intranet.example": "10.0.0.7",
+            "jobs.example": "93.184.216.34",  # public
+        }
+        ip = table.get(host)
+        if ip is None:
+            raise _socket.gaierror("unknown host")
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+    for bad in (
+        "http://api:8000/healthz",
+        "http://metadata.internal/latest/meta-data/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://localhost:7000/",
+        "http://intranet.example/secret",
+        "http://10.0.0.7/",
+        "ftp://jobs.example/posting",
+    ):
+        with pytest.raises(BlockedFetchTarget):
+            _assert_public_http_url(bad)
+
+    # A public host passes.
+    _assert_public_http_url("https://jobs.example/role/123")
+
+
+def test_live_fetcher_validates_every_redirect_hop(monkeypatch):
+    """A public URL that redirects to an internal target must be refused —
+    the guard runs per hop, not only on the first URL."""
+    import socket as _socket
+
+    from applicant.adapters.discovery import url_intake as mod
+
+    hops: list[str] = []
+    real_assert = mod._assert_public_http_url
+
+    def fake_getaddrinfo(host, port, **kwargs):
+        ip = {"jobs.example": "93.184.216.34", "api": "172.18.0.4"}.get(host)
+        if ip is None:
+            raise _socket.gaierror("unknown host")
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+    def tracking_assert(url):
+        hops.append(url)
+        return real_assert(url)
+
+    monkeypatch.setattr(mod, "_assert_public_http_url", tracking_assert)
+
+    class _Resp:
+        status_code = 302
+        headers = {"location": "http://api:8000/internal"}
+
+        def raise_for_status(self):
+            pass
+
+    class _Client:
+        def __init__(self, **kwargs):
+            assert kwargs.get("follow_redirects") is False, (
+                "the live fetcher must follow redirects MANUALLY so each hop is validated"
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, **kwargs):
+            return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+
+    fetcher = mod.LiveUrlPostingFetcher()
+    with pytest.raises(mod.BlockedFetchTarget):
+        fetcher.fetch("https://jobs.example/role/123")
+    assert hops == [
+        "https://jobs.example/role/123",
+        "http://api:8000/internal",
+    ], "both the original URL and the redirect target must pass the guard"
