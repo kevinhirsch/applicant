@@ -85,7 +85,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
 | P2-12 | Durability drills | M | eng | — |
 | P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains |
-| P2-14 | Easy Apply: assisted mode | M | both | — |
+| P2-14 | Easy Apply: assisted mode | M | both | PARTIAL — product surface DONE (consent screen recorded server-side + assisted-mode brief: deep link + prepared materials + checklist, reachable from the digest's Easy Apply chip); live-account automation (walk the modal, real proof run) explicitly DEFERRED — no owner-supplied LinkedIn account yet (issue #723) |
 | P3-1 | Install on tested targets | M–L | eng | — |
 | P3-2 | Requirements & model matrix | S–M | eng | — |
 | P3-3 | Business model + licensing | M | you+eng | — |
@@ -1211,16 +1211,40 @@ surfaced in UI (ties to P1-3); expectations documented.
 ### P2-14 — LinkedIn Easy Apply: assisted mode *(launch feature; parallel track)*
 **Effort:** M · **Owner:** both (you: real aged LinkedIn account; eng: build)
 **Depends on:** P1-11, screening-answer library, stealth persistent profile
+**Status: PARTIAL — owner decision made (issue #723): build the assisted-mode product
+surface + consent screen now; live LinkedIn automation explicitly deferred until the
+owner supplies a real, owner-controlled account. Scope was the product surface, not
+live LinkedIn automation.**
 **DoR:**
-- A real, owner-controlled aged LinkedIn account for proof runs.
-- Owner-approved consent-screen stance ("automates your LinkedIn account against their
-  ToS; you accept the account risk").
+- [ ] A real, owner-controlled aged LinkedIn account for proof runs — **still
+      outstanding**; blocks the DoD's live-automation items below only.
+- [x] Owner-approved consent-screen stance (issue #723): rather than the original
+      "automates your LinkedIn account against their ToS; you accept the account
+      risk" framing (which described the NOT-YET-BUILT live-automation lane), the
+      shipped consent screen honestly describes what THIS build actually does —
+      deep-link + your prepared materials + a checklist, never a login/fill/submit —
+      and is re-worded once live automation lands.
 **DoD:**
 - [ ] Logged-in session in the persistent stealth profile; agent walks the Easy Apply
       modal (screening-answer library handles Q&A) and **stops at Submit** → review/
-      takeover surface → human sends.
-- [ ] Consent screen shown and recorded before first use.
-- [ ] A recorded proof run on the real account exists.
+      takeover surface → human sends. *(Deferred — needs the owner's real LinkedIn
+      account, above. The stop-boundary this would route through
+      (`core/rules/prefill_boundary.py`) already exists and is unchanged.)*
+- [x] Consent screen shown and recorded before first use. *(Server-recorded, not a
+      caller-supplied opt-in: `SetupService.easy_apply_consent_status`/
+      `record_easy_apply_consent` (`easy_apply.consent` in `AppConfigStore`) →
+      `GET`/`POST /api/setup/easy-apply-consent` → owner-scoped proxy
+      `workspace/routes/applicant_easy_apply_routes.py` (`require_engine_owner` on
+      both reads and writes) → `emailLibrary/easyApplyAssist.js`'s
+      `_showConsentScreen`, shown once from the digest row's new "Assisted apply"
+      button (gated on the same `row.easy_apply` tag P1-11 already ships) before the
+      assisted-mode brief — deep link + checklist + a hand-off to the existing
+      Documents library — is shown. The brief itself is also server-gated: `GET
+      /api/easy-apply/{campaign_id}/{posting_id}` 409s until consent is actually
+      recorded.)*
+- [ ] A recorded proof run on the real account exists. *(Deferred with the live
+      LinkedIn account above — no live automation exists yet to record a proof run
+      of.)*
 
 ---
 
@@ -1395,7 +1419,7 @@ theme system passes.
 | P1-5 | OK to archive the old designated branch | branch cleanup |
 | P2-1 | Terms posture + legal entity | launch |
 | P2-4 | Fork license permits commercial white-label | launch |
-| P2-14 | Real LinkedIn account + consent-screen stance | Easy Apply |
+| P2-14 | Real LinkedIn account (consent-screen stance decided, issue #723) | Easy Apply live automation |
 | P3-3 / P4-6 | Business model + price | packaging, launch |
 | P4-DEC-1 | Source-available vs. closed | pricing, landing page |
 | P4-7 | Name check on "Applicant" | branding, stores |

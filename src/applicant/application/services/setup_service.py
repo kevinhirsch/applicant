@@ -16,6 +16,7 @@ from __future__ import annotations
 import ipaddress
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -149,6 +150,10 @@ _SANDBOX_CONN_KEY = "sandbox.proxmox_windows"
 #: onto the env-sourced ``Settings`` defaults, so an unconfigured knob still
 #: shows the value the running engine actually uses today.
 _AUTOMATION_KEY = "automation.prefs"
+#: Easy Apply assisted-mode consent record (P2-14): ``{"given": bool, "given_at":
+#: str | None}``. Set ONLY by ``record_easy_apply_consent`` -- never derived from
+#: a caller-supplied flag on some other request.
+_EASY_APPLY_CONSENT_KEY = "easy_apply.consent"
 #: Defaults duplicated here (NOT imported from ``applicant.app.config.Settings``)
 #: so this module has zero import-time dependency on the pydantic settings
 #: layer -- the same reason ``get_quiet_hours`` hardcodes "22:00"/"07:00"
@@ -1253,6 +1258,46 @@ class SetupService:
             # bar and is out of scope here, but a NEW field must not repeat it).
             egress_proxy_url_configured=bool(rec.get("egress_proxy_url")),
         )
+
+    # --- Easy Apply assisted mode (P2-14) --------------------------------
+    #
+    # A server-recorded, one-time consent record — NEVER a caller-supplied opt-in.
+    # The workspace front door shows a stop-boundary consent screen before the
+    # very first assisted-mode use ("this deep-links you to the posting and hands
+    # you a checklist + your prepared materials; it never logs into the job
+    # board, fills a field, or submits anything for you; EEO / work-authorization
+    # questions are always yours to answer"); ``record_easy_apply_consent`` is the
+    # ONLY way that acceptance is remembered, and every surface that needs to know
+    # whether consent was given (the assisted-mode brief below, the front door's
+    # feature-state gate) reads THIS persisted record rather than trusting a
+    # client-side flag or a body param on some unrelated request.
+    def easy_apply_consent_status(self) -> dict[str, Any]:
+        """Whether the Easy Apply assisted-mode consent screen has been accepted.
+
+        Shape: ``{"given": bool, "given_at": str | None}`` (ISO-8601 UTC, or
+        ``None`` before the first acceptance).
+        """
+        rec = self._store.get(_EASY_APPLY_CONSENT_KEY)
+        return {
+            "given": bool(rec and rec.get("given")),
+            "given_at": (rec or {}).get("given_at"),
+        }
+
+    def record_easy_apply_consent(self) -> dict[str, Any]:
+        """Record that the user read and accepted the assisted-mode consent screen.
+
+        Idempotent: once given, a later call leaves the ORIGINAL acceptance
+        timestamp in place (mirrors "recorded before first use" — the first
+        acceptance is what matters) rather than resetting it on every reopen.
+        """
+        existing = self._store.get(_EASY_APPLY_CONSENT_KEY)
+        if not (existing and existing.get("given")):
+            self._store.set(
+                _EASY_APPLY_CONSENT_KEY,
+                {"given": True, "given_at": datetime.now(UTC).isoformat()},
+            )
+            log.info("easy_apply_consent_recorded")
+        return self.easy_apply_consent_status()
 
     # --- status ----------------------------------------------------------
     def status(self) -> WizardStatus:

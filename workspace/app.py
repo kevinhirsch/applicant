@@ -1060,6 +1060,13 @@ app.include_router(setup_applicant_snapshot_routes())
 from routes.applicant_followups_routes import setup_applicant_followups_routes
 app.include_router(setup_applicant_followups_routes())
 
+# Easy Apply assisted mode (P2-14) — owner-scoped proxy
+# (/api/applicant/easy-apply) over the engine's consent record + assisted-mode
+# brief (deep link + checklist + prepared-materials pointer). The digest row's
+# "Easy Apply" chip (P1-11) is the entry point; no new nav door.
+from routes.applicant_easy_apply_routes import setup_applicant_easy_apply_routes
+app.include_router(setup_applicant_easy_apply_routes())
+
 # Assistant capability disclosure (dark-engine audit item 24) — owner-scoped,
 # read-only proxy (/api/applicant/capabilities) over the engine's native MCP
 # tool surface (GET /mcp/tools). Surfaces the plain-language "what the

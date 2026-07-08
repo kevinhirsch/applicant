@@ -26,6 +26,7 @@ from applicant.app.routers import (
     digest,
     discovery_sources,
     documents,
+    easy_apply,
     feedback,
     fonts,
     gallery,
@@ -72,6 +73,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(remote.router)
     app.include_router(outcomes.router)
     app.include_router(post_submission.router)
+    # P2-14: Easy Apply assisted-mode brief (deep-link + checklist + prepared
+    # materials pointer) -- gated server-side on the recorded consent record.
+    app.include_router(easy_apply.router)
     app.include_router(compare.router)
     app.include_router(credentials.router)
     app.include_router(pending_actions.router)

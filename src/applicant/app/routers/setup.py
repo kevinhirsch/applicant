@@ -226,6 +226,11 @@ def _status_dict(svc) -> dict:
         # (empty by default) so the front-door "suggested attribute" card has a stable
         # data source it can reveal when suggestions exist.
         "suggested_attributes": svc.suggested_attributes(),
+        # P2-14: whether the Easy Apply assisted-mode consent screen has been
+        # accepted yet -- read by the front door's feature-state layer so the
+        # assisted-mode entry point only lights up once the real, server-recorded
+        # consent (never a caller-supplied flag) exists.
+        "easy_apply_consent_given": svc.easy_apply_consent_status().get("given", False),
     }
     # Surface WHY applying is still blocked: the required-to-apply essentials that are
     # still missing + a plain reason, computed from real campaign data. Lets the front
@@ -241,6 +246,30 @@ def _status_dict(svc) -> dict:
 @router.get("/status")
 def get_status(svc=Depends(get_setup_service)) -> dict:
     return _status_dict(svc)
+
+
+@router.get("/easy-apply-consent")
+def get_easy_apply_consent(svc=Depends(get_setup_service)) -> dict:
+    """Whether the Easy Apply assisted-mode consent screen has been accepted (P2-14).
+
+    ``{"given": bool, "given_at": str | None}`` — the ONLY source of truth for
+    whether the stop-boundary consent screen was shown and accepted; every other
+    surface (the assisted-mode brief, the front door's feature gate) reads this
+    same record rather than trusting a caller-supplied flag.
+    """
+    return svc.easy_apply_consent_status()
+
+
+@router.post("/easy-apply-consent", status_code=status.HTTP_201_CREATED)
+def give_easy_apply_consent(svc=Depends(get_setup_service)) -> dict:
+    """Record that the user read and accepted the Easy Apply assisted-mode
+    consent screen (P2-14) -- what it does ("deep-link + your prepared
+    materials + a checklist") and what it never does (log into the job board,
+    fill a field, or submit anything; EEO / work-authorization questions are
+    always the user's to answer). Idempotent: calling this again after consent
+    was already given is a no-op that just returns the existing record.
+    """
+    return svc.record_easy_apply_consent()
 
 
 @router.post("/llm", status_code=status.HTTP_204_NO_CONTENT)
