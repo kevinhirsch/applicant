@@ -98,9 +98,11 @@ def test_rail_and_sidebar_destination_sets_match_in_order():
     assert rail_only == ["rail-update"]
 
 
-# multi_campaign_switcher was never built; its nav_ids are placeholders that
-# resolve to nothing on purpose (and the section stays dormant/locked), so they
-# are exempt from the "must resolve" check below (and must NOT be emitted).
+# multi_campaign_switcher's switcher UI is EMBEDDED in Today/Tracker/daily-updates
+# headers (P1-10) — its section has no nav door (nav_ids: []), and the old
+# rail-campaigns / tool-campaigns-btn placeholder ids must STILL never be emitted
+# (a nav button pointing at nothing would fail OPEN). rail-today is likewise a
+# known-absent id kept out of renderNav.
 _KNOWN_ABSENT = {"rail-campaigns", "tool-campaigns-btn", "rail-today"}
 
 

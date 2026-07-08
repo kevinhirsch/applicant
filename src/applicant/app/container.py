@@ -989,21 +989,27 @@ def build_container(settings: Settings | None = None) -> Container:
 
     # Surface engine-proposed attributes on the setup-status payload (#273) so the
     # front-door "suggested attribute" approval card has a data source. Mirrors the
-    # apply-readiness reporter: reads the FIRST real campaign's stored inputs only, never
+    # apply-readiness reporter: reads real campaigns' stored inputs only, never
     # fabricated. A reporter hiccup degrades to an empty list (status never breaks).
+    # P1-10 (multi-campaign): fans out over EVERY real campaign — reading only the
+    # first campaign's proposals would silently hide a second campaign's suggestions —
+    # deduped on (name, value) since the payload is deployment-level.
     def _suggested_attributes() -> list[dict]:
         from applicant.core.ids import SYSTEM_CAMPAIGN_ID
 
         campaigns = [
             c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID
         ]
-        if not campaigns:
-            return []
-        proposals = advanced_learning_service.suggest_attributes(campaigns[0].id)
-        return [
-            {"name": p.name, "value": p.value, "source": p.source}
-            for p in proposals
-        ]
+        out: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for campaign in campaigns:
+            for p in advanced_learning_service.suggest_attributes(campaign.id):
+                key = (str(p.name), str(p.value))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"name": p.name, "value": p.value, "source": p.source})
+        return out
 
     setup_service.set_suggested_attributes_reporter(_suggested_attributes)
 

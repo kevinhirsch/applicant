@@ -469,7 +469,9 @@ def test_send_message_with_session_persists_both_turns(monkeypatch):
     # so the native renderer's decoration seam can rebuild the chips on a
     # history reload.
     meta = msgs[1].metadata
-    assert meta["character_name"] == mod.ENGINE_SESSION_NAME
+    # P0-4 de-workspacing: the speaker is the product ("Applicant"), never a
+    # model name or tool persona — distinct from the session's list label.
+    assert meta["character_name"] == mod.ENGINE_SPEAKER_NAME == "Applicant"
     assert meta["applicant"]["gaps"] == ["portfolio"]
     assert meta["applicant"]["proposed_changes"][0]["name"] == "salary"
 

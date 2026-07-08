@@ -5,6 +5,15 @@ from datetime import UTC, datetime
 
 from applicant.core.ids import ApplicationId, SubmissionSnapshotId
 
+#: H3 (full-fidelity review) stage markers, carried inside ``ats_metadata`` so no
+#: schema change is needed. ``STAGE_REVIEWED`` = captured at the review
+#: stop-boundary BEFORE any submit (the literal payload the owner reviews);
+#: ``STAGE_SUBMITTED`` = the terminal record. A snapshot recorded before these
+#: markers existed has no stage and reads as submitted (it was only ever written
+#: at submission time).
+STAGE_REVIEWED = "reviewed"
+STAGE_SUBMITTED = "submitted"
+
 
 @dataclass(frozen=True)
 class SubmissionSnapshot:
@@ -33,3 +42,14 @@ class SubmissionSnapshot:
     def timestamp(self) -> datetime:
         """When the submission was recorded (alias of ``captured_at``)."""
         return self.captured_at
+
+    @property
+    def stage(self) -> str:
+        """H3: where in the lifecycle this snapshot was captured.
+
+        ``"reviewed"`` — captured at the review stop-boundary, before any submit
+        (what the owner sees in "Review exactly what will be sent");
+        ``"submitted"`` — the terminal record. Legacy snapshots (no marker) were
+        only ever written at submission time, so they read as submitted.
+        """
+        return (self.ats_metadata or {}).get("stage") or STAGE_SUBMITTED

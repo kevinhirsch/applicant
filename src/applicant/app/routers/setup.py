@@ -459,16 +459,58 @@ def configure_quiet_hours(body: QuietHoursIn, container=Depends(get_container)) 
         )
 
 
+class ChannelTestIn(BaseModel):
+    """Optional single-channel selector for the test ping (P1-4).
+
+    Empty (or no body at all — the historical shape) keeps the fan-out-to-every-
+    configured-channel behavior. Naming one channel (``discord`` / ``email`` /
+    ``ntfy`` / ``in_app``) tests just that channel, and a live delivery failure
+    is reported as an error instead of being swallowed by the ladder's
+    per-channel isolation — a watched test button must tell the truth.
+    """
+
+    channel: str = ""
+
+
 @router.post("/channels/test")
-def test_channels(container=Depends(get_container)) -> dict:
+def test_channels(
+    body: ChannelTestIn | None = None, container=Depends(get_container)
+) -> dict:
     """Send a test notification across configured channels (FR-NOTIF-1).
 
     Hermetic by default (the notifier captures offline); a live deployment sends
-    for real. Returns the channels the test would fire on.
+    for real. Returns the channels the test would fire on. With a ``channel`` in
+    the body, tests only that channel (per-channel Send test, P1-4).
     """
+    from applicant.adapters.notification.apprise_notifier import (
+        NotificationDeliveryError,
+    )
     from applicant.ports.driven.notification import Notification, NotificationUrgency
 
     notification = container.notification
+    live = notification.is_live() if hasattr(notification, "is_live") else True
+    requested = (body.channel if body is not None else "").strip()
+    if requested and hasattr(notification, "send_test"):
+        try:
+            notification.send_test(requested)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        except NotificationDeliveryError as exc:
+            # Honesty: a live send that failed is a failure, not a success with a
+            # log line. 502 — the upstream channel (webhook/SMTP/ntfy) rejected it.
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"The test could not be delivered on the {requested} channel — "
+                    "double-check its settings and try again."
+                ),
+            ) from exc
+        result = {"sent": True, "live": live, "channels": [requested]}
+        if not live:
+            result["note"] = "dry run — set NOTIFICATIONS_LIVE=true to deliver"
+        return result
     handle = notification.notify(
         Notification(
             title="Applicant test notification",
@@ -485,7 +527,6 @@ def test_channels(container=Depends(get_container)) -> dict:
     # UX honesty: the default lane captures the test in memory and sends NOTHING over
     # the wire. Surface that so "Send a test" doesn't claim delivery it didn't make —
     # only NOTIFICATIONS_LIVE actually delivers (FR-NOTIF-1).
-    live = notification.is_live() if hasattr(notification, "is_live") else True
     result = {"sent": True, "live": live, "handle": handle, "channels": channels}
     if not live:
         result["note"] = "dry run — set NOTIFICATIONS_LIVE=true to deliver"

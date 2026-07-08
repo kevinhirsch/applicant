@@ -637,6 +637,25 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+// P1-1 (onboarding TTFV): where to get an API key, per known provider base URL
+// (the <option value> of #adm-epProvider). Shown as a one-tap "get a key" link
+// next to the key field the moment a provider is picked, so a brand-new user
+// isn't stranded hunting for the provider's key console mid-setup.
+const PROVIDER_KEY_URLS = {
+  'https://api.anthropic.com': 'https://console.anthropic.com/settings/keys',
+  'https://api.deepseek.com/v1': 'https://platform.deepseek.com/api_keys',
+  'https://api.openai.com/v1': 'https://platform.openai.com/api-keys',
+  'https://openrouter.ai/api/v1': 'https://openrouter.ai/keys',
+  'https://ollama.com/api': 'https://ollama.com/settings/keys',
+  'https://api.groq.com/openai/v1': 'https://console.groq.com/keys',
+  'https://api.mistral.ai/v1': 'https://console.mistral.ai/api-keys',
+  'https://api.together.xyz/v1': 'https://api.together.ai/settings/api-keys',
+  'https://api.fireworks.ai/inference/v1': 'https://app.fireworks.ai/settings/users/api-keys',
+  'https://generativelanguage.googleapis.com/v1beta/openai': 'https://aistudio.google.com/apikey',
+  'https://api.x.ai/v1': 'https://console.x.ai',
+  'https://api.z.ai/api/paas/v4': 'https://z.ai/manage-apikey/apikey-list',
+};
+
 // Wired-once guard. `initEndpointForm()` attaches click/change listeners to the
 // `adm-*` endpoint-manager controls. It can now be triggered from two places —
 // the Settings → Services tab (via `initAll`) and the first-run setup wizard
@@ -700,15 +719,30 @@ function initEndpointForm() {
     });
   }
 
+  // P1-1: show/hide the "get a key" pointer for the picked provider. Hidden for
+  // Custom URL / unknown providers so it never links anywhere wrong.
+  function _syncKeyHelp() {
+    const help = el('adm-epKeyHelp');
+    if (!help) return;
+    const url = PROVIDER_KEY_URLS[provider.value];
+    if (!url) { help.style.display = 'none'; help.innerHTML = ''; return; }
+    const name = provider.selectedOptions[0] ? provider.selectedOptions[0].textContent.trim() : 'this provider';
+    help.innerHTML = `No key yet? <a href="${url}" target="_blank" rel="noopener">Get a ${esc(name)} API key ↗</a> — paste it above, then Test.`;
+    help.style.display = '';
+  }
+  _syncKeyHelp();
+
   provider.addEventListener('change', () => {
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
+    _syncKeyHelp();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
       _renderPickerMenu();
       _syncPickerCurrent();
+      _syncKeyHelp();
     }
   });
   function _normalizeBaseUrl(raw) {
@@ -761,7 +795,9 @@ function initEndpointForm() {
 
   function _renderEndpointTestResult(msg, res, d) {
     if (res.ok && d.status === 'empty') {
-      msg.textContent = 'Online — no models found';
+      // P1-1: reachable-but-empty gets its recovery action inline, not a bare
+      // success line the user has to interpret.
+      msg.textContent = 'Online — no models found. Pull or enable a model on this server (e.g. `ollama pull llama3.2`), then Test again.';
       msg.className = 'admin-success';
       return;
     }
@@ -770,6 +806,19 @@ function initEndpointForm() {
       const preview = models.slice(0, 3).map(m => esc(String(m).split('/').pop())).join(', ');
       msg.innerHTML = `Online — found ${models.length} model${models.length !== 1 ? 's' : ''}${preview ? `: ${preview}${models.length > 3 ? ', …' : ''}` : ''}`;
       msg.className = 'admin-success';
+      return;
+    }
+    // P1-1: say WHY it failed (server-classified `reason`) with a specific
+    // recovery action — a bad key and an unreachable URL need different fixes,
+    // and a bare "Offline" left the user guessing which one they had.
+    if (d && d.reason === 'bad_key') {
+      msg.textContent = 'The key was rejected — check your API key (paste a fresh one from your provider), then Test again.';
+      msg.className = 'admin-error';
+      return;
+    }
+    if (d && d.reason === 'unreachable') {
+      msg.textContent = `Can’t reach this address${d.ping_error ? ` (${d.ping_error})` : ''} — check the URL and that the server is running, then Test again.`;
+      msg.className = 'admin-error';
       return;
     }
     msg.textContent = (d && d.detail) || (d && d.ping_error ? `Offline — ${d.ping_error}` : 'Offline');

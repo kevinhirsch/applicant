@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from applicant.core.entities.generated_document import (
     DocumentType,
@@ -775,6 +775,23 @@ class MaterialService:
             missing_terms=tuple(missing),
         )
 
+    @staticmethod
+    def _fit_scores_entry(fit: ResumeFitScoring) -> dict:
+        """Serialize a coverage check into the variant's ``fit_scores`` JSON dict (P1-8).
+
+        The deterministic keyword-coverage metric (JD terms vs the variant's own
+        text) is banked on the variant alongside the model-driven viability score
+        the digest shows, so the review surface / variant library can render a real
+        "covers N% of the posting's language; missing: ..." line instead of "not
+        scored". Rides the EXISTING free-form ``fit_scores`` dict (no migration);
+        merged over any keys already present (e.g. the degraded-draft flag).
+        """
+        return {
+            "coverage": fit.coverage,
+            "missing_terms": list(fit.missing_terms),
+            "posting_id": str(fit.posting_id),
+        }
+
     def lineage(self, variant: ResumeVariant) -> list[ResumeVariant]:
         """Walk parent_id back to the root (FR-RESUME-6), nearest-first."""
         chain: list[ResumeVariant] = []
@@ -863,7 +880,16 @@ class MaterialService:
                 best = SelectionResult(variant=v, fit=fit, generated=False)
                 best_rank = rank
         if best is not None and best.fit.coverage * 100 >= threshold:
-            return best
+            # P1-8: bank the deterministic keyword-coverage check on the REUSED
+            # variant too (not just freshly generated ones), so the library /
+            # review surface shows the coverage this selection was based on.
+            reused = replace(
+                best.variant,
+                fit_scores={**best.variant.fit_scores, **self._fit_scores_entry(best.fit)},
+            )
+            self._storage.resume_variants.add(reused)
+            self._storage.commit()
+            return SelectionResult(variant=reused, fit=best.fit, generated=False)
 
         # No good reuse -> intelligently fork from the best parent (best coverage).
         self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
@@ -902,9 +928,16 @@ class MaterialService:
             # Stored in the existing ``fit_scores`` JSON dict (no migration needed).
             fit_scores=({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
         )
+        # P1-8: compute the deterministic keyword coverage of the GENERATED body vs
+        # the JD terms and persist it with the variant, so the coverage the review
+        # surface shows is stored (not recomputed ad hoc) and survives restarts.
+        fit = self.score_fit(new_variant, posting_id, jd_terms, report.text)
+        new_variant = replace(
+            new_variant,
+            fit_scores={**new_variant.fit_scores, **self._fit_scores_entry(fit)},
+        )
         self._storage.resume_variants.add(new_variant)
         self._storage.commit()
-        fit = self.score_fit(new_variant, posting_id, jd_terms, report.text)
         # #1 (FR-RESUME-1/8): a GENERATED variant is unreviewed output — materialize a
         # material_review pending action + the review-ready notification (mirroring
         # generate_cover_letter / generate_screening_answer) so there is something for

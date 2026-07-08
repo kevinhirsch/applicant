@@ -100,16 +100,29 @@ def test_empty_day_variant_preserved_with_preheader():
     email = digest.render_email(cid)
     html_ = email["html"]
     assert "no new matches" in email["subject"].lower()
-    assert "<h1>Your daily digest</h1>" in html_
+    assert "Your daily digest</h1>" in html_
     assert "No new viable roles today" in html_
     assert "display:none" in html_  # preheader present on the empty-day path too
     assert "<tr><td>" not in html_  # no role cards to render
 
 
-def test_email_body_still_starts_with_h1_heading():
-    """Preserve the existing heading-first contract other tests rely on."""
+def test_email_body_starts_with_preheader_then_branded_shell():
+    """P1-4 polish: the hidden preheader leads the body (so inbox snippet logic
+    reads it first), and the branded shell — "Applicant" masthead, heading,
+    footer with the Settings pointer — wraps the card list."""
     storage, digest = _wire()
     cid = _seed(storage)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     html_ = digest.render_email(cid, crit)["html"]
-    assert html_.startswith("<h1>")
+    assert html_.startswith("<span")  # the hidden preheader span comes first
+    assert ">Applicant</span>" in html_  # text masthead (white-label brand)
+    assert "Your daily digest</h1>" in html_
+    # The footer says where the matches came from and where to change delivery.
+    assert "Settings" in html_ and "Notifications" in html_
+    assert "Nothing is ever submitted" in html_
+    # The empty-day path carries the same shell.
+    storage2, digest2 = _wire()
+    cid2 = _seed(storage2, with_posting=False)
+    empty_html = digest2.render_email(cid2)["html"]
+    assert ">Applicant</span>" in empty_html
+    assert "Settings" in empty_html

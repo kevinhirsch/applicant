@@ -433,7 +433,17 @@ class ApplicantEngineClient:
         """Set notification channels (Discord/email via Apprise). 204 -> None."""
         return await self._request("POST", "/api/setup/channels", json=body)
 
-    async def setup_test_channels(self) -> Any:
+    async def setup_test_channels(self, channel: str = "") -> Any:
+        """Test notification delivery — all configured channels, or just one.
+
+        ``channel`` (``discord`` / ``email`` / ``ntfy`` / ``in_app``) scopes the
+        test to a single channel (P1-4 per-channel Send test); empty keeps the
+        historical fan-out-to-everything behavior (and request shape).
+        """
+        if channel:
+            return await self._request(
+                "POST", "/api/setup/channels/test", json={"channel": channel}
+            )
         return await self._request("POST", "/api/setup/channels/test")
 
     async def setup_get_quiet_hours(self) -> Any:

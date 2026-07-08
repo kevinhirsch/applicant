@@ -1359,6 +1359,12 @@ class AgentLoop:
             # verbal lesson for the next attempt on this ATS (previously written but
             # never invoked anywhere in the loop).
             self._reflect_on_prefill_failure(campaign.id, ats, res)
+            # H3 (full-fidelity review): pre-fill just landed at the stop-boundary —
+            # persist the literal payload (every value actually filled, verbatim) so
+            # "Review exactly what will be sent" shows the real thing BEFORE any
+            # submit, never a summary.
+            if res.state is ApplicationState.AWAITING_FINAL_APPROVAL:
+                self._record_presubmit_snapshot(current, res)
             return {"state": res.state.value}
 
         def _material_warranted() -> bool:
@@ -1385,6 +1391,12 @@ class AgentLoop:
 
         def _request_approval() -> Any:
             current = self._storage.applications.get(aid) or app
+            # H3 (full-fidelity review): materials are generated/approved AFTER
+            # pre-fill, so refresh the reviewed snapshot here — the moment the owner
+            # is asked for final approval — with the live document/variant set. The
+            # answers already captured at the pre-fill boundary are preserved; a
+            # snapshot that already records a real submission is never touched.
+            self._record_presubmit_snapshot(current, None)
             if self._final_approval is not None:
                 return self._final_approval.request_approval(
                     str(aid), session_url=current.sandbox_session_url
@@ -1939,6 +1951,122 @@ class AgentLoop:
     def _posting_url(self, posting_id: JobPostingId) -> str | None:
         posting = self._storage.postings.get(posting_id)
         return posting.source_url if posting is not None else None
+
+    def _record_presubmit_snapshot(self, app: Application, res) -> None:
+        """H3 (full-fidelity review): persist the literal payload at the stop-boundary.
+
+        Called (a) when pre-fill lands ``AWAITING_FINAL_APPROVAL`` (``res`` is the
+        live :class:`PrefillResult` — every value actually filled, verbatim) and
+        (b) again when final approval is requested (``res=None`` — materials are
+        generated after pre-fill, so the document/variant set is refreshed while the
+        captured answers are preserved). The snapshot is what "Review exactly what
+        will be sent" renders BEFORE the owner authorizes anything, and — because
+        ``SubmissionService`` records the terminal snapshot idempotently — it is the
+        SAME record that stands as the durable evidence of what was submitted: what
+        the owner reviews is exactly what is sent.
+
+        Rules:
+        * a snapshot that already records a real submission is IMMUTABLE — never
+          replaced or amended here;
+        * an earlier reviewed (pre-submit) snapshot for the same application is
+          replaced wholesale so the preview always reflects the current boundary;
+        * failure is loud (warning log) but never blocks the pipeline — the preview
+          then honestly shows "nothing recorded yet" instead of a fabrication.
+        """
+        from applicant.core.entities.submission_snapshot import (
+            STAGE_REVIEWED,
+            SubmissionSnapshot,
+        )
+        from applicant.core.ids import SubmissionSnapshotId
+
+        repo = getattr(self._storage, "submission_snapshots", None)
+        if repo is None:
+            return
+        try:
+            existing = repo.get_for_application(app.id)
+            if existing is not None and existing.stage != STAGE_REVIEWED:
+                return  # submitted evidence is immutable (H3 invariant)
+            if res is None and existing is None:
+                # Refresh pass with NOTHING to refresh: the boundary-time capture
+                # failed (and was loudly swallowed). Building a snapshot from live
+                # app/material data alone would carry zero literal answers yet
+                # read as has_snapshot=true — an incomplete payload masquerading
+                # as full fidelity. Keep the honest empty state instead (H3).
+                return
+            # NOTE: build-then-swap — the replacement snapshot is FULLY constructed
+            # before the old reviewed one is deleted, so a failure anywhere in the
+            # build leaves the owner with the PREVIOUS reviewed payload, never with
+            # nothing. The delete+add swap itself is guarded by the rollback in the
+            # except below (both storage lanes implement ``StoragePort.rollback``).
+
+            # Answers: every value actually filled, verbatim. Keyed by the field's
+            # human label when the engine knows one (drafted screening answers carry
+            # labels), else the raw selector — never paraphrased, never summarized.
+            answers: dict[str, str] = dict(existing.answers) if existing is not None else {}
+            if res is not None:
+                labels: dict[str, str] = {}
+                for ga in getattr(res, "generated_answers", None) or []:
+                    sel = str(ga.get("selector") or "")
+                    if sel and ga.get("label"):
+                        labels[sel] = str(ga.get("label"))
+                fresh: dict[str, str] = {}
+                for page_log in (getattr(res, "filled_by_page", None) or {}).values():
+                    for selector, value in (page_log or {}).items():
+                        key = labels.get(str(selector)) or str(selector)
+                        fresh[key] = str(value)
+                if fresh:
+                    answers = fresh
+
+            current = self._storage.applications.get(app.id) or app
+            material_versions: dict[str, str] = {}
+            materials: list[dict] = []
+            if getattr(current, "resume_variant_id", None):
+                material_versions["resume"] = str(current.resume_variant_id)
+            for doc in self._storage.documents.list_for_application(app.id):
+                kind = doc.type.value if hasattr(doc.type, "value") else str(doc.type)
+                materials.append(
+                    {"id": str(doc.id), "kind": kind, "approved": bool(doc.approved)}
+                )
+                material_versions.setdefault(kind, str(doc.id))
+            for up in (getattr(res, "uploaded_documents", None) or []) if res is not None else []:
+                path = str(up.get("path") or "")
+                name = path.rsplit("/", 1)[-1] if path else str(up.get("label") or "")
+                materials.append(
+                    {"kind": "uploaded_file", "name": name, "label": str(up.get("label") or "")}
+                )
+            if res is None and existing is not None:
+                # Refresh pass: carry the pre-fill-time upload records forward.
+                materials.extend(
+                    m for m in (existing.materials or [])
+                    if isinstance(m, dict) and m.get("kind") == "uploaded_file"
+                )
+
+            posting_url = current.root_url or (self._posting_url(current.posting_id) or "")
+            replacement = SubmissionSnapshot(
+                id=SubmissionSnapshotId(new_id()),
+                application_id=app.id,
+                answers=answers,
+                materials=materials,
+                material_versions=material_versions,
+                posting_url=posting_url or "",
+                ats_metadata={"stage": STAGE_REVIEWED},
+            )
+            if existing is not None:
+                repo.delete_for_application(app.id)
+            repo.add(replacement)
+            self._storage.commit()
+        except Exception as exc:  # the preview degrades to its honest empty state, loudly
+            try:
+                # Undo any half-applied delete/add swap so the previously
+                # reviewed payload is never silently lost.
+                self._storage.rollback()
+            except Exception:  # pragma: no cover - rollback must not mask the failure
+                pass
+            log.warning(
+                "presubmit_snapshot_record_failed",
+                application_id=str(app.id),
+                error=str(exc),
+            )
 
     def _latest_state(self, application_id: ApplicationId) -> ApplicationState | None:
         app = self._storage.applications.get(application_id)
