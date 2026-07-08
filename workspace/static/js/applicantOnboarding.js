@@ -2604,7 +2604,19 @@ async function _finish() {
     const profileJumpBtn = (!ready && applyMissing.length)
       ? '<button class="cal-btn" id="ao-finish-profile" style="margin-top:14px;">Complete your profile</button>'
       : '';
-    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">${esc(heading)}</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
+    // P1-1: a "what happens next" card — the first digest + approval flow in
+    // three plain steps, so the user leaves setup knowing what to expect and
+    // when, instead of staring at a quiet app wondering if it's working.
+    const whatNextCard = `
+      <div class="admin-card" style="max-width:460px;margin:16px auto 0;text-align:left;">
+        <p style="margin:0 0 6px;font-weight:600;font-size:0.9rem;">What happens next</p>
+        <ol style="margin:0;padding-left:18px;font-size:0.84rem;opacity:0.85;line-height:1.6;">
+          <li>I search for matching roles around the clock${ready ? '' : ' — starting the moment the last essentials above are in'}.</li>
+          <li>Your first digest of matched roles lands in Pending, your home base — and on any notification channels you set up in Settings.</li>
+          <li>You approve the roles you like; I prepare each application for your review, and nothing is ever sent without your final OK.</li>
+        </ol>
+      </div>`;
+    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">${esc(heading)}</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${whatNextCard}${profileJumpBtn}</div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
     // First-light payoff: this is the ONE screen that means setup is genuinely
     // done (llm_configured, nothing left gating it) — mark it so _dismiss() knows

@@ -157,7 +157,14 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # window.mountApplicantHealthPanel global on System-tab open); it also
     # exports renderApplicantPortalHealthBanner, imported directly by
     # applicantPortal.js for the Today/Portal degraded-capability banner.
-    assert count == 50, f"expected 50 eager module <script> tags, got {count}"
+    # 51 after wiring applicantRail.js (P0-3, the 3-pane shell's right-hand
+    # gadget rail) -- an always-present pane that self-boots into
+    # #applicant-gadget-rail and polls the owner's live signals, in the SAME
+    # eager, self-booting category as applicantPortal.js/applicantActivity.js
+    # (the home-base surfaces that must be live the moment the shell paints, not
+    # lazy launcher-only overlays). It must run eagerly so the third pane is
+    # there on first paint.
+    assert count == 51, f"expected 51 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():

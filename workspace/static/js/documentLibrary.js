@@ -2495,13 +2495,68 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
       const bits = [];
       if (matched.length) bits.push(`you cover ${matched.slice(0, 6).join(', ')}`);
-      if (missing.length) bits.push(`consider adding: ${missing.slice(0, 6).join(', ')}`);
       if (bits.length) {
         const detail = document.createElement('span');
         detail.textContent = bits.join('; ');
         line.appendChild(detail);
       }
+      // Missing-terms panel (P1-8): each missing keyword is a SUGGESTION chip.
+      // Tapping one only pre-fills the "Ask for a change" box in the open review
+      // panel below — the change still goes through the normal request-change →
+      // redline → approve path, so nothing is ever auto-inserted (the engine's
+      // truthfulness guard also vets the resulting draft server-side).
+      if (missing.length) {
+        const suggestWrap = document.createElement('span');
+        suggestWrap.className = 'doclib-applicant-jdmatch-missing';
+        suggestWrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;';
+        const lbl = document.createElement('span');
+        lbl.textContent = 'consider adding:';
+        suggestWrap.appendChild(lbl);
+        missing.slice(0, 6).forEach((term) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'doclib-card-text-btn doclib-applicant-suggest-term';
+          chip.style.cssText = 'font-size:11px;padding:1px 8px;';
+          chip.textContent = `+ ${term}`;
+          chip.title = `Suggest working “${term}” into the document under review — nothing is added until you request the change and approve the result.`;
+          chip.addEventListener('click', () => _suggestMissingTerm(container, term));
+          suggestWrap.appendChild(chip);
+        });
+        line.appendChild(suggestWrap);
+      }
       container.appendChild(line);
+    }
+
+    // Pre-fill the open review panel's "Ask for a change" box with a suggested
+    // keyword addition (P1-8). Deliberately NOT a direct write to the document:
+    // the suggestion only lands in the instruction box; the user still presses
+    // "Request change" (an ordinary redline turn, truthfulness-gated on the
+    // engine) and then approves the redline — the existing approve path.
+    function _suggestMissingTerm(slot, term) {
+      const results = slot && slot.parentElement;
+      // Only act on an UNAMBIGUOUS target: with several review panels open the
+      // first-in-DOM box could belong to a different document than the user
+      // means — ask them to narrow it down instead of guessing.
+      const boxes = results ? results.querySelectorAll('.doclib-applicant-instruction') : [];
+      if (!boxes.length) {
+        if (uiModule) uiModule.showToast('Open Review on a document below first, then tap a keyword to suggest it.');
+        return;
+      }
+      if (boxes.length > 1) {
+        if (uiModule) uiModule.showToast('More than one review panel is open — close the others (or type the suggestion into the one you mean) so the keyword lands on the right document.');
+        return;
+      }
+      const box = boxes[0];
+      const suggestion = `Work in “${term}” where my real experience genuinely supports it.`;
+      const existing = (box.value || '').trim();
+      if (!existing.includes(suggestion)) {
+        box.value = existing ? `${existing}\n${suggestion}` : suggestion;
+      }
+      // Fire the input listener so the review panel's draft store keeps the
+      // suggestion across re-renders, exactly like typed text.
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      box.focus();
+      if (uiModule) uiModule.showToast('Suggestion added — press “Request change”, then approve the result.');
     }
 
     // Company-research provenance (dark-engine audit #76): when the agent hit a

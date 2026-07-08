@@ -531,6 +531,23 @@ export function buildDigestRow(row, ctx = {}) {
         + 'color:var(--color-accent,#0077cc);',
     }));
   }
+  // Keyword-coverage chip (P1-8): the engine's deterministic resume<->posting
+  // keyword check, distinct from the model-driven "% match" above — how many of
+  // this posting's keywords your resume already covers, with the missing ones in
+  // the tooltip. Only rendered when the engine attached a real score (no resume
+  // on file / no extractable keywords = no chip, never a fabricated 0%).
+  const kwRaw = Number(row.keyword_coverage);
+  if (row.keyword_coverage != null && Number.isFinite(kwRaw)) {
+    const kw = Math.max(0, Math.min(100, Math.round(kwRaw)));
+    const kwMissing = Array.isArray(row.keyword_missing) ? row.keyword_missing.filter(Boolean) : [];
+    head.appendChild(_el('span', {
+      cls: 'memory-count applicant-digest-keywords',
+      text: `Keywords ${kw}%`,
+      title: "How many of this posting's keywords your resume already covers"
+        + (kwMissing.length ? `. Missing: ${kwMissing.slice(0, 6).join(', ')}` : ''),
+      style: 'font-size:10px;opacity:0.7;white-space:nowrap;',
+    }));
+  }
   const warnBadge = _warningBadge(row);
   if (warnBadge) head.appendChild(warnBadge);
   card.appendChild(head);

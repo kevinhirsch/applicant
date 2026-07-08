@@ -29,6 +29,7 @@ from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.errors import InvalidInput, NotFound
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, JobPostingId, new_id
+from applicant.core.rules.jd_match import compute_jd_match
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
@@ -325,6 +326,10 @@ class DigestService:
     ) -> list[tuple]:
         """Fetch + score every posting in the campaign (the actual hot-path cost)."""
         postings = self._storage.postings.list_for_campaign(campaign_id)
+        # P1-8: the candidate's own résumé/profile text, read ONCE per build (this
+        # method only runs on a DigestCache miss) so every row can carry the
+        # deterministic keyword-coverage chip without a per-row profile query.
+        resume_text = self._profile_resume_text(campaign_id)
         pairs: list[tuple] = []
         for posting in postings:
             row = {
@@ -357,8 +362,75 @@ class DigestService:
                 # the digest hot path. The rationale still says scoring is pending.
                 row["viability_score"] = 0.0
                 row["why_suggested"] = "scoring pending"
+            self._attach_keyword_match(row, posting, resume_text)
             pairs.append((posting, row))
         return pairs
+
+    def _profile_resume_text(self, campaign_id: CampaignId) -> str:
+        """The candidate's own résumé/profile text for keyword coverage (P1-8).
+
+        Mirrors ``MaterialService``'s ground-truth accessors — the uploaded base
+        résumé's raw text plus the flattened attribute-cloud values — without
+        pulling the whole material stack into the digest. Best-effort: any failure
+        degrades to ``""`` so the digest hot path never breaks; an empty result
+        means the coverage chip is simply OMITTED (no résumé on file must render
+        as no coverage claim, never as a fabricated 0%).
+        """
+        parts: list[str] = []
+        repo = getattr(self._storage, "onboarding_profiles", None)
+        if repo is not None:
+            try:
+                profile = repo.get_for_campaign(campaign_id)
+                intake = getattr(profile, "intake", None) or {}
+                base = intake.get("base_resume", {}) if isinstance(intake, dict) else {}
+                parts.append(str(base.get("raw_text", "") or ""))
+            except Exception:  # pragma: no cover - defensive; never break the digest
+                pass
+        attrs_repo = getattr(self._storage, "attributes", None)
+        if attrs_repo is not None:
+            try:
+                for attr in attrs_repo.list_for_campaign(campaign_id):
+                    val = getattr(attr, "value", None)
+                    if val:
+                        parts.append(str(val))
+            except Exception:  # pragma: no cover - defensive; never break the digest
+                pass
+        return "\n".join(p for p in parts if p).strip()
+
+    def _attach_keyword_match(self, row: dict, posting, resume_text: str) -> None:
+        """Deterministic résumé <-> JD keyword coverage for one digest row (P1-8).
+
+        Reuses the SAME pure ``core.rules.jd_match`` scorer the redline review's
+        match line already uses (no LLM, no fabrication risk), computed alongside
+        the model-driven viability score so the digest card can show BOTH "how
+        well this role fits you" and "how well your résumé covers its keywords".
+        Attached only when there is a résumé on file AND the posting yields at
+        least one extractable keyword — an absent chip is honest absence, never a
+        fabricated score (H-series). Guarded: a failure only omits the chip.
+        """
+        if not resume_text:
+            return
+        try:
+            posting_text = (
+                f"{getattr(posting, 'title', '') or ''}\n"
+                f"{getattr(posting, 'description', '') or ''}"
+            )
+            match = compute_jd_match(resume_text, posting_text)
+            # Shape-guard INSIDE the try: a malformed/None matcher result for
+            # one posting must only omit that row's chip — the caller's loop has
+            # no per-posting guard, so an escaped KeyError here would abort the
+            # digest for EVERY posting in the campaign.
+            matched = match.get("matched") if isinstance(match, dict) else None
+            missing = match.get("missing") if isinstance(match, dict) else None
+            score = match.get("score") if isinstance(match, dict) else None
+        except Exception:  # pragma: no cover - defensive; never break the digest
+            log.warning("digest_keyword_match_failed", exc_info=True)
+            return
+        if not matched and not missing:
+            return  # no extractable keywords -> no chip (never a fabricated 0%)
+        row["keyword_coverage"] = score
+        row["keyword_matched"] = matched
+        row["keyword_missing"] = missing
 
     def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
         """Human-readable presubmit-safety warnings for one digest row.

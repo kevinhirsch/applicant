@@ -195,6 +195,34 @@ async def _gate_state(engine: ApplicantEngineClient) -> dict:
         out["apply_missing"] = [
             str(m) for m in (raw.get("apply_missing") or []) if isinstance(m, str)
         ]
+    # P1-1 (onboarding TTFV): a plain essentials checklist (model / profile /
+    # notifications) derived from the SAME engine status fields the wizard reads
+    # (`llm_configured` / `apply_ready`+`apply_missing` / `channels_configured`),
+    # so Today can show what's done vs left — with the same conditional-inclusion
+    # honesty as above: a field the engine doesn't report is omitted, never
+    # fabricated as "not done".
+    essentials: list = []
+    if "llm_configured" in raw:
+        essentials.append(
+            {"key": "model", "label": "Connect a model", "done": bool(raw["llm_configured"])}
+        )
+    if "apply_ready" in raw or "apply_missing" in raw:
+        profile_done = bool(raw.get("apply_ready")) or (
+            isinstance(raw.get("apply_missing"), list) and not raw["apply_missing"]
+        )
+        essentials.append(
+            {"key": "profile", "label": "Your profile essentials", "done": profile_done}
+        )
+    if "channels_configured" in raw:
+        essentials.append(
+            {
+                "key": "notifications",
+                "label": "Notifications (optional — set up in Settings)",
+                "done": bool(raw["channels_configured"]),
+            }
+        )
+    if essentials:
+        out["essentials"] = essentials
     return out
 
 
@@ -213,7 +241,7 @@ def _apply_gap_item(gate: dict, candidates: list) -> Optional[dict]:
     if gate.get("apply_ready") is True or gate.get("automated_work_allowed") is True:
         return None
     cid, cname = candidates[0] if candidates else ("", "")
-    return {
+    item = {
         "id": "onboarding-incomplete",
         "kind": "onboarding_incomplete",
         "title": "Finish setup to start your search",
@@ -222,6 +250,11 @@ def _apply_gap_item(gate: dict, candidates: list) -> Optional[dict]:
         "missing": list(gate["apply_missing"]),
         "affordance": "complete",
     }
+    # P1-1: carry the essentials checklist (model / profile / notifications) on
+    # the row itself so Today's card can render done-vs-left at a glance.
+    if gate.get("essentials"):
+        item["essentials"] = list(gate["essentials"])
+    return item
 
 
 def _shape_item(raw: dict, *, campaign_id: str, campaign_name: str) -> dict:
@@ -295,7 +328,16 @@ def setup_applicant_portal_routes() -> APIRouter:
                 # A client-correctable setup gate (e.g. 409 automated-work gate) is
                 # NOT offline: forward the engine's plain-language message so the
                 # Portal shows the honest setup prompt, not "not connected yet".
-                return soft_degrade(exc, {"count": 0, "items": []})
+                degraded = soft_degrade(exc, {"count": 0, "items": []})
+                # P1-1: on the GATED path (engine reachable, setup unfinished),
+                # best-effort attach the essentials checklist so Today's gated
+                # state shows exactly what's left, not just a generic message.
+                # The status read is ungated, so it usually answers even here.
+                if degraded.get("gated"):
+                    gate = await _gate_state(engine)
+                    if gate.get("essentials"):
+                        degraded["essentials"] = gate["essentials"]
+                return degraded
 
             campaign_list = campaigns if isinstance(campaigns, list) else []
             items: list[dict] = []

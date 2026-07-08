@@ -550,15 +550,35 @@ function _renderFinal(wrap, item) {
   });
 }
 
+// P1-1 (onboarding TTFV): the setup-essentials checklist — the SAME
+// model / profile / notifications state the engine's setup status reports
+// (via the portal proxy's `essentials` field), rendered as a plain done-vs-left
+// list. Exported for the JS test harness; pure HTML in, HTML out.
+export function _essentialsChecklistHTML(essentials) {
+  if (!Array.isArray(essentials) || !essentials.length) return '';
+  const rows = essentials.map((e) => {
+    const done = !!(e && e.done);
+    return `<li style="list-style:none;font-size:12px;line-height:1.8;text-align:left;${done ? 'opacity:0.65;' : ''}">`
+      + `<span aria-hidden="true" style="margin-right:6px;">${done ? '✓' : '○'}</span>`
+      + `${esc((e && e.label) || '')}${done ? ' <span style="opacity:0.7;">— done</span>' : ''}`
+      + '</li>';
+  }).join('');
+  return `<ul style="margin:0 0 10px;padding:0;display:inline-block;" aria-label="Setup essentials">${rows}</ul>`;
+}
+
 function _renderComplete(wrap, item) {
   const hint = _meta(item.kind).hint || 'Finish these to switch on your automated job search.';
   const missing = Array.isArray(item.missing) ? item.missing.filter(Boolean) : [];
-  const list = missing.length
+  // Prefer the structured essentials checklist (model / profile / notifications,
+  // with done-vs-left state) when the proxy sent one; fall back to the plain
+  // missing-list an older proxy provides.
+  const essentials = _essentialsChecklistHTML(item.essentials);
+  const list = !essentials && missing.length
     ? `<ul style="margin:0 0 8px;padding-left:16px;font-size:12px;opacity:0.85;line-height:1.6;">${missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>`
     : '';
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
-    ${list}
+    ${essentials}${list}
     <button type="button" class="cal-btn cal-btn-primary" data-role="finish">Finish your profile</button>`;
   wrap.querySelector('[data-role="finish"]').addEventListener('click', () => {
     try {
@@ -716,8 +736,13 @@ function _renderOffline(host) {
 function _renderGated(host, data) {
   const msg = (data && data.message)
     || "Finish setup — connect a model and fill in your profile — and I can start working for you.";
+  // P1-1: when the proxy could read the engine's setup status even while gated,
+  // show the essentials checklist (model / profile / notifications) so the user
+  // sees exactly what's done and what's left — with the same one-tap resume.
+  const essentials = _essentialsChecklistHTML(data && data.essentials);
   host.innerHTML = gatedHTML(msg,
-    '<button type="button" class="cal-btn cal-btn-primary" id="applicant-today-gated-setup">Finish setup</button>');
+    essentials
+    + '<button type="button" class="cal-btn cal-btn-primary" id="applicant-today-gated-setup">Finish setup</button>');
   const btn = host.querySelector('#applicant-today-gated-setup');
   if (btn) {
     btn.addEventListener('click', () => {

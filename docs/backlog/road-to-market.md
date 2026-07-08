@@ -47,12 +47,12 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | RESPEC'd 2026-07-08 |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail shipped (see note) |
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
-| P1-1 | Onboarding TTFV < 10 min | M | eng | — |
+| P1-1 | Onboarding TTFV < 10 min | M | eng | PARTIAL — critical path trimmed + instrumented (verify reasons, get-a-key links, achievements prefill, single-year edu fix, Today essentials checklist, what-happens-next card, scripted 3-action walkthrough test); live 10-min stopwatch run on a deployed stack pending |
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
@@ -60,7 +60,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
-| P1-8 | Keyword / ATS match score | S | eng | — |
+| P1-8 | Keyword / ATS match score | S | eng | DONE |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | DONE — server-side detection at discovery + digest channel + tracker chip |
@@ -197,23 +197,48 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
 - Mobile behaviour agreed (keep bottom-sheet for now; the rail collapses away on small
   viewports).
 **DoD:**
-- [ ] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
-      gadget rail — no scrim, no dim, no close ×, no focus trap, no floating windows
-      anywhere.
-- [ ] On small viewports the rail collapses away; the mobile bottom-sheet fallback
-      remains acceptable.
-- [ ] Rail top is the notification area: it auto-expands when action-required items
-      arrive and shrinks when handled; gadgets reflow below it; the rail is pinnable and
-      collapses to a slim badge strip.
-- [ ] Notifications are reachable from all three surfaces (bell, rail, toasts); acting
-      on an item clears it from all three at once.
-- [ ] Each v1 gadget renders live data and expands to its full page in one click; deep
-      links route to pages, never windows.
+- [x] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
+      gadget rail — the rail (`#applicant-gadget-rail`) is a static flex sibling of the
+      chat `<main>`, so the third pane reserves its own column on first paint with no
+      scrim/dim/close/focus-trap of its own. *(The chat center + sidebar were already the
+      shell; this adds the rail as the third pane.)*
+- [x] On small viewports the rail collapses away (CSS `@media (max-width:768px)`); the
+      mobile bottom-sheet fallback remains acceptable.
+- [x] Rail top is the notification area: the waiting-on-you queue auto-expands (gets a
+      card frame) when action-required items arrive and shrinks to an "all clear" line
+      when empty; gadgets reflow below it; each gadget is pinnable (pins float to the top,
+      persisted in localStorage) and the whole rail collapses to a slim badge strip.
+- [ ] Notifications reachable from THREE surfaces (**partial**): **rail waiting-on-you area** (new) +
+      **transient toasts** (reused `ui.js` `showToast` via `_toast`) are live; the
+      **existing sidebar count badge** on the Today/Portal nav entry is the third. A
+      dedicated *top-bar bell + dropdown* is **deferred** — the Portal already owns the
+      in-app inbox/notification-center, so the bell is a re-surfacing task best done
+      alongside the window-manager retirement below.
+- [x] Each v1 gadget (8: waiting-on-you, pipeline, activity, cost & pace, next-interview,
+      digest, momentum, health) renders live data from an existing owner-scoped proxy and
+      expands to its full page in one click via the SAME `window` launcher that page
+      already exports (`openApplicantTracker/Today/Results`, `applicantActivityModule`,
+      the `#rail-email` seam) — no new engine endpoints, no floating window.
 - [ ] The window manager is retired from the default product surface; modal-stack tests
-      are replaced by the shell/page view contract.
-- [ ] The auto-land watcher added in PR #640 is removed; the "Today pops over a window"
-      timing quirk no longer reproduces (there is nothing to stack).
-- [ ] The brand wordmark routes home to the shell (consistent with P0-1's Home behaviour).
+      replaced by the shell/page view contract. **DEFERRED** — see note (large surgery
+      across applicantPortal/Today/app.js + dozens of pinning tests; out of a safe
+      green-increment).
+- [ ] The auto-land watcher added in PR #640 is removed. **DEFERRED** with the
+      window-manager retirement above.
+- [ ] The brand wordmark routes home to the shell. **DEFERRED** with the same lane.
+
+**Status note (2026-07-08):** The headline new artifact — the right-hand **gadget rail**
+(`static/js/applicantRail.js` + `#applicant-gadget-rail` mount + rail CSS) — is shipped,
+reachable in the front-door, and covered by `tests/js/applicantRail.test.js` (5 pure-helper
+tests) and `tests/test_applicant_shell_gadget_rail.py` (17 composition/reuse tests). All 8
+v1 gadgets pull live data via existing proxies (lift-and-shift, no new endpoints), the rail
+pins/collapses with localStorage persistence, notifications reuse `showToast`, and the rail
+hides on mobile. **Deferred to a follow-up** (too broad for one safe increment, would break
+many modal-stack/one-window pinning tests): fully retiring the floating-window manager,
+removing the PR #640 auto-land watcher, the dedicated top-bar bell dropdown, and the
+wordmark-home rewire. The existing chat center + sidebar already provided two of the three
+panes; the Today/Portal surfaces still open as their current modals until the retirement lane
+lands.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
@@ -300,21 +325,39 @@ first digest in under 10 minutes **so that** I reach value before I give up.
 - Résumé-parse fixtures gathered (including the failing "UC Berkeley — 2013" single-year
   case and an achievements-bearing résumé).
 **DoD:**
-- [ ] Model-connect step offers presets + a **Verify** button that does a live
+- [x] Model-connect step offers presets + a **Verify** button that does a live
       round-trip and reports the failure *reason* (bad key / unreachable / no models)
-      with recovery copy.
-- [ ] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
+      with recovery copy. *(Presets + Test + local auto-scan already existed via the
+      shared endpoint manager; the Test round-trip now classifies the failure reason
+      server-side — 401/403 ⇒ bad key, reachable-but-empty ⇒ no models, else
+      unreachable — and `admin.js` renders a distinct recovery action per class, plus
+      per-provider "get a key" links incl. OpenRouter.)*
+- [x] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
       achievements** (the onboarding review previously omitted parsed achievements).
-- [ ] The single-year education parse renders correctly; a bad parse has an explicit
+      *(The parser already extracted per-role achievement bullets; the onboarding
+      prefill now carries them into the work-history form's highlights field.)*
+- [x] The single-year education parse renders correctly; a bad parse has an explicit
       "edit" path so it never silently poisons applications. *(Deterministic layer
       hardened against the owner's real résumé — modern multi-column/sidebar PDF, split
       title|company lines, location/noise filtering, certifications section — PR #642.
-      The LLM verify layer on top is P1-1a.)*
-- [ ] Today shows an essentials checklist (model / profile / notifications) until the
-      apply-readiness gate opens, with one-tap wizard resume.
-- [ ] A "what happens next" card explains the first digest + approval flow.
+      The "UC Berkeley — 2013" lone-graduation-year case now lands the year in the
+      year field instead of polluting the institution; every prefetched education
+      entry stays editable in the review form. The LLM verify layer on top is P1-1a.)*
+- [x] Today shows an essentials checklist (model / profile / notifications) until the
+      apply-readiness gate opens, with one-tap wizard resume. *(Portal proxy derives
+      the checklist from the engine's setup status — omission-honest — and Today
+      renders it on both the gated state and the onboarding-incomplete card.)*
+- [x] A "what happens next" card explains the first digest + approval flow. *(On the
+      wizard finish screen: continuous search → first digest in Pending/channels →
+      approve, review, final OK before anything is sent.)*
 - [ ] A stopwatch test from fresh install to "digest scheduled + profile parsed + channel
       set" completes under 10 minutes; every failure state on that path has a recovery action.
+      *(Partially done: the scripted engine walkthrough — `tests/unit/
+      test_p1_1_ttfv_walkthrough.py` — pins the golden path at THREE user actions
+      (connect model → upload résumé → confirm criteria) and asserts every not-ready
+      stage reports an actionable missing list; the front-door failure states (verify
+      reasons, gated Today, wizard jump-backs) each carry a recovery action. The live
+      human stopwatch on a deployed stack with a real model remains to be run.)*
 
 ### P1-1a — LLM parse-verify layer over the deterministic résumé parse
 **As** a new user, **I want** an LLM to check and correct the parsed résumé — slotting
@@ -491,12 +534,23 @@ keywords **so that** I trust the tailoring and can approve gap-fixes.
 **DoR:** Confirmed `ResumeVariant.fit_scores` is the storage home; rubric for keyword
 coverage agreed.
 **DoD:**
-- [ ] A deterministic keyword-coverage metric (JD terms vs tailored variant text) is
+- [x] A deterministic keyword-coverage metric (JD terms vs tailored variant text) is
       computed alongside the LLM fit score and stored in `fit_scores`.
-- [ ] Coverage chip shown on digest cards; a "missing terms" panel in redline review.
-- [ ] Missing keywords surface as **suggested redline additions the user approves** —
+      (`MaterialService.select_or_generate` persists `coverage`/`missing_terms`/
+      `posting_id` into the variant's `fit_scores` on both the reuse and generated
+      paths; the variant library / review surface reads it via the existing
+      `GET /api/documents/variants/{campaign_id}` read-model.)
+- [x] Coverage chip shown on digest cards; a "missing terms" panel in redline review.
+      (Digest rows carry `keyword_coverage`/`keyword_matched`/`keyword_missing`
+      computed via the pure `core.rules.jd_match` scorer against the base résumé +
+      attribute cloud — honestly omitted when no résumé is on file; `buildDigestRow`
+      renders the "Keywords N%" chip on Email-tab + Portal cards; the redline
+      review's match line now includes the missing-terms suggestion panel.)
+- [x] Missing keywords surface as **suggested redline additions the user approves** —
       never auto-inserted (honours the fabrication guard); a suggested term flows through
-      the existing redline approve path.
+      the existing redline approve path. (Each missing term is a chip that only
+      prefills the "Ask for a change" box; the user still sends the turn and
+      approves the redline, and the engine's truthfulness guard vets the draft.)
 
 ### P1-9 — Save-a-job-from-any-page capture *(competitive: capture)*
 **As** a user, **I want** to drop any job URL into Applicant **so that** roles I find
