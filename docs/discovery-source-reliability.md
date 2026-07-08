@@ -182,7 +182,7 @@ pipeline never lets one source's outcome bleed into another's:
 |---|---|---|---|---|
 | US-remote engineering | Remote, US | Software Engineer | Indeed (ok), LinkedIn (ok), ZipRecruiter (empty), Glassdoor (simulated block → error) | yes |
 | UK sales | London, UK | Account Executive | Indeed (ok), LinkedIn (empty), ZipRecruiter (simulated out-of-region error) | yes |
-| Germany data/engineering | Berlin, Germany | Data Scientist | Indeed (ok), LinkedIn (ok), ZipRecruiter (empty), Glassdoor (empty) | — |
+| Germany data/engineering | Berlin, Germany | Data Scientist | Indeed (ok), LinkedIn (ok), ZipRecruiter (empty), Glassdoor (empty), Google jobs (simulated block → error) | yes |
 
 For every scenario the tests assert: normalization carries the region/category through
 untouched (location/title on every kept posting); the criteria filter keeps only

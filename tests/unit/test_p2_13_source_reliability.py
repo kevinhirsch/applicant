@@ -139,12 +139,15 @@ _SCENARIOS = [
             "zip_recruiter": [],
             "glassdoor": [],
         },
-        "raise_for": frozenset(),
+        # Google's jobs aggregator hits a simulated block/captcha this check, so
+        # this scenario too covers ok + empty + error in the SAME run.
+        "raise_for": frozenset({"google"}),
         "expect_status": {
             "jobspy:indeed": SOURCE_OK,
             "jobspy:linkedin": SOURCE_OK,
             "jobspy:zip_recruiter": SOURCE_EMPTY,
             "jobspy:glassdoor": SOURCE_EMPTY,
+            "jobspy:google": SOURCE_ERROR,
         },
     },
 ]
