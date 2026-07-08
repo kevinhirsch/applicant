@@ -79,7 +79,10 @@ Stack services: `applicant-ui` (public) + `api` (internal) + `postgres` + `searx
 head, workspace compileall, `node --check` on all workspace JS, `docker compose config`, and the
 white-label codename denylist. Run the exact hermetic set locally before pushing (see the
 green-increment principle below) — CI is Python 3.12 while local is often 3.11, so don't rely on a
-green local run alone.
+green local run alone. A **second** workflow, `.github/workflows/ci-integration.yml` (the "Integration
+Lane"), runs the `@pytest.mark.integration` suite against real deps — it is **not** a per-PR gate: it
+fires on `workflow_dispatch` (with an optional live-ATS dry-run URL that still stops at the review
+boundary) and weekly (Sunday 02:00 UTC), so don't expect it to catch a regression before merge.
 
 ## Architecture (the big picture)
 
@@ -167,6 +170,11 @@ just the host:
 - **Durable orchestration**: `dbos` is an **optional** extra (`durable-orchestration`); the default
   `ORCHESTRATOR_BACKEND=shim` (in-process checkpoints) needs nothing extra. Select `dbos` only to
   co-reside workflow state in Postgres.
+- **MCP surface**: `app/routers/mcp.py` `mount_mcp()` **always** mounts the native read-only
+  `/mcp/tools` + `/mcp/tools/call` JSON surface (no extra needed; consequential actions are
+  default-denied there, same review gates as HTTP). The **optional** `fastapi-mcp` extra
+  (`uv sync --extra mcp`) gates only the streaming (SSE) transport — absent it, that transport
+  alone is off (logged at INFO).
 
 The integration tests for these paths are `@pytest.mark.integration` and **skip when the dep is absent**
 — a skip is a signal that the *deployed image* needs that dependency, not just a quirk of the test box.
