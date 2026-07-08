@@ -237,6 +237,37 @@ def test_request_approval_refresh_adds_documents_and_keeps_answers(tmp_path):
     assert "uploaded_file" in kinds
 
 
+def test_failed_refresh_keeps_the_previous_reviewed_snapshot(tmp_path):
+    """A failure while REBUILDING the reviewed snapshot must leave the owner with
+    the previous reviewed payload — never with nothing (Greptile on #746: the old
+    snapshot is deleted only after the replacement is fully built)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    loop, app, _fa, _cid = _park_at_gate(storage, orch)
+
+    before = storage.submission_snapshots.get_for_application(app.id)
+    assert before is not None and before.stage == STAGE_REVIEWED
+
+    # Make the build blow up mid-way (documents read happens after the old
+    # delete used to run) — the recorder swallows and logs, but the previous
+    # reviewed snapshot must survive.
+    class _Boom:
+        def list_for_application(self, _id):
+            raise RuntimeError("boom")
+
+    real_docs = storage.documents
+    storage.documents = _Boom()
+    try:
+        loop._record_presubmit_snapshot(app, None)
+    finally:
+        storage.documents = real_docs
+
+    after = storage.submission_snapshots.get_for_application(app.id)
+    assert after is not None, "a failed rebuild must not delete the prior reviewed payload"
+    assert after.id == before.id
+    assert after.answers == before.answers
+
+
 # --- reviewed == submitted (byte-identical promotion) -------------------------
 
 

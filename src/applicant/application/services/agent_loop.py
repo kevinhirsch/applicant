@@ -1984,10 +1984,13 @@ class AgentLoop:
             return
         try:
             existing = repo.get_for_application(app.id)
-            if existing is not None:
-                if existing.stage != STAGE_REVIEWED:
-                    return  # submitted evidence is immutable (H3 invariant)
-                repo.delete_for_application(app.id)
+            if existing is not None and existing.stage != STAGE_REVIEWED:
+                return  # submitted evidence is immutable (H3 invariant)
+            # NOTE: the old reviewed snapshot is deleted at the END, only once the
+            # replacement is fully built — a failure anywhere in the build below
+            # must leave the owner with the PREVIOUS reviewed payload, never with
+            # nothing (the delete would otherwise already be applied when the
+            # swallow-and-log except fires, and in-memory storage has no rollback).
 
             # Answers: every value actually filled, verbatim. Keyed by the field's
             # human label when the engine knows one (drafted screening answers carry
@@ -2032,6 +2035,8 @@ class AgentLoop:
                 )
 
             posting_url = current.root_url or (self._posting_url(current.posting_id) or "")
+            if existing is not None:
+                repo.delete_for_application(app.id)
             repo.add(
                 SubmissionSnapshot(
                     id=SubmissionSnapshotId(new_id()),
