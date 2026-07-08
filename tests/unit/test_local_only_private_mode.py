@@ -41,6 +41,10 @@ from applicant.ports.driving.setup_wizard import LLMSettings
         "http://server.home.arpa:11434",
         "http://ollama:11434",  # Docker service name on the compose network
         "vllm:8000",  # scheme-less single-label host
+        "http://[fd00::1]:11434",  # IPv6 unique-local (the RFC-1918 analog)
+        "http://[fe80::1]:11434",  # IPv6 link-local
+        "http://[::ffff:127.0.0.1]:11434",  # IPv4-mapped loopback, unwrapped
+        "http://[::ffff:192.168.1.50]:11434",  # IPv4-mapped RFC-1918, unwrapped
     ],
 )
 def test_private_hosts_are_accepted(url):
@@ -59,6 +63,11 @@ def test_private_hosts_are_accepted(url):
         "https://ollama.example.com",
         "http://172.32.0.1:8000",  # just OUTSIDE the 172.16/12 private block
         "http://8.8.8.8:11434",
+        # IPv4-mapped PUBLIC IPv6 — the classic bypass of naive private-IP
+        # checks; the classifier unwraps to 8.8.8.8 and refuses on every
+        # Python version, whatever stdlib is_private says about the block.
+        "http://[::ffff:8.8.8.8]:443",
+        "http://[2606:4700:4700::1111]:443",  # global IPv6
         "",
         "   ",
         "http://",

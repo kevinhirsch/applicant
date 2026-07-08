@@ -1086,8 +1086,11 @@ embeddings were already always on-box. Status payload gains `llm_local_only`.
 The honest contract — including what still leaves the box (job-board queries,
 the approved submissions themselves, opt-in notifications) — is
 `docs/private-mode.md`; assertion suite `tests/unit/test_local_only_private_mode.py`.
-**DoD:** A tested configuration where no profile/job data leaves the box (local model
-only); documented + asserted. *(Done as above.)*
+**DoD:** A tested configuration where every LLM request stays on-box or on a
+private-network endpoint — profile/job data never reaches a third-party model
+API; documented + asserted. *(Done as above; what still egresses by design —
+job-board queries, approved submissions, opt-in notifications — is stated in
+docs/private-mode.md.)*
 
 ### P2-12 — Durability drills
 **Effort:** M · **Owner:** eng · **Depends on:** P1-2
