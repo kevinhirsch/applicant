@@ -186,11 +186,15 @@ def test_region_category_scenario_normalizes_and_matches(scenario, storage, embe
     kept = svc.run_discovery(campaign.id, crit)
 
     expected_location = scenario["criteria"]["locations"][0]
-    expected_title_kw = scenario["criteria"]["titles"][0].lower()
+    # The FULL criteria title must appear in every kept posting's title (case-
+    # insensitive) — the same substring containment `_matches` enforces. A
+    # last-token-only check would let e.g. "QA Engineer" satisfy a "Software
+    # Engineer" scenario.
+    expected_title = scenario["criteria"]["titles"][0].lower()
     assert kept, f"{scenario['name']}: expected at least one posting from the ok sources"
     for posting in kept:
         assert posting.location == expected_location
-        assert expected_title_kw.split()[-1] in posting.title.lower()  # e.g. "engineer"/"scientist"/"executive"
+        assert expected_title in posting.title.lower()
         assert posting.source_key in scenario["expect_status"]
 
 
