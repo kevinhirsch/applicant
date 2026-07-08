@@ -272,26 +272,35 @@ class LiveUrlPostingFetcher:
             timeout=self._timeout, proxy=proxy, follow_redirects=False
         ) as client:
             target = url
-            resp = None
             for _hop in range(_MAX_REDIRECTS + 1):
                 _assert_public_http_url(target)
-                resp = client.get(target, headers={"Accept": "text/html,application/xhtml+xml"})
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    loc = resp.headers.get("location", "")
-                    if not loc:
-                        break
-                    target = str(httpx.URL(target).join(loc))
-                    continue
-                break
-            else:
-                log.warning("url_intake_too_many_redirects", url=url)
-                return {}
-            resp.raise_for_status()
-            content_type = resp.headers.get("content-type", "")
-            if "html" not in content_type.lower():
-                log.warning("url_intake_non_html", url=url, content_type=content_type)
-                return {}
-            return extract_posting_metadata(resp.text)
+                # STREAM the response so the size cap applies while reading —
+                # resp.text would buffer a pathological multi-GB page whole
+                # before the parser's truncation ever ran.
+                with client.stream(
+                    "GET", target, headers={"Accept": "text/html,application/xhtml+xml"}
+                ) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location", "")
+                        if not loc:
+                            return {}
+                        target = str(httpx.URL(target).join(loc))
+                        continue
+                    resp.raise_for_status()
+                    content_type = resp.headers.get("content-type", "")
+                    if "html" not in content_type.lower():
+                        log.warning("url_intake_non_html", url=url, content_type=content_type)
+                        return {}
+                    parts: list[str] = []
+                    total = 0
+                    for chunk in resp.iter_text():
+                        parts.append(chunk)
+                        total += len(chunk)
+                        if total >= _MAX_HTML_CHARS:
+                            break
+                    return extract_posting_metadata("".join(parts)[:_MAX_HTML_CHARS])
+            log.warning("url_intake_too_many_redirects", url=url)
+            return {}
 
 
 # --- FAKE fetcher (offline; default lane) ------------------------------------

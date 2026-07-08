@@ -282,12 +282,17 @@ def test_live_fetcher_validates_every_redirect_hop(monkeypatch):
 
     monkeypatch.setattr(mod, "_assert_public_http_url", tracking_assert)
 
+    import contextlib
+
     class _Resp:
         status_code = 302
         headers = {"location": "http://api:8000/internal"}
 
         def raise_for_status(self):
             pass
+
+        def iter_text(self):
+            return iter(())
 
     class _Client:
         def __init__(self, **kwargs):
@@ -301,8 +306,9 @@ def test_live_fetcher_validates_every_redirect_hop(monkeypatch):
         def __exit__(self, *a):
             return False
 
-        def get(self, url, **kwargs):
-            return _Resp()
+        @contextlib.contextmanager
+        def stream(self, method, url, **kwargs):
+            yield _Resp()
 
     import httpx
 

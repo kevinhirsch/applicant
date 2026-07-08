@@ -465,8 +465,15 @@ def setup_applicant_tracker_routes() -> APIRouter:
             except EngineError as exc:
                 logger.debug("tracker: save-job campaigns read failed (status=%s): %s", exc.status, exc)
                 return soft_degrade(exc, {"saved": False})
+            # Only an ACTIVE campaign may receive new saves — list_campaigns
+            # returns every non-system campaign in storage order, so blindly
+            # taking the first could file the job into a paused/retired search.
+            # A missing "active" key (older engine) still counts as active.
             first = next(
-                (c for c in campaigns if isinstance(c, dict) and c.get("id")),
+                (
+                    c for c in campaigns
+                    if isinstance(c, dict) and c.get("id") and c.get("active") is not False
+                ),
                 None,
             ) if isinstance(campaigns, list) else None
             if first is None:

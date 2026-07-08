@@ -205,6 +205,9 @@ async function _saveJobByUrl(panel) {
   const input = panel.querySelector('#applicant-tracker-savejob-url');
   const btn = panel.querySelector('#applicant-tracker-savejob-btn');
   const resultEl = panel.querySelector('#applicant-tracker-savejob-result');
+  // In-flight guard shared by the button AND the Enter-key path — repeated
+  // Enter presses must not start a second overlapping save.
+  if (btn && btn.disabled) return;
   const url = (input.value || '').trim();
   if (!url) { resultEl.textContent = 'Paste a job posting link first.'; return; }
   if (!/^https?:\/\//i.test(url)) {
