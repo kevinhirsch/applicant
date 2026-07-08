@@ -56,32 +56,27 @@ import sys
 from pathlib import Path
 
 
-def _channel() -> str | None:
-    """First launchable chromium/chrome channel, or None (browser unavailable)."""
+def _launch_source():
+    """Launch the real driver on the first working channel; ``(source, channel)``.
+
+    Launches ONCE — the probe launch IS the run launch (no probe-then-relaunch).
+    Returns ``(None, None)`` when no browser binary is launchable. The caller owns
+    the returned source and must ``close()`` it.
+    """
     try:
         from applicant.adapters.browser.page_source import PlaywrightPageSource
         from applicant.adapters.browser.stealth import coherent_fingerprint
     except Exception:  # pragma: no cover - import guard
-        return None
+        return None, None
     for channel in ("chromium", "chrome"):
         try:
             src = PlaywrightPageSource(
                 coherent_fingerprint(channel), headless=True, channel=channel
             )
-            src.close()
-            return channel
+            return src, channel
         except Exception:
             continue
-    return None
-
-
-def _new_source(channel: str):
-    from applicant.adapters.browser.page_source import PlaywrightPageSource
-    from applicant.adapters.browser.stealth import coherent_fingerprint
-
-    return PlaywrightPageSource(
-        coherent_fingerprint(channel), headless=True, channel=channel
-    )
+    return None, None
 
 
 def _run(src, *, label: str, source_url: str, out_dir: Path) -> dict:
@@ -149,56 +144,50 @@ def _run(src, *, label: str, source_url: str, out_dir: Path) -> dict:
     }
 
 
-def _mode_live(args, channel: str) -> dict:
-    src = _new_source(channel)
-    try:
-        src.open(args.url)
-        return _run(src, label=args.label, source_url=args.url, out_dir=args.out)
-    finally:
-        src.close()
+def _mode_live(args, src) -> dict:
+    src.open(args.url)
+    return _run(src, label=args.label, source_url=args.url, out_dir=args.out)
 
 
-def _mode_dom(args, channel: str) -> dict:
+def _mode_dom(args, src) -> dict:
     html = Path(args.dom).read_text(encoding="utf-8", errors="replace")
-    src = _new_source(channel)
+    # Inject the saved real-board markup WITHOUT a URL navigation, exactly like
+    # tests/integration/test_real_browser.py — this keeps the SSRF guard intact
+    # and needs no browser egress, while driving the real detection engine over
+    # genuine board DOM. "commit" avoids hanging on the board's cross-origin
+    # subresources (which cannot load offline).
+    src._page.set_content(html, wait_until="commit")  # noqa: SLF001
     try:
-        # Inject the saved real-board markup WITHOUT a URL navigation, exactly like
-        # tests/integration/test_real_browser.py — this keeps the SSRF guard intact
-        # and needs no browser egress, while driving the real detection engine over
-        # genuine board DOM. "commit" avoids hanging on the board's cross-origin
-        # subresources (which cannot load offline).
-        src._page.set_content(html, wait_until="commit")  # noqa: SLF001
-        try:
-            src._settle()  # noqa: SLF001
-        except Exception:
-            pass
-        return _run(
-            src, label=args.label, source_url=args.source_url, out_dir=args.out
-        )
-    finally:
-        src.close()
+        src._settle()  # noqa: SLF001
+    except Exception:
+        pass
+    return _run(src, label=args.label, source_url=args.source_url, out_dir=args.out)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    # Shared flags live on a parent parser so both subcommands define them once.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--label", required=True)
+    common.add_argument("--out", type=Path, default=Path("docs/proof/p1-2"))
     sub = parser.add_subparsers(dest="mode", required=True)
 
-    p_live = sub.add_parser("live", help="Navigate a live posting URL (needs egress).")
-    p_live.add_argument("--label", required=True)
+    p_live = sub.add_parser(
+        "live", parents=[common], help="Navigate a live posting URL (needs egress)."
+    )
     p_live.add_argument("--url", required=True)
-    p_live.add_argument("--out", type=Path, default=Path("docs/proof/p1-2"))
 
-    p_dom = sub.add_parser("dom", help="Replay a saved real-board DOM snapshot.")
-    p_dom.add_argument("--label", required=True)
+    p_dom = sub.add_parser(
+        "dom", parents=[common], help="Replay a saved real-board DOM snapshot."
+    )
     p_dom.add_argument("--dom", required=True, help="Path to the saved .html snapshot.")
     p_dom.add_argument("--source-url", default="", help="The live URL it came from.")
-    p_dom.add_argument("--out", type=Path, default=Path("docs/proof/p1-2"))
 
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
 
-    channel = _channel()
-    if channel is None:
+    src, channel = _launch_source()
+    if src is None:
         print(
             "SKIP: no browser binary launchable. Install with "
             "`uv sync --extra browser && uv run patchright install chromium`.",
@@ -206,7 +195,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 3
 
-    record = _mode_live(args, channel) if args.mode == "live" else _mode_dom(args, channel)
+    try:
+        record = _mode_live(args, src) if args.mode == "live" else _mode_dom(args, src)
+    finally:
+        src.close()
 
     record["channel"] = channel
     record["ran_at"] = _dt.datetime.now(_dt.UTC).isoformat()

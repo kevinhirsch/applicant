@@ -71,10 +71,26 @@ def main() -> int:
         ),
     ]
     started = time.monotonic()
-    res = llm.complete(messages)
+    try:
+        res = llm.complete(messages)
+    except Exception as exc:
+        # Keep the failure record REDACTED: only the exception *type* is emitted.
+        # The message of an HTTP/provider error can carry response bodies or echoed
+        # request headers, so it is never printed — same posture as the credential.
+        record = {
+            "ok": False,
+            "provider": "openrouter",
+            "base_url": base_url,
+            "error_type": type(exc).__name__,
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+            "credential_printed": False,
+        }
+        print(json.dumps(record, indent=2))
+        return 1
     elapsed = round(time.monotonic() - started, 2)
 
     record = {
+        "ok": True,
         "provider": "openrouter",
         "base_url": base_url,
         "tier_used": getattr(res, "tier", None),
