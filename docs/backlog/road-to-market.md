@@ -66,7 +66,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
-| H1 | Honesty: receipts, not narration | M | eng | — |
+| H1 | Honesty: receipts, not narration | M | eng | DONE — claim-path audit (docs/design/audits/h1-receipts-audit.md) machine-checked by no-narration pin tests; per-run receipts on Activity rows; Today's count links to its run trail |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
 | H4 | Honesty: visible provenance | M | eng | — |
@@ -716,6 +716,14 @@ at trust instead of features.
 **DoD:** Every number/claim the owner reads (Today "what I did", Activity feed, Tracker
 counts, digest/recap) is a projection of **recorded actions**, never an LLM describing what
 it thinks it did. An audit confirms no claim-path narrates; a test pins it.
+**Status: DONE.** The audit record is `docs/design/audits/h1-receipts-audit.md` (every
+claim surface → its recorded source), kept honest by
+`tests/unit/test_h1_receipts_not_narration.py`: behavioral pins (intent sentence, daily
+status push, weekly recap = projections of persisted rows) plus a source scan proving no
+audited claim path can invoke a model (with a canary so the scan can't go vacuous). The
+claims now *link* to their receipts in the front-door: each Activity row exposes its
+recorded run record inline, and Today's "N applications" line opens the run trail it was
+counted from (`workspace/tests/test_applicant_h1_receipts.py`).
 
 ### H2 — No silent underdelivery *(kills: underdeliver)*
 **Effort:** M · **Owner:** eng · **Depends on:** P1-3 (health panel)
