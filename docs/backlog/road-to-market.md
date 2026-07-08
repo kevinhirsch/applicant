@@ -68,7 +68,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
 | H1 | Honesty: receipts, not narration | M | eng | DONE — claim-path audit (docs/design/audits/h1-receipts-audit.md) machine-checked by no-narration pin tests; per-run receipts on Activity rows; Today's count links to its run trail |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
-| H3 | Honesty: full-fidelity review | S | eng | — |
+| H3 | Honesty: full-fidelity review | S | eng | DONE — reviewed-stage snapshot at the stop-boundary, promoted byte-identical on submit; literal-payload panel on every submit surface |
 | H4 | Honesty: visible provenance | M | eng | — |
 | H5 | Honesty: calibrated copy | S | eng | — |
 | PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
@@ -783,11 +783,36 @@ counted from (`workspace/tests/test_applicant_h1_receipts.py`).
 incomplete prefill, a skipped step all say so at the item level — never ship a quiet
 generic result that reads as success. Extends P1-3 from boot-state to per-action.
 
-### H3 — Full-fidelity review *(kills: the embarrassing send)*
+### H3 — Full-fidelity review *(kills: the embarrassing send)* — **DONE**
 **Effort:** S · **Owner:** eng · **Depends on:** —
 **DoD:** Before every submit the owner sees the **literal** payload — exact résumé, exact
 cover letter, every screening answer verbatim — not a summary. Tested against the
 review-before-submit boundary (ties to P2-8).
+- [x] The engine records a provisional ``stage: "reviewed"`` submission snapshot AT
+      the stop-boundary (pre-fill landing `AWAITING_FINAL_APPROVAL`, refreshed with
+      the live document/variant set when final approval is requested): every filled
+      value verbatim (keyed by the human label when known), the drafted screening
+      answers, the uploaded résumé file, the exact generated documents, the posting
+      URL. The old pre-submit 404 gap in `GET /api/outcomes/applications/{id}/snapshot`
+      is closed; the route reports the capture `stage`.
+- [x] Reviewed **is** sent: the terminal submit promotes the reviewed snapshot
+      **byte-identical** (same id/answers/materials/capture time — only the stage
+      marker flips to `submitted`); a submitted snapshot is immutable thereafter.
+- [x] Reachable at every submit surface: the live-remote "Review exactly what will
+      be sent" panel, the Portal final-approval card, and the Today final-approval
+      card all render the SAME exported renderer
+      (`applicantRemote.js` `fetchSubmissionSnapshot`/`renderSubmissionSnapshot`) —
+      one implementation, no summarized sibling; the panel states honestly whether
+      it shows what *will* be or *was* sent, and the no-snapshot state stays the
+      honest "nothing recorded yet", never a fabrication.
+- [x] Owner-gated: the snapshot proxy now uses `require_engine_owner` (the literal
+      filled application is the owner's data; a second workspace account is denied).
+- [x] Tested against the review-before-submit boundary (ties to P2-8): unapproved
+      material still raises `ReviewRequired` and leaves the reviewed snapshot
+      untouched; engine pins in `tests/unit/test_h3_full_fidelity_review.py` (7),
+      front-door pins in `workspace/tests/test_applicant_h3_full_fidelity.py` (7) +
+      `test_applicant_snapshot_routes.py` (13, incl. stage + owner gate) + the
+      executable renderer harness `workspace/tests/js/applicantSnapshotFidelity.test.js` (6).
 
 ### H4 — Visible provenance *(kills: "it made something up in my name")*
 **Effort:** M · **Owner:** eng · **Depends on:** H3

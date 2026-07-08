@@ -283,14 +283,33 @@ class SubmissionService:
         Captures the exact answers (the attributes used to fill the application),
         the material versions (the approved résumé variant), and the posting at
         the stop-boundary. Idempotent: skips if a snapshot already exists.
+
+        H3 (full-fidelity review): when a *reviewed* pre-submit snapshot exists —
+        the literal payload the owner saw in "Review exactly what will be sent" —
+        that content IS the durable record. It is promoted byte-identical (only the
+        stage marker flips to ``submitted``), so what the owner reviewed is exactly
+        what stands as the evidence of what was sent.
         """
-        from applicant.core.entities.submission_snapshot import SubmissionSnapshot
+        import dataclasses as _dc
+
+        from applicant.core.entities.submission_snapshot import (
+            STAGE_REVIEWED,
+            STAGE_SUBMITTED,
+            SubmissionSnapshot,
+        )
         from applicant.core.ids import SubmissionSnapshotId
 
         repo = getattr(self._storage, "submission_snapshots", None)
         if repo is None:
             return
-        if repo.get_for_application(application.id) is not None:
+        existing = repo.get_for_application(application.id)
+        if existing is not None:
+            if existing.stage == STAGE_REVIEWED:
+                # Promote the reviewed payload unchanged: same id, same answers,
+                # same materials, same capture time — only the stage flips.
+                meta = dict(existing.ats_metadata or {})
+                meta["stage"] = STAGE_SUBMITTED
+                repo.add(_dc.replace(existing, ats_metadata=meta))
             return
 
         app = self._storage.applications.get(application.id) or application

@@ -1543,6 +1543,12 @@ function _renderTwoFactor(item) {
 // SAME engine endpoints the live-session modal uses — submit-self (open the live
 // session) or authorize-the-engine-to-finish. The live session remains the path
 // for takeover cases.
+//
+// H3 (full-fidelity review): the card also carries "See exactly what will be
+// sent" — an inline panel with the LITERAL payload captured at the review stop
+// (every answer verbatim, the exact documents, the posting), rendered by the
+// SAME remoteModule renderer the live-session modal uses. Never a summary; when
+// nothing is recorded it says so honestly instead of fabricating.
 function _renderFinal(item) {
   const hint = _meta(item.kind).hint || 'Choose how to submit — nothing is sent until you do.';
   const label = _roleCompany(item);
@@ -1555,6 +1561,14 @@ function _renderFinal(item) {
     </div>
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <div class="applicant-portal-final-caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
+    <div style="margin-bottom:8px;">
+      <button type="button" class="cal-btn applicant-portal-final-payload-toggle"
+              data-app-id="${esc(appId)}" aria-expanded="false"
+              aria-controls="applicant-portal-final-payload-${esc(appId)}"
+              title="The exact answers, documents, and posting — word for word, before anything is sent">See exactly what will be sent</button>
+      <div class="applicant-portal-final-payload" id="applicant-portal-final-payload-${esc(appId)}" data-app-id="${esc(appId)}" hidden
+           style="margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:260px;overflow-y:auto;font-size:12px;"></div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="button" class="cal-btn applicant-portal-final-self"
               data-app-id="${esc(appId)}" data-label="${esc(label)}"
@@ -1563,6 +1577,32 @@ function _renderFinal(item) {
               data-app-id="${esc(appId)}" data-action-id="${esc(item.id)}" data-label="${esc(label)}"
               title="I'll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
     </div>`;
+}
+
+// H3: fetch + render the literal reviewed payload into a final-approval card's
+// panel. Reuses the remoteModule snapshot seam (same fetch, same renderer as the
+// live-session modal — never a second, summarized implementation). Errors offer
+// a retry; the "nothing recorded yet" state renders honestly, never fabricated.
+async function _loadFinalPayload(appId, panel) {
+  if (!appId) {
+    panel.innerHTML = remoteModule.renderSubmissionSnapshot({ has_snapshot: false });
+    return;
+  }
+  panel.innerHTML = loadingHTML('Loading what will be sent…');
+  let data;
+  try {
+    data = await remoteModule.fetchSubmissionSnapshot(appId);
+  } catch (e) {
+    panel.innerHTML = errorHTML(errText(e));
+    wireRetry(panel, () => _loadFinalPayload(appId, panel));
+    return;
+  }
+  if (data && data.engine_available === false) {
+    panel.innerHTML = errorHTML("I can't load what will be sent right now — try again in a moment.");
+    wireRetry(panel, () => _loadFinalPayload(appId, panel));
+    return;
+  }
+  panel.innerHTML = remoteModule.renderSubmissionSnapshot(data || {});
 }
 
 // Onboarding gap (the single persistent "finish your profile" row). The engine's
@@ -2180,6 +2220,27 @@ function _wireRows(host) {
     btn.addEventListener('click', () => {
       _openSession(btn.dataset.appId, '');
       _toast('Open the live view and click submit when you’re ready');
+    });
+  });
+  // H3 (full-fidelity review): "See exactly what will be sent" on the final-
+  // approval card — fetch + render the literal reviewed payload via the SAME
+  // remoteModule seam the live-session modal uses (one renderer, no summary).
+  host.querySelectorAll('.applicant-portal-final-payload-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.applicant-portal-row');
+      const panel = row && row.querySelector('.applicant-portal-final-payload');
+      if (!panel) return;
+      if (!panel.hidden) {
+        panel.hidden = true;
+        panel.innerHTML = '';
+        btn.setAttribute('aria-expanded', 'false');
+        btn.textContent = 'See exactly what will be sent';
+        return;
+      }
+      panel.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      btn.textContent = 'Hide what will be sent';
+      await _loadFinalPayload(btn.dataset.appId, panel);
     });
   });
   host.querySelectorAll('.applicant-portal-final-authorize').forEach((btn) => {
