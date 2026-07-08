@@ -32639,11 +32639,17 @@ body.theme-frosted .modal {
   transform: translateX(1px);
 }
 
-/* ── Applicant section gating (Stage-2) ──────────────────────────────────
+/* ── Applicant section gating (Stage-2, reworked by P0-4) ─────────────────
    Sections mapped to the Applicant engine activate progressively from
-   /api/applicant/features. Until the engine is configured (or for surfaces
-   that ship present-but-disabled, e.g. Compare) the launcher is greyed and
-   non-interactive but stays VISIBLE — no dead UI that 500s when clicked. */
+   /api/applicant/features. P0-4 (padlocks → absence): a not-yet-configured
+   or not-in-this-build section is ABSENT from the nav — it appears once it
+   becomes real (setup complete / data exists) instead of rendering a lock
+   that reads as broken/paywalled. `!important` so the gating verdict beats
+   any inline display another renderer set on the same element. */
+.applicant-gated-hidden { display: none !important; }
+/* A section whose backing IS configured but whose engine is momentarily
+   unreachable keeps its place (vanishing would read as data loss) — greyed
+   and non-interactive until the engine answers again. */
 .applicant-locked {
   opacity: 0.4;
   cursor: not-allowed;
