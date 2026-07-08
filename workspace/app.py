@@ -1036,6 +1036,14 @@ app.include_router(setup_applicant_capabilities_routes())
 from routes.applicant_demo_routes import setup_applicant_demo_routes
 app.include_router(setup_applicant_demo_routes())
 
+# Honest health panel (P1-3, issue #655) — owner-gated read proxy
+# (/api/applicant/health/capabilities) over the engine's boot-time capability
+# self-report (postgres / résumé renderer / browser / orchestrator, real vs
+# stub with actionable fix copy). Renders in Settings -> System + a Today
+# banner when a load-bearing capability is degraded.
+from routes.applicant_health_routes import setup_applicant_health_routes
+app.include_router(setup_applicant_health_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
