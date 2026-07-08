@@ -1164,7 +1164,9 @@ class PostSubmissionService:
         (``interview_invited`` / ``offer``) never touch status -- see
         ``POSITIVE_SIGNAL_TYPES``. Returns ``None`` when the application does not
         exist (caller maps that to 404); raises ``ValueError`` for an unrecognized
-        ``outcome_type`` so the router can 422 instead of silently no-op'ing.
+        ``outcome_type`` so the router can 422 instead of silently no-op'ing. Also
+        raises ``ValueError`` for the submission-class types (``submitted`` /
+        ``converted``), which must go through the review-gated mark-submitted flow.
         """
         if not is_recognized_outcome(outcome_type):
             raise ValueError(f"Unrecognized outcome type: {outcome_type!r}")
