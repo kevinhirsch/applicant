@@ -244,12 +244,19 @@ def test_submitted_outcomes_are_constructed_only_by_the_gated_service_and_demo_s
     keyword, not text matching."""
     offenders: set[str] = set()
     for rel, call in _outcome_event_calls():
+        # Keyword form: type="submitted".
         for kw in call.keywords:
             if (
                 kw.arg == "type"
                 and isinstance(kw.value, ast.Constant)
                 and kw.value.value == "submitted"
             ):
+                offenders.add(rel)
+        # Positional form: OutcomeEvent(id, app_id, "submitted", ...). Checked
+        # index-agnostically — no other field legitimately takes the literal
+        # "submitted", and this survives a dataclass field reorder.
+        for arg in call.args:
+            if isinstance(arg, ast.Constant) and arg.value == "submitted":
                 offenders.add(rel)
     assert offenders == {
         "application/services/submission_service.py",
