@@ -55,8 +55,12 @@ three packages. The front-door `npm audit` was clean (0 vulnerabilities).
   uploads a résumé, and a poisoned `.docx` could carry a DTD that reads a local
   file or expands an entity bomb. **Fixed at the call sites, version-independently:**
   - *Read* (`adapters/resume_parser/resume_parser.py`): `_docx_has_dtd` scans
-    every XML part's prolog and refuses any that declares `<!DOCTYPE`/`<!ENTITY`
-    before python-docx (which uses an entity-resolving parser) ever opens it.
+    every XML part IN FULL (streamed, with a carry buffer across chunk
+    boundaries, capped per part so a decompression bomb fails closed) and
+    refuses any that declares `<!DOCTYPE`/`<!ENTITY` before python-docx (which
+    uses an entity-resolving parser) ever opens it. Whole-part, not just the
+    prolog head: XML permits comments/whitespace before the DTD, so a fixed
+    head-scan is bypassable (Greptile T-Rex repro on the first version).
   - *Edit* (`adapters/resume_tailoring/docx_tailor.py`): already parses with
     `_SAFE_XML_PARSER` (`resolve_entities=False, no_network=True, huge_tree=False`).
 

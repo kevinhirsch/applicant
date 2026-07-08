@@ -29,6 +29,17 @@ from applicant.ports.driven.resume_parser import (
 log = get_logger(__name__)
 
 
+#: DTD markers a legitimate OOXML part never contains. Matched case-insensitively
+#: over the raw bytes (the XML spec keeps these keywords uppercase, but matching
+#: loosely costs nothing and is safer).
+_DTD_MARKERS: tuple[bytes, ...] = (b"<!doctype", b"<!entity")
+#: Per-part read cap. A résumé's ``document.xml``/``styles.xml`` is tens of KB;
+#: a part larger than this is itself suspicious (and could be a decompression
+#: bomb), so scanning stops and fails closed.
+_DTD_SCAN_MAX_BYTES = 16 * 1024 * 1024
+_DTD_SCAN_CHUNK = 65536
+
+
 def _docx_has_dtd(path: Path) -> bool:
     """True when any XML part of the .docx archive declares a DTD (P2-3).
 
@@ -36,20 +47,38 @@ def _docx_has_dtd(path: Path) -> bool:
     python-docx parses parts with an entity-resolving lxml parser — so a
     crafted archive could mount an XXE local-file read or an entity-expansion
     bomb. Scanning the raw bytes BEFORE any XML parser touches them closes the
-    hole for every installed lxml version. Fail-closed: an unreadable/corrupt
-    archive reports True (the caller then skips python-docx entirely; the same
-    corrupt file would have failed to parse anyway).
+    hole for every installed lxml version.
+
+    The scan reads each XML part in full (not just the prolog head): XML permits
+    arbitrary comments / processing-instructions / whitespace before the DTD, so
+    a crafted part can pad ``<!DOCTYPE`` past any fixed offset (Greptile T-Rex
+    repro on the earlier 4 KB-only version). Reading is STREAMED with a carry
+    buffer across chunk boundaries and capped at
+    :data:`_DTD_SCAN_MAX_BYTES` per part so a decompression bomb cannot exhaust
+    memory — an over-cap part fails closed. Fail-closed too on an
+    unreadable/corrupt archive (the caller then skips python-docx entirely; the
+    same file would have failed to parse anyway).
     """
+    carry = max(len(m) for m in _DTD_MARKERS) - 1
     try:
         with zipfile.ZipFile(path) as zf:
             for name in zf.namelist():
                 if not name.lower().endswith((".xml", ".rels")):
                     continue
-                # DTDs must appear in the prolog, before the root element —
-                # the first 4KB is more than enough to catch one.
-                head = zf.open(name).read(4096)
-                if b"<!DOCTYPE" in head or b"<!ENTITY" in head:
-                    return True
+                total = 0
+                prev = b""
+                with zf.open(name) as fh:
+                    while True:
+                        chunk = fh.read(_DTD_SCAN_CHUNK)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        window = (prev + chunk).lower()
+                        if any(marker in window for marker in _DTD_MARKERS):
+                            return True
+                        if total > _DTD_SCAN_MAX_BYTES:
+                            return True  # oversized part: fail closed
+                        prev = window[-carry:]
     except Exception:
         return True
     return False

@@ -68,6 +68,26 @@ def test_docx_has_dtd_detects_the_entity_payload(tmp_path):
 
 
 @pytest.mark.unit
+def test_docx_has_dtd_catches_a_dtd_padded_past_the_prolog_head(tmp_path):
+    """Greptile T-Rex bypass: XML permits comments/whitespace before the DTD, so
+    a crafted part can pad ``<!DOCTYPE`` past any fixed prolog-head offset. The
+    whole-part scan must still catch it (a 4 KB-only scan did not)."""
+    padded = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        + "<!-- " + ("A" * 8192) + " -->"  # >4 KB of comment padding
+        + '<!DOCTYPE w:document [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+        + '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        'wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>&xxe;'
+        "</w:t></w:r></w:p></w:body></w:document>"
+    )
+    poisoned = tmp_path / "padded.docx"
+    _write_docx(poisoned, padded)
+
+    assert _docx_has_dtd(poisoned) is True
+    assert ResumeParser()._read_docx(poisoned) == ""
+
+
+@pytest.mark.unit
 def test_docx_has_dtd_fails_closed_on_a_corrupt_archive(tmp_path):
     """A non-zip / truncated file cannot be classified safe — report True so the
     caller skips python-docx (which would fail on it anyway)."""

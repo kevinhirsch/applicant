@@ -27,12 +27,11 @@ IS reached). Zero network.
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 import routes.applicant_gallery_routes as gallery_mod
 import routes.applicant_research_routes as research_mod
 import routes.applicant_results_routes as results_mod
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from routes.applicant_gallery_routes import setup_applicant_gallery_routes
 from routes.applicant_research_routes import setup_applicant_research_routes
 from routes.applicant_results_routes import setup_applicant_results_routes
@@ -90,6 +89,14 @@ class FakeEngine:
     async def research_cached(self, campaign_id, query):
         FakeEngine.calls.append(("research_cached", campaign_id, query))
         return {"report": "secret company research"}
+
+    async def research_run(self, campaign_id, payload):
+        FakeEngine.calls.append(("research_run", campaign_id, dict(payload)))
+        return {"report": "fresh company research"}
+
+    async def research_budget(self, campaign_id):
+        FakeEngine.calls.append(("research_budget", campaign_id))
+        return {"remaining": 5}
 
 
 @pytest.fixture(autouse=True)
@@ -149,6 +156,22 @@ def test_research_second_account_denied_and_engine_untouched():
     assert FakeEngine.calls == [], "another account must not read the owner's research"
 
 
+def test_research_run_second_account_denied_and_engine_untouched():
+    """The budget-CHARGING run is the costliest research endpoint — a second
+    account must not be able to spend the owner's research budget."""
+    app = _mount(setup_applicant_research_routes, user="teammate", configured=True, admins=("owner",))
+    r = TestClient(app).post("/api/applicant/research/c1/run", json={"query": "Acme"})
+    assert r.status_code == 403
+    assert FakeEngine.calls == []
+
+
+def test_research_budget_second_account_denied():
+    app = _mount(setup_applicant_research_routes, user="teammate", configured=True, admins=("owner",))
+    r = TestClient(app).get("/api/applicant/research/c1/budget")
+    assert r.status_code == 403
+    assert FakeEngine.calls == []
+
+
 def test_research_unauthenticated_rejected():
     app = _mount(setup_applicant_research_routes, user=None, configured=True, admins=("owner",))
     r = TestClient(app).get("/api/applicant/research/c1/cached", params={"query": "Acme"})
@@ -170,6 +193,20 @@ def test_gallery_second_account_denied_and_engine_untouched():
     r = TestClient(app).get("/api/applicant/gallery")
     assert r.status_code == 403
     assert FakeEngine.calls == [], "another account must not read the owner's gallery"
+
+
+def test_gallery_campaigns_list_second_account_denied():
+    app = _mount(setup_applicant_gallery_routes, user="teammate", configured=True, admins=("owner",))
+    r = TestClient(app).get("/api/applicant/gallery/campaigns")
+    assert r.status_code == 403
+    assert FakeEngine.calls == []
+
+
+def test_gallery_for_campaign_second_account_denied():
+    app = _mount(setup_applicant_gallery_routes, user="teammate", configured=True, admins=("owner",))
+    r = TestClient(app).get("/api/applicant/gallery/c1")
+    assert r.status_code == 403
+    assert FakeEngine.calls == []
 
 
 def test_gallery_unauthenticated_rejected():
