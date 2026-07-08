@@ -30,6 +30,12 @@ log = get_logger(__name__)
 #: pasted role that discovery already found is recognized, not double-tracked.
 _DEDUP_THRESHOLD = 0.97
 
+_INVALID_URL_MESSAGE = (
+    "That doesn't look like a web address I can open — paste the full link "
+    "to the job posting (it should start with http:// or https:// and "
+    "include the site's address)."
+)
+
 
 def _normalized_url(url: str) -> str:
     return (url or "").strip().rstrip("/")
@@ -81,11 +87,19 @@ class IntakeService:
     def save_url(self, campaign_id: CampaignId, url: str) -> dict:
         """Capture one posting URL into the campaign's reviewed pipeline."""
         url = (url or "").strip()
-        if not url.lower().startswith(("http://", "https://")):
-            raise InvalidInput(
-                "That doesn't look like a web address I can open — paste the "
-                "full link to the job posting (it should start with http:// or https://)."
-            )
+        # Validate up front, before dedup or any fetch: a malformed value must be
+        # rejected here, never persisted as an "unknown" posting (fake lane) or
+        # swallowed as an unreadable page (live lane). Bracketed-IPv6 and bad-port
+        # errors surface as ValueError — some only when ``.hostname``/``.port``
+        # are accessed, so both accesses live inside the try.
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname or ""
+            _ = parts.port
+        except ValueError:
+            raise InvalidInput(_INVALID_URL_MESSAGE) from None
+        if parts.scheme.lower() not in ("http", "https") or not host:
+            raise InvalidInput(_INVALID_URL_MESSAGE)
         existing = list(self._storage.postings.list_for_campaign(campaign_id))
         dup = self._find_url_duplicate(existing, url)
         if dup is not None:

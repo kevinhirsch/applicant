@@ -106,6 +106,43 @@ def test_non_http_url_is_rejected_with_plain_language_422(gated_client):
     assert "http" in res.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://[::1",              # unbracketed-close IPv6 — urlsplit raises ValueError
+        "https://",                  # scheme only, no hostname at all
+        "https://example.com:99999",  # port out of range — raises on .port access
+    ],
+)
+def test_malformed_http_url_is_rejected_and_nothing_is_persisted(bad_url):
+    """Greptile P1 (#740): a string that merely STARTS with http(s):// but does
+    not parse into a real host/port must be rejected up front — never persisted
+    as an 'unknown' posting (fake lane) or swallowed as an unreadable page
+    (live lane)."""
+    from applicant.adapters.storage.in_memory import InMemoryStorage
+    from applicant.application.services.intake_service import IntakeService
+    from applicant.core.errors import InvalidInput
+
+    class ExplodingFetcher:
+        def fetch(self, url):  # pragma: no cover - must never be reached
+            raise AssertionError("a malformed URL must be rejected before any fetch")
+
+    storage = InMemoryStorage()
+    service = IntakeService(storage, ExplodingFetcher(), embedding=None)
+    with pytest.raises(InvalidInput) as exc:
+        service.save_url("camp-i8", bad_url)
+    assert "web address" in str(exc.value)
+    assert list(storage.postings.list_for_campaign("camp-i8")) == []
+
+
+def test_malformed_http_url_is_rejected_over_http_with_422(gated_client):
+    res = gated_client.post("/api/intake/camp-i9/url", json={"url": "https://[::1"})
+    assert res.status_code == 422
+    assert "web address" in res.json()["detail"]
+    digest = gated_client.get("/api/digest/camp-i9").json()
+    assert digest["empty"] is True
+
+
 def test_router_blocked_before_llm_gate(app):
     with TestClient(app) as c:
         res = c.post("/api/intake/camp-i6/url", json={"url": URL})
