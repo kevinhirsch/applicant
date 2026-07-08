@@ -52,6 +52,7 @@ from applicant.core.rules.ats_match_rate import (
     is_probable_wrong_ats,
 )
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
+from applicant.core.rules.underdelivery import prefill_shortfall
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
 
@@ -1629,11 +1630,22 @@ class PrefillService:
         app = app.with_status(ApplicationState.MATERIAL_REVIEW)
         app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
         result.state = app.status
+        # H2 (no silent underdelivery): a run that cleared the match-rate floor
+        # can still have left fields blank, failed some fills, or deferred
+        # screening questions. State that ON the final-approval item itself so
+        # an incomplete pre-fill never reads as "all filled, just submit".
+        shortfall = prefill_shortfall(
+            fields_detected=result.fields_detected,
+            fields_filled=result.fields_filled,
+            failed_fields=result.fields_failed,
+            deferred_questions=result.deferred_essay_questions,
+        )
         result.pending_action_id = self._emit_waiting(
             application=app,
             kind="final_approval",
             title="Final approval / submit",
             session_url=result.sandbox_session_url,
+            payload={"shortfall": shortfall} if shortfall else None,
         )
         self._persist(app)
         return result
@@ -2367,19 +2379,38 @@ class PrefillService:
 
         IDEM-2: deduped by ``(application_id, kind)`` — ``_resume_in_flight`` re-drives
         an in-flight app every ~60s tick, re-landing the same waiting state; without
-        this guard each redrive piled up another identical pending action.
+        this guard each redrive piled up another identical pending action. The dedupe
+        keeps ONE open action but the redrive recomputes the payload (e.g. the H2
+        ``shortfall`` honesty record), so the existing action is refreshed with the
+        fresh emission's payload — otherwise Today/Portal keep rendering a stale
+        claim (a shortfall that has since cleared, or worse, none where one now
+        exists). Keys the fresh emission never computes stay sticky: ``snoozed_until``
+        (a user's "remind me later" must not reset every tick) and ``dedup_key``
+        (mirrored into an indexed column on every write).
         """
         cid: CampaignId = application.campaign_id
+        body = dict(payload or {})
+        if session_url:
+            body["session_url"] = session_url
         for existing in self._storage.pending_actions.list_open(cid):
             if (
                 str(getattr(existing, "application_id", "")) == str(application.id)
                 and existing.kind == kind
             ):
+                old = dict(existing.payload or {})
+                fresh = dict(body)
+                for sticky in ("snoozed_until", "dedup_key"):
+                    if sticky in old and sticky not in fresh:
+                        fresh[sticky] = old[sticky]
+                if fresh != old:
+                    # ``add`` is an upsert (merge) keyed on id — the same
+                    # payload-update path ``PendingActionsService.snooze`` uses.
+                    self._storage.pending_actions.add(
+                        dataclasses.replace(existing, payload=fresh)
+                    )
+                    self._storage.commit()
                 return existing.id
         pid = PendingActionId(new_id())
-        body = dict(payload or {})
-        if session_url:
-            body["session_url"] = session_url
         action = PendingAction(
             id=pid,
             campaign_id=cid,

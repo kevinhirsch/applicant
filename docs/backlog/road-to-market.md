@@ -67,7 +67,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
 | H1 | Honesty: receipts, not narration | M | eng | DONE — claim-path audit (docs/design/audits/h1-receipts-audit.md) machine-checked by no-narration pin tests; per-run receipts on Activity rows; Today's count links to its run trail |
-| H2 | Honesty: no silent underdelivery | M | eng | — |
+| H2 | Honesty: no silent underdelivery | M | eng | DONE — per-source discovery outcomes + digest/email shortfall statements + final-approval pre-fill shortfall (engine + front-door) |
 | H3 | Honesty: full-fidelity review | S | eng | DONE — reviewed-stage snapshot at the stop-boundary, promoted byte-identical on submit; literal-payload panel on every submit surface |
 | H4 | Honesty: visible provenance | M | eng | DONE — per-line provenance trace in the review panel (engine `/provenance` read + "Where this came from") |
 | H5 | Honesty: calibrated copy | S | eng | DONE — full copy sweep + overclaim-denylist pin tests (engine + front-door lanes); recap verbs & wizard render-promise calibrated |
@@ -797,9 +797,36 @@ counted from (`workspace/tests/test_applicant_h1_receipts.py`).
 
 ### H2 — No silent underdelivery *(kills: underdeliver)*
 **Effort:** M · **Owner:** eng · **Depends on:** P1-3 (health panel)
+**Status: DONE — every named degrade is stated at the item level (engine + front-door).**
 **DoD:** Every degrade is loud, per-action: a tailoring stub-fallback, an empty source, an
 incomplete prefill, a skipped step all say so at the item level — never ship a quiet
 generic result that reads as success. Extends P1-3 from boot-state to per-action.
+- [x] **Empty / failed / rate-limit-skipped source:** the discovery aggregator records a
+      per-source outcome for every run (``last_source_outcomes``; a source's swallowed
+      fetch failure is reported as *failed*, never as merely empty), persisted per source
+      to ``discovery_sources.yield_stats.last_run``. The digest payload + email carry
+      ``source_shortfalls`` — one plain-language statement per underdelivering enabled
+      source, on EVERY digest (not just empty days), rendered by the in-app digest
+      (``applicantDigest.js`` strip) and per source in Settings > Job searches
+      (``applicantCampaignSettings.js`` last-check note). Pure vocabulary in
+      ``core/rules/underdelivery.py`` — a caller can't opt the honesty out.
+- [x] **Incomplete prefill:** a run that clears the match-rate floor but left fields
+      blank / failed fills / deferred screening questions attaches a ``shortfall``
+      record (counts + named fields + ready-made summary) to the ``final_approval``
+      pending action; the Today card and Portal row state it right under "Materials
+      approved ✓" so an incomplete pre-fill never reads as "all filled, just submit".
+      (Below-floor runs were already loud: the ``wrong_ats`` hand-off with match-rate
+      diagnostics, #177.)
+- [x] **Tailoring stub-fallback:** already loud end-to-end (dark-engine audit #40 —
+      ``degraded``/``degraded_reason`` + provenance sentinel → ``documentLibrary.js``
+      fallback-draft badge); pinned by ``test_dark_engine_audit_39_40_frontend.py``.
+- [x] **Skipped step:** per-tick skip reasons persist to ``agent_runs`` (audit #64),
+      presubmit blocks persist user-visibly instead of log-only (audit #61), and a
+      rate-limit-skipped discovery source is now a recorded outcome (above), not a
+      log-only vanish.
+- [x] Tests pin the chain: ``tests/unit/test_h2_no_silent_underdelivery.py`` (rule,
+      adapter outcomes, persistence, digest payload/email, final-approval payload) +
+      ``workspace/tests/test_applicant_h2_shortfalls.py`` (front-door renderers).
 
 ### H3 — Full-fidelity review *(kills: the embarrassing send)* — **DONE**
 **Effort:** S · **Owner:** eng · **Depends on:** —

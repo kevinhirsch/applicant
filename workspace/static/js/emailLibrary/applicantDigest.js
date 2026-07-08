@@ -291,6 +291,24 @@ function _renderMessage(panel, msg, { muted = true } = {}) {
   }));
 }
 
+// H2 (no silent underdelivery): the engine's digest payload carries
+// `source_shortfalls` — one plain-language statement per enabled source whose
+// last discovery run underdelivered (returned nothing, failed, or was
+// rate-limit-skipped). Rendered on EVERY digest, not just empty days, so a
+// handful of roles from one board can never quietly read as a full sweep of
+// all of them. No shortfalls → no strip (honest absence, not decoration).
+function _shortfallStrip(payload) {
+  const items = (payload && Array.isArray(payload.source_shortfalls))
+    ? payload.source_shortfalls.filter((s) => s && s.message) : [];
+  if (!items.length) return null;
+  return _el('div', {
+    cls: 'applicant-digest-shortfalls',
+    html: '<div style="font-weight:600;margin-bottom:2px;">Where I came up short on the last check</div>'
+      + items.map((s) => `<div>&bull; ${_esc(String(s.message))}</div>`).join(''),
+    style: 'padding:8px 4px;font-size:11.5px;color:var(--color-warning,#e0a96c);line-height:1.6;',
+  });
+}
+
 function _renderDigest(panel, payload) {
   const body = panel.querySelector('#applicant-digest-body');
   if (!body) return;
@@ -318,12 +336,16 @@ function _renderDigest(panel, payload) {
       html: _esc(note),
       style: 'padding:12px 4px;font-size:12px;opacity:0.75;',
     }));
+    const emptyStrip = _shortfallStrip(payload);
+    if (emptyStrip) body.appendChild(emptyStrip);
     return;
   }
 
   for (const row of rows) {
     body.appendChild(_buildRow(panel, row));
   }
+  const strip = _shortfallStrip(payload);
+  if (strip) body.appendChild(strip);
 }
 
 // Build one digest row card with its full action set (Open / Approve / Pass /

@@ -290,6 +290,10 @@ class JobSpySource:
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         location = criteria.locations[0] if criteria.locations else None
+        # H2 (no silent underdelivery): a swallowed fetch failure must stay
+        # observable — the aggregator reads ``last_error`` after each fetch so a
+        # failed board is reported as *failed*, never as merely empty.
+        self.last_error: str | None = None
         try:
             rows = self._client.scrape(
                 site=self.site,
@@ -300,6 +304,7 @@ class JobSpySource:
             )
         except Exception as exc:  # a flaky board must never crash the whole run
             log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
             return []
         out: list[JobPosting] = []
         for raw in rows:
@@ -328,10 +333,12 @@ class SearxngSource:
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         query = f"{_search_term(criteria)} jobs".strip()
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
         try:
             rows = self._client.search(query=query, proxies=self._proxy.as_list())
         except Exception as exc:
             log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
             return []
         out: list[JobPosting] = []
         for raw in rows:
@@ -377,12 +384,14 @@ class RssSource:
         self._proxy = proxy or ProxyConfig()
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
         try:
             rows = self._client.fetch_items(
                 feed_url=self._feed_url, proxies=self._proxy.as_list()
             )
         except Exception as exc:  # a flaky feed must never crash the whole run
             log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
             return []
         out: list[JobPosting] = []
         for raw in rows:
@@ -502,6 +511,13 @@ class JobSpySearxngDiscovery:
         self._rate_limiter = rate_limiter or PerBoardRateLimiter()
         self._sources: dict[str, Source] = {}
         self._enabled: dict[str, bool] = {}
+        # H2 (no silent underdelivery): per-source outcome of the most recent
+        # ``search`` call — ``{"source_key", "status", "found", "error"}`` per
+        # source queried (statuses from ``core.rules.underdelivery``). Read by
+        # ``DiscoveryService`` right after ``search`` returns so an empty,
+        # failed, or rate-limit-skipped source is reportable at the item level
+        # instead of vanishing into a flat aggregated list.
+        self.last_source_outcomes: list[dict] = []
         for src in sources or [SampleSource()]:
             self.register_source(src)
 
@@ -549,6 +565,13 @@ class JobSpySearxngDiscovery:
         ranking + the exploration budget (FR-DISC-5/FR-LEARN-6). Any key passed must
         still be enabled; absent it, every enabled source is queried (legacy path).
         """
+        from applicant.core.rules.underdelivery import (
+            SOURCE_EMPTY,
+            SOURCE_ERROR,
+            SOURCE_OK,
+            SOURCE_RATE_LIMITED,
+        )
+
         if sources is None:
             keys = self.enabled_sources()
         else:
@@ -556,15 +579,42 @@ class JobSpySearxngDiscovery:
             keys = [k for k in sources if k in enabled]
         seen: set[str] = set()
         aggregated: list[JobPosting] = []
+        # H2: record what each queried source actually delivered — reset per
+        # call so a stale prior run can never masquerade as this one's outcome.
+        outcomes: list[dict] = []
+        self.last_source_outcomes = outcomes
         for key in keys:
             # Per-board rate limiter (#195): skip a source that has exceeded its
             # rate-limit window so one aggressive board never hogs the run.
             if not self._rate_limiter.admit(key):
                 log.info("rate_limit_skip", source=key)
+                outcomes.append(
+                    {
+                        "source_key": key,
+                        "status": SOURCE_RATE_LIMITED,
+                        "found": 0,
+                        "error": None,
+                    }
+                )
                 continue
-            for posting in self._sources[key].fetch(campaign_id, criteria):
+            source = self._sources[key]
+            found = 0
+            for posting in source.fetch(campaign_id, criteria):
+                found += 1
                 if posting.source_url in seen:
                     continue
                 seen.add(posting.source_url)
                 aggregated.append(posting)
+            # A source that swallowed a fetch failure (returning []) reports it
+            # via ``last_error`` — distinguish "failed" from genuinely "empty".
+            error = getattr(source, "last_error", None)
+            status = SOURCE_ERROR if error else (SOURCE_OK if found else SOURCE_EMPTY)
+            outcomes.append(
+                {
+                    "source_key": key,
+                    "status": status,
+                    "found": found,
+                    "error": str(error) if error else None,
+                }
+            )
         return aggregated
