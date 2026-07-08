@@ -365,6 +365,29 @@ class ApplicantEngineClient:
         """Return the engine health payload (raises :class:`EngineError` if down)."""
         return await self._request("GET", "/healthz")
 
+    # -- demo mode (P0-2 seeded demo) -------------------------------------
+
+    async def demo_status(self) -> dict:
+        """Whether the ``DEMO_MODE`` seed dataset is loaded (``/api/dev/seed/status``).
+
+        Reachable ONLY when the engine runs under ``DEMO_MODE=1`` — the whole
+        seed router 404s otherwise — so the front-door proxy treats an
+        ``EngineError`` (incl. that 404) as "not in demo mode" and hides the
+        banner. Returns the engine's ``{demo_active, campaign_id, counts}`` shape.
+        """
+        result = await self._request("GET", "/api/dev/seed/status")
+        return result if isinstance(result, dict) else {}
+
+    async def demo_clear(self) -> dict:
+        """Clear the ``DEMO_MODE`` seed dataset (``POST /api/dev/seed/reset``).
+
+        Reuses the engine's campaign-purge cascade so every seeded row is
+        removed with no residue. Reachable only under ``DEMO_MODE`` (the seed
+        router gate). Returns the engine's ``{reset, campaign_id, counts}`` shape.
+        """
+        result = await self._request("POST", "/api/dev/seed/reset")
+        return result if isinstance(result, dict) else {}
+
     # -- setup / gate (FR-OOBE) -------------------------------------------
 
     async def setup_status(self) -> dict:
@@ -376,6 +399,16 @@ class ApplicantEngineClient:
         """The engine's dormant-surface registry (key/status/live_phase/...)."""
         result = await self._request("GET", "/api/dormant-surfaces")
         return result if isinstance(result, list) else []
+
+    # -- honest health panel (P1-3, issue #655) ----------------------------
+
+    async def health_capabilities(self) -> dict:
+        """The boot-time capability self-report: postgres, résumé renderer,
+        browser, orchestrator — each real-vs-stub with a plain-language label
+        and actionable fix copy. Ungated on the engine (no llm-configured
+        gate — see ``routers/health.py``), so it is reachable even before the
+        owner has connected a model."""
+        return await self._request("GET", "/api/health/capabilities")
 
     # -- setup wizard: LLM + channels + step advance (FR-OOBE-2/3) --------
 
@@ -619,6 +652,15 @@ class ApplicantEngineClient:
         /api/documents/redline``) -- a pure, stateless diff (no persistence),
         reusable for "what changed vs. the original" outside a review session."""
         return await self._request("POST", "/api/documents/redline", json=body)
+
+    async def document_flagged_facts(self, document_id: str) -> Any:
+        """Facts in a generated draft not yet traceable to the candidate's profile
+        (P1-13 truth-policy surfacing; engine ``GET
+        /api/documents/{id}/flagged-facts``). Read-only detection the review UI shows
+        with a one-tap confirm ("add to my profile") / remove choice."""
+        return await self._request(
+            "GET", f"/api/documents/{document_id}/flagged-facts"
+        )
 
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")

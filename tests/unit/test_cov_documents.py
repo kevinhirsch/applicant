@@ -160,6 +160,39 @@ def test_deferred_essay_generates_and_reviews(client):
     assert "content" in body
 
 
+def test_flagged_facts_surfaces_unsupported_fact_for_review(client):
+    """P1-13: the review surface reads the fact-class specifics a stored draft uses
+    that aren't in the profile yet. An essay answer that mentions a skill absent
+    from the seeded profile surfaces that token; the check is read-only (the draft
+    was never blocked — balanced surfaces, never raises)."""
+    cid, aid = "camp-flag-1", "app-flag-1"
+    _seed_profile(client, cid)  # Python / SQL / data pipelines, no Kubernetes
+    made = client.post(
+        "/api/documents/screening-answer",
+        json={
+            "campaign_id": cid,
+            "application_id": aid,
+            "question": "Describe your proudest project.",
+            "true_source": "I built data pipelines and deployed them on Kubernetes.",
+            "essay": True,
+        },
+    )
+    assert made.status_code == 201
+    doc_id = made.json()["id"]
+    res = client.get(f"/api/documents/{doc_id}/flagged-facts")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["document_id"] == doc_id
+    assert body["campaign_id"] == cid
+    assert body["type"] == "screening_answer"
+    assert isinstance(body["flagged"], list)
+
+
+def test_flagged_facts_unknown_document_is_404(client):
+    res = client.get("/api/documents/no-such-doc/flagged-facts")
+    assert res.status_code == 404
+
+
 def test_invalid_turn_kind_is_422(client):
     cid, aid = "camp-docs-3", "app-docs-3"
     made = client.post(

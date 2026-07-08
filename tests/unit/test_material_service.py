@@ -463,6 +463,77 @@ def test_true_attribute_text_includes_attribute_cloud(svc, storage):
     svc.assert_no_fabrication(truth, "Worked with Kubernetes.")  # no raise
 
 
+# === P1-13 flagged-facts surfacing (balanced truth policy) ================
+def _store_doc(storage, cid, content, *, dtype=None, application_id=None):
+    from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
+    from applicant.core.ids import GeneratedDocumentId
+
+    doc = GeneratedDocument(
+        id=GeneratedDocumentId(new_id()),
+        campaign_id=cid,
+        application_id=application_id or ApplicationId(new_id()),
+        type=dtype or DocumentType.COVER_LETTER,
+        content=content,
+        approved=False,
+    )
+    storage.documents.add(doc)
+    storage.commit()
+    return doc
+
+
+@pytest.mark.unit
+def test_flagged_facts_surfaces_unsupported_and_omits_supported(svc, storage):
+    """The read-only surfacing recomputes the fact-class tokens a stored draft
+    uses that aren't in the profile — invented specifics are flagged while the
+    ones traceable to the attribute cloud are not (P1-13; BALANCED surfaces, never
+    blocks)."""
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId
+
+    cid = CampaignId(new_id())
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="skill:py", value="Python")
+    )
+    storage.commit()
+    doc = _store_doc(
+        storage, cid, "I built Python pipelines and deployed on Kubernetes at Stanford."
+    )
+    out = svc.flagged_facts_for_document(doc.id)
+    assert out["document_id"] == str(doc.id)
+    assert out["campaign_id"] == str(cid)
+    assert out["type"] == "cover_letter"
+    assert "Kubernetes" in out["flagged"]
+    assert "Stanford" in out["flagged"]
+    # Python is in the true attribute cloud -> supported -> never flagged.
+    assert "Python" not in out["flagged"]
+
+
+@pytest.mark.unit
+def test_flagged_facts_clean_draft_returns_empty(svc, storage):
+    """A draft whose specifics all trace to the profile flags nothing (the panel
+    then renders nothing) — the honest 'clean' signal, not a fabricated one."""
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId
+
+    cid = CampaignId(new_id())
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="skill:py", value="Python")
+    )
+    storage.commit()
+    doc = _store_doc(storage, cid, "I am glad to bring my Python experience to your team.")
+    out = svc.flagged_facts_for_document(doc.id)
+    assert out["flagged"] == []
+
+
+@pytest.mark.unit
+def test_flagged_facts_missing_document_raises_not_found(svc):
+    from applicant.core.errors import NotFound
+    from applicant.core.ids import GeneratedDocumentId
+
+    with pytest.raises(NotFound):
+        svc.flagged_facts_for_document(GeneratedDocumentId(new_id()))
+
+
 # === non-AI-looking filters every pass (FR-RESUME-5) ======================
 @pytest.mark.unit
 def test_post_filter_strips_emdash_and_banned_and_scores_voice(svc):

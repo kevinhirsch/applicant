@@ -1444,6 +1444,14 @@ class ActionEventRepo:
         ).all()
         return [_action_event_to_entity(r) for r in rows]
 
+    def delete_for_campaign(self, campaign_id) -> int:
+        return int(
+            self._s.query(m.ActionEventModel)
+            .filter(m.ActionEventModel.campaign_id == str(campaign_id))
+            .delete(synchronize_session=False)
+            or 0
+        )
+
 
 def _action_event_to_entity(row):
     from applicant.core.entities.action_event import ActionEvent as _AE
@@ -1590,6 +1598,12 @@ class SqlAlchemyStorage:
                 m.PortfolioAttachmentModel,
                 m.PortfolioAttachmentModel.application_id.in_(app_ids),
             )
+        # Action-trail rows FK -> applications (and -> campaigns), so delete them
+        # by campaign_id — catching BOTH the application-scoped and the
+        # campaign-level (application_id NULL) rows — before the applications and
+        # the campaign are removed (keeps "Clear demo data" residue-free). Uses
+        # the repo's own delete (mirrors InMemoryStorage.purge_campaign).
+        counts["action_events"] = self.action_events.delete_for_campaign(scid)
         # Revision sessions (FK -> generated_materials) before the materials.
         if material_ids:
             counts["revisions"] = _del(

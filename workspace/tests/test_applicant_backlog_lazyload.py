@@ -150,7 +150,14 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # run eagerly and first, before every destination module's own launcher
     # wiring), so it stays eager like applicantTrust.js/applicantCapabilities.js
     # above.
-    assert count == 49, f"expected 49 eager module <script> tags, got {count}"
+    # 50 after wiring applicantHealth.js (P1-3, issue #655: the honest health
+    # panel) -- a Settings-tab panel in the SAME eager category as
+    # applicantCampaignSettings.js/applicantModelLadder.js/
+    # applicantAutomationSettings.js (settings.js reads its
+    # window.mountApplicantHealthPanel global on System-tab open); it also
+    # exports renderApplicantPortalHealthBanner, imported directly by
+    # applicantPortal.js for the Today/Portal degraded-capability banner.
+    assert count == 50, f"expected 50 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():

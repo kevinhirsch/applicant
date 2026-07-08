@@ -38173,3 +38173,40 @@ body.theme-frosted .search-overlay {
   }
 }
 
+
+/* ── Seeded-demo banner (P0-2) ───────────────────────────────────────────────
+   A persistent, unmistakable strip shown ONLY while the engine runs under
+   DEMO_MODE with a synthetic dataset loaded (workspace/static/js/applicantDemoBanner.js).
+   It reads as "this data is not real" and offers a one-click Clear. Hidden by
+   default (the [hidden] attribute) and in every production deploy. */
+#applicant-demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg, #222);
+  background: color-mix(in srgb, var(--accent-warm, #d19a66) 22%, var(--panel, #fff));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-warm, #d19a66) 55%, transparent);
+  /* body is a flex ROW (sidebar | content), so an in-flow first child renders as a
+     left column — pin the strip to the viewport top instead and pad the body by the
+     banner's measured height (--applicant-demo-banner-h, set by the JS on render). */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4000;
+}
+body.has-applicant-demo-banner { padding-top: var(--applicant-demo-banner-h, 34px); }
+#applicant-demo-banner[hidden] { display: none; }
+#applicant-demo-banner .applicant-demo-banner__dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-warm, #d19a66);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-warm, #d19a66) 30%, transparent);
+}
+#applicant-demo-banner .applicant-demo-banner__text { flex: 1 1 auto; }
+#applicant-demo-banner #applicant-demo-clear { flex: 0 0 auto; }

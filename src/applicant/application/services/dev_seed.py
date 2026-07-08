@@ -4,9 +4,11 @@ Without seeded rows the front-door opens every surface empty: no model, no
 campaign, no digest, no redline, no tracker, no Portal actions. That means the
 trust-core daily loop (digest -> redline -> approve -> takeover -> submit) can
 never be rendered or exercised end to end. This module is the pure-derivation
-+ persistence layer that fixes that, gated strictly behind
-``APPLICANT_ALLOW_SEED=1`` at the call site (``scripts/seed_demo.py`` for the
-CLI, ``applicant.app.routers.dev_seed`` for the HTTP route).
++ persistence layer that fixes that, gated strictly behind ``DEMO_MODE=1``
+(back-compat alias: ``APPLICANT_ALLOW_SEED=1``) at the call site
+(``scripts/seed_demo.py`` for the CLI, ``applicant.app.routers.dev_seed`` for
+the HTTP route, and the front-door "Clear demo data" affordance in the
+white-labeled workspace).
 
 What it produces (all scoped to one demo campaign):
 
@@ -57,8 +59,10 @@ duplicates.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from applicant.core.entities.action_event import ActionEvent
+from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
@@ -73,6 +77,8 @@ from applicant.core.entities.revision_session import (
 )
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
+    ActionEventId,
+    AgentRunId,
     ApplicationId,
     CampaignId,
     GeneratedDocumentId,
@@ -113,8 +119,17 @@ class DemoBundle:
     material: GeneratedDocument
     revision_session: RevisionSession
     submission_snapshot: SubmissionSnapshot
+    #: A second library document (a tailored cover letter) so the Documents
+    #: surface shows more than one artifact -- ``material`` (a résumé) + this.
+    cover_letter: GeneratedDocument | None = None
     outcome_events: tuple[OutcomeEvent, ...] = ()
     pending_actions: tuple[PendingAction, ...] = ()
+    #: The append-only action trail (~15 rows) the Activity / audit-log surfaces
+    #: render -- "discovered / scored / applied / prefilled / submitted / ...".
+    action_events: tuple[ActionEvent, ...] = ()
+    #: A short run history (recent consecutive days) so the momentum recap +
+    #: supportive streak + run-log render with real numbers.
+    agent_runs: tuple[AgentRun, ...] = ()
 
 
 # --- pure builders ---------------------------------------------------------
@@ -313,6 +328,31 @@ def build_demo_material(
             "- Backend Engineer, Umbrella: shipped the billing service rewrite.\n"
         ),
         storage_path="demo/materials/globex-staff-resume.pdf",
+        approved=False,
+    )
+
+
+def build_demo_cover_letter(
+    application_id: str,
+    campaign_id: str = DEMO_CAMPAIGN_ID,
+) -> GeneratedDocument:
+    """A second library artifact -- a tailored cover letter -- so the Documents
+    surface shows more than one document (the résumé ``material`` + this)."""
+    return GeneratedDocument(
+        id=GeneratedDocumentId("demo-material-globex-cover"),
+        campaign_id=CampaignId(campaign_id),
+        application_id=ApplicationId(application_id),
+        type=DocumentType.COVER_LETTER,
+        content=(
+            "Dear Hiring Team,\n\n"
+            "I'm excited to apply for the Staff Software Engineer, Platform role. "
+            "Over the last eight years I've built and operated high-throughput "
+            "backend systems on Python and Postgres, and I led a platform "
+            "reliability effort that cut p99 latency by 40%. I'd welcome the "
+            "chance to bring that depth to your platform team.\n\n"
+            "Best regards,\nAlex Doe\n"
+        ),
+        storage_path="demo/materials/globex-staff-cover.pdf",
         approved=False,
     )
 
@@ -577,7 +617,103 @@ def build_demo_pending_actions(
     return tuple(actions)
 
 
-def build_demo_bundle(campaign_id: str = DEMO_CAMPAIGN_ID) -> DemoBundle:
+#: The scripted action trail rendered on the Activity / audit-log surfaces. Each
+#: tuple is ``(action, reason, application_suffix | None)``; ``None`` is a
+#: campaign-level action (discovery/scoring passes). Ordered oldest -> newest so
+#: the builder can stamp descending timestamps and the feed reads newest-first.
+_DEMO_ACTION_TRAIL: tuple[tuple[str, str, str | None], ...] = (
+    ("discovered", "Found 7 new roles matching your search across 7 sources.", None),
+    ("scored", "Scored the 7 new roles for fit against your criteria.", "acme"),
+    ("scored", "Ranked the platform roles by conversion history.", "globex"),
+    ("digested", "Queued Acme Robotics for your approval — 88% fit.", "acme"),
+    ("tailored", "Drafted a tailored résumé for the Globex platform role.", "globex"),
+    ("prefilled", "Pre-filled the Globex application up to the review stop.", "globex"),
+    ("blocked", "Paused on Hooli — the posting asks about a security clearance.", "hooli"),
+    ("blocked", "Paused on Stark — a required work-authorization detail is missing.", "stark"),
+    ("prefilled", "Pre-filled the Initech application; awaiting your final go-ahead.", "initech"),
+    ("submitted", "Submitted your application to Umbrella Cloud.", "umbrella"),
+    ("submitted", "Submitted your application to Wayne Logistics.", "wayne"),
+    ("interview_invited", "Wayne Logistics invited you to interview.", "wayne"),
+    ("followed_up", "Sent a polite follow-up on the Umbrella Cloud application.", "umbrella"),
+    ("scored", "Re-scored open roles as new postings came in.", None),
+    ("approved", "You approved applying to the Globex platform role.", "globex"),
+)
+
+
+def build_demo_action_events(
+    applications: tuple[Application, ...],
+    campaign_id: str = DEMO_CAMPAIGN_ID,
+    now: datetime | None = None,
+) -> tuple[ActionEvent, ...]:
+    """~15 append-only action-trail rows for the Activity / audit-log surfaces.
+
+    Deterministic: timestamps descend from ``_SEED_TIMESTAMP`` at a fixed cadence
+    (``now`` is accepted only for callers that want a recent anchor; it does not
+    change ordering). Every application-scoped row references a real seeded
+    application id so the FK to ``applications`` holds, so the campaign-purge
+    cascade sweeps these rows too (no residue on "Clear demo data").
+    """
+    anchor = now or _SEED_TIMESTAMP
+    cid = CampaignId(campaign_id)
+    by_suffix = {a.id.rsplit("-", 1)[-1]: a for a in applications}
+    out: list[ActionEvent] = []
+    for i, (action, reason, suffix) in enumerate(_DEMO_ACTION_TRAIL):
+        app = by_suffix.get(suffix) if suffix else None
+        out.append(
+            ActionEvent(
+                id=ActionEventId(f"demo-action-{i:02d}-{action}"),
+                occurred_at=anchor - timedelta(minutes=30 * (len(_DEMO_ACTION_TRAIL) - i)),
+                application_id=app.id if app is not None else None,
+                campaign_id=cid,
+                actor="user" if action == "approved" else "engine",
+                action=action,
+                reason=reason,
+            )
+        )
+    return tuple(out)
+
+
+def build_demo_agent_runs(
+    campaign_id: str = DEMO_CAMPAIGN_ID,
+    now: datetime | None = None,
+) -> tuple[AgentRun, ...]:
+    """A short run history over the last three CONSECUTIVE days ending "today".
+
+    The momentum recap sums each run's ``stats`` and the supportive streak counts
+    consecutive calendar days with a run, so the runs are dated relative to ``now``
+    (default: the current time) — a fixed past date would read as a broken streak.
+    Stable ids keep a re-seed idempotent (upsert by id), and the campaign-purge
+    cascade already sweeps ``agent_runs`` so "Clear demo data" leaves no residue.
+    """
+    ref = now or datetime.now(UTC)
+    specs = (
+        ("today", 0, "Reviewing the Globex résumé draft with you.",
+         {"discovered": 3, "shortlisted": 2, "prefilled": 1, "submitted": 0}),
+        ("yesterday", 1, "Submitted two applications and opened one follow-up.",
+         {"discovered": 2, "shortlisted": 2, "prefilled": 2, "submitted": 2}),
+        ("day-before", 2, "Discovered and scored the first batch of roles.",
+         {"discovered": 7, "shortlisted": 4, "prefilled": 1, "submitted": 0}),
+    )
+    cid = CampaignId(campaign_id)
+    out: list[AgentRun] = []
+    for label, days_ago, intent, stats in specs:
+        out.append(
+            AgentRun(
+                id=AgentRunId(f"demo-run-{label}"),
+                campaign_id=cid,
+                intent_sentence=intent,
+                run_mode=RunMode.CONTINUOUS,
+                throughput_target=15,
+                stats=stats,
+                timestamp=ref - timedelta(days=days_ago),
+            )
+        )
+    return tuple(out)
+
+
+def build_demo_bundle(
+    campaign_id: str = DEMO_CAMPAIGN_ID, now: datetime | None = None
+) -> DemoBundle:
     """Assemble the full, coherent demo dataset (pure -- no IO)."""
     campaign = build_demo_campaign(campaign_id)
     postings = build_demo_postings(campaign_id)
@@ -590,6 +726,7 @@ def build_demo_bundle(campaign_id: str = DEMO_CAMPAIGN_ID) -> DemoBundle:
         applications[0],
     )
     material = build_demo_material(str(review_app.id), campaign_id)
+    cover_letter = build_demo_cover_letter(str(review_app.id), campaign_id)
     revision_session = build_demo_revision_session(str(material.id))
 
     interview_app = next(
@@ -604,6 +741,8 @@ def build_demo_bundle(campaign_id: str = DEMO_CAMPAIGN_ID) -> DemoBundle:
     pending_actions = build_demo_pending_actions(
         applications, postings, material, campaign_id
     )
+    action_events = build_demo_action_events(applications, campaign_id)
+    agent_runs = build_demo_agent_runs(campaign_id, now)
 
     return DemoBundle(
         campaign=campaign,
@@ -611,10 +750,13 @@ def build_demo_bundle(campaign_id: str = DEMO_CAMPAIGN_ID) -> DemoBundle:
         applications=applications,
         resume_variant=resume_variant,
         material=material,
+        cover_letter=cover_letter,
         revision_session=revision_session,
         submission_snapshot=submission_snapshot,
         outcome_events=outcome_events,
         pending_actions=pending_actions,
+        action_events=action_events,
+        agent_runs=agent_runs,
     )
 
 
@@ -646,7 +788,11 @@ def persist(storage, bundle: DemoBundle) -> dict[str, int]:
     counts["applications"] = len(bundle.applications)
 
     storage.documents.add(bundle.material)
-    counts["materials"] = 1
+    materials = 1
+    if bundle.cover_letter is not None:
+        storage.documents.add(bundle.cover_letter)
+        materials += 1
+    counts["materials"] = materials
 
     storage.revisions.add(bundle.revision_session)
     counts["revision_sessions"] = 1
@@ -657,6 +803,14 @@ def persist(storage, bundle: DemoBundle) -> dict[str, int]:
     for event in bundle.outcome_events:
         storage.outcomes.add(event)
     counts["outcome_events"] = len(bundle.outcome_events)
+
+    for run in bundle.agent_runs:
+        storage.agent_runs.add(run)
+    counts["agent_runs"] = len(bundle.agent_runs)
+
+    for event in bundle.action_events:
+        storage.action_events.add(event)
+    counts["action_events"] = len(bundle.action_events)
 
     for action in bundle.pending_actions:
         storage.pending_actions.add(action)

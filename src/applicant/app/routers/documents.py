@@ -564,6 +564,24 @@ def list_variants(
     return {"campaign_id": campaign_id, "variants": variants}
 
 
+@router.get("/{document_id}/flagged-facts")
+def flagged_facts(document_id: str, material=Depends(get_material_service)) -> dict:
+    """Facts in a generated document not yet traceable to the candidate's profile.
+
+    Truth-policy surfacing (P1-13): under the default balanced policy the fabrication
+    guard flags invented fact-class tokens (employers, titles, credentials, skills,
+    dates, numbers) but never blocks — the human approves every send. This read-only
+    endpoint recomputes those flagged tokens for an already-stored draft so the review
+    UI can surface them with a one-tap "yes, that's true, add it to my profile" /
+    "remove" choice. Pure detection: no write, no LLM call. 404 when the document
+    does not exist.
+    """
+    try:
+        return material.flagged_facts_for_document(GeneratedDocumentId(document_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.post("/{document_id}/review", status_code=201)
 def open_review(document_id: str, material=Depends(get_material_service)) -> dict:
     """Open the interactive review session for a document (FR-RESUME-8)."""
