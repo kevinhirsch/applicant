@@ -2452,7 +2452,7 @@ function initAccount() {
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
       if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < 12) { msgEl.textContent = 'Use at least 12 characters — a few random words work well'; msgEl.style.color = 'var(--red)'; return; }
       if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {

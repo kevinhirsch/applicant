@@ -57,7 +57,12 @@ owner. It is designed to run on a **private LAN or VPN over plain HTTP** (e.g. a
 home network or a Tailscale tailnet), not exposed to the public internet. The
 internal channel, the live-session/takeover URLs, and the in-UI Update button all
 assume a trusted private network. Put a reverse proxy (Caddy/nginx/Traefik) in
-front for TLS if you want it, but the baseline posture is private + HTTP.
+front for TLS if you want it — [reverse-proxy-https.md](reverse-proxy-https.md)
+has copy-paste snippets for all three (Secure cookies follow
+`X-Forwarded-Proto` automatically) — but the baseline posture is private + HTTP.
+The app door itself is hardened either way: strong passwords enforced
+server-side wherever one is set, per-client login rate-limiting, and optional
+TOTP two-factor auth in Settings → Security.
 
 ## What ships (the feature set)
 

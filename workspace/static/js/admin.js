@@ -283,7 +283,7 @@ function initAddUser() {
     const password = el('adm-newPassword').value;
     const is_admin = el('adm-newIsAdmin').checked;
     if (!username) { msg.textContent = 'Username required'; msg.className = 'admin-error'; return; }
-    if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
+    if (password.length < 12) { msg.textContent = 'Use at least 12 characters — a few random words work well'; msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
       const res = await fetch('/api/auth/users', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });

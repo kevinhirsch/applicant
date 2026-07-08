@@ -402,8 +402,8 @@
         submitBtn.disabled = false;
         return;
       }
-      if (password.length < 8) {
-        errEl.textContent = 'Password must be at least 8 characters';
+      if (password.length < 12) {
+        errEl.textContent = 'Use at least 12 characters — a passphrase of a few random words works well';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;

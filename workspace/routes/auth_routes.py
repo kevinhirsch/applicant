@@ -8,6 +8,7 @@ import logging
 import os
 
 from core.auth import AuthManager
+from src.password_policy import assess_password
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -109,8 +110,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        # P2-9: the first-run admin guards the whole box — strong-password
+        # policy enforced server-side (length floor + denylists, passphrase
+        # friendly; see src/password_policy.py).
+        ok_pw, reason = assess_password(body.password, body.username)
+        if not ok_pw:
+            raise HTTPException(400, reason)
         ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
@@ -125,8 +130,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Run setup first")
         if not auth_manager.signup_enabled:
             raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        ok_pw, reason = assess_password(body.password, body.username)
+        if not ok_pw:
+            raise HTTPException(400, reason)
         if len(body.username.strip()) < 1:
             raise HTTPException(400, "Username is required")
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
@@ -201,8 +207,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
-        if len(body.new_password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        ok_pw, reason = assess_password(body.new_password, user)
+        if not ok_pw:
+            raise HTTPException(400, reason)
         current_token = request.cookies.get(SESSION_COOKIE)
         ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
@@ -282,8 +289,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        ok_pw, reason = assess_password(body.password, body.username)
+        if not ok_pw:
+            raise HTTPException(400, reason)
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
         if not ok:
             raise HTTPException(409, "Username already taken")

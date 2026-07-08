@@ -56,6 +56,19 @@ def create_default_admin():
 
         username = os.getenv("APPLICANT_ADMIN_USER", "admin").strip().lower() or "admin"
         password = os.getenv("APPLICANT_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
+        # App-door hardening: warn (without failing a re-runnable bootstrap) when
+        # the operator-chosen password would not pass the app's own policy — the
+        # login/change-password routes enforce it, this bootstrap path should at
+        # least say so out loud.
+        try:
+            from src.password_policy import assess_password
+
+            _pw_ok, _pw_reason = assess_password(password, username)
+            if not _pw_ok:
+                print(f"  [warn] APPLICANT_ADMIN_PASSWORD is weak: {_pw_reason}")
+                print("         The in-app password rules will require a stronger one on change.")
+        except ImportError:
+            pass
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {
             "users": {

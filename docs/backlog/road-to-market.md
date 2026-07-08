@@ -80,7 +80,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-6 | LLM output eval harness | M | eng | — |
 | P2-7 | Sensitive-question policy | M | eng | DONE — EEO + work-auth never AI-answered, both lanes (docs/proof/citable-invariants.md Claim 3) |
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
-| P2-9 | App-door hardening | M | eng | — |
+| P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
 | P2-10 | ATS-parseability proof | M | eng | — |
 | P2-11 | Local-only private mode | M | eng | — |
 | P2-12 | Durability drills | M | eng | — |
@@ -1050,10 +1050,22 @@ Write-up: `docs/proof/citable-invariants.md`.
 
 ### P2-9 — App-door hardening
 **Effort:** M · **Owner:** eng · **Depends on:** —
+**Status: DONE** — a shared server-side strong-password policy
+(`workspace/src/password_policy.py`, NIST-flavored: 12-char floor + worst-password/
+username/trivial-pattern denylists, deliberately passphrase-friendly — no
+composition rules) enforced at ALL four password-setting routes (first-run
+setup, signup, change-password, admin create-user), with the FE hints mirroring
+the floor and `setup.py` warning (without breaking a re-runnable bootstrap) on a
+weak `APPLICANT_ADMIN_PASSWORD`. Login/setup/signup rate-limiting and the full
+TOTP enrollment flow already existed — now PINNED (limiter runs before password
+verification; Settings really calls the 2FA endpoints). HTTPS guide shipped:
+`docs/reverse-proxy-https.md` (Caddy/Traefik/nginx snippets; Secure cookies
+auto-follow `X-Forwarded-Proto`), linked from the overview. Tests:
+`workspace/tests/test_applicant_appdoor_hardening.py`.
 **DoD:**
-- [ ] Strong-password enforced at first login; existing TOTP 2FA surfaced; login attempts
+- [x] Strong-password enforced at first login; existing TOTP 2FA surfaced; login attempts
       rate-limited.
-- [ ] A reverse-proxy/HTTPS guide (Caddy/Traefik snippet) shipped.
+- [x] A reverse-proxy/HTTPS guide (Caddy/Traefik snippet) shipped.
 
 ### P2-10 — ATS-parseability proof
 **Effort:** M · **Owner:** eng · **Depends on:** P1-2 (generated PDFs)

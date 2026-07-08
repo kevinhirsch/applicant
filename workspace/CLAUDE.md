@@ -41,7 +41,7 @@ static/ (browser SPA)  →  app.py (FastAPI + middleware/auth gate)  →  routes
    →  SQLite (app.db) · ChromaDB (vectors) · JSON state files · external services
 ```
 
-- **`core/`** — foundation. `auth.py` (`AuthManager`: bcrypt, TOTP 2FA, session tokens, per-user privileges), `database.py` (SQLAlchemy 2.x models, `EncryptedText` Fernet columns), `session_manager.py` (sessions with **lazy message hydration** — metadata loads at boot, messages on first read), `middleware.py` (CSP-nonce security headers, `require_admin`), `atomic_io.py` (crash-safe JSON writes used for all `data/*.json` state).
+- **`core/`** — foundation. `auth.py` (`AuthManager`: bcrypt, TOTP 2FA, session tokens, per-user privileges; every password-setting route enforces the shared strong-password policy in `src/password_policy.py` — 12-char floor + denylists, passphrase-friendly, no composition rules), `database.py` (SQLAlchemy 2.x models, `EncryptedText` Fernet columns), `session_manager.py` (sessions with **lazy message hydration** — metadata loads at boot, messages on first read), `middleware.py` (CSP-nonce security headers, `require_admin`), `atomic_io.py` (crash-safe JSON writes used for all `data/*.json` state).
 - **`routes/`** (~47 modules) — thin HTTP layer, one `APIRouter` per feature, registered in `app.py`. Logic lives in `src/`; route files lean on shared `*_helpers.py` and dependency-injected auth/privilege gates.
 - **`src/`** (~80 modules) — the AI engine and business logic. This is where real work happens.
 - **`services/`** — self-contained subsystems (`search/`, `memory/`, `research/`, `shell/`, `docs/`, `hwfit/` Cookbook, `stt/`, `tts/`, `youtube/`, `faces/`).
