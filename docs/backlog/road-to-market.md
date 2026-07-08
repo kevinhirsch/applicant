@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | DONE — DEMO_MODE seed (5-stage apps, digest, redline, interview, activity, momentum, portal) + front-door banner/one-click clear (PR #731) |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; window-manager retirement + #640 watcher in the concurrent retirement lane (see note) |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; **#640 auto-land watcher removed** (retirement lane); full window-manager retirement (tiling/docking plumbing + modal-stack test-contract rewrite) still open — feature-heavy, owner direction needed (see note) |
 | P0-4 | De-workspace the surface | M | eng | DONE — speaker "Applicant", padlocks → absence, window titles fixed, no-model-name pin tests |
 | P0-5 | Empty states that sell | S–M | eng | DONE — shared kit gained the icon+sentence+CTA design; tracker/activity/results empty+gated states all route somewhere real (theme check via CI-run composition tests; live dark/light screenshot pass rides P0-6) |
 | P0-6 | Visual regression harness | M | eng | DONE — `workspace/tests/visual/` walks the full matrix (27 states × 2 viewports × 2 themes, incl. the P0-3 rail states) with off-screen + overflow detectors on every state; baselines blessed post-P0-3b/4/5 with a two-consecutive-runs zero-diff proof; `--bless` is the only accept path. Honest carve-outs: the rail's two text stacks are masked (per-launch glyph raster variance survived five pinning mechanisms; their content/order stays pinned by the headless composition suites), and the composer bar is masked for its async settle. Live walk runs pre-push + the on-demand Visual Lane workflow (not per-PR — see the DoD note); the harness's codec tests ride per-PR `npm test` |
@@ -241,8 +241,15 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
       replaced by the shell/page view contract. **In the concurrent window-retirement lane**
       (owns the applicantPortal/Today window-stack plumbing, app.js modal-stack code, and the
       #640 watcher). P0-3b deliberately did NOT touch that plumbing to avoid colliding with it.
-- [ ] The auto-land watcher added in PR #640 is removed. **In the concurrent
-      window-retirement lane** (same owner as the item above).
+- [x] The auto-land watcher added in PR #640 is removed. The redundant boot-time
+      `_autoLandOnToday()` setInterval watcher in `applicantPortal.js` (`_boot`) —
+      plus its `_landNow`/`_onboardingUp`/`_autoLandedOnToday`/`_LAND_SURFACES`
+      helpers — is gone. The single home-base landing that remains is app.js's
+      onboarding-chain open (already guarded against deep links and the wizard);
+      the permanent gadget rail now surfaces the Today state as the third pane, so
+      a second watcher popping the Portal modal on boot is no longer needed. No
+      test pinned the watcher's internals (the hashrouting tests assert only
+      app.js's `skipHashUpdate` landing, which is untouched).
 - [x] The brand wordmark routes home to the shell (P0-1's Home behaviour): clicking the
       "Applicant" wordmark (`sidebar-brand-btn`) is intercepted in `applicantChat.js`
       (`_interceptNewChatClick`) to open Today (the Portal home base), never a new chat.
@@ -257,11 +264,20 @@ surfaces" and "wordmark routes home" DoD items. The bell is covered by
 `GET /api/applicant/portal/pending` backing the rail + Portal read (no new endpoint), routes to
 Today via the existing launcher (no rebuilt resolve logic), and shares the
 `applicant:pending-changed` signal so a resolution clears all three surfaces at once.
-**Still open (row stays PARTIAL):** fully retiring the floating-window manager and removing the
-PR #640 auto-land watcher — these are owned by the **concurrent window-retirement lane**, which
-holds the window/modal-stack plumbing across applicantPortal/Today/app.js; P0-3b stayed out of
-that plumbing by design and opened pages only through the existing `window.openApplicant*`
-launchers. Once that lane lands, this row can flip to DONE.
+**Retirement-lane update (2026-07-08):** the **PR #640 auto-land watcher is now removed** — the
+redundant `_autoLandOnToday()` setInterval watcher (and its `_landNow`/`_onboardingUp`/
+`_autoLandedOnToday`/`_LAND_SURFACES` helpers) is deleted from `applicantPortal.js`, leaving the
+single, deep-link-guarded home-base landing in `app.js`'s onboarding chain untouched. This was the
+bounded, mechanical half of the retirement lane and required no test changes (nothing pinned the
+watcher internals; the hashrouting suite asserts only app.js's `skipHashUpdate` landing).
+
+**Still open (row stays PARTIAL):** fully retiring the floating-window manager — the tiling/docking/
+snapping subsystem (`tileManager.js`, `modalSnap.js`, `windowDrag.js`, `modalManager.js`) is woven
+through ~10 modules (email, notes, memory, theme, settings, …) and the DoD explicitly calls for the
+**modal-stack tests to be replaced by a shell/page view contract**. That is a feature-heavy, cross-
+cutting refactor plus a test-contract rewrite (a design decision, not a mechanical edit), so per the
+backlog's "ask first" rule it is deliberately left for the owner's direction rather than guessed at.
+Once that lands, this row can flip to DONE.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
