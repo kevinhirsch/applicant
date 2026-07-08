@@ -63,7 +63,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-8 | Keyword / ATS match score | S | eng | — |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
-| P1-11 | Easy Apply: detect & tag | S | eng | — |
+| P1-11 | Easy Apply: detect & tag | S | eng | DONE — server-side detection at discovery + digest channel + tracker chip |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
 | H1 | Honesty: receipts, not narration | M | eng | — |
@@ -535,10 +535,23 @@ own base résumé **so that** e.g. "PM-track" and "Eng-track" run independently.
 **As** a user, **I want** Easy Apply-able roles flagged in my digest **so that** I know
 the channel exists even before automation.
 **Effort:** S · **Owner:** eng · **Depends on:** P0-2
+**Status: DONE — server-side detection at discovery, `easy_apply` on the posting,
+digest channel per role + Tracker chip.**
 **DoR:** Confirmed JobSpy exposes the Easy Apply attribute in discovery results.
+*(Verified against the vendored python-jobspy: `easy_apply` is a scrape-input
+attribute, and LinkedIn rows expose the channel via `job_url_direct` — a fetched
+detail page with no external apply URL means the apply flow is hosted on
+LinkedIn itself. Detection reads both signals, conservatively: a row whose
+detail was never fetched stays untagged, never guessed.)*
 **DoD:**
-- [ ] Discovery marks Easy Apply-able postings; the digest shows the channel per role.
-- [ ] Zero automation/login risk introduced by this step (detection only).
+- [x] Discovery marks Easy Apply-able postings; the digest shows the channel per
+      role. *(`detect_easy_apply` in `adapters/discovery/jobspy_searxng.py` →
+      `JobPosting.easy_apply` (+ column, migration `0012`); digest rows/email
+      carry the channel; Tracker board rows chip it —
+      `emailLibrary/applicantDigest.js` + `applicantTracker.js`.)*
+- [x] Zero automation/login risk introduced by this step (detection only). *(The
+      tag is computed purely from the scraped row discovery already had — no new
+      requests, no login, no automation; the chip is render-only.)*
 
 ### P1-12 — Give each engine capability a narrative FE home
 **As** a user, **I want** the engine's deeper capabilities to appear intuitively inside

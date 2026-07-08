@@ -336,6 +336,9 @@ class DigestService:
                 "work_mode": posting.work_mode,
                 "salary": posting.salary,
                 "source": posting.source_key,
+                # P1-11: surface the apply channel per role (detection-only tag
+                # set at discovery time; never drives automation by itself).
+                "easy_apply": bool(getattr(posting, "easy_apply", False)),
             }
             if self._scoring is not None:
                 # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
@@ -515,6 +518,9 @@ class DigestService:
                 # emailed/rendered digest.
                 summary = html.escape(str(r["summary"] or ""))
                 work_mode = html.escape(str(r["work_mode"] or "-"))
+                # P1-11: show the apply channel per role — a static, trusted
+                # label (never scraped text), appended to the meta line.
+                channel = " &middot; Easy Apply" if r.get("easy_apply") else ""
                 score = html.escape(str(r["viability_score"]))
                 why = html.escape(str(r["why_suggested"] or ""))
                 href = _safe_href(r["link"])
@@ -526,7 +532,7 @@ class DigestService:
                     "<tr><td style='padding:16px;'>"
                     f"<div style='font-size:16px;font-weight:bold;color:#111111;'>{summary}</div>"
                     "<div style='font-size:13px;color:#555555;margin:4px 0 0;'>"
-                    f"{work_mode} &middot; Score {score}</div>"
+                    f"{work_mode}{channel} &middot; Score {score}</div>"
                     f"<div style='font-size:13px;color:#555555;margin:4px 0 0;'>{why}</div>"
                     "<div style='margin:12px 0 0;'>"
                     f"<a href='{href}' style='display:inline-block;padding:8px 14px;"
