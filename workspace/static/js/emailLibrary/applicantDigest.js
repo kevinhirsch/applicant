@@ -1391,6 +1391,9 @@ async function _loadWeeklyRecap(panel, campaignId) {
   if (!campaignId) return;
   try {
     const recap = await _api(`/digest/${encodeURIComponent(campaignId)}/weekly-recap`);
+    // A slower request for a previously selected search must not render its
+    // totals over the currently selected one.
+    if (_currentCampaign(panel) !== campaignId) return;
     const body = recap && typeof recap.body === 'string' ? recap.body.trim() : '';
     if (!body) return;
     host.innerHTML = `<span style="font-weight:600;opacity:0.75;">Your week so far · </span>${_esc(body)}`;

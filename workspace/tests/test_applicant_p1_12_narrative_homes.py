@@ -473,3 +473,12 @@ def test_daily_updates_panel_renders_the_recap_line():
     assert "_loadWeeklyRecap(panel, campaignId);" in _DIGEST_JS
     # The engine-composed body is escaped, not rebuilt client-side.
     assert "${_esc(body)}" in _DIGEST_JS
+    # Stale-response guard: a slower request for a previously selected search
+    # must never render its totals over the currently selected one — the guard
+    # sits between the await and the render (Greptile on #752).
+    body = _DIGEST_JS[_DIGEST_JS.index("async function _loadWeeklyRecap"):]
+    body = body[: body.index("\nasync function ", 1)]
+    assert "if (_currentCampaign(panel) !== campaignId) return;" in body
+    assert body.index("/weekly-recap`") < body.index(
+        "if (_currentCampaign(panel) !== campaignId) return;"
+    ) < body.index("host.innerHTML")
