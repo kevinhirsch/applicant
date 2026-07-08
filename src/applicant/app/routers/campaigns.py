@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from applicant.app.deps import (
     get_campaign_service,
+    get_cost_service,
     get_data_lifecycle_service,
     require_llm_configured,
 )
@@ -96,6 +97,29 @@ def update_campaign(
     except ValueError as exc:  # bad run_mode value
         raise HTTPException(status_code=422, detail=f"Invalid value: {exc}") from exc
     return _campaign_dict(updated)
+
+
+@router.get("/{campaign_id}/guardrails")
+def get_campaign_guardrails(
+    campaign_id: str,
+    svc=Depends(get_campaign_service),
+    cost=Depends(get_cost_service),
+) -> dict:
+    """Cost & pace guardrails (P1-6): today's pace + spend, and a monthly projection.
+
+    Daily target/hard cap are enforced server-side in ``AgentLoop`` (FR-AGENT-1);
+    this is a read-only view of that same state plus the token usage AgentLoop
+    durably folds into ``agent_runs.stats`` from every LLM completion that
+    reported it. Every dollar figure is an ESTIMATE, never exact billing.
+    """
+    cid = CampaignId(campaign_id)
+    campaign = svc.get_campaign(cid)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="No such campaign.")
+    return {
+        "today": cost.today_summary(campaign),
+        "monthly": cost.monthly_projection(campaign),
+    }
 
 
 @router.post("/{campaign_id}/clone", status_code=201)

@@ -1071,6 +1071,34 @@ class AgentRunRepo:
             total += int((run.stats or {}).get("pipelines_started", 0))
         return total
 
+    def sum_stats_between(
+        self,
+        campaign_id: CampaignId,
+        start: datetime,
+        end: datetime,
+        keys: tuple[str, ...],
+    ) -> dict[str, float]:
+        """Sum each of ``keys`` across every run's ``stats`` in ``[start, end]`` (P1-6).
+
+        Mirrors ``count_pipelines_started_on``'s Python-side sum (``stats`` lives
+        inside the JSON blob), generalized to an arbitrary window + key set so the
+        cost & pace guardrails can read both "today" and "month to date" through
+        one method.
+        """
+        rows = self._s.scalars(
+            select(m.AgentRunModel)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .where(m.AgentRunModel.timestamp >= start)
+            .where(m.AgentRunModel.timestamp <= end)
+        ).all()
+        totals: dict[str, float] = dict.fromkeys(keys, 0.0)
+        for r in rows:
+            run = _agent_run_to_entity(r)
+            stats = run.stats or {}
+            for key in keys:
+                totals[key] += float(stats.get(key, 0) or 0)
+        return totals
+
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
         """Most recent run (timestamp DESC, seq DESC tie-break per FR-AGENT-7)."""
         row = self._s.scalars(

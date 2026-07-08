@@ -328,6 +328,24 @@ class AgentRunRepository(Protocol):
         """
         ...
 
+    def sum_stats_between(
+        self,
+        campaign_id: CampaignId,
+        start: datetime,
+        end: datetime,
+        keys: tuple[str, ...],
+    ) -> dict[str, float]:
+        """Sum each of ``keys`` across every run's ``stats`` in ``[start, end]`` (P1-6).
+
+        Generalizes ``count_pipelines_started_on``'s "sum a numeric stats field
+        across a day's runs" pattern to an arbitrary inclusive datetime range and
+        an arbitrary set of keys, so the cost & pace guardrails can read both
+        "today" (a day window) and "month to date" (a wider window) through one
+        method. A key absent from a given run's ``stats`` contributes 0. Returns
+        a dict with every requested key present (0.0 when no run has it).
+        """
+        ...
+
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
         """Most recent run for ``campaign_id`` (by timestamp, seq tie-break)."""
         ...

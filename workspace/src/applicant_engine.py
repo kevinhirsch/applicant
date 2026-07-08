@@ -530,6 +530,15 @@ class ApplicantEngineClient:
         body: dict = {"name": name} if name else {}
         return await self._request("POST", f"/api/campaigns/{campaign_id}/clone", json=body)
 
+    async def get_campaign_guardrails(self, campaign_id: str) -> Any:
+        """Cost & pace guardrails (P1-6): today's pace/spend + a monthly projection.
+
+        The engine enforces the daily target/hard cap and computes the cost
+        estimate server-side (``GET /api/campaigns/{id}/guardrails``); this is a
+        read-only proxy call, same shape as ``list_discovery_sources`` below.
+        """
+        return await self._request("GET", f"/api/campaigns/{campaign_id}/guardrails")
+
     # -- discovery sources (#301, FR-DISC-2/5) ---------------------------
 
     async def list_discovery_sources(self, campaign_id: str) -> Any:
