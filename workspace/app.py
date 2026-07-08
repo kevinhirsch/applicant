@@ -511,16 +511,27 @@ class _RevalidatingStatic(StaticFiles):
 # browser's SW update check revalidating instead of trusting a cached copy.
 @app.get("/static/sw.js")
 async def serve_service_worker():
+    import anyio
+
     from src.sw_version import static_asset_fingerprint, stamp_sw_cache_name
 
     static_dir = abs_join(BASE_DIR, "static")
-    try:
+
+    def _read_and_stamp() -> str:
+        # Sync file walk + hash — off the event loop, same as the
+        # _RevalidatingStatic read above. Recomputed per request on purpose:
+        # this route is hit once per SW update check, and the dev flow edits
+        # static files without a restart, so a process-lifetime memo would
+        # serve a stale fingerprint.
         with open(abs_join(static_dir, "sw.js"), "r", encoding="utf-8") as fh:
             source = fh.read()
+        return stamp_sw_cache_name(source, static_asset_fingerprint(static_dir))
+
+    try:
+        stamped = await anyio.to_thread.run_sync(_read_and_stamp)
     except FileNotFoundError:
         # A broken deploy artifact should read as a clean 404, not a traceback.
         return Response(content="service worker not found", status_code=404, media_type="text/plain")
-    stamped = stamp_sw_cache_name(source, static_asset_fingerprint(static_dir))
     return Response(
         content=stamped,
         media_type="application/javascript",

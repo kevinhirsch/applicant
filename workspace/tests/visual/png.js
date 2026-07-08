@@ -290,7 +290,18 @@ function comparePNG(bufA, bufB) {
   };
   let diffCount = 0;
   let aaTolerated = 0;
+  const toleratedIdx = [];
   let diff = null;
+  const ensureCanvas = () => {
+    if (diff) return;
+    // Lazily build the diff canvas: grayscale-dimmed baseline.
+    diff = Buffer.alloc(total * 4);
+    for (let q = 0; q < total; q++) {
+      const j = q * 4;
+      const g = Math.round((a.data[j] * 0.299 + a.data[j + 1] * 0.587 + a.data[j + 2] * 0.114) * 0.4 + 140);
+      diff[j] = g; diff[j + 1] = g; diff[j + 2] = g; diff[j + 3] = 255;
+    }
+  };
   for (let p = 0; p < total; p++) {
     const i = p * 4;
     if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] ||
@@ -298,24 +309,26 @@ function comparePNG(bufA, bufB) {
       const x = p % W, y = (p / W) | 0;
       if (neighborMatch(b.data, a.data, x, y) && neighborMatch(a.data, b.data, x, y)) {
         aaTolerated++;
+        toleratedIdx.push(i);
         continue;
       }
-      if (!diff) {
-        // Lazily build the diff canvas: grayscale-dimmed baseline.
-        diff = Buffer.alloc(total * 4);
-        for (let q = 0; q < total; q++) {
-          const j = q * 4;
-          const g = Math.round((a.data[j] * 0.299 + a.data[j + 1] * 0.587 + a.data[j + 2] * 0.114) * 0.4 + 140);
-          diff[j] = g; diff[j + 1] = g; diff[j + 2] = g; diff[j + 3] = 255;
-        }
-      }
+      ensureCanvas();
       diff[i] = 255; diff[i + 1] = 0; diff[i + 2] = 0; diff[i + 3] = 255;
       diffCount++;
     }
   }
   // The tolerance is bounded: past 0.5% of the frame, "AA jitter" is not a
-  // credible explanation and the frame fails outright.
-  if (aaTolerated > total * 0.005) diffCount += aaTolerated;
+  // credible explanation and the frame fails outright — and the pixels that
+  // blew the cap must appear IN the diff image (amber, vs red for hard
+  // mismatches), or a tolerance-only failure would point at a diff artifact
+  // that was never painted.
+  if (aaTolerated > total * 0.005) {
+    diffCount += aaTolerated;
+    ensureCanvas();
+    for (const j of toleratedIdx) {
+      diff[j] = 255; diff[j + 1] = 165; diff[j + 2] = 0; diff[j + 3] = 255;
+    }
+  }
   return {
     equal: diffCount === 0,
     diffCount,
