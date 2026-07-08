@@ -165,6 +165,9 @@
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
+  .legal-link { text-align: center; margin-top: 0.6rem; font-size: 0.75rem; color: color-mix(in srgb, var(--fg) 40%, transparent); }
+  .legal-link a { color: inherit; text-decoration: underline; }
+  .legal-link a:hover { color: var(--fg); }
   .pw-wrapper { position: relative; margin-bottom: 1rem; }
   .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
   .pw-toggle {
@@ -270,6 +273,8 @@
     <span id="toggleText">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
   </div>
+
+  <div class="legal-link"><a href="/privacy">Privacy Policy</a></div>
 </div>
 
 <div class="version-label" id="version-label"></div>

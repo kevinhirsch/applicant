@@ -98,13 +98,24 @@ def test_ats_prefill_dryrun_stops_at_review_boundary():
         for f in fields[:20]:
             state_trace.append(f"  field: {f.selector!r} label={f.label!r}")
 
-        # Core boundary assertion: we have NOT navigated to a submit-confirmation page.
-        # The engine's review-before-submit gate ensures submit never fires without
-        # human approval; at this point only detection was run, so we must NOT be
-        # on the post-submit page.
-        assert not src.is_final_submit_page(), (
-            "is_final_submit_page() returned True during a detection-only dry-run — "
-            "the stop boundary was crossed without human approval (NFR-OPS-1 violation)."
+        # Core boundary assertion: we have NOT reached a post-submission
+        # CONFIRMATION page — that is the only signal a submit actually fired. The
+        # engine's review-before-submit gate ensures submit never fires without
+        # human approval; only detection was run, so no confirmation may be present.
+        #
+        # NOTE: we deliberately do NOT assert `not is_final_submit_page()` here.
+        # Single-page ATS boards (Greenhouse, Lever) render every field AND the
+        # "Submit application" button on ONE page, so is_final_submit_page() is
+        # legitimately True on the pre-fill terminus — the page where the engine
+        # stops and hands off to review. Asserting its negation raised a false alarm
+        # on those boards (P1-2 finding). is_final_submit_page is logged as the
+        # informational terminus signal; is_confirmation_page is the real boundary.
+        state_trace.append(
+            f"on_prefill_terminus (is_final_submit_page): {src.is_final_submit_page()}"
+        )
+        assert not src.is_confirmation_page(), (
+            "is_confirmation_page() returned True during a detection-only dry-run — "
+            "a submit fired without human approval (NFR-OPS-1 violation)."
         )
 
     finally:
@@ -144,8 +155,10 @@ def test_ats_prefill_dryrun_never_reaches_final_submit_page():
     """Confirm the ATS submission confirmation page is never reached in a dry-run.
 
     Runs the same detection pass as the boundary test but checks explicitly that
-    is_final_submit_page() remains False after detection-only navigation. A True
-    result would mean a submit fired before human approval.
+    is_confirmation_page() remains False after detection-only navigation. A True
+    result would mean a submit fired before human approval. (is_final_submit_page
+    is NOT asserted here — it is legitimately True on single-page boards whose form
+    and submit button share one page; see the boundary test's note.)
     """
     from applicant.adapters.browser.page_source import PlaywrightPageSource
     from applicant.adapters.browser.stealth import coherent_fingerprint
@@ -161,9 +174,9 @@ def test_ats_prefill_dryrun_never_reaches_final_submit_page():
             pass
         # Detection only — never fill, never submit.
         src.detect_fields()
-        # Must NOT be on a confirmation page after detection-only pass.
-        assert not src.is_final_submit_page(), (
-            "Reached final-submit confirmation page without human approval — "
+        # Must NOT be on a post-submission confirmation page after a detect-only pass.
+        assert not src.is_confirmation_page(), (
+            "Reached post-submission confirmation page without human approval — "
             "review-before-submit gate breached."
         )
     finally:
