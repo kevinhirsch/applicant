@@ -1,0 +1,530 @@
+[
+  {
+    "label": "greenhouse-figma",
+    "source_url": "https://job-boards.greenhouse.io/figma/jobs/5364702004",
+    "detected_field_count": 15,
+    "fields": [
+      {
+        "selector": "#first_name",
+        "label": "First Name",
+        "type": "text"
+      },
+      {
+        "selector": "#last_name",
+        "label": "Last Name",
+        "type": "text"
+      },
+      {
+        "selector": "#email",
+        "label": "Email",
+        "type": "text"
+      },
+      {
+        "selector": "#phone",
+        "label": "Phone",
+        "type": "tel"
+      },
+      {
+        "selector": "#resume",
+        "label": "Attach",
+        "type": "file"
+      },
+      {
+        "selector": "#question_12074269004",
+        "label": "Preferred First Name",
+        "type": "text"
+      },
+      {
+        "selector": "#question_12074263004",
+        "label": "LinkedIn Profile",
+        "type": "text"
+      },
+      {
+        "selector": "#question_12074265004",
+        "label": "Why do you want to join Figma?",
+        "type": "textarea"
+      },
+      {
+        "selector": "#question_14019464004",
+        "label": "Are you fluent in German?",
+        "type": "text"
+      },
+      {
+        "selector": "#question_12074268004",
+        "label": "From where do you intend to work?",
+        "type": "text"
+      },
+      {
+        "selector": "#country",
+        "label": "Country*",
+        "type": "listbox"
+      },
+      {
+        "selector": "#candidate-location",
+        "label": "Location (City)*",
+        "type": "listbox"
+      },
+      {
+        "selector": "#question_12074266004",
+        "label": "Pronouns",
+        "type": "listbox"
+      },
+      {
+        "selector": "#question_12074270004",
+        "label": "Are you authorized to work in the country for which you applied? *",
+        "type": "listbox"
+      },
+      {
+        "selector": "#question_12074271004",
+        "label": "Have you ever worked for Figma before, as an employee or a contractor/consultant? *",
+        "type": "listbox"
+      }
+    ],
+    "stop_boundary_respected": true,
+    "on_prefill_terminus": true,
+    "is_final_submit_page": true,
+    "is_confirmation_page": false,
+    "is_account_gate": false,
+    "screenshot": "/home/user/applicant/.claude/worktrees/agent-ae5a74851618a990f/docs/proof/p1-2/greenhouse-figma.png",
+    "state_trace": [
+      "entered_application_flow",
+      "detected_fields: 15",
+      "is_final_submit_page (pre-fill terminus): True",
+      "is_confirmation_page (post-submit proof): False",
+      "is_account_gate: False"
+    ],
+    "typed_any_value": false,
+    "submitted": false,
+    "channel": "chromium",
+    "ran_at": "2026-07-08T21:04:09.352917+00:00"
+  },
+  {
+    "label": "lever-gopuff",
+    "source_url": "https://jobs.lever.co/gopuff/8fabd999-8c8d-4f04-bdb7-5ef60f9f0fd6/apply",
+    "detected_field_count": 81,
+    "fields": [
+      {
+        "selector": "[name=\"resume\"]",
+        "label": "Resume/CV ATTACH RESUME/CV",
+        "type": "file"
+      },
+      {
+        "selector": "[name=\"name\"]",
+        "label": "Full name \u2731",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"email\"]",
+        "label": "Email \u2731",
+        "type": "email"
+      },
+      {
+        "selector": "[name=\"phone\"]",
+        "label": "Phone \u2731",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"location\"]",
+        "label": "Current location",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"selectedLocation\"]",
+        "label": "Current location",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"org\"]",
+        "label": "Current company",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"urls[LinkedIn]\"]",
+        "label": "LinkedIn URL",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"urls[Portfolio]\"]",
+        "label": "Portfolio URL",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][baseTemplate]\"]",
+        "label": "cards[3c730281-455c-4784-aebc-4e90d2dc029a][baseTemplate]",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field0]\"]",
+        "label": "Type your response",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field1]\"]",
+        "label": "Type your response",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field2]\"]",
+        "label": "cards[3c730281-455c-4784-aebc-4e90d2dc029a][field2]",
+        "type": "select"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field3]\"]",
+        "label": "Type your response",
+        "type": "text"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field4]\"]",
+        "label": "cards[3c730281-455c-4784-aebc-4e90d2dc029a][field4]",
+        "type": "select"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field5]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field5]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field6]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field6]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field7]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field7]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field8]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field8]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field9]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field9]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field10]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[3c730281-455c-4784-aebc-4e90d2dc029a][field10]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"cards[59c2365c-daf0-4653-9fdc-b5761c7aec93][baseTemplate]\"]",
+        "label": "cards[59c2365c-daf0-4653-9fdc-b5761c7aec93][baseTemplate]",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"cards[59c2365c-daf0-4653-9fdc-b5761c7aec93][field0]\"]",
+        "label": "cards[59c2365c-daf0-4653-9fdc-b5761c7aec93][field0]",
+        "type": "file"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][baseTemplate]\"]",
+        "label": "cards[bf8587da-13aa-45b4-8d94-385fd457292a][baseTemplate]",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][field0]\"]",
+        "label": "Days",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][field0]\"]",
+        "label": "Nights",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][field0]\"]",
+        "label": "Weekdays",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][field0]\"]",
+        "label": "Weekends",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"cards[bf8587da-13aa-45b4-8d94-385fd457292a][field0]\"]",
+        "label": "Holidays",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][baseTemplate]\"]",
+        "label": "surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][baseTemplate]",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][surveyId]\"]",
+        "label": "surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][surveyId]",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "17 or younger",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "18-20",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "21-29",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "30-39",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "40-49",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "50-59",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "60 or older",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field0]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Hispanic or Latinx",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Black or African American",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Asian",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Pacific Islander",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Native American",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "White",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Middle Eastern",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field1]\"]",
+        "label": "Prefer not to answer",
+        "type": "checkbox"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field2]\"]",
+        "label": "Woman",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field2]\"]",
+        "label": "Man",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field2]\"]",
+        "label": "Non-binary",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field2]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field3]\"]",
+        "label": "Yes",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field3]\"]",
+        "label": "No",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field3]\"]",
+        "label": "Not sure",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field3]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field4]\"]",
+        "label": "They/Them",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field4]\"]",
+        "label": "She/Her",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field4]\"]",
+        "label": "He/Him",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field4]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field5]\"]",
+        "label": "I identify as a U.S. veteran",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field5]\"]",
+        "label": "I am not a U.S. veteran",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field5]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field6]\"]",
+        "label": "Yes, I have a disability, or have a history/record of having a disability",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field6]\"]",
+        "label": "No, I do not have a disability, or have a history/record of having a disability",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"surveysResponses[44bc1677-a3b5-4dbb-978c-1a3447e0cd27][responses][field6]\"]",
+        "label": "Prefer not to answer",
+        "type": "radio"
+      },
+      {
+        "selector": "[name=\"accountId\"]",
+        "label": "accountId",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"linkedInData\"]",
+        "label": "linkedInData",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"origin\"]",
+        "label": "origin",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"referer\"]",
+        "label": "referer",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"timezone\"]",
+        "label": "timezone",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"socialReferralKey\"]",
+        "label": "socialReferralKey",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"socialSource\"]",
+        "label": "socialSource",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"resumeStorageId\"]",
+        "label": "resumeStorageId",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"h-captcha-response\"]",
+        "label": "h-captcha-response",
+        "type": "hidden"
+      },
+      {
+        "selector": "[name=\"source\"]",
+        "label": "source",
+        "type": "hidden"
+      }
+    ],
+    "stop_boundary_respected": true,
+    "on_prefill_terminus": true,
+    "is_final_submit_page": true,
+    "is_confirmation_page": false,
+    "is_account_gate": false,
+    "screenshot": "/home/user/applicant/.claude/worktrees/agent-ae5a74851618a990f/docs/proof/p1-2/lever-gopuff.png",
+    "state_trace": [
+      "entered_application_flow",
+      "detected_fields: 81",
+      "is_final_submit_page (pre-fill terminus): True",
+      "is_confirmation_page (post-submit proof): False",
+      "is_account_gate: False"
+    ],
+    "typed_any_value": false,
+    "submitted": false,
+    "channel": "chromium",
+    "ran_at": "2026-07-08T21:04:29.149476+00:00"
+  }
+]
