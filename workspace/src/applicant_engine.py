@@ -464,6 +464,28 @@ class ApplicantEngineClient:
         internally, surfaced as a plain read so it doesn't require a chat message."""
         return await self._request("GET", f"/api/setup/{campaign_id}/gaps")
 
+    # -- P2-14: Easy Apply assisted-mode consent + brief -------------------
+
+    async def easy_apply_consent_status(self) -> Any:
+        """Whether the Easy Apply assisted-mode consent screen has been
+        accepted yet -- ``{"given": bool, "given_at": str | None}``."""
+        return await self._request("GET", "/api/setup/easy-apply-consent")
+
+    async def easy_apply_consent_give(self) -> Any:
+        """Record acceptance of the Easy Apply assisted-mode consent screen.
+        Idempotent -- calling this again after consent was already given just
+        returns the existing (first) record."""
+        return await self._request("POST", "/api/setup/easy-apply-consent")
+
+    async def easy_apply_assist(self, campaign_id: str, posting_id: str) -> Any:
+        """The assisted-mode brief for one Easy-Apply posting: a deep link, a
+        plain checklist, and a pointer at the candidate's own prepared
+        materials. 409 if consent hasn't been recorded yet; 404 if the posting
+        doesn't exist / isn't in this campaign / isn't tagged Easy Apply."""
+        return await self._request(
+            "GET", f"/api/easy-apply/{campaign_id}/{posting_id}"
+        )
+
     # -- setup: Settings > Automation (dark-engine audit items
     # 82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) --
 

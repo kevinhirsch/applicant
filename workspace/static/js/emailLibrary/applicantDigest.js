@@ -20,6 +20,7 @@
 
 import { showToast, styledPrompt, styledConfirm } from '../ui.js';
 import { showDigestEmailPreview } from './digestEmailPreview.js';
+import { showEasyApplyAssist } from './easyApplyAssist.js';
 
 const API_BASE = window.location.origin;
 
@@ -109,6 +110,8 @@ const _ICON_SEARCH =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 const _ICON_STAR =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+const _ICON_ZAP =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
 
 // --- feature gate ----------------------------------------------------------
 
@@ -608,6 +611,33 @@ export function buildDigestRow(row, ctx = {}) {
       style: 'text-decoration:none;',
     });
     actions.appendChild(open);
+  }
+
+  // Easy Apply: assisted mode (P2-14) — deep link + your prepared materials +
+  // a plain checklist; the user drives every action themselves. Only offered
+  // for a posting the server actually tagged Easy-Apply (row.easy_apply, set
+  // at discovery) AND that carries a posting id to look the brief up by.
+  if (row.easy_apply && row.posting_id) {
+    const assist = _el('button', {
+      cls: 'memory-toolbar-btn applicant-digest-easy-apply-assist',
+      html: `${_ICON_ZAP}Assisted apply`,
+      title: 'Get a deep link to the posting, your prepared materials, and a checklist — you apply yourself',
+      attrs: { type: 'button' },
+    });
+    // Disabled while the consent/brief fetches are in flight (mirrors
+    // _onAlignment's busy pattern) so a double-click can't stack two modals.
+    assist.addEventListener('click', async () => {
+      const original = assist.innerHTML;
+      assist.disabled = true;
+      assist.innerHTML = 'Opening…';
+      try {
+        await showEasyApplyAssist(getCampaignId(), row);
+      } finally {
+        assist.disabled = false;
+        assist.innerHTML = original;
+      }
+    });
+    actions.appendChild(assist);
   }
 
   const approve = _el('button', {

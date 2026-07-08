@@ -284,10 +284,22 @@ retirement lane (not yet on main); P0-6 (visual-regression harness) is sequenced
 blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lands, then P0-6.
 
 **Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy), P2-4 (license/#722),
-P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account); live-deploy — P2-10 (ATS-parse),
+P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account for the
+live-automation half only — see below); live-deploy — P2-10 (ATS-parse),
 P2-12 (durability drills), P2-13's live board-coverage confirmation (the hermetic quality-matrix +
 documentation half of P2-13 is now done, above). The cleanly-hermetic Phase-2 eng lane is otherwise
 complete.
+
+- **P2-14 assisted mode (partial).** Owner decision (issue #723): build the assisted-mode
+  product surface + consent screen now; live LinkedIn automation stays deferred until a real
+  account is on file. Shipped: a server-recorded consent screen (`SetupService.easy_apply_
+  consent_status`/`record_easy_apply_consent`, never a caller-supplied opt-in) and the
+  assisted-mode brief (deep link + prepared materials + checklist) reachable from the
+  digest row's existing "Easy Apply" chip (P1-11) — `GET/POST /api/setup/easy-apply-consent`
+  + `GET /api/easy-apply/{campaign_id}/{posting_id}` → owner-scoped proxy
+  `applicant_easy_apply_routes.py` → `emailLibrary/easyApplyAssist.js`. Deferred: walking the
+  real Easy Apply modal and a recorded proof run, both gated on the owner supplying a real
+  account.
 
 ### Founder-trust track — first slice (road-to-market Phase 1.5)
 
