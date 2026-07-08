@@ -182,6 +182,14 @@ class MarkSubmittedIn(BaseModel):
     attributes_used: Optional[dict] = None
 
 
+class SaveJobIn(BaseModel):
+    #: The posting URL the owner pasted (or the bookmarklet sent). The engine
+    #: validates the scheme and owns dedup/parse/score — this proxy only decides
+    #: WHOSE campaign it lands in (the owner's own first campaign, never a
+    #: caller-supplied id).
+    url: str
+
+
 async def _owner_tracker_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
     """Every tracker row across the owner's OWN campaigns, or a soft-degrade dict.
 
@@ -434,6 +442,59 @@ def setup_applicant_tracker_routes() -> APIRouter:
             "has_data": bool(rows),
             "applications": rows,
         }
+
+    @router.post("/save-job")
+    async def save_job(request: Request, body: SaveJobIn) -> dict:
+        """Save a job from any page (P1-9): forward one pasted/bookmarked
+        posting URL to the engine's direct-URL intake, which runs it through
+        the SAME dedup → parse → score → pending-review pipeline discovery
+        results take, tagged "added by you".
+
+        Owner-scoped (DISC-15/15b): gated by ``_require_owner`` like every
+        other write here, and the campaign the job lands in is resolved from
+        THIS request's own ``list_campaigns()`` fan-out (the owner's first
+        campaign) — never a caller-supplied campaign id. Degrades soft: an
+        unreachable engine returns ``engine_available: false``; a setup gate
+        returns ``gated: true`` with the engine's own message; no campaign yet
+        returns ``has_data: false`` with a plain-language note.
+        """
+        _require_owner(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                campaigns = await engine.list_campaigns()
+            except EngineError as exc:
+                logger.debug("tracker: save-job campaigns read failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(exc, {"saved": False})
+            # Only an ACTIVE campaign may receive new saves — list_campaigns
+            # returns every non-system campaign in storage order, so blindly
+            # taking the first could file the job into a paused/retired search.
+            # A missing "active" key (older engine) still counts as active.
+            first = next(
+                (
+                    c for c in campaigns
+                    if isinstance(c, dict) and c.get("id") and c.get("active") is not False
+                ),
+                None,
+            ) if isinstance(campaigns, list) else None
+            if first is None:
+                return {
+                    "engine_available": True,
+                    "has_data": False,
+                    "saved": False,
+                    "note": "Finish setup first — once your search is created I can track jobs you add.",
+                }
+            try:
+                result = await engine.intake_url(str(first["id"]), body.url)
+            except EngineError as exc:
+                logger.debug("tracker: save-job intake failed: %s", exc)
+                if exc.status == 422:
+                    # A bad URL is the owner's own input — surface the engine's
+                    # plain-language message as a real error, not a soft empty.
+                    detail = exc.detail if isinstance(exc.detail, str) and exc.detail else str(exc)
+                    raise HTTPException(status_code=422, detail=detail) from exc
+                return soft_degrade(exc, {"saved": False})
+        out = result if isinstance(result, dict) else {}
+        return {"engine_available": True, "has_data": True, **out}
 
     @router.post("/applications/{application_id}/outcome", status_code=201)
     async def record_outcome(

@@ -596,6 +596,14 @@ class ApplicantEngineClient:
             json={"enabled": enabled},
         )
 
+    # -- direct-URL intake (P1-9 save-a-job-from-any-page) ----------------
+
+    async def intake_url(self, campaign_id: str, url: str) -> Any:
+        """Capture one posting URL into the campaign's reviewed pipeline."""
+        return await self._request(
+            "POST", f"/api/intake/{campaign_id}/url", json={"url": url}
+        )
+
     # -- documents / variants (Lane A) -----------------------------------
 
     async def list_documents(self) -> Any:

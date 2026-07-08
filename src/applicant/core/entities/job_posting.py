@@ -6,6 +6,13 @@ from dataclasses import dataclass, field
 
 from applicant.core.ids import CampaignId, JobPostingId
 
+#: ``source_key`` for a posting the USER captured directly (paste-a-URL /
+#: bookmarklet intake, P1-9) rather than one discovery found. The digest and
+#: intake lanes both key the "added by you" tag off this value, and the digest
+#: never silently drops a user-added posting below the viability threshold —
+#: the user asked for it explicitly, so hiding it would be a silent degrade.
+USER_ADDED_SOURCE_KEY = "added-by-you"
+
 
 @dataclass(frozen=True)
 class JobPosting:

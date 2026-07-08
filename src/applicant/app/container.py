@@ -132,6 +132,9 @@ class Container:
     feedback_service: Any
     chat_service: Any = None
     admin_query_service: Any = None
+    # P1-9: direct-URL intake (save a job from any page). Per-request rebuilt
+    # against the request session, like its storage-bound siblings.
+    intake_service: Any = None
     # #363: campaign-delete purge + PII retention cascade across the relational store
     # and the sealed credential vault. Per-request rebuilt against the request session.
     data_lifecycle_service: Any = None
@@ -846,6 +849,20 @@ def build_container(settings: Settings | None = None) -> Container:
         proxies=discovery_proxies,
         rss_feeds=discovery_rss_feeds,
     )
+    # P1-9: single-URL posting fetcher for the paste-a-URL/bookmarklet intake.
+    # Same live/fake split as the discovery clients above (FR-DISC-4 hermeticity):
+    # the fake never touches the network and the intake service then saves an
+    # honest, clearly URL-derived row instead of pretending it read the page.
+    from applicant.adapters.discovery.url_intake import (
+        FakeUrlPostingFetcher,
+        LiveUrlPostingFetcher,
+    )
+
+    url_posting_fetcher = (
+        LiveUrlPostingFetcher(proxies=discovery_proxies)
+        if settings.discovery_live
+        else FakeUrlPostingFetcher()
+    )
     embedding = LocalEmbedding()
     # FR-STEALTH-4: residential egress is enforced up front — a configured proxy is
     # threaded into the real browser launch; residential-proxy mode without a proxy
@@ -1031,6 +1048,18 @@ def build_container(settings: Settings | None = None) -> Container:
         storage,
         pending_actions=pending_actions_service,
         advanced_learning=advanced_learning_service,
+    )
+    # P1-9: direct-URL intake — reuses the existing scoring/pending/criteria path
+    # so a pasted or bookmarked posting enters the SAME reviewed pipeline.
+    from applicant.application.services.intake_service import IntakeService
+
+    intake_service = IntakeService(
+        storage,
+        url_posting_fetcher,
+        embedding,
+        scoring=scoring_service,
+        pending_actions=pending_actions_service,
+        criteria=criteria_service,
     )
     feedback_service = FeedbackService(
         storage,
@@ -1619,6 +1648,18 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_attr = AttributeCloudService(
             req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
         )
+        # P1-9: request-scoped direct-URL intake, sharing this request's Session-
+        # bound scoring/pending/criteria services (the fetcher is process-lived).
+        from applicant.application.services.intake_service import IntakeService as _IntakeService
+
+        rs_intake = _IntakeService(
+            req_storage,
+            url_posting_fetcher,
+            embedding,
+            scoring=rs_scoring,
+            pending_actions=rs_pas,
+            criteria=rs_criteria,
+        )
         rs_feedback = FeedbackService(
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
             pending_actions=rs_pas,
@@ -1755,6 +1796,7 @@ def build_container(settings: Settings | None = None) -> Container:
             "pending_actions_service": rs_pas,
             "digest_service": rs_digest,
             "attribute_cloud_service": rs_attr,
+            "intake_service": rs_intake,
             "feedback_service": rs_feedback,
             "chat_service": rs_chat,
             "admin_query_service": rs_admin,
@@ -1911,6 +1953,7 @@ def build_container(settings: Settings | None = None) -> Container:
         pending_actions_service=pending_actions_service,
         digest_service=digest_service,
         attribute_cloud_service=attribute_cloud_service,
+        intake_service=intake_service,
         feedback_service=feedback_service,
         chat_service=chat_service,
         admin_query_service=admin_query_service,
