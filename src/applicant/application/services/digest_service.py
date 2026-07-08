@@ -413,14 +413,21 @@ class DigestService:
                 f"{getattr(posting, 'description', '') or ''}"
             )
             match = compute_jd_match(resume_text, posting_text)
+            # Shape-guard INSIDE the try: a malformed/None matcher result for
+            # one posting must only omit that row's chip — the caller's loop has
+            # no per-posting guard, so an escaped KeyError here would abort the
+            # digest for EVERY posting in the campaign.
+            matched = match.get("matched") if isinstance(match, dict) else None
+            missing = match.get("missing") if isinstance(match, dict) else None
+            score = match.get("score") if isinstance(match, dict) else None
         except Exception:  # pragma: no cover - defensive; never break the digest
             log.warning("digest_keyword_match_failed", exc_info=True)
             return
-        if not match["matched"] and not match["missing"]:
+        if not matched and not missing:
             return  # no extractable keywords -> no chip (never a fabricated 0%)
-        row["keyword_coverage"] = match["score"]
-        row["keyword_matched"] = match["matched"]
-        row["keyword_missing"] = match["missing"]
+        row["keyword_coverage"] = score
+        row["keyword_matched"] = matched
+        row["keyword_missing"] = missing
 
     def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
         """Human-readable presubmit-safety warnings for one digest row.

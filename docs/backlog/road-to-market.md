@@ -506,7 +506,7 @@ coverage agreed.
 - [x] Missing keywords surface as **suggested redline additions the user approves** —
       never auto-inserted (honours the fabrication guard); a suggested term flows through
       the existing redline approve path. (Each missing term is a chip that only
-      pre-fills the "Ask for a change" box; the user still sends the turn and
+      prefills the "Ask for a change" box; the user still sends the turn and
       approves the redline, and the engine's truthfulness guard vets the draft.)
 
 ### P1-9 — Save-a-job-from-any-page capture *(competitive: capture)*

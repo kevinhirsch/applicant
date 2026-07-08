@@ -2534,11 +2534,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // engine) and then approves the redline — the existing approve path.
     function _suggestMissingTerm(slot, term) {
       const results = slot && slot.parentElement;
-      const box = results ? results.querySelector('.doclib-applicant-instruction') : null;
-      if (!box) {
+      // Only act on an UNAMBIGUOUS target: with several review panels open the
+      // first-in-DOM box could belong to a different document than the user
+      // means — ask them to narrow it down instead of guessing.
+      const boxes = results ? results.querySelectorAll('.doclib-applicant-instruction') : [];
+      if (!boxes.length) {
         if (uiModule) uiModule.showToast('Open Review on a document below first, then tap a keyword to suggest it.');
         return;
       }
+      if (boxes.length > 1) {
+        if (uiModule) uiModule.showToast('More than one review panel is open — close the others (or type the suggestion into the one you mean) so the keyword lands on the right document.');
+        return;
+      }
+      const box = boxes[0];
       const suggestion = `Work in “${term}” where my real experience genuinely supports it.`;
       const existing = (box.value || '').trim();
       if (!existing.includes(suggestion)) {
