@@ -1941,6 +1941,141 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return panel;
     }
 
+    // "A few facts to double-check" (P1-13). The assistant may rewrite a draft to
+    // read its strongest, and the engine's balanced truth policy SURFACES any
+    // fact-class specifics (a skill, employer, credential, date or number) that
+    // aren't in the profile yet rather than blocking them — nothing is sent until
+    // the user approves. This loads those flagged facts for the open document and
+    // renders each with a one-tap "yes, that's true — add to my profile" (persists
+    // it via the same confirm-conflict endpoint onboarding uses, so it stops being
+    // flagged and can be reused) or "Remove" (a subtract turn that takes it out of
+    // this draft). Best-effort: a failed/empty read renders nothing and never
+    // blocks the review card below, mirroring the research-provenance panel.
+    async function _loadApplicantFlaggedFacts(item, appId, slot, panel, card, results) {
+      slot.innerHTML = '';
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/flagged-facts`, { credentials: 'same-origin' });
+        if (!res.ok) return;
+        data = await res.json();
+      } catch { return; }
+      const flagged = (data && Array.isArray(data.flagged))
+        ? data.flagged.filter(f => typeof f === 'string' && f.trim())
+        : [];
+      if (!flagged.length) return;   // nothing to double-check → render nothing
+      const campaignId = (data && data.campaign_id) ? String(data.campaign_id) : '';
+      _renderApplicantFlaggedFacts(item, appId, slot, flagged, campaignId, panel, card, results);
+    }
+
+    // Build the flagged-facts panel: a warm-toned card listing each fact with the
+    // confirm ("add to my profile") and remove ("take it out of this draft")
+    // actions. Reuses the workspace design system (`.memory-item`, `.cal-btn`-tier
+    // `.doclib-card-text-btn`, the same `var(--orange)` caution tone the degraded
+    // badge uses). Fact labels are set via textContent (never innerHTML), so the
+    // model-derived tokens can never inject markup.
+    function _renderApplicantFlaggedFacts(item, appId, slot, flagged, campaignId, panel, card, results) {
+      slot.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'memory-item doclib-applicant-flagged';
+      wrap.style.cssText = 'font-size:12px;border:1px solid var(--orange, #ffb86c);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:8px;';
+
+      const head = document.createElement('div');
+      head.style.cssText = 'font-weight:600;display:flex;align-items:center;gap:5px;color:var(--orange, #ffb86c);';
+      head.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
+          '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+          '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+        '<span>A few facts to double-check</span>';
+      head.title = "These specifics appear in this draft but aren't in your profile yet. Confirm the true ones so I can use them again, or remove them. Nothing is sent until you approve.";
+      wrap.appendChild(head);
+
+      const intro = document.createElement('div');
+      intro.style.cssText = 'opacity:0.8;';
+      intro.textContent = "I wrote this to read its strongest. These details aren't in your profile yet — please confirm they're true, or remove them from this draft:";
+      wrap.appendChild(intro);
+
+      const list = document.createElement('div');
+      list.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+      wrap.appendChild(list);
+
+      flagged.forEach(fact => {
+        const row = document.createElement('div');
+        row.className = 'doclib-applicant-flagged-row';
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+
+        const label = document.createElement('span');
+        label.style.cssText = 'flex:1;min-width:120px;font-weight:600;';
+        label.textContent = fact;   // textContent, not innerHTML — no markup injection
+        row.appendChild(label);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'doclib-card-text-btn doclib-card-action-btn odec-confirm';
+        addBtn.textContent = "Yes, that's true — add to my profile";
+        addBtn.title = 'Save this as a real detail about you so I can use it again and it stops being flagged.';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
+        removeBtn.textContent = 'Remove';
+        removeBtn.title = 'Take this detail out of this draft.';
+
+        addBtn.addEventListener('click', async () => {
+          if (!campaignId) {
+            if (uiModule) uiModule.showError("I couldn't tell which profile to add this to.");
+            return;
+          }
+          addBtn.disabled = true; removeBtn.disabled = true;
+          const orig = addBtn.textContent; addBtn.textContent = 'Adding…';
+          try {
+            // Persist through the SAME confirm-conflict endpoint the onboarding
+            // Q&A-conflicts flow uses (routes/applicant_setup_routes.py). Once it is
+            // in the attribute cloud the fabrication check no longer flags it.
+            const res = await fetch(`${API_BASE}/api/applicant/setup/onboarding/${encodeURIComponent(campaignId)}/confirm-conflict`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ attribute: fact, value: fact }),
+            });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            if (uiModule) uiModule.showToast('Added to your profile');
+            row.remove();
+            if (!list.children.length) slot.innerHTML = '';   // collapse when done
+          } catch (err) {
+            addBtn.disabled = false; removeBtn.disabled = false; addBtn.textContent = orig;
+            if (uiModule) uiModule.showError(err.message || String(err));
+          }
+        });
+
+        removeBtn.addEventListener('click', async () => {
+          addBtn.disabled = true; removeBtn.disabled = true;
+          removeBtn.textContent = 'Removing…';
+          try {
+            // A subtract turn takes the phrasing out of the draft, reusing the same
+            // review turn loop (kind:'subtract') the "ask for a change" box drives.
+            const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/turn`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ kind: 'subtract', instruction: fact }),
+            });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            const next = await res.json();
+            if (uiModule) uiModule.showToast('Removed from this draft');
+            // Re-render the whole review from the new session so the redline +
+            // the remaining flagged facts reflect the edit (mirrors the send box).
+            _renderApplicantReview(item, appId, panel, next, card, results);
+          } catch (err) {
+            addBtn.disabled = false; removeBtn.disabled = false; removeBtn.textContent = 'Remove';
+            if (uiModule) uiModule.showError(err.message || String(err));
+          }
+        });
+
+        row.appendChild(addBtn);
+        row.appendChild(removeBtn);
+        list.appendChild(row);
+      });
+
+      slot.appendChild(wrap);
+    }
+
     // Pull a readable message out of the proxy's error JSON ({error,message,...}).
     async function _applicantErrText(res) {
       try {
@@ -2799,6 +2934,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const researchSlot = document.createElement('div');
       panel.appendChild(researchSlot);
       _loadResearchProvenance(appId, researchSlot);
+
+      // "A few facts to double-check" (P1-13): fact-class specifics the assistant
+      // used that aren't in the profile yet, each with a one-tap confirm ("add to
+      // my profile") / remove choice. Best-effort own fetch (renders nothing on a
+      // clean draft or an engine error), so it never blocks the redline below.
+      const flaggedSlot = document.createElement('div');
+      panel.appendChild(flaggedSlot);
+      _loadApplicantFlaggedFacts(item, appId, flaggedSlot, panel, card, results);
 
       // Redline: the engine returns a redline_state describing what changed
       // versus the base. The engine's side-by-side highlighted redline

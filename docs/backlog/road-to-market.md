@@ -30,8 +30,8 @@ résumé, key, and submissions. Don't conflate their ordering.
   (H1–H5) so the owner can *see* it's honest → **dogfood continuously** (don't wait for the
   end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
   than any speculative polish, and reorders everything behind it.
-- **Now (eng):** P1-13 FE surfacing (flagged facts, one-tap add-to-profile — the core
-  fact-gate is merged) · finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
+- **Now (eng):** P1-13 DONE (flagged-facts review surface + one-tap add-to-profile landed
+  on the merged core fact-gate) · finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
   + H3 (full-fidelity review). *(P1-1a is DONE: engine PR #644 + wizard double-check
   surfacing — the parse-verify layer runs on every base-résumé ingest.)*
 - **Studies:** `docs/studies/` — parse-verify tier study **done & green** (free local
@@ -65,7 +65,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
-| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | PARTIAL — core+guard (PR #643) |
+| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
@@ -499,7 +499,7 @@ from scratch. Closest comparable product rewrites freely — we match that freed
 keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
 **Effort:** M · **Owner:** eng · **Depends on:** the existing truthfulness rules
 (`core/rules/truthfulness.py`), attribute cloud / provenance plumbing.
-**Status: PARTIAL — core + guard seam landed (PR #643); FE surfacing + Q&A-growth remain.**
+**Status: DONE — core + guard seam (PR #643); FE flagged-facts surfacing landed.**
 **DoR:**
 - [x] Policy defined (above). Fact-class = employers, titles, credentials/certs,
       technologies/skills, dates, numbers. Prose-class = everything else.
@@ -509,13 +509,18 @@ keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
       truth cloud are flagged; **strict** remains available. *(PR #643 —
       `TruthPolicy`/`policy_blocks` in core; `assert_no_fabrication` policy-aware across
       all three guard seams; wired via config → container.)*
-- [~] Flagged facts are **surfaced, not silently blocked** — the engine now **returns**
-      them (BALANCED never raises) and logs them; the review-UI surface with one-tap
-      "yes, that's true — add to my profile" / "remove" is the **remaining FE work**
-      (pairs with H4 visible-provenance).
-- [ ] The "asks questions to learn" behaviour is reachable: the onboarding/profile
-      Q&A-conflicts flow surfaces gaps the LLM wants clarified (ties to the
-      confirm-conflict endpoint that already exists).
+- [x] Flagged facts are **surfaced, not silently blocked** — the engine returns them
+      (BALANCED never raises) and logs them; the review surface now recomputes them for a
+      stored draft (`MaterialService.flagged_facts_for_document` → `GET
+      /api/documents/{id}/flagged-facts` → thin proxy → `documentLibrary.js`
+      "A few facts to double-check" panel) with one-tap "yes, that's true — add to my
+      profile" / "Remove" (pairs with H4 visible-provenance).
+- [x] The "asks questions to learn" behaviour is reachable: the profile Q&A-conflicts
+      flow surfaces gaps the LLM wants clarified — the base-résumé conflict picker in
+      onboarding AND the review panel's "add to my profile" both commit through the
+      existing confirm-conflict endpoint (`POST
+      /api/applicant/setup/onboarding/{campaign}/confirm-conflict`), so a confirmed
+      fact enters the attribute cloud and stops being flagged.
 - [x] Review-before-submit and the final-say invariant (P2-8) are unchanged — the human
       still approves every send. *(Untouched; the loosening is safe precisely because of it.)*
 - [x] Tests: balanced surfaces vs. strict raises covered; the injection / persists-nothing
