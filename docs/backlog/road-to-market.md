@@ -58,7 +58,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-3 | Honest health panel | M | eng | — |
 | P1-4 | Notifications out of the box | M | eng | — |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
-| P1-6 | Cost & pace guardrails | M | eng | — |
+| P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
 | P1-7 | Backup / restore / export | M | eng | — |
 | P1-8 | Keyword / ATS match score | S | eng | — |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
@@ -440,11 +440,31 @@ pace **so that** I never fear a runaway bill.
 **DoR:** Confirmed which providers report token usage (OpenRouter does); agreed
 cost-estimate display locations.
 **DoD:**
-- [ ] Daily target (15) + hard cap (30) surfaced on Today.
-- [ ] Per-run token usage captured where the provider reports it; per-application cost
+- [x] Daily target (15) + hard cap (30) surfaced on Today.
+- [x] Per-run token usage captured where the provider reports it; per-application cost
       estimate + "today: N applications · ~$X" on Today; monthly projection in Settings.
-- [ ] Caps enforced server-side; hitting a cap emits a notification (silence never
+- [x] Caps enforced server-side; hitting a cap emits a notification (silence never
       means "stopped").
+
+**Status note.** Daily target/hard cap were already enforced server-side
+(`core/entities/campaign.py` `clamp_throughput`/`THROUGHPUT_HARD_CAP`, `AgentLoop`'s
+`_process_approvals`/throughput-cap gate) — this story added the surfacing + cost half.
+Token usage: `ProviderProfile.usage_extractor` (declarative per-provider, mirroring the
+existing `extract_text` pattern) pulls `{tokens_in, tokens_out}` from the OpenAI-shape
+`usage` block (OpenRouter/OpenAI-compatible) or Ollama's `prompt_eval_count`/`eval_count`;
+`OpenAICompatibleLLM`'s optional `usage_recorder` callback feeds a process-lived
+`UsageLedger` (`application/services/usage_ledger.py`) from every completion (any code
+path). `AgentLoop` drains it each tick into the existing `agent_runs.stats` JSON blob —
+no schema change, mirroring the `skip_reason` precedent — so `CostService`
+(`application/services/cost_service.py`) can sum it per day/month via a new
+`AgentRunRepository.sum_stats_between`. Every dollar figure is an explicit ESTIMATE
+(`core/rules/cost_estimate.py`, configurable `LLM_COST_PER_1K_INPUT_USD`/
+`LLM_COST_PER_1K_OUTPUT_USD`), never exact billing. New engine endpoint
+`GET /api/campaigns/{id}/guardrails`, proxied at
+`GET /api/applicant/campaigns/{id}/guardrails` (owner-scoped), surfaced in the Today
+modal's header line and a new "Estimated spend" line on each Settings campaign card.
+Hitting the cap fires `NotificationService.notify_budget_reached` (deduped per
+campaign/UTC-day, same in-app/Discord/email fan-out as the daily digest).
 
 ### P1-7 — Backup, restore, export
 **As** a self-hoster, **I want** operator backup/restore and a user data export **so

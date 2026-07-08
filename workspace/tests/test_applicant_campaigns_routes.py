@@ -45,6 +45,7 @@ class FakeEngine:
     sources: dict = {}     # campaign_id -> {"items": [...]}
     updated: dict = {}     # campaign_id -> dict returned by update
     audit_exports: dict = {}  # campaign_id -> httpx.Response
+    guardrails: dict = {}  # campaign_id -> dict returned by get_campaign_guardrails
     raises: dict = {}      # key -> EngineError
 
     def __init__(self, *a, **k):
@@ -67,6 +68,22 @@ class FakeEngine:
         if ("update", cid) in FakeEngine.raises:
             raise FakeEngine.raises[("update", cid)]
         return FakeEngine.updated.get(cid, {"id": cid, **body})
+
+    async def get_campaign_guardrails(self, cid):
+        FakeEngine.calls.append(("guardrails", cid))
+        if ("guardrails", cid) in FakeEngine.raises:
+            raise FakeEngine.raises[("guardrails", cid)]
+        return FakeEngine.guardrails.get(cid, {
+            "today": {
+                "applications_today": 0, "daily_target": 15, "hard_cap": 30,
+                "remaining_today": 15, "cost_today_usd_estimate": 0.0,
+                "cost_per_application_usd_estimate": None, "usage_reported": False,
+            },
+            "monthly": {
+                "month_to_date_usd_estimate": 0.0, "projected_month_usd_estimate": 0.0,
+                "usage_reported": False,
+            },
+        })
 
     async def list_discovery_sources(self, cid):
         FakeEngine.calls.append(("sources", cid))
@@ -96,6 +113,7 @@ def _reset_fake():
     FakeEngine.sources = {}
     FakeEngine.updated = {}
     FakeEngine.audit_exports = {}
+    FakeEngine.guardrails = {}
     FakeEngine.raises = {}
     yield
 
@@ -115,6 +133,7 @@ def test_unauthenticated_is_rejected(monkeypatch):
     assert c.get("/api/applicant/campaigns").status_code == 401
     assert c.patch("/api/applicant/campaigns/c1", json={"name": "x"}).status_code == 401
     assert c.get("/api/applicant/campaigns/c1/sources").status_code == 401
+    assert c.get("/api/applicant/campaigns/c1/guardrails").status_code == 401
 
 
 # --- list config ------------------------------------------------------------
@@ -193,6 +212,39 @@ def test_toggle_not_owned_is_404(client):
     FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
     r = client.put("/api/applicant/campaigns/c-evil/sources/x", json={"enabled": True})
     assert r.status_code == 404
+
+
+# --- cost & pace guardrails (owner-scoped, P1-6) ----------------------------
+
+
+def test_guardrails_proxied_when_owned(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.guardrails = {"c1": {
+        "today": {"applications_today": 3, "daily_target": 15, "hard_cap": 30,
+                   "cost_today_usd_estimate": 0.42, "usage_reported": True},
+        "monthly": {"month_to_date_usd_estimate": 4.2, "projected_month_usd_estimate": 12.6},
+    }}
+    body = client.get("/api/applicant/campaigns/c1/guardrails").json()
+    assert body["engine_available"] is True
+    assert body["today"]["applications_today"] == 3
+    assert body["today"]["hard_cap"] == 30
+    assert body["monthly"]["projected_month_usd_estimate"] == 12.6
+    assert ("guardrails", "c1") in FakeEngine.calls
+
+
+def test_guardrails_not_owned_is_empty_not_proxied(client):
+    """MANDATORY owner-isolation test: a caller must never read guardrail /
+    spend data for a campaign that isn't in their own campaign list."""
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    body = client.get("/api/applicant/campaigns/c-evil/guardrails").json()
+    assert "today" not in body
+    assert ("guardrails", "c-evil") not in FakeEngine.calls
+
+
+def test_guardrails_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down", is_timeout=True)
+    body = client.get("/api/applicant/campaigns/c1/guardrails").json()
+    assert body["engine_available"] is False
 
 
 # --- campaign audit-log export (owner-scoped, dark-engine audit item 31) ---

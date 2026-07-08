@@ -420,6 +420,55 @@ class StoragePortContract:
         assert adapter.agent_runs.max_seq(empty) == 0
         assert adapter.agent_runs.count_pipelines_started_on(empty, day.date()) == 0
 
+    def test_agent_run_sum_stats_between(self, adapter):
+        """P1-6: ``sum_stats_between`` sums arbitrary numeric ``stats`` keys over a
+        window, generalizing ``count_pipelines_started_on``'s single-field/single-day
+        sum to the cost & pace guardrails' "today" + "month to date" windows."""
+        from datetime import UTC, datetime
+
+        cid = CampaignId(new_id())
+        r1 = AgentRun(
+            id=AgentRunId("u1"), campaign_id=cid, intent_sentence="one",
+            timestamp=datetime(2026, 6, 17, 1, tzinfo=UTC),
+            stats={"tokens_in": 100, "tokens_out": 20, "cost_usd_estimate": 0.10, "llm_calls": 2},
+        )
+        r2 = AgentRun(
+            id=AgentRunId("u2"), campaign_id=cid, intent_sentence="two",
+            timestamp=datetime(2026, 6, 17, 5, tzinfo=UTC),
+            stats={"tokens_in": 50, "tokens_out": 10, "cost_usd_estimate": 0.05, "llm_calls": 1},
+        )
+        r_other_day = AgentRun(
+            id=AgentRunId("u3"), campaign_id=cid, intent_sentence="prev",
+            timestamp=datetime(2026, 6, 16, 5, tzinfo=UTC),
+            stats={"tokens_in": 999, "tokens_out": 999, "cost_usd_estimate": 9.0, "llm_calls": 9},
+        )
+        # A run with NO usage keys at all contributes 0 for each — missing keys
+        # must not raise (a run that predates this feature, or a skip-reason tick
+        # with nothing to drain).
+        r_no_usage = AgentRun(
+            id=AgentRunId("u4"), campaign_id=cid, intent_sentence="skip",
+            timestamp=datetime(2026, 6, 17, 6, tzinfo=UTC),
+            stats={"skip_reason": "run_mode_stop"},
+        )
+        adapter.agent_runs.add(r1)
+        adapter.agent_runs.add(r2)
+        adapter.agent_runs.add(r_other_day)
+        adapter.agent_runs.add(r_no_usage)
+        adapter.commit()
+
+        keys = ("tokens_in", "tokens_out", "cost_usd_estimate", "llm_calls")
+        start = datetime(2026, 6, 17, 0, tzinfo=UTC)
+        end = datetime(2026, 6, 17, 23, 59, 59, tzinfo=UTC)
+        totals = adapter.agent_runs.sum_stats_between(cid, start, end, keys)
+        assert totals["tokens_in"] == 150
+        assert totals["tokens_out"] == 30
+        assert totals["cost_usd_estimate"] == pytest.approx(0.15)
+        assert totals["llm_calls"] == 3
+        # Every requested key is present even when nothing matched.
+        empty = CampaignId(new_id())
+        empty_totals = adapter.agent_runs.sum_stats_between(empty, start, end, keys)
+        assert empty_totals == {k: 0.0 for k in keys}
+
     def test_agent_run_list_pagination(self, adapter):
         from datetime import UTC, datetime
 

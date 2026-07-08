@@ -616,6 +616,39 @@ class _AgentRunRepo:
             if r.campaign_id == cid and r.timestamp.date() == day
         )
 
+    def sum_stats_between(
+        self,
+        cid: CampaignId,
+        start: datetime,
+        end: datetime,
+        keys: tuple[str, ...],
+    ) -> dict[str, float]:
+        """Sum each of ``keys`` across every run's ``stats`` in ``[start, end]`` (P1-6).
+
+        Mirrors the SQL lane's ``sum_stats_between``.
+        """
+        # Callers pass either NAIVE bounds (``CostService``, mirroring the SQL lane's
+        # ``count_pipelines_started_on`` -> ``datetime.combine(day, time.min/max)``
+        # convention) or tz-aware bounds (e.g. this method's own contract test,
+        # matching how other ``agent_runs`` contract tests build fixtures) — and
+        # ``AgentRun.timestamp`` defaults to a tz-aware ``datetime.now(UTC)``.
+        # Normalize everything to naive before comparing so this never raises on a
+        # naive/aware mismatch regardless of which convention the caller used.
+        def _naive(dt: datetime) -> datetime:
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+        start, end = _naive(start), _naive(end)
+        totals: dict[str, float] = dict.fromkeys(keys, 0.0)
+        for r in self._d.values():
+            if r.campaign_id != cid:
+                continue
+            if not (start <= _naive(r.timestamp) <= end):
+                continue
+            stats = r.stats or {}
+            for key in keys:
+                totals[key] += float(stats.get(key, 0) or 0)
+        return totals
+
     def latest(self, cid: CampaignId) -> AgentRun | None:
         runs = [r for r in self._d.values() if r.campaign_id == cid]
         if not runs:

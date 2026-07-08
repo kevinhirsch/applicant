@@ -135,6 +135,10 @@ class Container:
     # #363: campaign-delete purge + PII retention cascade across the relational store
     # and the sealed credential vault. Per-request rebuilt against the request session.
     data_lifecycle_service: Any = None
+    # P1-6: cost & pace guardrails read model (today's applications/spend vs. the
+    # daily target/hard cap; monthly projection). Per-request rebuilt against the
+    # request session, exactly like campaign_service/data_lifecycle_service above.
+    cost_service: Any = None
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
@@ -770,6 +774,32 @@ def build_container(settings: Settings | None = None) -> Container:
     llm_rate_limiter = LLMRateLimiter(
         limit=settings.llm_rate_limit, period=settings.llm_rate_period
     )
+    # P1-6 (cost & pace guardrails): ONE process-lived ledger for the whole engine,
+    # fed by the shared ``llm`` singleton below from EVERY completion that reports
+    # usage (chat, discovery, material generation, résumé parse-verify, ...). Drained
+    # into ``agent_runs.stats`` by AgentLoop's per-tick flush (see agent_loop.py).
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    from applicant.application.services.usage_ledger import UsageLedger
+    from applicant.core.rules.cost_estimate import estimate_cost_usd
+
+    usage_ledger = UsageLedger()
+
+    def _record_llm_usage(provider: str, model: str, usage: dict) -> None:  # noqa: ARG001
+        cost = estimate_cost_usd(
+            int(usage.get("tokens_in", 0)),
+            int(usage.get("tokens_out", 0)),
+            input_price_per_1k=settings.llm_cost_per_1k_input_usd,
+            output_price_per_1k=settings.llm_cost_per_1k_output_usd,
+        )
+        usage_ledger.record(
+            _datetime.now(_UTC).date(),
+            tokens_in=int(usage.get("tokens_in", 0)),
+            tokens_out=int(usage.get("tokens_out", 0)),
+            cost_usd=cost,
+        )
+
     llm = OpenAICompatibleLLM(
         # Resolve the ladder lazily through the provider so a runtime model-connect
         # (which re-fires this) is picked up without rebuilding the adapter — the chat,
@@ -781,6 +811,7 @@ def build_container(settings: Settings | None = None) -> Container:
         app_context_manager=app_context_manager,
         prefix_cache=settings.prefix_cache,
         rate_limiter=llm_rate_limiter,
+        usage_recorder=_record_llm_usage,
     )
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).
@@ -919,6 +950,12 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials,
         pii_retention_days=settings.pii_retention_days,
     )
+    # P1-6: cost & pace guardrails read model (today's applications/spend vs. the
+    # daily target/hard cap; monthly projection). Read-only over ``agent_runs.stats``
+    # (see agent_loop.py's ``_drain_usage_stats``) — no ledger reference needed here.
+    from applicant.application.services.cost_service import CostService
+
+    cost_service = CostService(storage)
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     # #44 (dark-engine audit): ONE process-lived EpisodicLessonLedger for the whole
@@ -1369,6 +1406,8 @@ def build_container(settings: Settings | None = None) -> Container:
         presubmit_safety_params=presubmit_safety_params,
         # dark-engine audit #61: process-lived block ledger (reason + override).
         presubmit_block_ledger=presubmit_block_ledger,
+        # P1-6: process-lived usage ledger the shared ``llm`` singleton feeds.
+        usage_ledger=usage_ledger,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -1512,6 +1551,9 @@ def build_container(settings: Settings | None = None) -> Container:
             presubmit_safety_params=presubmit_safety_params,
             # dark-engine audit #61: process-lived block ledger (reason + override).
             presubmit_block_ledger=presubmit_block_ledger,
+            # P1-6: SAME process-lived usage ledger as the shared loop above, so
+            # per-tick usage is drained into THIS tick's durable agent_runs.stats.
+            usage_ledger=usage_ledger,
         )
         return {
             "storage": tick_storage,
@@ -1698,9 +1740,12 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials,
             pii_retention_days=settings.pii_retention_days,
         )
+        # P1-6: request-scoped cost & pace guardrails read model (CONC-REQ-1).
+        rs_cost = CostService(req_storage)
         return {
             "storage": req_storage,
             "data_lifecycle_service": rs_data_lifecycle,
+            "cost_service": rs_cost,
             "pending_actions_service": rs_pas,
             "digest_service": rs_digest,
             "attribute_cloud_service": rs_attr,
@@ -1846,6 +1891,7 @@ def build_container(settings: Settings | None = None) -> Container:
         setup_service=setup_service,
         campaign_service=campaign_service,
         data_lifecycle_service=data_lifecycle_service,
+        cost_service=cost_service,
         onboarding_service=onboarding_service,
         font_service=font_service,
         conversion_service=conversion_service,

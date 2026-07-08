@@ -38,6 +38,11 @@ import { registerRoute, setHash, clearHash } from './hashRouter.js';
 // a read-only alternate VIEW over it, never a second data path.
 const API = '/api/applicant/portal';
 
+// The SAME owner-scoped campaign proxy Settings' Campaign tab already reads
+// (applicantCampaignSettings.js) — reused here only to read the cost & pace
+// guardrails (P1-6), never to duplicate campaign config editing.
+const CAMPAIGNS_API = '/api/applicant/campaigns';
+
 let _modalEl = null;
 let _modalA11yCleanup = null;
 let _loading = false;
@@ -139,6 +144,7 @@ function _ensureModalEl() {
           </button>
         </div>
       </div>
+      <div id="applicant-today-guardrails" class="admin-toggle-sub" style="padding:6px 14px 0;font-size:11px;opacity:0.75;display:none;" aria-live="polite"></div>
       <div class="modal-body" id="applicant-today-body" style="flex:1;overflow-y:auto;" aria-live="polite" aria-busy="false">
         <div class="hwfit-loading">Loading today's items…</div>
       </div>
@@ -723,9 +729,61 @@ function _renderGated(host, data) {
   }
 }
 
+// ── Cost & pace guardrails summary (P1-6) ───────────────────────────────────
+//
+// Best-effort, fire-and-forget: never awaited by `_load()` and any failure is
+// swallowed, so a slow/unavailable guardrails read never delays or breaks the
+// pending-items deck it sits above. MVP-1 runs a single active campaign (the
+// engine's own campaign entity docstring), so — mirroring the same "first
+// campaign" fallback already used by applicantChat.js/applicantVault.js/
+// applicantGallery.js/applicantPortal.js/applicantDebug.js — this reads the
+// owner's first campaign rather than adding a second campaign-picker.
+function _guardrailsSlot() {
+  return _modalEl && _modalEl.querySelector('#applicant-today-guardrails');
+}
+
+function _formatGuardrailsLine(today) {
+  const count = Number(today.applications_today) || 0;
+  const target = Number(today.daily_target) || 0;
+  const cap = Number(today.hard_cap) || 0;
+  const costPart = today.usage_reported
+    ? ` · ~$${(Number(today.cost_today_usd_estimate) || 0).toFixed(2)}`
+    : '';
+  const noun = count === 1 ? 'application' : 'applications';
+  // Mirrors the Settings > Campaign tab's own daily-target copy voice
+  // ("up to 30, capped for safety") rather than the internal "hard cap" term.
+  return `Today: ${count} ${noun}${costPart} · target ${target}/day (up to ${cap}, capped for safety)`;
+}
+
+async function _loadGuardrails() {
+  const slot = _guardrailsSlot();
+  if (!slot) return;
+  // Clear FIRST: a refresh where campaigns/guardrails fail or come back empty
+  // must not leave a previous run's spend/pace line rendered as current
+  // (stale numbers presented as live would be a silent lie).
+  slot.textContent = '';
+  slot.style.display = 'none';
+  try {
+    const list = await _fetchJSON(CAMPAIGNS_API);
+    const campaigns = (list && list.campaigns) || [];
+    if (!campaigns.length || !campaigns[0] || !campaigns[0].id) return;
+    const data = await _fetchJSON(
+      `${CAMPAIGNS_API}/${encodeURIComponent(campaigns[0].id)}/guardrails`,
+    );
+    const today = data && data.today;
+    if (!today) return;
+    slot.textContent = _formatGuardrailsLine(today);
+    slot.style.display = '';
+  } catch {
+    // Best-effort only (see header comment) — the slot stays cleared/hidden.
+  }
+}
+
 async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
+  // Fire-and-forget: this must never block or break the pending-items deck.
+  _loadGuardrails();
   const host = _body();
   const slot = _progressSlot();
   if (slot) slot.textContent = '';

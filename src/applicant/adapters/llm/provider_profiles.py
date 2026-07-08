@@ -67,6 +67,13 @@ class ProviderProfile:
         Given the raw response body, return the assistant's requested tool calls as
         a list of ``(call_id, name, arguments_json_str)`` tuples, or ``[]`` when the
         model returned plain text. Only consulted when ``supports_tools`` is True.
+    usage_extractor:
+        Given the raw response body, return ``{"tokens_in": int, "tokens_out": int}``
+        when the provider reported token usage for the call, or ``None`` when it
+        didn't (P1-6 cost & pace guardrails: DoR confirmed OpenRouter — and any
+        OpenAI-compatible provider using the same wire shape — reports usage; this
+        must stay honest and return ``None`` rather than fabricate zeros for a
+        provider that reports nothing).
     """
 
     name: str
@@ -84,6 +91,9 @@ class ProviderProfile:
     supports_tools: bool = False
     parse_tool_calls: Callable[[dict[str, Any]], list[tuple[str, str, str]]] = (
         lambda raw: []
+    )
+    usage_extractor: Callable[[dict[str, Any]], dict[str, int] | None] = (
+        lambda raw: None
     )
 
 
@@ -286,6 +296,41 @@ def _ollama_extract_text(raw: dict[str, Any]) -> str:
     return strip_reasoning(text)
 
 
+def _openai_usage_extractor(raw: dict[str, Any]) -> dict[str, int] | None:
+    """Pull ``{tokens_in, tokens_out}`` from an OpenAI-shape ``usage`` block.
+
+    OpenRouter and OpenAI-compatible cloud providers report a top-level
+    ``usage: {prompt_tokens, completion_tokens, total_tokens}`` object (P1-6 DoR:
+    "confirmed OpenRouter reports token usage" — this is that shape). Returns
+    ``None`` when the body carries no such block at all, so a provider that
+    doesn't report usage is never mistaken for one reporting zero usage.
+    """
+    usage = raw.get("usage") if isinstance(raw, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    tin = usage.get("prompt_tokens")
+    tout = usage.get("completion_tokens")
+    if tin is None and tout is None:
+        return None
+    return {"tokens_in": int(tin or 0), "tokens_out": int(tout or 0)}
+
+
+def _ollama_usage_extractor(raw: dict[str, Any]) -> dict[str, int] | None:
+    """Pull ``{tokens_in, tokens_out}`` from Ollama's own field names.
+
+    Ollama's ``/api/chat`` reports ``prompt_eval_count``/``eval_count`` at the
+    top level instead of an OpenAI-shape ``usage`` object. Returns ``None`` when
+    neither is present.
+    """
+    if not isinstance(raw, dict):
+        return None
+    tin = raw.get("prompt_eval_count")
+    tout = raw.get("eval_count")
+    if tin is None and tout is None:
+        return None
+    return {"tokens_in": int(tin or 0), "tokens_out": int(tout or 0)}
+
+
 # ---------------------------------------------------------------------------
 # Detection predicates
 # ---------------------------------------------------------------------------
@@ -324,6 +369,7 @@ OLLAMA_PROFILE: ProviderProfile = ProviderProfile(
     chat_url=_ollama_chat_url,
     build_request=_ollama_build_request,
     extract_text=_ollama_extract_text,
+    usage_extractor=_ollama_usage_extractor,
 )
 
 OPENAI_PROFILE: ProviderProfile = ProviderProfile(
@@ -337,6 +383,7 @@ OPENAI_PROFILE: ProviderProfile = ProviderProfile(
     extract_text=_openai_extract_text,
     supports_tools=True,
     parse_tool_calls=_openai_parse_tool_calls,
+    usage_extractor=_openai_usage_extractor,
 )
 
 #: Ordered list of profiles.  First profile whose ``detect`` returns True is used.

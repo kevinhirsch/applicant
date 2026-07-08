@@ -807,3 +807,159 @@ def test_rate_limit_gates_complete_with_tools_too():
     res = llm.complete_with_tools([ChatMessage(role="user", content="q")], [])
     assert res.tier == 2
     assert res.model == "t2"
+
+
+# --- P1-6: usage capture + recorder callback -------------------------------
+def _usage_handler(text: str, prompt_tokens: int, completion_tokens: int):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": text}}],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                },
+            },
+        )
+
+    return handler
+
+
+def test_complete_attaches_usage_from_the_provider_response():
+    llm = OpenAICompatibleLLM(
+        provider="openrouter", base_url="https://openrouter.ai/api/v1", model="m",
+        transport=httpx.MockTransport(_usage_handler("hi", 42, 8)),
+    )
+    res = llm.complete([ChatMessage(role="user", content="hi")])
+    assert res.usage == {"tokens_in": 42, "tokens_out": 8}
+
+
+def test_complete_usage_is_none_when_the_provider_reports_none():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="hi")])
+    assert res.usage is None
+
+
+def test_usage_recorder_is_called_with_provider_model_and_usage():
+    recorded: list = []
+    llm = OpenAICompatibleLLM(
+        provider="openrouter", base_url="https://openrouter.ai/api/v1", model="z-ai/glm-5.2",
+        transport=httpx.MockTransport(_usage_handler("hi", 10, 5)),
+        usage_recorder=lambda provider, model, usage: recorded.append((provider, model, usage)),
+    )
+    llm.complete([ChatMessage(role="user", content="hi")])
+    assert recorded == [("openrouter", "z-ai/glm-5.2", {"tokens_in": 10, "tokens_out": 5})]
+
+
+def test_usage_recorder_not_called_when_no_usage_reported():
+    recorded: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+        usage_recorder=lambda provider, model, usage: recorded.append(usage),
+    )
+    llm.complete([ChatMessage(role="user", content="hi")])
+    assert recorded == []
+
+
+def test_usage_recorder_never_breaks_a_completion():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    def _boom(provider, model, usage):
+        raise RuntimeError("telemetry sink is down")
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+        usage_recorder=_boom,
+    )
+    res = llm.complete([ChatMessage(role="user", content="hi")])
+    assert res.text == "hi"
+
+
+def test_structured_output_fallback_sums_usage_across_both_wire_calls():
+    # FR-LLM-4a's prompt-based fallback makes a SECOND real HTTP call — its tokens
+    # must be folded into the total, not dropped (P1-6).
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "sorry, no idea"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"score": 3}'}}],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 7},
+            },
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="rate")], json_schema=_SCHEMA)
+    assert res.structured == {"score": 3}
+    assert res.usage == {"tokens_in": 30, "tokens_out": 12}
+
+
+def test_complete_with_tools_attaches_usage():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+            },
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete_with_tools([ChatMessage(role="user", content="hi")], [])
+    assert res.usage == {"tokens_in": 3, "tokens_out": 4}
+
+
+def test_ollama_complete_attaches_usage_from_eval_counts():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {"content": "local reply"},
+                "prompt_eval_count": 9,
+                "eval_count": 3,
+            },
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="ollama", base_url="http://localhost:11434", model="llama3.1",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="hi")])
+    assert res.usage == {"tokens_in": 9, "tokens_out": 3}

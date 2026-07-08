@@ -100,3 +100,34 @@ def test_patch_system_campaign_is_refused(client):
     _open_gate(client)
     r = client.patch(f"/api/campaigns/{SYSTEM_CAMPAIGN_ID}", json={"name": "hijack"})
     assert r.status_code == 422
+
+
+# --- P1-6: cost & pace guardrails --------------------------------------------
+def test_guardrails_reports_daily_target_and_hard_cap(client):
+    """Daily target (15) + hard cap (30) are surfaced, with no usage yet today."""
+    _open_gate(client)
+    cid = _make_campaign(client)
+    r = client.get(f"/api/campaigns/{cid}/guardrails")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["today"]["daily_target"] == 15
+    assert body["today"]["hard_cap"] == THROUGHPUT_HARD_CAP
+    assert body["today"]["applications_today"] == 0
+    assert body["today"]["usage_reported"] is False
+    assert body["today"]["cost_per_application_usd_estimate"] is None
+    assert "month_to_date_usd_estimate" in body["monthly"]
+    assert "projected_month_usd_estimate" in body["monthly"]
+
+
+def test_guardrails_reflects_a_retuned_daily_target(client):
+    _open_gate(client)
+    cid = _make_campaign(client)
+    client.patch(f"/api/campaigns/{cid}", json={"throughput_target": 7})
+    body = client.get(f"/api/campaigns/{cid}/guardrails").json()
+    assert body["today"]["daily_target"] == 7
+    assert body["today"]["hard_cap"] == THROUGHPUT_HARD_CAP
+
+
+def test_guardrails_unknown_campaign_is_404(client):
+    _open_gate(client)
+    assert client.get(f"/api/campaigns/{new_id()}/guardrails").status_code == 404
