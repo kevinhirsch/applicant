@@ -39,7 +39,11 @@ The **trigger** is the `Eval Lane` GitHub workflow
 per-dimension regression, so a "meaningful prompt or model change" that degrades
 output quality is caught. It is a dispatch/weekly lane (not a per-PR gate)
 because live judging needs an LLM key and costs tokens — the same posture as the
-integration lane.
+integration lane. With no key secret configured, the lane runs a clearly-labelled
+**offline wiring smoke** instead (deterministic generation + heuristic judging,
+low absolute floor, no live-baseline comparison): comparing a heuristic run
+against the live baseline would fail by design — a false red that evaluates
+nothing — and the smoke never presents itself as a live quality eval.
 
 ## The evidence in this directory
 

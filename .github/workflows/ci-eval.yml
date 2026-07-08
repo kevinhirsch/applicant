@@ -51,22 +51,43 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      - name: Run the golden-set material eval
+      - name: Run the material eval (live when the key secret is set; offline wiring smoke otherwise)
         env:
           # Secret injected via env only — never inlined into the command, never
-          # echoed. Absent (e.g. on a fork) the runner falls back to OFFLINE mode.
+          # echoed.
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # Input-derived shell vars (NOT the EVAL_* names the runner reads, so a
           # blank input can never override the runner's model defaults with "").
-          IN_MAX_CASES: ${{ github.event.inputs.max_cases }}
-          IN_GEN_MODEL: ${{ github.event.inputs.gen_model }}
-          IN_JUDGE_MODEL: ${{ github.event.inputs.judge_model }}
+          # Routed through env — never template-spliced into `run:` — and forwarded
+          # as ONE QUOTED ARRAY ELEMENT each, so an input containing spaces/flags
+          # (e.g. "some/model --offline") stays a single argv token instead of
+          # injecting extra arguments into the runner.
+          MAX_CASES_INPUT: ${{ github.event.inputs.max_cases }}
+          GEN_MODEL_INPUT: ${{ github.event.inputs.gen_model }}
+          JUDGE_MODEL_INPUT: ${{ github.event.inputs.judge_model }}
         run: |
-          ARGS="--baseline docs/proof/eval/baseline.json --out reports/eval"
-          if [ -n "$IN_MAX_CASES" ]; then ARGS="$ARGS --max-cases $IN_MAX_CASES"; fi
-          if [ -n "$IN_GEN_MODEL" ]; then ARGS="$ARGS --gen-model $IN_GEN_MODEL"; fi
-          if [ -n "$IN_JUDGE_MODEL" ]; then ARGS="$ARGS --judge-model $IN_JUDGE_MODEL"; fi
-          uv run python -m applicant.evaluation.material_runner $ARGS
+          # Honesty (H-series): the live baseline in docs/proof/eval/ was produced by
+          # a real model, so comparing an OFFLINE (deterministic + heuristic) run
+          # against it fails by design — a false red that evaluates nothing. With no
+          # key, run a clearly-labelled wiring SMOKE instead (offline, low absolute
+          # floor, no live baseline) — it proves the harness executes end to end and
+          # never masquerades as a live quality eval, in the step summary or anywhere.
+          if [ -n "$OPENROUTER_API_KEY" ]; then
+            mode="LIVE quality eval (gated against docs/proof/eval/baseline.json)"
+            args=(--baseline docs/proof/eval/baseline.json --out reports/eval)
+          else
+            mode="OFFLINE wiring smoke — OPENROUTER_API_KEY secret not configured. \
+          Deterministic generation + heuristic judging; NOT a live quality eval; \
+          not gated against the live baseline."
+            echo "::notice::$mode"
+            args=(--offline --min-score 1.0 --out reports/eval)
+          fi
+          echo "### Eval lane mode" >> "$GITHUB_STEP_SUMMARY"
+          echo "$mode" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$MAX_CASES_INPUT" ] && args+=(--max-cases "$MAX_CASES_INPUT")
+          [ -n "$GEN_MODEL_INPUT" ] && args+=(--gen-model "$GEN_MODEL_INPUT")
+          [ -n "$JUDGE_MODEL_INPUT" ] && args+=(--judge-model "$JUDGE_MODEL_INPUT")
+          uv run python -m applicant.evaluation.material_runner "${args[@]}"
 
       - name: Upload eval report
         if: always()
