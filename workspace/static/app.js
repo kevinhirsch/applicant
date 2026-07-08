@@ -1356,8 +1356,8 @@ function initializeEventListeners() {
       // the Profile launchers) and the old per-section loop let whichever
       // section iterated LAST win — an id must show when ANY section that
       // lists it is usable, so aggregate to the best state first
-      // (active > configured > locked/disabled).
-      const _STATE_RANK = { active: 3, configured: 2 };
+      // (active > configured > locked > disabled).
+      const _STATE_RANK = { active: 3, configured: 2, locked: 1, disabled: 0 };
       const navStates = new Map();
       Object.values(sections).forEach(section => {
         const reason = section.present_but_disabled
@@ -1405,6 +1405,8 @@ function initializeEventListeners() {
             e.removeEventListener('click', e._applicantGuard, true);
             delete e._applicantGuard;
           }
+          delete e.dataset.applicantGuardReason;
+          delete e.dataset.applicantGuardDisabledInBuild;
         } else {
           e.setAttribute('aria-disabled', 'true');
           if (!e.dataset.applicantLockTitle) {
@@ -1420,12 +1422,18 @@ function initializeEventListeners() {
           // click silently, and route a genuinely unlockable item into the
           // setup wizard (design-audit #43); a present-but-disabled one has
           // nothing to route to, so it only explains why.
+          // The guard's inputs refresh EVERY pass and the handler reads them
+          // at click time — a launcher that moves locked -> configured (or a
+          // changed reason) must never act on a stale closure (bots on #745).
+          e.dataset.applicantGuardReason = info.reason;
+          if (info.disabledInBuild) e.dataset.applicantGuardDisabledInBuild = '1';
+          else delete e.dataset.applicantGuardDisabledInBuild;
           if (!e._applicantGuard) {
-            const disabledInBuild = info.disabledInBuild;
-            const reason = info.reason;
             e._applicantGuard = (ev) => {
               ev.stopPropagation();
               ev.preventDefault();
+              const reason = e.dataset.applicantGuardReason || '';
+              const disabledInBuild = e.dataset.applicantGuardDisabledInBuild === '1';
               try { uiModule.showToast(reason); } catch (_) {}
               // CC-S2-6 / ON-S3-19: a locked-feature click routes into the setup
               // wizard ONLY while it hasn't been dismissed. Once the user has

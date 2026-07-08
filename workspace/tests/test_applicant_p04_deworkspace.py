@@ -110,7 +110,13 @@ def test_legacy_history_labels_normalize_to_applicant_without_losing_timestamp()
     pre-rename bubble ('Job assistant' + a timestamp child) must relabel to
     'Applicant' keeping the timestamp; an unrelated label must be untouched."""
     src = _read(CHAT_JS)
-    fn = _extract_fn(src, "function _normalizeSpeakerLabels()")
+    # The normalize pass delegates to the shared _rewriteLegacyRoleLabel
+    # helper — slice BOTH so the executed harness matches shipped composition.
+    fn = (
+        _extract_fn(src, "function _rewriteLegacyRoleLabel(roleEl)")
+        + "\n"
+        + _extract_fn(src, "function _normalizeSpeakerLabels()")
+    )
     label = re.search(r"const ASSISTANT_LABEL = '([^']+)';", src).group(1)
     legacy = re.search(r"const LEGACY_ASSISTANT_LABEL = '([^']+)';", src).group(1)
     script = textwrap.dedent(f"""
@@ -186,7 +192,11 @@ def test_chat_surface_never_invokes_the_metrics_renderer():
     context_percent)."""
     assert "displayMetrics" not in _read(CHAT_JS)
     routes = _read(CHAT_ROUTES)
-    persist = routes[routes.index("def _persist_chat_turn") : routes.index("def setup_applicant_chat_routes")]
+    # Anchor on the next top-level def, not a named sibling — reordering the
+    # module must not silently mis-scope this pin (CodeRabbit on #745).
+    _m = re.search(r"\ndef _persist_chat_turn[\s\S]*?(?=\n(?:async )?def )", routes)
+    assert _m, "_persist_chat_turn definition not found"
+    persist = _m.group(0)
     for metric_field in ("response_time", "output_tokens", "tokens_per_second", "context_percent"):
         assert metric_field not in persist, (
             f"_persist_chat_turn must not persist {metric_field} — it would make "

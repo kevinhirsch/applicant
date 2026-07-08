@@ -495,14 +495,16 @@ function _pruneThreadActions() {
 // legacy character_name, so a history reload would label old bubbles
 // differently from new ones. Rewrite only the label's leading text node —
 // the timestamp child appended by roleTimestamp() must survive untouched.
+function _rewriteLegacyRoleLabel(roleEl) {
+  const textNode = roleEl && roleEl.firstChild;
+  if (textNode && textNode.nodeType === 3
+      && textNode.nodeValue === LEGACY_ASSISTANT_LABEL) {
+    textNode.nodeValue = ASSISTANT_LABEL;
+  }
+}
+
 function _normalizeSpeakerLabels() {
-  document.querySelectorAll('#chat-history .msg-ai .role').forEach((roleEl) => {
-    const textNode = roleEl.firstChild;
-    if (textNode && textNode.nodeType === 3
-        && textNode.nodeValue === LEGACY_ASSISTANT_LABEL) {
-      textNode.nodeValue = ASSISTANT_LABEL;
-    }
-  });
+  document.querySelectorAll('#chat-history .msg-ai .role').forEach(_rewriteLegacyRoleLabel);
 }
 
 // ── Job-action chips (per-message decoration) ───────────────────────────────
@@ -646,10 +648,7 @@ export function decorateEngineMessage(wrap, payload) {
   _pruneBubbleActions(wrap);
   // Pre-rename turns carry the legacy speaker label — fix this bubble now
   // (the mount-time _normalizeSpeakerLabels sweep covers the rest).
-  const roleText = wrap.querySelector('.role') && wrap.querySelector('.role').firstChild;
-  if (roleText && roleText.nodeType === 3 && roleText.nodeValue === LEGACY_ASSISTANT_LABEL) {
-    roleText.nodeValue = ASSISTANT_LABEL;
-  }
+  _rewriteLegacyRoleLabel(wrap.querySelector('.role'));
   const old = wrap.querySelector('.applicant-msg-extras');
   if (old) old.remove();
   const html = _renderGaps(payload.gaps)
