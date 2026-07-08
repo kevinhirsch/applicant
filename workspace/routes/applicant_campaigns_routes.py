@@ -35,6 +35,11 @@ campaigns. All four write endpoints are now additionally gated by the same
 Endpoints (all under ``/api/applicant/campaigns``):
 
 * ``GET  /api/applicant/campaigns``                       — campaigns + config.
+* ``POST /api/applicant/campaigns``                       — create a new campaign
+  (P1-10 multi-campaign): the engine seeds its criteria from the name; its own
+  base résumé is then uploaded per campaign through the existing onboarding
+  intake (``/api/applicant/setup/onboarding/{campaign_id}/base-resume``). This
+  is the route the Settings "Start a search" card posts to.
 * ``PATCH /api/applicant/campaigns/{campaign_id}``        — rename/archive/re-tune.
 * ``POST /api/applicant/campaigns/{campaign_id}/clone``   — duplicate under a new
   identity (dark-engine audit item 36) — "same search, new city".
@@ -86,6 +91,12 @@ class CloneCampaignIn(BaseModel):
     name: Optional[str] = None
 
 
+class CreateCampaignIn(BaseModel):
+    """Name for a brand-new campaign (the engine seeds criteria from it)."""
+
+    name: str
+
+
 class ToggleSourceIn(BaseModel):
     enabled: bool
 
@@ -123,6 +134,34 @@ def setup_applicant_campaigns_routes() -> APIRouter:
                 return {"engine_available": False, "campaigns": []}
         items = [c for c in campaigns if isinstance(c, dict)] if isinstance(campaigns, list) else []
         return {"engine_available": True, "campaigns": items}
+
+    @router.post("", status_code=201)
+    async def create_campaign(request: Request, body: CreateCampaignIn) -> dict:
+        """Create a brand-new campaign (P1-10 multi-campaign).
+
+        The engine owns the logic: it seeds the campaign's starting criteria
+        from the name (CampaignService). The campaign's own base résumé is
+        uploaded afterwards through the per-campaign onboarding intake — this
+        route only starts the second (third, ...) parallel track.
+
+        Owner-scoped (DISC-15b): gated by ``require_engine_owner`` like every
+        other write here — the engine is single-tenant, so any authenticated
+        workspace account could otherwise create campaigns in the owner's
+        deployment.
+        """
+        require_engine_owner(request)
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Give the search a name first.")
+        async with ApplicantEngineClient() as engine:
+            try:
+                created = await engine.create_campaign(name)
+            except EngineError as exc:
+                logger.debug("campaigns: create failed: %s", exc)
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return created if isinstance(created, dict) else {}
 
     @router.patch("/{campaign_id}")
     async def update_campaign(

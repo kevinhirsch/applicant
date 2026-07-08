@@ -4,7 +4,7 @@ Two halves:
 
 * **Registry invariants** — every entry is well-formed, keys are unique, statuses
   are one of the two allowed values, and the live/dormant split matches the spec
-  (only ``multi_campaign_switcher`` ships grayed).
+  (nothing ships grayed since P1-10 un-locked ``multi_campaign_switcher``).
 * **Seeding** — ``seed_dormant_surfaces`` tolerates no-DB (returns the count) AND,
   when given a real session, upserts one row per surface idempotently. The DB path
   is hermetic on SQLite (no Postgres).
@@ -44,17 +44,18 @@ def test_surface_keys_are_unique():
 
 
 def test_only_expected_surfaces_remain_genuinely_dormant():
-    # The only genuinely-grayed surface is the multi-campaign switcher (MVP-1 runs a
-    # single campaign). resume_aggressiveness was promoted to live in #187.
-    # FR-MIND's agent-learning surfaces and FR-CUA's desktop assist are wired end-to-end
+    # Nothing ships grayed anymore: the multi-campaign switcher — the last
+    # genuinely-dormant surface — was promoted to live in P1-10 (campaign
+    # create/clone with per-campaign base résumés + a campaign filter on
+    # Today/Tracker; the daily-updates panel already had its own picker).
+    # resume_aggressiveness was promoted to live in #187. FR-MIND's
+    # agent-learning surfaces and FR-CUA's desktop assist are wired end-to-end
     # and registered LIVE; desktop assist is additionally CAPABILITY-gated at runtime
     # (it shows locked until COMPUTER_USE_BACKEND=cua and the desktop driver is baked
     # into the sandbox image so the health preflight passes), which is a runtime gate,
     # not a dormant-registry flag.
     dormant_keys = {s.key for s in DORMANT_SURFACES if s.status == STATUS_DORMANT}
-    assert dormant_keys == {
-        "multi_campaign_switcher",
-    }
+    assert dormant_keys == set()
 
 
 def test_dormant_surface_is_frozen():
