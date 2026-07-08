@@ -16,9 +16,11 @@ hand-maintained suffix stays as a belt-and-braces override for logic-only
 changes... which the fingerprint also catches, since ``sw.js`` fingerprints
 itself).
 
-The fingerprint is computed once per process (deploys restart the server) and
-covers the shell + every ``.js``/``.css`` under ``static/`` — a superset of
-the precache list, so a drifted precache list cannot dodge the bust.
+The fingerprint is recomputed on every ``/static/sw.js`` request (uncached on
+purpose — the dev flow edits static files without a restart, and the route is
+hit only on SW update checks) and covers the shell + every ``.js``/``.css``
+under ``static/`` — a superset of the precache list, so a drifted precache
+list cannot dodge the bust.
 """
 
 from __future__ import annotations
@@ -26,12 +28,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from functools import lru_cache
 
 _CACHE_NAME_RE = re.compile(r"(const CACHE_NAME = ')([^']+)(';)")
 
 
-@lru_cache(maxsize=1)
 def static_asset_fingerprint(static_dir: str) -> str:
     """A stable content hash of the shipped front-end assets.
 

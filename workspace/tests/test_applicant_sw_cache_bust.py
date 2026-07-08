@@ -26,8 +26,6 @@ WORKSPACE = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _fp(static_dir: pathlib.Path) -> str:
-    # static_asset_fingerprint is lru_cached per path string; unique temp dirs
-    # per test keep the cache honest.
     return static_asset_fingerprint(str(static_dir))
 
 
