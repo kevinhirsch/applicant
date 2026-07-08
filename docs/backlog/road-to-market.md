@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail shipped (see note) |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; window-manager retirement + #640 watcher in the concurrent retirement lane (see note) |
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
@@ -208,37 +208,45 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
       card frame) when action-required items arrive and shrinks to an "all clear" line
       when empty; gadgets reflow below it; each gadget is pinnable (pins float to the top,
       persisted in localStorage) and the whole rail collapses to a slim badge strip.
-- [ ] Notifications reachable from THREE surfaces (**partial**): **rail waiting-on-you area** (new) +
-      **transient toasts** (reused `ui.js` `showToast` via `_toast`) are live; the
-      **existing sidebar count badge** on the Today/Portal nav entry is the third. A
-      dedicated *top-bar bell + dropdown* is **deferred** — the Portal already owns the
-      in-app inbox/notification-center, so the bell is a re-surfacing task best done
-      alongside the window-manager retirement below.
+- [x] Notifications reachable from THREE surfaces: **top-bar bell + dropdown** (new, P0-3b —
+      `static/js/applicantBell.js` + `#applicant-bell-wrap` in the chat top bar), the **rail
+      waiting-on-you area**, and **transient toasts** (reused `ui.js` `showToast` via `_toast`).
+      The bell is a NEW LENS over the SAME owner-scoped backing the rail/Portal read
+      (`GET /api/applicant/portal/pending`) — no new engine endpoint. It shows the pending count
+      and a dropdown of the same items; each opens Today via the existing `window.openApplicantToday`
+      launcher. Acting on an item clears it from bell, rail, AND portal at once: the Portal's
+      `_setBadge` dispatches `applicant:pending-changed`, which both the bell and the rail listen for
+      and re-read. (The old sidebar count badge remains as a bonus signal.)
 - [x] Each v1 gadget (8: waiting-on-you, pipeline, activity, cost & pace, next-interview,
       digest, momentum, health) renders live data from an existing owner-scoped proxy and
       expands to its full page in one click via the SAME `window` launcher that page
       already exports (`openApplicantTracker/Today/Results`, `applicantActivityModule`,
       the `#rail-email` seam) — no new engine endpoints, no floating window.
 - [ ] The window manager is retired from the default product surface; modal-stack tests
-      replaced by the shell/page view contract. **DEFERRED** — see note (large surgery
-      across applicantPortal/Today/app.js + dozens of pinning tests; out of a safe
-      green-increment).
-- [ ] The auto-land watcher added in PR #640 is removed. **DEFERRED** with the
-      window-manager retirement above.
-- [ ] The brand wordmark routes home to the shell. **DEFERRED** with the same lane.
+      replaced by the shell/page view contract. **In the concurrent window-retirement lane**
+      (owns the applicantPortal/Today window-stack plumbing, app.js modal-stack code, and the
+      #640 watcher). P0-3b deliberately did NOT touch that plumbing to avoid colliding with it.
+- [ ] The auto-land watcher added in PR #640 is removed. **In the concurrent
+      window-retirement lane** (same owner as the item above).
+- [x] The brand wordmark routes home to the shell (P0-1's Home behaviour): clicking the
+      "Applicant" wordmark (`sidebar-brand-btn`) is intercepted in `applicantChat.js`
+      (`_interceptNewChatClick`) to open Today (the Portal home base), never a new chat.
+      Pinned by `test_applicant_chat_unification.py`.
 
-**Status note (2026-07-08):** The headline new artifact — the right-hand **gadget rail**
-(`static/js/applicantRail.js` + `#applicant-gadget-rail` mount + rail CSS) — is shipped,
-reachable in the front-door, and covered by `tests/js/applicantRail.test.js` (5 pure-helper
-tests) and `tests/test_applicant_shell_gadget_rail.py` (17 composition/reuse tests). All 8
-v1 gadgets pull live data via existing proxies (lift-and-shift, no new endpoints), the rail
-pins/collapses with localStorage persistence, notifications reuse `showToast`, and the rail
-hides on mobile. **Deferred to a follow-up** (too broad for one safe increment, would break
-many modal-stack/one-window pinning tests): fully retiring the floating-window manager,
-removing the PR #640 auto-land watcher, the dedicated top-bar bell dropdown, and the
-wordmark-home rewire. The existing chat center + sidebar already provided two of the three
-panes; the Today/Portal surfaces still open as their current modals until the retirement lane
-lands.
+**Status note (updated 2026-07-08, P0-3b):** The gadget rail (P0-3) plus the **top-bar
+notification bell** (P0-3b — `static/js/applicantBell.js` + `#applicant-bell-wrap`) and the
+**wordmark→home** behaviour are shipped and reachable, closing the "notifications from three
+surfaces" and "wordmark routes home" DoD items. The bell is covered by
+`tests/js/applicantBell.test.js` (pure helpers) and `tests/test_applicant_topbar_bell.py`
+(composition/reuse/owner-only/cross-surface-signal). It reuses the SAME
+`GET /api/applicant/portal/pending` backing the rail + Portal read (no new endpoint), routes to
+Today via the existing launcher (no rebuilt resolve logic), and shares the
+`applicant:pending-changed` signal so a resolution clears all three surfaces at once.
+**Still open (row stays PARTIAL):** fully retiring the floating-window manager and removing the
+PR #640 auto-land watcher — these are owned by the **concurrent window-retirement lane**, which
+holds the window/modal-stack plumbing across applicantPortal/Today/app.js; P0-3b stayed out of
+that plumbing by design and opened pages only through the existing `window.openApplicant*`
+launchers. Once that lane lands, this row can flip to DONE.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
