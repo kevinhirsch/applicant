@@ -29,6 +29,9 @@ def _fake_docker(bin_dir: Path) -> Path:
         'for a in "$@"; do\n'
         '  if [[ "$a" == "pg_dump" ]]; then echo "-- fake dump body"; exit 0; fi\n'
         "done\n"
+        # The engine-secrets export uses `run --rm --entrypoint tar api -czf ...`
+        # (no literal "tar -czf -" substring) — match it before the workspace form.
+        'if [[ "$*" == *"--entrypoint tar"* && "$*" == *"-czf -"* ]]; then printf SECRETSDATA; exit 0; fi\n'
         'if [[ "$*" == *"tar -czf -"* ]]; then printf WORKSPACEDATA; exit 0; fi\n'
         "exit 0\n"
     )
@@ -73,7 +76,7 @@ def test_apply_produces_one_tarball_with_expected_members(tmp_path):
         manifest = tf.extractfile(
             [n for n in tf.getnames() if n.endswith("MANIFEST.txt")][0]
         ).read().decode("utf-8")
-        assert "credential vault master key: present" in manifest
+        assert "engine-secrets.tar.gz (credential vault master key): present" in manifest
         db_member = tf.extractfile([n for n in tf.getnames() if n.endswith("db.sql")][0])
         assert db_member.read().decode("utf-8").strip() == "-- fake dump body"
         ws_member = tf.extractfile([n for n in tf.getnames() if n.endswith("workspace-data.tar.gz")][0])
