@@ -44,7 +44,7 @@ from src.applicant_engine import (
     EngineError,
     engine_base_url,
 )
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,22 @@ def setup_applicant_email_routes() -> APIRouter:
         """
         require_user(request)
         return await _engine_call(lambda e: e.digest_email(campaign_id))
+
+    @router.get("/digest/{campaign_id}/weekly-recap")
+    async def get_weekly_recap(request: Request, campaign_id: str) -> dict:
+        """The trailing-7-day recap for the "Daily updates" panel (P1-12).
+
+        The SAME first-person recap the engine already pushes once a week
+        through the notification fan-out (audit Top-25 #18) — read on demand
+        here so the weekly summary has a persistent narrative home instead of
+        existing only as a transient notification. Read-only; the engine owns
+        the aggregation. Gated by ``require_engine_owner`` (not plain
+        ``require_user``): the recap totals the single deployment owner's real
+        submission history, so a second workspace account must not read it
+        (DISC-15).
+        """
+        require_engine_owner(request)
+        return await _engine_call(lambda e: e.digest_weekly_recap(campaign_id))
 
     # Dark-engine audit item 5: this router used to also carry
     # `POST /digest/{campaign_id}/deliver`, a duplicate of `manual_digest_delivery`

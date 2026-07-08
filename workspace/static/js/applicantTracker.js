@@ -34,6 +34,10 @@ const API = '/api/applicant/tracker';
 //: Product-gaps backlog #20 — the reusable screening-answer library lives on
 //: the Documents proxy (campaign-scoped), not the tracker's own API base.
 const LIBRARY_API = '/api/applicant/documents/screening-answer-library';
+//: P1-12 — ghosting flags + drafted (never auto-sent) follow-ups live on the
+//: owner-scoped followups proxy (routes/applicant_followups_routes.py), which
+//: reads the engine's post-submission attention feed per campaign.
+const FOLLOWUPS_API = '/api/applicant/followups';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -130,6 +134,7 @@ function _ensureModalEl() {
       <div id="applicant-tracker-confirm" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-stuck" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-blocked" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
+      <div id="applicant-tracker-attention" style="display:none;flex-shrink:0;max-height:36vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div class="modal-body" id="applicant-tracker-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
       </div>
@@ -660,6 +665,174 @@ async function _onDetectSubmission(btn) {
   }
 }
 
+// ── Follow-ups & quiet applications (P1-12 — the narrative home for the ─────
+// engine's ghosting detection + follow-up drafting). The scheduler's daily
+// post-submission sweep already flags applications gone silent past the SLA
+// and DRAFTS (never sends) a follow-up for each one still awaiting a response
+// past the follow-up window — both were reachable only as generic Portal
+// pending actions. This panel surfaces them per-application right on the
+// Tracker, where the owner is already looking at "where does each application
+// stand": each drafted follow-up shows its full subject/body for review
+// (editable before approving), and approving schedules it through the SAME
+// owner-approval-only proxy path (`POST /api/applicant/followups/applications/
+// {id}/approve` — the ONLY route in the product that can queue a follow-up
+// for sending; the engine never sends one on its own). Ghosting flags render
+// as honest, informational rows — the board's "Went quiet" bucket below keeps
+// the status itself. Loaded off the board's own campaign ids (a follow-up
+// only ever exists for a tracked application), degrades silently (hides
+// itself) on any failure — a bonus surface, never allowed to blank out the
+// primary tracker.
+
+function _attentionPanelEl() {
+  return _modalEl && _modalEl.querySelector('#applicant-tracker-attention');
+}
+
+function _attentionCampaignIds() {
+  const ids = new Set();
+  (_lastApplications || []).forEach((app) => {
+    if (app && app.campaign_id) ids.add(String(app.campaign_id));
+  });
+  return Array.from(ids);
+}
+
+function _renderGhostRow(item) {
+  const title = esc(String(item.title || 'An application looks like it went quiet'));
+  const payload = (item.payload && typeof item.payload === 'object') ? item.payload : {};
+  const age = Number(payload.submission_age_days);
+  const meta = Number.isFinite(age) && age > 0
+    ? `No response in ${age} day${age === 1 ? '' : 's'} — I’ve marked it “Went quiet” below.`
+    : 'No response for a while — I’ve marked it “Went quiet” below.';
+  return `
+    <div class="memory-item ow-list-row" data-attention-ghost="${esc(String(item.application_id || ''))}" style="display:block;padding:6px 4px;">
+      <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</div>
+      <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">${esc(meta)}</div>
+    </div>`;
+}
+
+function _renderFollowupRow(item) {
+  const id = esc(String(item.application_id || ''));
+  const title = esc(String(item.title || 'A follow-up is drafted for your review'));
+  const payload = (item.payload && typeof item.payload === 'object') ? item.payload : {};
+  const subject = esc(String(payload.subject || ''));
+  const body = esc(String(payload.body || ''));
+  const days = Number(payload.days_since_submission);
+  const meta = Number.isFinite(days) && days > 0
+    ? `Drafted after ${days} day${days === 1 ? '' : 's'} without a response. I never send one without your OK.`
+    : 'Drafted for you — I never send one without your OK.';
+  const busy = _busyIds.has(String(item.application_id));
+  return `
+    <div class="memory-item ow-list-row" data-attention-followup="${id}" style="display:block;padding:6px 4px;">
+      <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</div>
+      <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">${esc(meta)}</div>
+      <details class="ow-list-row" style="margin:4px 0 0;">
+        <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">Review &amp; send</summary>
+        <div style="margin:8px 0 4px;display:flex;flex-direction:column;gap:6px;">
+          <input type="text" class="cal-input" data-followup-subject="${id}" value="${subject}" style="font-size:11px;padding:5px 8px;" aria-label="Follow-up subject" />
+          <textarea class="cal-input" data-followup-body="${id}" rows="5" style="font-size:11px;padding:5px 8px;" aria-label="Follow-up message">${body}</textarea>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <span data-followup-result="${id}" style="font-size:11px;flex:1;min-width:0;"></span>
+            <button class="cal-btn" type="button" data-followup-approve="${id}" ${busy ? 'disabled' : ''} title="Approve this follow-up — I’ll send it for you after a short delay">Approve &amp; send</button>
+          </div>
+        </div>
+      </details>
+    </div>`;
+}
+
+function _renderAttentionPanel(followups, ghosted) {
+  const sections = [];
+  if (followups.length) {
+    sections.push(`
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.6;">Follow-ups ready for your review</span>
+        <span style="font-size:9.5px;opacity:0.4;">(${followups.length})</span>
+      </div>
+      ${followups.map(_renderFollowupRow).join('')}`);
+  }
+  if (ghosted.length) {
+    sections.push(`
+      <div style="display:flex;align-items:center;gap:6px;padding:${followups.length ? '8px' : '2px'} 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.6;">Gone quiet</span>
+        <span style="font-size:9.5px;opacity:0.4;">(${ghosted.length})</span>
+      </div>
+      ${ghosted.map(_renderGhostRow).join('')}`);
+  }
+  return `<div style="padding:8px 10px;">${sections.join('')}</div>`;
+}
+
+async function _loadAttention() {
+  const panel = _attentionPanelEl();
+  if (!panel) return;
+  const campaignIds = _attentionCampaignIds();
+  if (!campaignIds.length) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  const followups = [];
+  const ghosted = [];
+  try {
+    const results = await Promise.all(campaignIds.map(async (cid) => {
+      try {
+        return await _fetchJSON(`${FOLLOWUPS_API}/${encodeURIComponent(cid)}`);
+      } catch {
+        return null; // one unreadable campaign never blanks the whole panel
+      }
+    }));
+    results.forEach((data) => {
+      if (!data || data.engine_available === false || data.gated === true) return;
+      (Array.isArray(data.followups_due) ? data.followups_due : []).forEach((it) => {
+        if (it && it.application_id) followups.push(it);
+      });
+      (Array.isArray(data.ghosted) ? data.ghosted : []).forEach((it) => {
+        if (it && typeof it === 'object') ghosted.push(it);
+      });
+    });
+  } catch {
+    // Bonus surface — never show an error banner over the primary tracker.
+  }
+  if (!followups.length && !ghosted.length) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = _renderAttentionPanel(followups, ghosted);
+  panel.querySelectorAll('[data-followup-approve]').forEach((btn) => {
+    btn.addEventListener('click', () => _approveFollowUp(btn));
+  });
+}
+
+async function _approveFollowUp(btn) {
+  const id = btn.getAttribute('data-followup-approve');
+  if (!id || _busyIds.has(id)) return;
+  const panel = _attentionPanelEl();
+  const row = btn.closest('[data-attention-followup]');
+  const subjectEl = row && row.querySelector(`[data-followup-subject="${CSS.escape(id)}"]`);
+  const bodyEl = row && row.querySelector(`[data-followup-body="${CSS.escape(id)}"]`);
+  const resultEl = row && row.querySelector(`[data-followup-result="${CSS.escape(id)}"]`);
+  _busyIds.add(id);
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Scheduling…';
+  try {
+    const payload = {};
+    if (subjectEl) payload.subject = subjectEl.value;
+    if (bodyEl) payload.body = bodyEl.value;
+    await _post(`${FOLLOWUPS_API}/applications/${encodeURIComponent(id)}/approve`, payload);
+    _toast('Approved — I’ll send this follow-up for you after a short delay.');
+    _busyIds.delete(id);
+    await _loadAttention();
+    return; // the row this button lives on was just re-rendered/removed
+  } catch (e) {
+    if (resultEl) resultEl.textContent = errText(e); else _toast(errText(e));
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  } finally {
+    _busyIds.delete(id);
+    if (panel && !panel.innerHTML) panel.style.display = 'none';
+  }
+}
+
 // ── Data flow ────────────────────────────────────────────────────────────────
 
 async function _load(showSpinner) {
@@ -670,6 +843,10 @@ async function _load(showSpinner) {
   try {
     const data = await _fetchJSON(API);
     _lastApplications = Array.isArray(data && data.applications) ? data.applications : [];
+    // P1-12: the follow-ups / gone-quiet panel keys off the board's own
+    // campaign ids, so it (re)loads whenever the board itself does —
+    // fire-and-forget, it hides itself on any failure.
+    _loadAttention();
     if (!host) return;
     if (data && data.gated === true) { _renderGated(host, data); return; }
     if (data && data.engine_available === false) { _renderOffline(host); return; }

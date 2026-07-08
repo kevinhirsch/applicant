@@ -71,6 +71,23 @@ def get_email(campaign_id: str, digest=Depends(get_digest_service)) -> dict:
     return digest.render_email(campaign_id)  # type: ignore[arg-type]
 
 
+@router.get("/{campaign_id}/weekly-recap", dependencies=[Depends(require_automated_work)])
+def get_weekly_recap(campaign_id: str, digest=Depends(get_digest_service)) -> dict:
+    """The trailing-7-day recap, read on demand (P1-12 — narrative FE home).
+
+    Pure exposure of the EXISTING recap the scheduler already pushes weekly
+    through the notification fan-out (``DigestService.build_weekly_recap`` +
+    ``render_weekly_recap_message``, audit Top-25 #18) — no new aggregation
+    logic, no new state. Lets the front-door "Daily updates" panel show the
+    same first-person, honestly-composed recap sentence at any time instead of
+    it existing only as a once-a-week notification. Gated exactly like its
+    daily-digest siblings: reading it implies discovery/scoring ran, which is
+    automated work.
+    """
+    recap = digest.build_weekly_recap(campaign_id)  # type: ignore[arg-type]
+    return digest.render_weekly_recap_message(campaign_id, recap=recap)  # type: ignore[arg-type]
+
+
 @router.post("/presence", status_code=204)
 def set_presence(body: PresenceIn, container: Container = Depends(get_container)) -> None:
     """Mark the user verifiably present in the web UI (FR-NOTIF-2 pre-empt signal)."""

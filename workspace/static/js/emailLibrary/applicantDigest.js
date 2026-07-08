@@ -263,6 +263,8 @@ function _ensurePanel(modal) {
     <p class="memory-desc" style="margin:6px 0 4px;opacity:0.7;font-size:11px;">
       Roles I flagged for you today. I email you this same summary — act on anything right here.
     </p>
+    <div id="applicant-digest-recap" style="display:none;margin:0 0 6px;padding:7px 10px;border-radius:6px;background:var(--bg-secondary, rgba(127,127,127,0.08));font-size:11.5px;line-height:1.45;"
+         title="A running summary of the past seven days — the same recap I send you once a week"></div>
     ${_loopIntroHTML()}
     <div class="applicant-digest-bulk-bar" id="applicant-digest-bulk-bar" style="display:none;align-items:center;gap:8px;margin:0 0 6px;">
       <label class="memory-bulk-check-all"><input type="checkbox" id="applicant-digest-select-all"> All</label>
@@ -1360,14 +1362,42 @@ function _renderFreshness(panel) {
   el.textContent = ts ? `Updated ${_relWhen(ts)}` : '';
 }
 
+// The weekly recap line (P1-12 — the recap's narrative home). The engine
+// already composes an honest, first-person trailing-7-day recap ("This week I
+// sent N applications on your behalf…") and pushes it once a week through the
+// notification fan-out; this reads the SAME composed sentence on demand
+// (/api/applicant/email/digest/{id}/weekly-recap → the engine's
+// render_weekly_recap_message) so it lives inside Daily updates instead of
+// existing only as a transient notification. Best-effort and additive: any
+// failure (engine offline, setup gate, older engine without the endpoint)
+// simply hides the line — it never blocks or blanks the digest itself.
+async function _loadWeeklyRecap(panel, campaignId) {
+  const host = panel.querySelector('#applicant-digest-recap');
+  if (!host) return;
+  host.style.display = 'none';
+  host.textContent = '';
+  if (!campaignId) return;
+  try {
+    const recap = await _api(`/digest/${encodeURIComponent(campaignId)}/weekly-recap`);
+    const body = recap && typeof recap.body === 'string' ? recap.body.trim() : '';
+    if (!body) return;
+    host.innerHTML = `<span style="font-weight:600;opacity:0.75;">Your week so far · </span>${_esc(body)}`;
+    host.style.display = 'block';
+  } catch (_) {
+    /* hidden — a missing recap is never an error state on this panel */
+  }
+}
+
 async function _loadDigest(panel, campaignId) {
   if (!campaignId) {
     _renderMessage(panel, 'No job search yet. Set one up to start getting daily updates.');
     panel.dataset.loadedAt = '';
     _renderFreshness(panel);
+    _loadWeeklyRecap(panel, campaignId);
     return;
   }
   _renderMessage(panel, 'Loading today’s updates…');
+  _loadWeeklyRecap(panel, campaignId);
   try {
     const payload = await _api(`/digest/${encodeURIComponent(campaignId)}`);
     _renderDigest(panel, payload);

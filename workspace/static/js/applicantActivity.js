@@ -263,6 +263,7 @@ function _ensureModalEl() {
       <div class="modal-body" id="applicant-activity-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
       </div>
+      <div id="applicant-activity-learning" style="flex:0 0 auto;"></div>
     </div>`;
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
@@ -270,7 +271,7 @@ function _ensureModalEl() {
   // design-audit item #17) — do not add a second local Escape listener here.
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
+  modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); _loadLearning(); });
   // "← Back to Pending" (audit #7's reverse of the redline "Continue to
   // submit" CTA): only shown when this page was reached via a deep link
   // (see openApplicantActivity's `viaRoute` flag) — i.e. the user didn't
@@ -538,6 +539,84 @@ async function _loadRuns(showSpinner) {
   }
 }
 
+// ── "What I'm learning" section (P1-12 — the learning loop's narrative home) ─
+//
+// The engine's learning/outcomes loop (LearningService.build_summary — which
+// sources convert, which roles convert, what the owner's own decline feedback
+// keeps saying) already existed as a read-model but was reachable only behind
+// the admin-gated Debug modal. This renders it at the foot of the Activity
+// page — where the owner already watches the agent work — through the
+// owner-scoped `/api/applicant/activity/learning` proxy. Honest by
+// construction: the proxy's `has_learning` is true only when there is REAL
+// recorded volume/feedback, so this section renders nothing (no card, no
+// heading) for a fresh campaign — the absence of learning never renders as
+// learning.
+
+function _learningHost() { return _modalEl && _modalEl.querySelector('#applicant-activity-learning'); }
+
+// Pure line-builder (exported for headless tests): turns the learning payload
+// into plain-language sentences, each included only when its data is real.
+export function _learningLines(data) {
+  const lines = [];
+  if (!data || typeof data !== 'object') return lines;
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const best = sources.find((s) => {
+    if (!s || typeof s !== 'object' || !s.source) return false;
+    return ['matched', 'approved', 'submitted'].some((k) => Number(s[k]) > 0);
+  });
+  if (best) {
+    const matched = Number(best.matched) || 0;
+    const submitted = Number(best.submitted) || 0;
+    if (submitted > 0 && matched > 0) {
+      lines.push(`Best source so far: ${best.source} — ${submitted} of ${matched} matches there went on to a submission, so I look there first.`);
+    } else if (matched > 0) {
+      lines.push(`Most matches so far come from ${best.source} (${matched} so far), so I look there first.`);
+    }
+  }
+  const roles = (Array.isArray(data.converting_roles) ? data.converting_roles : [])
+    .filter((r) => typeof r === 'string' && r.trim()).slice(0, 3);
+  if (roles.length) {
+    lines.push(`Roles like “${roles.join('”, “')}” have converted for you, so similar ones score higher now.`);
+  }
+  const reasons = (Array.isArray(data.decline_reasons) ? data.decline_reasons : [])
+    .map((r) => (r && typeof r === 'object' ? String(r.reason || '') : ''))
+    .filter(Boolean).slice(0, 3);
+  if (reasons.length) {
+    lines.push(`When you pass on a role, “${reasons.join('”, “')}” come up most — I weigh those against new matches.`);
+  }
+  return lines;
+}
+
+function _renderLearning(host, data) {
+  if (!host) return;
+  if (!data || data.engine_available === false || data.has_learning !== true) {
+    host.innerHTML = '';
+    return;
+  }
+  const lines = _learningLines(data);
+  if (!lines.length) { host.innerHTML = ''; return; }
+  const rows = lines.map((l) => `<div style="margin:2px 0;font-size:11.5px;line-height:1.45;">${esc(l)}</div>`).join('');
+  host.innerHTML = `
+    <div class="admin-card" style="margin:8px 0 0;padding:10px 12px;">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;"
+        title="Learned from your approvals, declines, and real outcomes — it adjusts what I look for next">
+        What I’m learning
+      </div>
+      ${rows}
+    </div>`;
+}
+
+async function _loadLearning() {
+  const host = _learningHost();
+  if (!host) return;
+  try {
+    const data = await _fetchJSON(`${API}/learning`);
+    _renderLearning(host, data);
+  } catch {
+    host.innerHTML = ''; // bonus section — hide silently, never a broken panel
+  }
+}
+
 // `opts.viaRoute` marks an open that came from the hash router (a deep
 // link/shared link/back-forward on '#activity', or a refresh landing on
 // that hash) rather than an in-app click — it shows the "← Back to
@@ -551,8 +630,10 @@ export async function openApplicantActivity(opts) {
   modal.style.display = 'flex';
   if (!(opts && opts.skipHashUpdate)) setHash('activity');
   _setBackToPendingVisible(!!(opts && opts.viaRoute));
-  // The live "now / next" header and the "recently" history load together.
+  // The live "now / next" header, the "recently" history, and the
+  // "What I'm learning" footer load together.
   _loadSnapshot();
+  _loadLearning();
   await _loadRuns(true);
   // Opening the page is a natural moment to refresh the strip too.
   refreshStatus();

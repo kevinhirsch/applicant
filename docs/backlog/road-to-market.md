@@ -64,7 +64,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
-| P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
+| P1-12 | Narrative FE homes for engine capabilities | M | eng | DONE |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
@@ -602,16 +602,37 @@ instead of hiding behind jargon or dead windows.
 into FE intuitively." It's the connective tissue P0-3/P0-4/P0-5 set up — made explicit so
 no built capability stays FE-invisible.)*
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2, P0-3, P0-5
+**Status: DONE — every named capability now has a narrative home reached through an
+existing surface (no new standalone windows).**
 **DoR:** Confirmed capability→section mapping: screening-answer library, follow-up
 drafting, ghosting detection, weekly recap, and the learning/outcomes loop.
 **DoD:**
-- [ ] Each named capability is surfaced in its narrative home — Today (what needs you /
+- [x] Each named capability is surfaced in its narrative home — Today (what needs you /
       what I did overnight), Tracker (per-application status incl. ghosting + drafted
       follow-ups), Activity (the live feed incl. learning adjustments), Daily updates
-      (the weekly recap) — **not** as a new standalone window.
-- [ ] Each is discoverable by following the loop, without documentation.
-- [ ] The reachability audit (traceability docs) is re-checked so no built capability
-      remains FE-invisible.
+      (the weekly recap) — **not** as a new standalone window. *(Landed per capability:
+      **ghosting + drafted follow-ups** → the Tracker's "Follow-ups ready for your
+      review" / "Gone quiet" panel over the existing `/api/applicant/followups` proxy,
+      with the full draft editable and approve-to-schedule (the product's only lane onto
+      `schedule_follow_up`); **learning/outcomes loop** → the Activity page's "What I'm
+      learning" footer over a new owner-scoped `/api/applicant/activity/learning` read of
+      the existing `LearningService.build_summary` (previously admin-Debug-only);
+      **weekly recap** → the Daily-updates panel's "Your week so far" line over a thin
+      on-demand read (`GET /api/digest/{id}/weekly-recap` — pure exposure of the
+      existing `build_weekly_recap`/`render_weekly_recap_message`, same recap the weekly
+      notification already pushes); **screening-answer library** → already home on the
+      Tracker's per-row "Screening answers" disclosure (product-gaps #20, verified);
+      **Today** already covers "what needs you" (the Portal-backed deck) and "what I did
+      overnight" (the rail's Recent-activity gadget + the Portal's while-you-were-away
+      recap, P0-3/H1).)*
+- [x] Each is discoverable by following the loop, without documentation — each rides a
+      surface the loop already lands the owner on (Tracker rows they check, the Activity
+      page the status strip opens, the Daily-updates panel the digest lives in), with
+      plain-language headings and tooltips, no new nav entry to find.
+- [x] The reachability audit (traceability docs) is re-checked so no built capability
+      remains FE-invisible — `docs/traceability.md`'s front-door reachability table
+      gained rows for the followups/ghosting feed, the learning read-model, and the
+      weekly recap.
 
 ### P1-13 — Truth policy: free rewriting over a fact-gate *(owner directive)*
 **As** the owner, **I want** the fabrication guard loosened so the LLM can freely
