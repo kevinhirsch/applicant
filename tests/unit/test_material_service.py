@@ -587,6 +587,29 @@ def test_line_provenance_agrees_with_flagged_facts(svc, storage):
 
 
 @pytest.mark.unit
+def test_line_provenance_keeps_blank_named_attributes_as_sources(svc, storage):
+    """A blank-named attribute's value is still ground truth for the guard
+    (true_attribute_text keeps every value), so the provenance view must keep
+    it as a source under a fallback label — or the two views disagree about
+    the same token (CodeRabbit on #749)."""
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId
+
+    cid = CampaignId(new_id())
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="", value="Stanford")
+    )
+    storage.commit()
+    doc = _store_doc(storage, cid, "I studied at Stanford.")
+    prov = svc.line_provenance_for_document(doc.id)
+    facts = {f["token"]: f["sources"] for f in prov["lines"][0]["facts"]}
+    assert facts["Stanford"] == ["your profile"]  # fallback label, not dropped
+    assert prov["unsourced"] == []
+    flagged = svc.flagged_facts_for_document(doc.id)
+    assert set(prov["unsourced"]) == set(flagged["flagged"])
+
+
+@pytest.mark.unit
 def test_line_provenance_empty_document_says_unchecked_not_clean(svc, storage):
     """H-series: a document with no reviewable text must return checked=False
     with a reason — the absence of a check must never render as a clean check."""

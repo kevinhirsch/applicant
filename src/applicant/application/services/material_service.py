@@ -777,8 +777,12 @@ class MaterialService:
         for a in attrs:
             name = str(getattr(a, "name", "") or "").strip()
             val = getattr(a, "value", None)
-            if name and val:
-                components.append((f"your profile ({name})", str(val)))
+            if val:
+                # A blank-named attribute is still ground truth for the guard
+                # (true_attribute_text keeps every value), so it must stay a
+                # provenance source too or the two views disagree.
+                label = f"your profile ({name})" if name else "your profile"
+                components.append((label, str(val)))
         resume_text = self._base_resume_text(campaign_id)
         if resume_text:
             components.append(("your base résumé", resume_text))

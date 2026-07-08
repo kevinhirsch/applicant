@@ -104,6 +104,32 @@ class TestTraceLineProvenance:
         traced_unsourced = {f.token for lp in out for f in lp.facts if f.unsourced}
         assert traced_unsourced == guard
 
+    def test_sentence_initial_sourced_token_still_shows_its_source(self) -> None:
+        # The guard reads a sentence-initial capital as grammar (never flags it),
+        # but when the writer leads a sentence with a REAL sourced detail the
+        # provenance view must still show its support — not report a "complete"
+        # trace that omits a visible fact (Greptile on #749).
+        generated = "Python powered the migration."
+        combined = "\n".join(text for _, text in SOURCES)
+        assert "Python" not in unsupported_prose_claims(combined, generated)
+        out = trace_line_provenance(SOURCES, generated, prose=True)
+        facts = {f.token: f for f in out[0].facts}
+        assert facts["Python"].sources == ("your profile (Skills)",)
+
+    def test_sentence_initial_unsupported_word_stays_grammar_not_flagged(self) -> None:
+        # An UNSOURCED sentence starter is exactly what the guard's
+        # sentence-initial rule protects ("Yesterday I applied...") — it must
+        # not appear in facts at all, keeping unsourced == the guard's flags.
+        generated = "Zanzibar powered the migration."
+        combined = "\n".join(text for _, text in SOURCES)
+        guard = set(unsupported_prose_claims(combined, generated))
+        assert "Zanzibar" not in guard
+        out = trace_line_provenance(SOURCES, generated, prose=True)
+        tokens = {f.token for lp in out for f in lp.facts}
+        assert "Zanzibar" not in tokens
+        traced_unsourced = {f.token for lp in out for f in lp.facts if f.unsourced}
+        assert traced_unsourced == guard
+
     def test_empty_generated_returns_nothing(self) -> None:
         assert trace_line_provenance(SOURCES, "", prose=True) == ()
 

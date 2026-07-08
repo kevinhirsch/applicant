@@ -756,6 +756,47 @@ def _claim_tokens_in_line(line: str, doc_tokens: list[str], *, prose: bool) -> l
     return out
 
 
+def _sentence_initial_sourced_tokens(
+    generated: str, sources: list[tuple[str, str]], skip: set[str]
+) -> list[str]:
+    """Sentence-initial entity-shaped tokens that trace to a source (prose only).
+
+    The prose guard deliberately reads a sentence-initial capital as grammar,
+    never a claim — right for FLAGGING (an ordinary sentence start must not
+    read as a fabrication), but the provenance view also wants to SHOW support
+    for a real detail the writer happened to lead a sentence with ("Python
+    powered the migration."). This walks sentences exactly as the checker does,
+    keeps only the first word when it would be entity-shaped mid-sentence, and
+    returns it only when a source actually supports it — an unsupported
+    sentence starter stays grammar (excluded), so the unsourced set still
+    matches the guard's flag set exactly.
+    """
+    out: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", generated):
+        first_word = ""
+        for raw in _PROSE_WORD_SPLIT_RE.split(sentence):
+            for piece in _CONTRACTION_SPLIT_RE.split(raw):
+                word = piece.strip(_QUOTE_CHARS)
+                if word:
+                    first_word = word
+                    break
+            if first_word:
+                break
+        word = first_word
+        if (
+            len(word) < 2
+            or word.lower() in _NON_CLAIM
+            or any(c.isdigit() for c in word)
+            or word in skip
+            or word in out
+            or not _is_entity_shaped(word, sentence_initial=False)
+        ):
+            continue
+        if any(_component_supports(text, word, prose=True) for _, text in sources):
+            out.append(word)
+    return out
+
+
 def _component_supports(text: str, token: str, *, prose: bool) -> bool:
     """Whole-token (or numeric-value) support of ``token`` by one source text."""
     if any(c.isdigit() for c in token):
@@ -793,6 +834,12 @@ def trace_line_provenance(
     # newlines exactly as it does in the guard's own pass; each line below only
     # attributes these tokens, never re-extracts.
     doc_tokens = checker("", generated)
+    if prose:
+        # Sentence-initial sourced details ("Python powered the migration."):
+        # shown WITH their source, never flagged — see the helper's docstring.
+        doc_tokens = doc_tokens + _sentence_initial_sourced_tokens(
+            generated, sources, skip=set(doc_tokens) | unsourced
+        )
     out: list[LineProvenance] = []
     for line in generated.splitlines():
         if not line.strip():
