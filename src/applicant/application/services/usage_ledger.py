@@ -34,7 +34,7 @@ class UsageLedger:
     """Thread-safe running total of not-yet-persisted LLM usage, by UTC day."""
 
     _totals: dict[date, dict[str, float]] = field(default_factory=dict)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)
 
     def record(self, day: date, *, tokens_in: int, tokens_out: int, cost_usd: float) -> None:
         """Add one completion's usage to ``day``'s running total.
@@ -59,6 +59,22 @@ class UsageLedger:
         with self._lock:
             row = self._totals.pop(day, None)
         return dict(row) if row else dict(_ZERO_ROW)
+
+    def restore(self, day: date, row: dict[str, float]) -> None:
+        """Credit a previously-drained row back (persist failed after a drain).
+
+        ``drain`` + a failed ``agent_runs.start_run`` must not silently lose the
+        popped usage (H-series: nothing degrades silently) — the caller hands the
+        drained row back and it folds into the running total, calls included.
+        """
+        if not row:
+            return
+        with self._lock:
+            tot = self._totals.setdefault(day, dict(_ZERO_ROW))
+            tot["tokens_in"] += max(0, int(row.get("tokens_in", 0)))
+            tot["tokens_out"] += max(0, int(row.get("tokens_out", 0)))
+            tot["cost_usd"] += max(0.0, float(row.get("cost_usd", 0.0)))
+            tot["calls"] += max(0, int(row.get("calls", 0)))
 
     def peek(self, day: date) -> dict[str, float]:
         """Read-only snapshot of ``day``'s not-yet-persisted totals (no clear)."""

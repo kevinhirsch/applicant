@@ -272,7 +272,7 @@ def setup_applicant_campaigns_routes() -> APIRouter:
                 logger.debug("campaigns: guardrails read failed for %s: %s", campaign_id, exc)
                 return {"engine_available": True, "campaign_id": campaign_id}
         out = data if isinstance(data, dict) else {}
-        return {"engine_available": True, "campaign_id": campaign_id, **out}
+        return {**out, "engine_available": True, "campaign_id": campaign_id}
 
     @router.get("/{campaign_id}/sources")
     async def list_sources(request: Request, campaign_id: str) -> dict:

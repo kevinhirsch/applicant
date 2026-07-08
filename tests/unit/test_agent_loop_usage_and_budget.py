@@ -196,6 +196,48 @@ def test_usage_ledger_drains_on_a_gated_skip_reason_tick_too(tmp_path):
 
 
 @pytest.mark.unit
+def test_repeated_same_reason_gated_ticks_still_drain_usage(tmp_path):
+    """The skip-reason dedup must NOT strand usage on a second same-reason tick.
+
+    A long paused/gated stretch repeats the same skip_reason every tick; the
+    dedup early-return used to fire before the drain, so usage recorded between
+    ticks stayed in memory until the reason eventually changed (CodeRabbit
+    finding on #734)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage, target=15)
+    ledger = UsageLedger()
+    now = datetime.now(UTC)
+
+    class _ClosedGate:
+        def is_automated_work_allowed(self):
+            return False
+
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        orchestrator=orch,
+        setup_service=_ClosedGate(),
+        usage_ledger=ledger,
+    )
+    # Tick 1 persists the gated reason (no usage yet).
+    loop.run_once(cid, now=now)
+    # Usage lands between ticks (e.g. chat); tick 2 repeats the SAME reason.
+    ledger.record(now.date(), tokens_in=11, tokens_out=5, cost_usd=0.002)
+    loop.run_once(cid, now=now)
+
+    latest = storage.agent_runs.latest(cid)
+    assert latest is not None
+    assert latest.stats.get("skip_reason") == "automated_work_gated"
+    assert latest.stats.get("tokens_in") == 11
+    assert latest.stats.get("cost_usd_estimate") == pytest.approx(0.002)
+    # Drained — nothing stranded in memory.
+    assert ledger.peek(now.date())["calls"] == 0
+
+
+@pytest.mark.unit
 def test_usage_totals_survive_a_restart_via_sum_stats_between(tmp_path):
     """A fresh AgentLoop over the same storage still reports the prior drain."""
     storage = InMemoryStorage()

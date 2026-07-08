@@ -571,30 +571,34 @@ class OpenAICompatibleLLM:
         text, raw = self._post_openai(tier, url, payload)
         usage = _sum_usage(None, profile.usage_extractor(raw))
         structured = None
-        if json_schema is not None:
-            structured = _extract_json(text)
-            if structured is None or not _validate_against_schema(structured, json_schema):
-                # Native mode failed → prompt-based fallback (FR-LLM-4a).
-                fb_messages = self._with_schema_prompt(messages, json_schema)
-                if _estimate_tokens(fb_messages) > tier.context_window:
-                    raise _Overflow()
-                # Rebuild request without native response_format, with schema prompt.
-                fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
-                fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
-                fb_payload = self._apply_prefix_cache(profile, fb_payload)
-                text, raw = self._post_openai(tier, url, fb_payload)
-                # The fallback is a SECOND real wire call — fold its usage into the
-                # running total rather than discarding the first call's tokens (P1-6).
-                usage = _sum_usage(usage, profile.usage_extractor(raw))
-                # Re-validate the fallback against the schema (FR-LLM-4a): a
-                # malformed-but-parseable object must not be returned as structured.
+        try:
+            if json_schema is not None:
                 structured = _extract_json(text)
-                if structured is not None and not _validate_against_schema(
-                    structured, json_schema
-                ):
-                    structured = None
-
-        self._record_usage(tier, usage)
+                if structured is None or not _validate_against_schema(structured, json_schema):
+                    # Native mode failed → prompt-based fallback (FR-LLM-4a).
+                    fb_messages = self._with_schema_prompt(messages, json_schema)
+                    if _estimate_tokens(fb_messages) > tier.context_window:
+                        raise _Overflow()
+                    # Rebuild request without native response_format, with schema prompt.
+                    fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
+                    fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
+                    fb_payload = self._apply_prefix_cache(profile, fb_payload)
+                    text, raw = self._post_openai(tier, url, fb_payload)
+                    # The fallback is a SECOND real wire call — fold its usage into the
+                    # running total rather than discarding the first call's tokens (P1-6).
+                    usage = _sum_usage(usage, profile.usage_extractor(raw))
+                    # Re-validate the fallback against the schema (FR-LLM-4a): a
+                    # malformed-but-parseable object must not be returned as structured.
+                    structured = _extract_json(text)
+                    if structured is not None and not _validate_against_schema(
+                        structured, json_schema
+                    ):
+                        structured = None
+        finally:
+            # The FIRST wire call is already billed even if the fallback overflows
+            # or errors and this frame unwinds into the ladder's retry — never lose
+            # billed usage (P1-6).
+            self._record_usage(tier, usage)
         return LLMResult(
             text=text,
             tier=tier_no,

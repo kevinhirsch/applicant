@@ -265,9 +265,11 @@ class NotificationService:
         the owner has opted into) — not a parallel delivery path. ``hard_cap``
         distinguishes "reached today's configured target" from "hit the
         engine's absolute safety ceiling" in the copy. ``dedup_key`` is keyed
-        per (campaign, UTC day) so a re-driven same-day tick is a no-op at the
-        notifier (the loop only calls this once per day itself; this is
-        defense in depth, FR-NOTIF-3, mirroring ``notify_status_update``).
+        per (campaign, UTC day) and is the PRIMARY de-duplication: once the
+        budget is exhausted, ``AgentLoop`` re-enters the exhausted branch and
+        calls this again on every subsequent tick that day — there is no
+        loop-side cadence guard, so do not drop the dedup key (FR-NOTIF-3,
+        mirroring ``notify_status_update``).
         """
         cap_word = "safety limit" if hard_cap else "daily target"
         body = (

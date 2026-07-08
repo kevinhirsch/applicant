@@ -238,6 +238,7 @@ class AgentLoop:
         {
             "_resume_ledger",
             "_digest_ledger",
+            "_usage_ledger",
             "_last_resume",
             "_resume_failures",
             "_resume_giveup",
@@ -2002,6 +2003,10 @@ class AgentLoop:
         # freshly-persisted row's ``pipelines_started`` PLUS the still-uncleared
         # in-memory delta that produced it).
         applications_today = self.acted_today(campaign.id, now)
+        # Drain BEFORE the guarded persist: if start_run fails, the drained row
+        # is credited back to the ledger instead of vanishing with the swallowed
+        # exception (P1-6: usage is either persisted or still in memory, never lost).
+        usage_stats = self._drain_usage_stats(now)
         try:
             self._runs.start_run(
                 campaign.id,
@@ -2013,11 +2018,11 @@ class AgentLoop:
                     "handoffs": len(result.handoffs),
                     "completed": len(result.completed),
                     "budget_remaining": result.budget_remaining,
-                    **self._drain_usage_stats(now),
+                    **usage_stats,
                 },
             )
         except Exception:  # pragma: no cover - defensive
-            pass
+            self._restore_usage_stats(now, usage_stats)
         if result.budget_exhausted:
             self._notify_budget_reached(campaign, now, applications_today=applications_today)
 
@@ -2043,6 +2048,20 @@ class AgentLoop:
             "cost_usd_estimate": float(delta.get("cost_usd", 0.0)),
             "llm_calls": int(delta.get("calls", 0)),
         }
+
+    def _restore_usage_stats(self, now: datetime, usage_stats: dict) -> None:
+        """Credit a drained-but-not-persisted usage row back to the ledger (P1-6)."""
+        if self._usage_ledger is None or not usage_stats:
+            return
+        self._usage_ledger.restore(
+            now.date(),
+            {
+                "tokens_in": usage_stats.get("tokens_in", 0),
+                "tokens_out": usage_stats.get("tokens_out", 0),
+                "cost_usd": usage_stats.get("cost_usd_estimate", 0.0),
+                "calls": usage_stats.get("llm_calls", 0),
+            },
+        )
 
     def _notify_budget_reached(
         self, campaign, now: datetime, *, applications_today: int
@@ -2090,10 +2109,17 @@ class AgentLoop:
         own ``last_tick``/``next_tick`` heartbeat (already surfaced) carries the
         "am I still alive" signal; this carries WHY nothing is happening.
         """
+        usage_stats = {}
         try:
             latest = self._storage.agent_runs.latest(campaign.id)
             prior_reason = (latest.stats or {}).get("skip_reason") if latest is not None else None
-            if prior_reason == result.reason:
+            # P1-6: drain BEFORE the dedup return — a long paused/gated stretch
+            # repeats the same reason every tick, and returning first would strand
+            # any usage recorded meanwhile (chat, an in-flight resume) in memory
+            # until the reason eventually changes. Repeat-reason ticks with NO new
+            # usage still dedup to zero extra rows.
+            usage_stats = self._drain_usage_stats(now)
+            if prior_reason == result.reason and not usage_stats:
                 return
             sentence = SKIP_REASON_SENTENCES.get(
                 result.reason, "Not starting any new work right now."
@@ -2104,15 +2130,11 @@ class AgentLoop:
                 sentence,
                 stats={
                     "skip_reason": result.reason,
-                    # P1-6: still drain any usage recorded since the last drain
-                    # (e.g. chat, or an in-flight resume that ran above even
-                    # while gated) so a long paused/gated stretch doesn't strand
-                    # it in memory until the reason eventually changes.
-                    **self._drain_usage_stats(now),
+                    **usage_stats,
                 },
             )
         except Exception:  # pragma: no cover - defensive: a skip note is best-effort
-            pass
+            self._restore_usage_stats(now, usage_stats)
 
     def _intent_sentence(self, campaign, result: TickResult) -> str:
         if result.budget_exhausted:
