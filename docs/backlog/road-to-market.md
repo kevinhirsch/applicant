@@ -395,19 +395,20 @@ are available for Phase 2.
 - [ ] Old stranded branch archived/deleted (after owner confirmation). *(Skipped —
       requires owner confirmation per DoR; branch retained.)*
 
-**Status note (audit, P1-5).** The two work commits are reachable on
-`origin/claude/applicant-production-ready-7iep6h` — `43670ab` (wave 1: observability
-alerting #362, learning biasing #237/#238/#239, truthfulness fail-closed) and `cead689`
-(wave 2: universal-ATS #173/#177, PII purge/retention #363, key rotation #361,
-chat-onboarding default #406). Neither is on `main`, but cherry-picking `43670ab` onto
-`main` conflicts because `main` already contains equivalent — sometimes more-evolved —
-implementations of every feature: e.g. #238 is wired in `learning_advanced.py` by
-delegating to the Phase-1 `record_converting_role` rather than the commit's
-`_fold_centroid_vector` helper, and the truth-fail-closed steps on `main` are a superset
-(they pin the `strict` policy for the P1-13 balanced default). File-by-file and
-symbol-by-symbol checks confirm both waves are already present on `main`; the rescue is
-therefore complete by supersession. The stranded branch is retained pending owner
-confirmation to archive/delete.
+**Status note (audit, P1-5).** Two distinct facts. (1) The stranded commit SHAs remain
+reachable only on `origin/claude/applicant-production-ready-7iep6h` — `43670ab` (wave 1:
+observability alerting #362, learning biasing #237/#238/#239, truthfulness fail-closed)
+and `cead689` (wave 2: universal-ATS #173/#177, PII purge/retention #363, key rotation
+#361, chat-onboarding default #406); those SHAs themselves never landed on `main`.
+(2) The *features* those commits carry are already on `main`, landed via separate PRs
+between the commit date and now — so a cherry-pick is unnecessary and conflicts with the
+equivalent, sometimes more-evolved, implementations: e.g. #238 is wired in
+`learning_advanced.py` by delegating to the Phase-1 `record_converting_role` rather than
+the commit's `_fold_centroid_vector` helper, and the truth-fail-closed steps on `main`
+are a superset (they pin the `strict` policy for the P1-13 balanced default).
+File-by-file and symbol-by-symbol checks confirm both waves' functionality is present on
+`main`; the rescue is therefore complete by supersession. The stranded branch is
+retained pending owner confirmation to archive/delete.
 
 ### P1-6 — Cost & pace guardrails
 **As** a user paying for LLM calls, **I want** to see and cap my spend and application
