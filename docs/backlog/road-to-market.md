@@ -81,7 +81,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-7 | Sensitive-question policy | M | eng | DONE — EEO + work-auth never AI-answered, both lanes (docs/proof/citable-invariants.md Claim 3) |
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
-| P2-10 | ATS-parseability proof | M | eng | — |
+| P2-10 | ATS-parseability proof | M | eng | PARTIAL — harness built + wired for both render paths (docs/proof/ats-parseability.md); docx lane exercised in this session only via honest self-skip (soffice binary present but the `libreoffice-writer` package is missing, so real convert fails and the test self-skips rather than false-passing); TeX lane not installed in this container. Both lanes are `@pytest.mark.integration` and expected to run for real on the deploy image / self-hosted Integration Lane; neither has yet been observed green with a real dependency present |
 | P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
 | P2-12 | Durability drills | M | eng | — |
 | P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains |
@@ -1144,8 +1144,35 @@ auto-follow `X-Forwarded-Proto`), linked from the overview. Tests:
 
 ### P2-10 — ATS-parseability proof
 **Effort:** M · **Owner:** eng · **Depends on:** P1-2 (generated PDFs)
+**Status: PARTIAL** — the proof harness is built and wired for both shipped render
+paths: `tests/integration/test_ats_parseability_proof.py` renders a REAL PDF
+(LaTeX/moderncv via the real xelatex/lualatex compile; docx-XML via the real
+LibreOffice headless convert) and feeds the resulting PDF FILE to the same
+open-source, deterministic `ResumeParser` the engine uses to ingest an uploaded
+résumé (built on `pypdf`'s PDF text-layer extraction), asserting name/email/skills/
+work-history all recover and that `core.rules.ats_parseability.
+check_render_parseability` independently agrees the text is machine-readable.
+Full narrative + honest per-lane split in `docs/proof/ats-parseability.md`.
+**What is NOT yet proven:** neither lane has been observed green against a real
+dependency. TeX was entirely absent in the container this was built in; LibreOffice's
+CLI binary was present but the `libreoffice-writer` component package was not
+installed, so the real convert failed and the docx test self-skipped honestly
+(`DocxTailor` reports `convert_failed=True`, never a silent pass) rather than
+asserting against a PDF that was never produced. Both tests are
+`@pytest.mark.integration` and are expected to run for real on the deploy image
+(`docker/Dockerfile` installs both `libreoffice-writer` and TeX) and on the
+self-hosted Integration Lane (which pre-bakes and verifies TeX) — running them
+there with the real dependency present, and committing that captured-green output
+back into `docs/proof/ats-parseability.md`, is the remaining work before this
+flips to DONE.
 **DoD:** Generated PDFs run through an open-source ATS parser; fields extract cleanly;
 result is a citable "ATS-safe" claim.
+- [x] Harness renders both shipped paths to a REAL PDF and round-trips the PDF
+      through the engine's own open-source deterministic parser + the render-side
+      parseability self-check; committed as `tests/integration/
+      test_ats_parseability_proof.py` + `docs/proof/ats-parseability.md`.
+- [ ] Observed green against a real TeX engine (LaTeX/moderncv path).
+- [ ] Observed green against a real, fully-installed LibreOffice (docx path).
 
 ### P2-11 — Verified local-only private mode
 **Effort:** M · **Owner:** eng · **Depends on:** local model path
