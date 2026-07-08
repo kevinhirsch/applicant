@@ -60,7 +60,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
-| P1-8 | Keyword / ATS match score | S | eng | — |
+| P1-8 | Keyword / ATS match score | S | eng | DONE |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
@@ -534,12 +534,23 @@ keywords **so that** I trust the tailoring and can approve gap-fixes.
 **DoR:** Confirmed `ResumeVariant.fit_scores` is the storage home; rubric for keyword
 coverage agreed.
 **DoD:**
-- [ ] A deterministic keyword-coverage metric (JD terms vs tailored variant text) is
+- [x] A deterministic keyword-coverage metric (JD terms vs tailored variant text) is
       computed alongside the LLM fit score and stored in `fit_scores`.
-- [ ] Coverage chip shown on digest cards; a "missing terms" panel in redline review.
-- [ ] Missing keywords surface as **suggested redline additions the user approves** —
+      (`MaterialService.select_or_generate` persists `coverage`/`missing_terms`/
+      `posting_id` into the variant's `fit_scores` on both the reuse and generated
+      paths; the variant library / review surface reads it via the existing
+      `GET /api/documents/variants/{campaign_id}` read-model.)
+- [x] Coverage chip shown on digest cards; a "missing terms" panel in redline review.
+      (Digest rows carry `keyword_coverage`/`keyword_matched`/`keyword_missing`
+      computed via the pure `core.rules.jd_match` scorer against the base résumé +
+      attribute cloud — honestly omitted when no résumé is on file; `buildDigestRow`
+      renders the "Keywords N%" chip on Email-tab + Portal cards; the redline
+      review's match line now includes the missing-terms suggestion panel.)
+- [x] Missing keywords surface as **suggested redline additions the user approves** —
       never auto-inserted (honours the fabrication guard); a suggested term flows through
-      the existing redline approve path.
+      the existing redline approve path. (Each missing term is a chip that only
+      prefills the "Ask for a change" box; the user still sends the turn and
+      approves the redline, and the engine's truthfulness guard vets the draft.)
 
 ### P1-9 — Save-a-job-from-any-page capture *(competitive: capture)*
 **As** a user, **I want** to drop any job URL into Applicant **so that** roles I find
