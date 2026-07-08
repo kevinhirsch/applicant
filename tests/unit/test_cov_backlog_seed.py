@@ -113,6 +113,7 @@ def test_seed_reset_is_reachable_when_allow_seed_is_one(client, monkeypatch):
 def test_gate_reflects_env_flips_within_one_process(client, monkeypatch):
     """The gate is checked live per-request (no caching): flipping the env var
     mid-process changes reachability on the very next call."""
+    monkeypatch.delenv("DEMO_MODE", raising=False)
     monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
     assert client.post("/api/dev/seed").status_code == 404
 
@@ -121,6 +122,42 @@ def test_gate_reflects_env_flips_within_one_process(client, monkeypatch):
 
     monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
     assert client.post("/api/dev/seed").status_code == 404
+
+
+def test_demo_mode_env_enables_the_seed_route(client, monkeypatch):
+    """``DEMO_MODE=1`` — the story's canonical gate — opens the seed route just
+    like the ``APPLICANT_ALLOW_SEED`` alias, and unsetting it closes it again."""
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
+    assert client.post("/api/dev/seed").status_code == 404
+
+    monkeypatch.setenv("DEMO_MODE", "1")
+    assert client.post("/api/dev/seed").status_code == 200
+
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    assert client.post("/api/dev/seed").status_code == 404
+
+
+def test_status_endpoint_reports_active_state(client, monkeypatch):
+    """``GET /api/dev/seed/status`` (banner state) is gated too, and reports
+    ``demo_active`` off the seeded campaign row."""
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
+    # Gated like every other route on the seed router.
+    assert client.get("/api/dev/seed/status").status_code == 404
+
+    monkeypatch.setenv("DEMO_MODE", "1")
+    # Before seeding: reachable but inactive.
+    before = client.get("/api/dev/seed/status")
+    assert before.status_code == 200
+    assert before.json()["demo_active"] is False
+
+    assert client.post("/api/dev/seed").status_code == 200
+    after = client.get("/api/dev/seed/status")
+    assert after.status_code == 200
+    body = after.json()
+    assert body["demo_active"] is True
+    assert body["counts"]["applications"] >= 5
 
 
 # --- (b) the seeded dataset is coherent + reachable via real routes ---------
@@ -137,10 +174,14 @@ def test_seed_produces_the_expected_coherent_dataset(client, monkeypatch):
     assert counts["postings"] >= 5
     assert counts["applications"] == counts["postings"]
     assert counts["resume_variants"] == 1
-    assert counts["materials"] == 1
+    # Two library documents (a résumé + a tailored cover letter) per P0-2.
+    assert counts["materials"] == 2
     assert counts["revision_sessions"] == 1
     assert counts["submission_snapshots"] == 1
     assert counts["outcome_events"] >= 2
+    # An activity trail (~15 rows) + a short run history (momentum/streak) per P0-2.
+    assert 14 <= counts["action_events"] <= 16
+    assert counts["agent_runs"] >= 3
     assert counts["pending_actions"] >= 4
 
     container = client.app.state.container

@@ -1028,6 +1028,14 @@ app.include_router(setup_applicant_followups_routes())
 from routes.applicant_capabilities_routes import setup_applicant_capabilities_routes
 app.include_router(setup_applicant_capabilities_routes())
 
+# Seeded-demo banner + one-click "Clear demo data" (P0-2) — owner-scoped proxy
+# (/api/applicant/demo) over the engine's DEMO_MODE seed status/reset. Lets the
+# front-door show a persistent "Demo data" banner while a synthetic dataset is
+# loaded and clear it in one click with no residue. Reachable only while the
+# engine runs under DEMO_MODE; degrades to "not active" (banner hidden) otherwise.
+from routes.applicant_demo_routes import setup_applicant_demo_routes
+app.include_router(setup_applicant_demo_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

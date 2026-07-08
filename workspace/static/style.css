@@ -38173,3 +38173,34 @@ body.theme-frosted .search-overlay {
   }
 }
 
+
+/* ── Seeded-demo banner (P0-2) ───────────────────────────────────────────────
+   A persistent, unmistakable strip shown ONLY while the engine runs under
+   DEMO_MODE with a synthetic dataset loaded (workspace/static/js/applicantDemoBanner.js).
+   It reads as "this data is not real" and offers a one-click Clear. Hidden by
+   default (the [hidden] attribute) and in every production deploy. */
+#applicant-demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg, #222);
+  background: color-mix(in srgb, var(--accent-warm, #d19a66) 22%, var(--panel, #fff));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-warm, #d19a66) 55%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 4000;
+}
+#applicant-demo-banner[hidden] { display: none; }
+#applicant-demo-banner .applicant-demo-banner__dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-warm, #d19a66);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-warm, #d19a66) 30%, transparent);
+}
+#applicant-demo-banner .applicant-demo-banner__text { flex: 1 1 auto; }
+#applicant-demo-banner #applicant-demo-clear { flex: 0 0 auto; }

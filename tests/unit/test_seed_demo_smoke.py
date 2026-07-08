@@ -226,11 +226,27 @@ def test_build_demo_bundle_is_coherent():
         assert e.application_id in app_ids
 
 
-def test_cli_refuses_without_allow_seed_env(monkeypatch, capsys):
-    """The CLI's env gate must refuse (non-zero) and never touch the DB when unset."""
+def test_cli_refuses_without_demo_mode_env(monkeypatch, capsys):
+    """The CLI's env gate must refuse (non-zero) and never touch the DB when both
+    ``DEMO_MODE`` and the ``APPLICANT_ALLOW_SEED`` alias are unset."""
+    monkeypatch.delenv("DEMO_MODE", raising=False)
     monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
     cli = _load_seed_script()
     rc = cli.main([])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "APPLICANT_ALLOW_SEED=1" in err
+    assert "DEMO_MODE=1" in err
+
+
+def test_cli_demo_mode_alias_enables(monkeypatch):
+    """Either env var opens the gate: ``DEMO_MODE=1`` OR the ``APPLICANT_ALLOW_SEED``
+    alias. Exercises the pure gate predicate (no DB touched)."""
+    cli = _load_seed_script()
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    monkeypatch.delenv("APPLICANT_ALLOW_SEED", raising=False)
+    assert cli._demo_enabled() is False
+    monkeypatch.setenv("DEMO_MODE", "1")
+    assert cli._demo_enabled() is True
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    monkeypatch.setenv("APPLICANT_ALLOW_SEED", "1")
+    assert cli._demo_enabled() is True

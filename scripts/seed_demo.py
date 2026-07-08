@@ -83,15 +83,25 @@ def _build_gate_services(storage):
     return setup_service, onboarding_service
 
 
+def _demo_enabled() -> bool:
+    """``True`` when ``DEMO_MODE=1`` (canonical) or the ``APPLICANT_ALLOW_SEED=1``
+    back-compat alias is set — mirrors the HTTP router's ``_seed_enabled``."""
+    return (
+        os.environ.get("DEMO_MODE") == "1"
+        or os.environ.get("APPLICANT_ALLOW_SEED") == "1"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. Gated behind ``APPLICANT_ALLOW_SEED=1``."""
+    """CLI entry point. Gated behind ``DEMO_MODE=1`` (alias ``APPLICANT_ALLOW_SEED=1``)."""
     args = list(sys.argv[1:] if argv is None else argv)
 
-    if os.environ.get("APPLICANT_ALLOW_SEED") != "1":
+    if not _demo_enabled():
         print(
-            "Refusing to seed demo data: set APPLICANT_ALLOW_SEED=1 to confirm.\n"
+            "Refusing to seed demo data: set DEMO_MODE=1 to confirm "
+            "(alias: APPLICANT_ALLOW_SEED=1).\n"
             "This inserts DEMO rows and must never run against production by accident.\n\n"
-            "  APPLICANT_ALLOW_SEED=1 DATABASE_URL=... uv run python scripts/seed_demo.py",
+            "  DEMO_MODE=1 DATABASE_URL=... uv run python scripts/seed_demo.py",
             file=sys.stderr,
         )
         return 2
@@ -130,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         "revision_sessions",
         "submission_snapshots",
         "outcome_events",
+        "agent_runs",
+        "action_events",
         "pending_actions",
     ):
         print(f"  {key:18s}: {counts.get(key, 0)}")
