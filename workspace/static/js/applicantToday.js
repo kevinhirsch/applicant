@@ -160,6 +160,31 @@ function _ensureModalEl() {
   // too).
   modal.querySelector('#applicant-today-close').addEventListener('click', () => _requestClose());
   modal.querySelector('#applicant-today-refresh').addEventListener('click', () => _load(true));
+  // H1 (receipts, not narration): the "Today: N applications …" line is a
+  // projection of the engine's RECORDED runs (the same agent_runs rows the
+  // Activity page lists), so the claim links to its receipt — clicking it
+  // opens Activity, where each recorded run behind the count is inspectable.
+  // Wired once here; _loadGuardrails makes it focusable only while a line is
+  // actually shown.
+  const guardrails = modal.querySelector('#applicant-today-guardrails');
+  const openReceipts = () => {
+    try {
+      if (window.applicantActivityModule
+          && typeof window.applicantActivityModule.openApplicantActivity === 'function') {
+        _close();
+        window.applicantActivityModule.openApplicantActivity();
+        return;
+      }
+    } catch { /* fall through */ }
+    _toast('Open Activity to see the recorded runs behind these numbers');
+  };
+  guardrails.addEventListener('click', openReceipts);
+  guardrails.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !e.isComposing) {
+      e.preventDefault();
+      openReceipts();
+    }
+  });
   modal.addEventListener('click', (e) => { if (e.target === modal) _requestClose(); });
   _modalEl = modal;
   return modal;
@@ -788,6 +813,10 @@ async function _loadGuardrails() {
   // (stale numbers presented as live would be a silent lie).
   slot.textContent = '';
   slot.style.display = 'none';
+  // Hidden ⇒ not focusable/clickable as the receipt link either (H1 wiring
+  // in _ensureModalEl re-arms below when a real line renders).
+  slot.removeAttribute('role');
+  slot.removeAttribute('tabindex');
   try {
     const list = await _fetchJSON(CAMPAIGNS_API);
     const campaigns = (list && list.campaigns) || [];
@@ -798,6 +827,16 @@ async function _loadGuardrails() {
     const today = data && data.today;
     if (!today) return;
     slot.textContent = _formatGuardrailsLine(today);
+    // H1: the count links to its receipt — this line opens Activity, the
+    // recorded-run trail the number is computed from (see _ensureModalEl).
+    slot.title = 'Counted from my recorded runs — open Activity to see each one';
+    slot.setAttribute('role', 'button');
+    slot.setAttribute('tabindex', '0');
+    slot.setAttribute(
+      'aria-label',
+      `${slot.textContent}. Counted from my recorded runs — opens Activity.`,
+    );
+    slot.style.cursor = 'pointer';
     slot.style.display = '';
   } catch {
     // Best-effort only (see header comment) — the slot stays cleared/hidden.
