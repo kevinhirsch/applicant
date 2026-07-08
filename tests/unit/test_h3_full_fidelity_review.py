@@ -268,6 +268,43 @@ def test_failed_refresh_keeps_the_previous_reviewed_snapshot(tmp_path):
     assert after.answers == before.answers
 
 
+def test_failed_swap_after_delete_rolls_back_to_the_previous_snapshot(tmp_path):
+    """If persisting the replacement fails AFTER the old reviewed snapshot was
+    deleted, the storage session is rolled back — the owner keeps the previous
+    reviewed payload and no exception escapes (CodeRabbit on #746: the delete/add
+    swap must never leave the boundary with nothing)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    loop, app, _fa, _cid = _park_at_gate(storage, orch)
+
+    before = storage.submission_snapshots.get_for_application(app.id)
+    assert before is not None and before.stage == STAGE_REVIEWED
+
+    class _AddBoom:
+        """Delegates everything (incl. the real delete) but blows up on add."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def add(self, *_a, **_k):
+            raise RuntimeError("boom on add")
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    real = storage.submission_snapshots
+    storage.submission_snapshots = _AddBoom(real)
+    try:
+        loop._record_presubmit_snapshot(app, None)  # swallows + logs, never raises
+    finally:
+        storage.submission_snapshots = real
+
+    after = storage.submission_snapshots.get_for_application(app.id)
+    assert after is not None, "rollback must restore the deleted reviewed payload"
+    assert after.id == before.id
+    assert after.answers == before.answers
+
+
 def test_refresh_without_a_boundary_capture_stays_honestly_empty(tmp_path):
     """res=None refresh with NO existing reviewed snapshot must record nothing —
     a snapshot built from live materials alone carries zero literal answers yet

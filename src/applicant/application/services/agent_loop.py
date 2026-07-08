@@ -1993,11 +1993,11 @@ class AgentLoop:
                 # read as has_snapshot=true — an incomplete payload masquerading
                 # as full fidelity. Keep the honest empty state instead (H3).
                 return
-            # NOTE: the old reviewed snapshot is deleted at the END, only once the
-            # replacement is fully built — a failure anywhere in the build below
-            # must leave the owner with the PREVIOUS reviewed payload, never with
-            # nothing (the delete would otherwise already be applied when the
-            # swallow-and-log except fires, and in-memory storage has no rollback).
+            # NOTE: build-then-swap — the replacement snapshot is FULLY constructed
+            # before the old reviewed one is deleted, so a failure anywhere in the
+            # build leaves the owner with the PREVIOUS reviewed payload, never with
+            # nothing. The delete+add swap itself is guarded by the rollback in the
+            # except below (both storage lanes implement ``StoragePort.rollback``).
 
             # Answers: every value actually filled, verbatim. Keyed by the field's
             # human label when the engine knows one (drafted screening answers carry
@@ -2042,22 +2042,31 @@ class AgentLoop:
                 )
 
             posting_url = current.root_url or (self._posting_url(current.posting_id) or "")
+            replacement = SubmissionSnapshot(
+                id=SubmissionSnapshotId(new_id()),
+                application_id=app.id,
+                answers=answers,
+                materials=materials,
+                material_versions=material_versions,
+                posting_url=posting_url or "",
+                ats_metadata={"stage": STAGE_REVIEWED},
+            )
             if existing is not None:
                 repo.delete_for_application(app.id)
-            repo.add(
-                SubmissionSnapshot(
-                    id=SubmissionSnapshotId(new_id()),
-                    application_id=app.id,
-                    answers=answers,
-                    materials=materials,
-                    material_versions=material_versions,
-                    posting_url=posting_url or "",
-                    ats_metadata={"stage": STAGE_REVIEWED},
-                )
-            )
+            repo.add(replacement)
             self._storage.commit()
-        except Exception:  # the preview degrades to its honest empty state, loudly
-            log.warning("presubmit_snapshot_record_failed", application_id=str(app.id))
+        except Exception as exc:  # the preview degrades to its honest empty state, loudly
+            try:
+                # Undo any half-applied delete/add swap so the previously
+                # reviewed payload is never silently lost.
+                self._storage.rollback()
+            except Exception:  # pragma: no cover - rollback must not mask the failure
+                pass
+            log.warning(
+                "presubmit_snapshot_record_failed",
+                application_id=str(app.id),
+                error=str(exc),
+            )
 
     def _latest_state(self, application_id: ApplicationId) -> ApplicationState | None:
         app = self._storage.applications.get(application_id)
