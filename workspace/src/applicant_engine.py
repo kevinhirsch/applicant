@@ -365,6 +365,29 @@ class ApplicantEngineClient:
         """Return the engine health payload (raises :class:`EngineError` if down)."""
         return await self._request("GET", "/healthz")
 
+    # -- demo mode (P0-2 seeded demo) -------------------------------------
+
+    async def demo_status(self) -> dict:
+        """Whether the ``DEMO_MODE`` seed dataset is loaded (``/api/dev/seed/status``).
+
+        Reachable ONLY when the engine runs under ``DEMO_MODE=1`` — the whole
+        seed router 404s otherwise — so the front-door proxy treats an
+        ``EngineError`` (incl. that 404) as "not in demo mode" and hides the
+        banner. Returns the engine's ``{demo_active, campaign_id, counts}`` shape.
+        """
+        result = await self._request("GET", "/api/dev/seed/status")
+        return result if isinstance(result, dict) else {}
+
+    async def demo_clear(self) -> dict:
+        """Clear the ``DEMO_MODE`` seed dataset (``POST /api/dev/seed/reset``).
+
+        Reuses the engine's campaign-purge cascade so every seeded row is
+        removed with no residue. Reachable only under ``DEMO_MODE`` (the seed
+        router gate). Returns the engine's ``{reset, campaign_id, counts}`` shape.
+        """
+        result = await self._request("POST", "/api/dev/seed/reset")
+        return result if isinstance(result, dict) else {}
+
     # -- setup / gate (FR-OOBE) -------------------------------------------
 
     async def setup_status(self) -> dict:
@@ -620,6 +643,15 @@ class ApplicantEngineClient:
         /api/documents/redline``) -- a pure, stateless diff (no persistence),
         reusable for "what changed vs. the original" outside a review session."""
         return await self._request("POST", "/api/documents/redline", json=body)
+
+    async def document_flagged_facts(self, document_id: str) -> Any:
+        """Facts in a generated draft not yet traceable to the candidate's profile
+        (P1-13 truth-policy surfacing; engine ``GET
+        /api/documents/{id}/flagged-facts``). Read-only detection the review UI shows
+        with a one-tap confirm ("add to my profile") / remove choice."""
+        return await self._request(
+            "GET", f"/api/documents/{document_id}/flagged-facts"
+        )
 
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")

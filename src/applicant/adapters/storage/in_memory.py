@@ -953,6 +953,15 @@ class _ActionEventRepo:
         matches.sort(key=lambda e: (e.occurred_at, e.id), reverse=True)
         return matches
 
+    def delete_for_campaign(self, campaign_id) -> int:
+        from applicant.core.ids import CampaignId as _Cid
+
+        cid = _Cid(str(campaign_id))
+        doomed = [k for k, e in self._d.items() if e.campaign_id == cid]
+        for k in doomed:
+            del self._d[k]
+        return len(doomed)
+
 
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
@@ -1068,6 +1077,7 @@ class InMemoryStorage:
             "discovery_sources": self.discovery_sources.delete_for_campaign(cid),
             "screening_answer_library": self.screening_answer_library.delete_for_campaign(cid),
             "agent_runs": self.agent_runs.delete_for_campaign(cid),
+            "action_events": self.action_events.delete_for_campaign(cid),
             "pending_actions": self.pending_actions.delete_for_campaign(cid),
             "campaigns": self.campaigns.delete(cid),
         }
