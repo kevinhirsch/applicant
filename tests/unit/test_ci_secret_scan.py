@@ -56,9 +56,20 @@ def test_scanner_module_is_importable():
     _load_module()
 
 
+# Fixture strings are BUILT via concatenation so this test file's own source
+# never contains a contiguous secret-shaped literal - otherwise the scanner
+# (correctly) flags its own test suite in CI.
+_FAKE_SK_KEY = "sk-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+_PEM_BLOCK = (
+    "-----BEGIN RSA PRIVATE " + "KEY-----\n"
+    "MIIB...redacted...\n"
+    "-----END RSA PRIVATE " + "KEY-----\n"
+)
+
+
 def test_flags_a_real_looking_openai_style_key(tmp_path):
     repo = _init_repo(tmp_path)
-    _write_and_track(repo, "config.py", 'OPENROUTER_KEY = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ01234"\n')
+    _write_and_track(repo, "config.py", 'OPENROUTER_KEY = "' + _FAKE_SK_KEY + '"\n')
     findings = _run_scan_against(repo)
     assert any("config.py" in f for f in findings)
 
@@ -69,7 +80,7 @@ def test_flags_a_github_token_and_a_pem_private_key(tmp_path):
     _write_and_track(
         repo,
         "id_rsa",
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIB...redacted...\n-----END RSA PRIVATE KEY-----\n",
+        _PEM_BLOCK,
     )
     findings = _run_scan_against(repo)
     assert any("deploy.env" in f for f in findings)
@@ -101,7 +112,7 @@ def test_honors_the_allowed_files_exclusion_list(tmp_path):
     _write_and_track(
         repo,
         "tests/unit/test_observability.py",
-        'sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ01234\n',
+        _FAKE_SK_KEY + '\n',
     )
     findings = _run_scan_against(repo)
     assert findings == []
@@ -109,14 +120,14 @@ def test_honors_the_allowed_files_exclusion_list(tmp_path):
 
 def test_skips_lockfiles(tmp_path):
     repo = _init_repo(tmp_path)
-    _write_and_track(repo, "uv.lock", 'sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ01234\n')
+    _write_and_track(repo, "uv.lock", _FAKE_SK_KEY + '\n')
     findings = _run_scan_against(repo)
     assert findings == []
 
 
 def test_main_exits_nonzero_when_findings_present(tmp_path):
     repo = _init_repo(tmp_path)
-    _write_and_track(repo, "leak.py", 'KEY = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ01234"\n')
+    _write_and_track(repo, "leak.py", 'KEY = "' + _FAKE_SK_KEY + '"\n')
     module = _load_module()
     original_root = module.REPO_ROOT
     try:
