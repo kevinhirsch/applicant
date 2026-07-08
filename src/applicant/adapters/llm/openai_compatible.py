@@ -112,6 +112,27 @@ def _looks_low_confidence(text: str) -> bool:
     return any(marker in low for marker in _LOW_CONFIDENCE_MARKERS)
 
 
+def _sum_usage(
+    a: dict[str, int] | None, b: dict[str, int] | None
+) -> dict[str, int] | None:
+    """Fold a second wire call's usage into a running total (P1-6).
+
+    ``None + None -> None`` (neither call reported usage); either side alone
+    passes through unchanged; both present sum token-for-token. Used when a
+    structured-output fallback makes a SECOND real HTTP call for the same
+    logical completion (see ``_call_openai``) so its tokens are not silently
+    dropped from the total.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return {
+        "tokens_in": int(a.get("tokens_in", 0)) + int(b.get("tokens_in", 0)),
+        "tokens_out": int(a.get("tokens_out", 0)) + int(b.get("tokens_out", 0)),
+    }
+
+
 def _strip_trailing_commas(candidate: str) -> str:
     """Remove a trailing comma before a closing ``}``/``]`` (lenient JSON)."""
     return re.sub(r",(\s*[}\]])", r"\1", candidate)
@@ -233,6 +254,7 @@ class OpenAICompatibleLLM:
         app_context_manager: Any | None = None,
         prefix_cache: str = "auto",
         rate_limiter: LLMRateLimiter | None = None,
+        usage_recorder: Callable[[str, str, dict[str, int]], None] | None = None,
     ) -> None:
         if ladder is None and (provider or model):
             ladder = TierLadder(
@@ -280,6 +302,22 @@ class OpenAICompatibleLLM:
         # DISABLED limiter (limit=None) so every existing call site/test is
         # byte-identical unless the composition root wires a real one from config.
         self._rate_limiter = rate_limiter or LLMRateLimiter(None, None)
+        # P1-6 (cost & pace guardrails): optional callback invoked
+        # ``(provider, model, {"tokens_in": int, "tokens_out": int})`` once per
+        # successful wire call THAT reported usage. ``None`` (default) is a clean
+        # no-op, so every existing call site/test is byte-identical unless the
+        # composition root wires a real recorder. Never called for a call whose
+        # provider reported no usage at all (see ``ProviderProfile.usage_extractor``).
+        self._usage_recorder = usage_recorder
+
+    def _record_usage(self, tier: TierConfig, usage: dict[str, int] | None) -> None:
+        """Best-effort usage recording; must never break a completion (P1-6)."""
+        if self._usage_recorder is None or not usage:
+            return
+        try:
+            self._usage_recorder(tier.provider, tier.model, usage)
+        except Exception:  # pragma: no cover - defensive: telemetry never breaks a call
+            log.warning("llm_usage_record_failed", exc_info=True)
 
     # --- runtime-reloadable ladder ---------------------------------------
     @property
@@ -531,27 +569,36 @@ class OpenAICompatibleLLM:
         payload = self._apply_prefix_cache(profile, payload)
 
         text, raw = self._post_openai(tier, url, payload)
+        usage = _sum_usage(None, profile.usage_extractor(raw))
         structured = None
-        if json_schema is not None:
-            structured = _extract_json(text)
-            if structured is None or not _validate_against_schema(structured, json_schema):
-                # Native mode failed → prompt-based fallback (FR-LLM-4a).
-                fb_messages = self._with_schema_prompt(messages, json_schema)
-                if _estimate_tokens(fb_messages) > tier.context_window:
-                    raise _Overflow()
-                # Rebuild request without native response_format, with schema prompt.
-                fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
-                fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
-                fb_payload = self._apply_prefix_cache(profile, fb_payload)
-                text, raw = self._post_openai(tier, url, fb_payload)
-                # Re-validate the fallback against the schema (FR-LLM-4a): a
-                # malformed-but-parseable object must not be returned as structured.
+        try:
+            if json_schema is not None:
                 structured = _extract_json(text)
-                if structured is not None and not _validate_against_schema(
-                    structured, json_schema
-                ):
-                    structured = None
-
+                if structured is None or not _validate_against_schema(structured, json_schema):
+                    # Native mode failed → prompt-based fallback (FR-LLM-4a).
+                    fb_messages = self._with_schema_prompt(messages, json_schema)
+                    if _estimate_tokens(fb_messages) > tier.context_window:
+                        raise _Overflow()
+                    # Rebuild request without native response_format, with schema prompt.
+                    fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
+                    fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
+                    fb_payload = self._apply_prefix_cache(profile, fb_payload)
+                    text, raw = self._post_openai(tier, url, fb_payload)
+                    # The fallback is a SECOND real wire call — fold its usage into the
+                    # running total rather than discarding the first call's tokens (P1-6).
+                    usage = _sum_usage(usage, profile.usage_extractor(raw))
+                    # Re-validate the fallback against the schema (FR-LLM-4a): a
+                    # malformed-but-parseable object must not be returned as structured.
+                    structured = _extract_json(text)
+                    if structured is not None and not _validate_against_schema(
+                        structured, json_schema
+                    ):
+                        structured = None
+        finally:
+            # The FIRST wire call is already billed even if the fallback overflows
+            # or errors and this frame unwinds into the ladder's retry — never lose
+            # billed usage (P1-6).
+            self._record_usage(tier, usage)
         return LLMResult(
             text=text,
             tier=tier_no,
@@ -559,6 +606,7 @@ class OpenAICompatibleLLM:
             raw=raw,
             structured=structured,
             low_confidence=_looks_low_confidence(text),
+            usage=usage,
         )
 
     def _post_openai(
@@ -611,6 +659,8 @@ class OpenAICompatibleLLM:
             raw = {}
         text = profile.extract_text(raw)
         structured = _extract_json(text) if json_schema is not None else None
+        usage = profile.usage_extractor(raw)
+        self._record_usage(tier, usage)
         return LLMResult(
             text=text,
             tier=tier_no,
@@ -618,6 +668,7 @@ class OpenAICompatibleLLM:
             raw=raw,
             structured=structured,
             low_confidence=_looks_low_confidence(text),
+            usage=usage,
         )
 
     def _apply_prefix_cache(
@@ -813,10 +864,13 @@ class OpenAICompatibleLLM:
             for cid, name, args in profile.parse_tool_calls(raw)
         ]
         text = "" if calls else profile.extract_text(raw)
+        usage = profile.usage_extractor(raw)
+        self._record_usage(tier, usage)
         return ToolCallResult(
             text=text,
             tool_calls=tuple(calls),
             tier=tier_no,
             model=tier.model,
             raw=raw,
+            usage=usage,
         )

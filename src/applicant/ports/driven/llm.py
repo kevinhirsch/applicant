@@ -135,6 +135,10 @@ class ToolCallResult:
     tier: int = 1
     model: str = ""
     raw: dict[str, Any] | None = None
+    # P1-6: token usage the provider reported for this call, when it does
+    # (``{"tokens_in": int, "tokens_out": int}``) — ``None`` when the provider's
+    # response carried no recognizable usage block. Never fabricated.
+    usage: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +149,11 @@ class LLMResult:
     raw: dict[str, Any] | None = None
     structured: dict[str, Any] | None = None  # parsed JSON when json_schema given
     low_confidence: bool = False
+    # P1-6 (cost & pace guardrails): token usage the provider reported for this
+    # completion, when it does (``{"tokens_in": int, "tokens_out": int}``).
+    # ``None`` when the provider's response carried no recognizable usage block
+    # (never fabricated — an absent count must never render as a zero count).
+    usage: dict[str, int] | None = None
 
 
 @runtime_checkable

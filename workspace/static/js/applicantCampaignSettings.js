@@ -67,6 +67,46 @@ async function _loadSources(campaignId) {
   }
 }
 
+// P1-6 (cost & pace guardrails): a monthly-projection line under the daily
+// target, read from the SAME owner-scoped proxy this whole panel already
+// talks to (${BASE}/{id}/guardrails). The engine computes every dollar
+// figure server-side (never caller-supplied) and always labels it an
+// estimate; this panel never re-derives or re-labels those numbers.
+async function _loadGuardrails(campaignId) {
+  try {
+    return await _fetchJSON(`${BASE}/${encodeURIComponent(campaignId)}/guardrails`);
+  } catch {
+    return null;
+  }
+}
+
+function _guardrailsLine(data) {
+  const monthly = data && data.monthly;
+  const today = data && data.today;
+  if (!monthly && !today) return '';
+  const parts = [];
+  if (today && today.usage_reported) {
+    parts.push(`today ~$${(Number(today.cost_today_usd_estimate) || 0).toFixed(2)}`);
+  }
+  if (monthly && monthly.usage_reported) {
+    const mtd = (Number(monthly.month_to_date_usd_estimate) || 0).toFixed(2);
+    const proj = (Number(monthly.projected_month_usd_estimate) || 0).toFixed(2);
+    parts.push(`this month ~$${mtd}, projected ~$${proj}`);
+  }
+  if (!parts.length) return 'No LLM usage recorded yet — cost estimates appear once I start working.';
+  return `Estimated spend: ${parts.join(' · ')}.`;
+}
+
+async function _wireGuardrails(host, campaignId) {
+  const slot = host.querySelector(`[data-cs-guardrails-for="${CSS.escape(campaignId)}"]`);
+  if (!slot) return;
+  const data = await _loadGuardrails(campaignId);
+  const line = _guardrailsLine(data);
+  if (!line) return; // engine unavailable — leave the slot hidden, no fabricated figure.
+  slot.textContent = line;
+  slot.style.display = '';
+}
+
 function _yieldSummary(stats) {
   // The engine returns a free-form per-source yield_stats dict (e.g. postings /
   // conversions seen). Render the most useful numbers in plain language, falling
@@ -153,6 +193,7 @@ function _campaignCard(c) {
                value="${esc(String(throughput))}" data-cs-field="throughput_target" style="max-width:120px">
       </div>
       <div class="admin-toggle-sub cs-tput-note" id="cs-tput-note-${id}" style="opacity:0.75;margin:-6px 0 4px;display:none;" role="status"></div>
+      <div class="admin-toggle-sub cs-guardrails" data-cs-guardrails-for="${id}" style="margin:-2px 0 10px;opacity:0.75;display:none;" role="status"></div>
       <div class="settings-row">
         <label class="settings-label" for="cs-budget-${id}">Trying new sources
           <span style="opacity:0.6;font-weight:normal">(% of my effort spent on unproven job boards)</span></label>
@@ -389,6 +430,7 @@ async function _wireCard(host, card) {
     }
   });
   await _wireSources(host, id);
+  await _wireGuardrails(host, id);
 }
 
 // PATCH convenience (applicantCore only exports _post/_put).

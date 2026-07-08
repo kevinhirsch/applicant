@@ -40,12 +40,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from applicant.application.services.usage_ledger import UsageLedger
 from applicant.application.workflows import application_pipeline
 from applicant.application.workflows.application_pipeline import (
     WORKFLOW_NAME,
     PipelineContext,
 )
 from applicant.core.entities.application import Application
+from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP
 from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, new_id
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
@@ -236,6 +238,7 @@ class AgentLoop:
         {
             "_resume_ledger",
             "_digest_ledger",
+            "_usage_ledger",
             "_last_resume",
             "_resume_failures",
             "_resume_giveup",
@@ -312,6 +315,12 @@ class AgentLoop:
         # rather than a fresh per-call instance, so it stays cross-tick-persistent even
         # where the container does not (yet) inject an explicit one.
         approval_start_ledger: ApprovalStartLedger | None = None,
+        # P1-6 (cost & pace guardrails): the process-lived LLM usage ledger the
+        # shared ``llm`` singleton feeds (see ``usage_ledger.py``). Shared across
+        # per-tick rebuilds exactly like ``resume_ledger``/``digest_ledger`` above.
+        # ``None`` (legacy/unit tests that construct the loop directly) is a clean
+        # no-op — every tick behaves byte-identically without it.
+        usage_ledger: UsageLedger | None = None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -359,6 +368,10 @@ class AgentLoop:
         # process-lived curation ledger the rest of the system uses.
         self._llm = llm
         self._loop_toolset_factory = loop_toolset_factory
+        # P1-6: process-lived ledger the shared ``llm`` singleton feeds from every
+        # completion (any code path, not just this loop). Drained into the
+        # per-tick ``agent_runs.stats`` blob below (see ``_drain_usage_stats``).
+        self._usage_ledger = usage_ledger
         # (campaign_id, date) -> count of applications acted on that day (FR-AGENT-1).
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
@@ -1983,6 +1996,17 @@ class AgentLoop:
         if suffix:
             intent = f"{intent} {suffix}"
         result.intent = intent
+        # Snapshot BEFORE persisting this run: ``acted_today`` sums the persisted
+        # total + the in-memory this-tick delta, and that delta is only cleared at
+        # the very end of the OUTER ``tick()`` wrapper (not here) — reading it again
+        # AFTER ``start_run`` below would double-count this same tick's work (the
+        # freshly-persisted row's ``pipelines_started`` PLUS the still-uncleared
+        # in-memory delta that produced it).
+        applications_today = self.acted_today(campaign.id, now)
+        # Drain BEFORE the guarded persist: if start_run fails, the drained row
+        # is credited back to the ledger instead of vanishing with the swallowed
+        # exception (P1-6: usage is either persisted or still in memory, never lost).
+        usage_stats = self._drain_usage_stats(now)
         try:
             self._runs.start_run(
                 campaign.id,
@@ -1994,9 +2018,77 @@ class AgentLoop:
                     "handoffs": len(result.handoffs),
                     "completed": len(result.completed),
                     "budget_remaining": result.budget_remaining,
+                    **usage_stats,
                 },
             )
         except Exception:  # pragma: no cover - defensive
+            self._restore_usage_stats(now, usage_stats)
+        if result.budget_exhausted:
+            self._notify_budget_reached(campaign, now, applications_today=applications_today)
+
+    def _drain_usage_stats(self, now: datetime) -> dict:
+        """Fold today's not-yet-persisted LLM usage into a ``stats`` dict (P1-6).
+
+        Returns ``{}`` (adds no keys) when no ledger is wired or nothing has
+        been recorded since the last drain, so a stats dict merged with this is
+        byte-identical to before wherever the feature is unused (e.g. tests that
+        construct ``AgentLoop`` with no ``usage_ledger``). Draining here — at
+        whichever call actually persists a run this tick — is what makes the
+        cost figure durable across a restart (mirrors ``acted_today``'s
+        persisted+delta pattern) with at most one scheduler interval at risk.
+        """
+        if self._usage_ledger is None:
+            return {}
+        delta = self._usage_ledger.drain(now.date())
+        if not delta or not delta.get("calls"):
+            return {}
+        return {
+            "tokens_in": int(delta.get("tokens_in", 0)),
+            "tokens_out": int(delta.get("tokens_out", 0)),
+            "cost_usd_estimate": float(delta.get("cost_usd", 0.0)),
+            "llm_calls": int(delta.get("calls", 0)),
+        }
+
+    def _restore_usage_stats(self, now: datetime, usage_stats: dict) -> None:
+        """Credit a drained-but-not-persisted usage row back to the ledger (P1-6)."""
+        if self._usage_ledger is None or not usage_stats:
+            return
+        self._usage_ledger.restore(
+            now.date(),
+            {
+                "tokens_in": usage_stats.get("tokens_in", 0),
+                "tokens_out": usage_stats.get("tokens_out", 0),
+                "cost_usd": usage_stats.get("cost_usd_estimate", 0.0),
+                "calls": usage_stats.get("llm_calls", 0),
+            },
+        )
+
+    def _notify_budget_reached(
+        self, campaign, now: datetime, *, applications_today: int
+    ) -> None:
+        """Tell the owner the daily cap paused new work today (P1-6 DoD).
+
+        "Silence never means stopped": without this, hitting the throughput cap
+        was invisible unless the owner checked Today themselves. The
+        notification service dedupes per (campaign, UTC day) itself, so calling
+        this every tick while the budget stays exhausted is a safe no-op after
+        the first. Never lets a notifier hiccup break the tick.
+
+        ``applications_today`` is supplied by the caller (a snapshot taken
+        BEFORE this tick's own run was persisted — see ``_record_intent``)
+        rather than recomputed here, so it can't double-count this tick's own
+        just-persisted total against the still-uncleared in-memory delta.
+        """
+        if self._notifications is None:
+            return
+        try:
+            self._notifications.notify_budget_reached(
+                str(campaign.id),
+                applications_today=applications_today,
+                hard_cap=int(campaign.throughput_target) >= THROUGHPUT_HARD_CAP,
+                day=now.date(),
+            )
+        except Exception:  # pragma: no cover - defensive: notification never breaks a tick
             pass
 
     def _record_skip_reason(self, campaign, result: TickResult, now: datetime) -> None:
@@ -2017,20 +2109,32 @@ class AgentLoop:
         own ``last_tick``/``next_tick`` heartbeat (already surfaced) carries the
         "am I still alive" signal; this carries WHY nothing is happening.
         """
+        usage_stats = {}
         try:
             latest = self._storage.agent_runs.latest(campaign.id)
             prior_reason = (latest.stats or {}).get("skip_reason") if latest is not None else None
-            if prior_reason == result.reason:
+            # P1-6: drain BEFORE the dedup return — a long paused/gated stretch
+            # repeats the same reason every tick, and returning first would strand
+            # any usage recorded meanwhile (chat, an in-flight resume) in memory
+            # until the reason eventually changes. Repeat-reason ticks with NO new
+            # usage still dedup to zero extra rows.
+            usage_stats = self._drain_usage_stats(now)
+            if prior_reason == result.reason and not usage_stats:
                 return
             sentence = SKIP_REASON_SENTENCES.get(
                 result.reason, "Not starting any new work right now."
             )
             result.intent = sentence
             self._runs.start_run(
-                campaign.id, sentence, stats={"skip_reason": result.reason}
+                campaign.id,
+                sentence,
+                stats={
+                    "skip_reason": result.reason,
+                    **usage_stats,
+                },
             )
         except Exception:  # pragma: no cover - defensive: a skip note is best-effort
-            pass
+            self._restore_usage_stats(now, usage_stats)
 
     def _intent_sentence(self, campaign, result: TickResult) -> str:
         if result.budget_exhausted:

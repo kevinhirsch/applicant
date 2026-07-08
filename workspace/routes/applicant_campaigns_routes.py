@@ -39,6 +39,10 @@ Endpoints (all under ``/api/applicant/campaigns``):
 * ``POST /api/applicant/campaigns/{campaign_id}/clone``   — duplicate under a new
   identity (dark-engine audit item 36) — "same search, new city".
 * ``DELETE /api/applicant/campaigns/{campaign_id}``       — permanently delete + purge (#363).
+* ``GET  /api/applicant/campaigns/{campaign_id}/guardrails`` — cost & pace
+  guardrails (P1-6): today's applications vs. the daily target/hard cap, an
+  estimated spend, and a monthly projection. The engine enforces the caps and
+  computes every dollar figure server-side; this is a read-only proxy.
 * ``GET  /api/applicant/campaigns/{campaign_id}/sources`` — discovery sources.
 * ``PUT  /api/applicant/campaigns/{campaign_id}/sources/{source_key}`` — toggle.
 * ``GET  /api/applicant/campaigns/{campaign_id}/audit-log/export.json`` —
@@ -245,6 +249,30 @@ def setup_applicant_campaigns_routes() -> APIRouter:
                 "Content-Disposition": f"attachment; filename=audit-log-{campaign_id}.json"
             },
         )
+
+    @router.get("/{campaign_id}/guardrails")
+    async def get_guardrails(request: Request, campaign_id: str) -> dict:
+        """Cost & pace guardrails (P1-6): today's pace/spend + a monthly projection.
+
+        The engine enforces the daily target/hard cap and computes every dollar
+        figure server-side (never caller-supplied); this proxy only surfaces it.
+        Owner-scoped (DISC-15) and soft-degrading, exactly like ``list_sources``
+        below.
+        """
+        require_engine_owner(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                return {"engine_available": False, "campaign_id": campaign_id}
+            if campaign_id not in owned:
+                return {"engine_available": True, "campaign_id": campaign_id}
+            try:
+                data = await engine.get_campaign_guardrails(campaign_id)
+            except EngineError as exc:
+                logger.debug("campaigns: guardrails read failed for %s: %s", campaign_id, exc)
+                return {"engine_available": True, "campaign_id": campaign_id}
+        out = data if isinstance(data, dict) else {}
+        return {**out, "engine_available": True, "campaign_id": campaign_id}
 
     @router.get("/{campaign_id}/sources")
     async def list_sources(request: Request, campaign_id: str) -> dict:

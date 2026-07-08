@@ -100,6 +100,14 @@ def get_data_lifecycle_service(
     return _resolved(services, container, "data_lifecycle_service")
 
 
+def get_cost_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """Cost & pace guardrails read model (P1-6, CONC-REQ-1)."""
+    return _resolved(services, container, "cost_service")
+
+
 def get_onboarding_service(container: Container = Depends(get_container)):
     return container.onboarding_service
 

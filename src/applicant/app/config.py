@@ -192,6 +192,18 @@ class Settings(BaseSettings):
     )
     prefix_cache: str = Field(default="auto", alias="PREFIX_CACHE")
 
+    # P1-6 (cost & pace guardrails): $/1K-token rates used to turn captured token
+    # counts into an ESTIMATED dollar figure (never exact billing — the engine has
+    # no way to know a provider's live per-model price without another network
+    # call). Defaults are a conservative blended cloud-model rate; tune to your
+    # actual provider's pricing if you want a tighter estimate.
+    llm_cost_per_1k_input_usd: float = Field(
+        default=0.15, ge=0, alias="LLM_COST_PER_1K_INPUT_USD"
+    )
+    llm_cost_per_1k_output_usd: float = Field(
+        default=0.60, ge=0, alias="LLM_COST_PER_1K_OUTPUT_USD"
+    )
+
     # Credential vault (FR-VAULT-3)
     credential_keyfile: str = Field(default="secrets/master.key", alias="CREDENTIAL_KEYFILE")
 

@@ -268,3 +268,45 @@ class TestExtractText:
 
     def test_ollama_empty_on_empty_dict(self):
         assert OLLAMA_PROFILE.extract_text({}) == ""
+
+
+class TestUsageExtractor:
+    """P1-6 cost & pace guardrails: token usage extraction per provider shape."""
+
+    def test_openai_extracts_usage_block(self):
+        raw = {"usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}}
+        assert OPENAI_PROFILE.usage_extractor(raw) == {"tokens_in": 120, "tokens_out": 30}
+
+    def test_openai_none_when_no_usage_block(self):
+        # A provider that reports no usage must yield None, never a fabricated zero.
+        assert OPENAI_PROFILE.usage_extractor({"choices": []}) is None
+        assert OPENAI_PROFILE.usage_extractor({}) is None
+        assert OPENAI_PROFILE.usage_extractor({"usage": "not-a-dict"}) is None
+
+    def test_openai_tolerates_missing_individual_fields(self):
+        assert OPENAI_PROFILE.usage_extractor({"usage": {"prompt_tokens": 5}}) == {
+            "tokens_in": 5,
+            "tokens_out": 0,
+        }
+
+    def test_ollama_extracts_eval_counts(self):
+        raw = {"prompt_eval_count": 40, "eval_count": 12}
+        assert OLLAMA_PROFILE.usage_extractor(raw) == {"tokens_in": 40, "tokens_out": 12}
+
+    def test_ollama_none_when_no_eval_counts(self):
+        assert OLLAMA_PROFILE.usage_extractor({"message": {"content": "hi"}}) is None
+        assert OLLAMA_PROFILE.usage_extractor({}) is None
+
+    def test_default_profile_usage_extractor_is_none(self):
+        """A ``ProviderProfile`` that doesn't declare one degrades to "not reported"."""
+        blank = ProviderProfile(
+            name="blank",
+            detect=lambda p, b: False,
+            headers=lambda k: {},
+            models_url=lambda b: b,
+            models_extractor=lambda d: [],
+            chat_url=lambda b: b,
+            build_request=lambda *a: {},
+            extract_text=lambda r: "",
+        )
+        assert blank.usage_extractor({"usage": {"prompt_tokens": 1}}) is None

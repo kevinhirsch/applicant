@@ -244,6 +244,48 @@ class NotificationService:
             )
         )
 
+    # --- daily cap reached (P1-6 cost & pace guardrails) -------------------
+    def notify_budget_reached(
+        self,
+        campaign_id: str,
+        *,
+        applications_today: int,
+        hard_cap: bool,
+        day: date,
+        deep_link: str | None = None,
+    ) -> str:
+        """Tell the owner their daily application cap paused new work today.
+
+        "Silence never means stopped" (P1-6 DoD): without this, hitting the
+        throughput cap (``core.entities.campaign.clamp_throughput``/
+        ``THROUGHPUT_HARD_CAP``, enforced server-side in ``AgentLoop``) was
+        invisible — the owner would only notice a quiet day by checking Today
+        themselves. Fires through the EXACT SAME fan-out as the daily digest /
+        status update (in-app inbox always, Discord/email for whatever channels
+        the owner has opted into) — not a parallel delivery path. ``hard_cap``
+        distinguishes "reached today's configured target" from "hit the
+        engine's absolute safety ceiling" in the copy. ``dedup_key`` is keyed
+        per (campaign, UTC day) and is the PRIMARY de-duplication: once the
+        budget is exhausted, ``AgentLoop`` re-enters the exhausted branch and
+        calls this again on every subsequent tick that day — there is no
+        loop-side cadence guard, so do not drop the dedup key (FR-NOTIF-3,
+        mirroring ``notify_status_update``).
+        """
+        cap_word = "safety limit" if hard_cap else "daily target"
+        body = (
+            f"I've sent {applications_today} application(s) today and reached your "
+            f"{cap_word}. I'll pick back up automatically tomorrow — nothing is stuck."
+        )
+        return self._notification.notify(
+            Notification(
+                title="Today's application cap reached",
+                body=body,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+                dedup_key=f"budget_reached:{campaign_id}:{day.isoformat()}",
+            )
+        )
+
     # --- weekly recap (Top-25 #18 / FR-DIG-2 sibling) ----------------------
     def notify_weekly_recap(
         self,
