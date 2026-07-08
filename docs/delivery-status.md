@@ -239,8 +239,9 @@ each against the actual `src/` code (file:line in [traceability.md](traceability
 
 ### Session log — 2026-07-08 (Phase 2 trust/security + Phase 0 close-out)
 
-Six PRs merged this session, all green on CI (Python 3.12) with both review bots (Greptile
-T-Rex + CodeRabbit) satisfied:
+Five PRs merged this segment, all green on CI (Python 3.12) with both review bots (Greptile
+T-Rex + CodeRabbit) satisfied (a sixth, #754 — P2-5/P2-8 citable invariants — landed earlier
+in the same session and is recorded in the founder-trust track below):
 
 - **P2-7 — protected questions never AI-answered (PR #755).** Work authorization joined EEO
   as a protected question class in BOTH lanes (screening-answer generation + pre-fill field
@@ -273,7 +274,7 @@ retirement lane (not yet on main); P0-6 (visual-regression harness) is sequenced
 blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lands, then P0-6.
 
 **Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy), P2-4 (license/#722),
-P2-6 (golden set + weights), P2-14 (LinkedIn account); live-deploy — P2-10 (ATS-parse),
+P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account); live-deploy — P2-10 (ATS-parse),
 P2-12 (durability drills), P2-13 (source-reliability matrix). The cleanly-hermetic Phase-2
 eng lane is otherwise complete.
 

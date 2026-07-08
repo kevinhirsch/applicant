@@ -1050,7 +1050,7 @@ per-rubric-dimension (today's `ab_gate` keys on planner success-rate, not materi
 dimensions); (3) a trigger ("on every meaningful prompt/model change" — a dispatch/CI
 lane like `ci-integration.yml`, since live judging needs an LLM key). Recommend pairing
 a starter golden set + agreed rubric weights, then wiring the runner around the existing
-#309 machinery in one focused pass.
+issue #309 machinery in one focused pass.
 **DoD:**
 - [ ] Harness runs the golden set through tailoring/scoring/digest on every meaningful
       prompt or model change and scores against the rubric.
