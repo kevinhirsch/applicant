@@ -111,9 +111,9 @@ def test_ping_endpoint_uses_provider_specific_auth_and_path():
     assert "_provider_headers(api_key, base)" in block, (
         "ping must build provider-specific auth headers (x-api-key for Anthropic)"
     )
-    assert '_detect_provider(base) == "anthropic"' in block
-    assert '_anthropic_api_root(base) + "/v1/models"' in block, (
-        "the Anthropic ping must hit the same /v1/models path the probe uses"
+    assert "_models_url(base)" in block, (
+        "ping must resolve the models URL through the SAME shared helper the "
+        "probe uses (Anthropic /v1/models, Ollama /tags) — no hand-rolled copy"
     )
 
 

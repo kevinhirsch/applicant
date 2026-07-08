@@ -385,16 +385,13 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
-    # Provider-specific auth + path: an Anthropic ping must hit the same
-    # /v1/models with x-api-key that _probe_endpoint uses — the generic
-    # Bearer + /models fallback 404s there, so a REJECTED key would be
-    # misclassified as "unreachable" (fix the URL) instead of bad_key
-    # (replace the key).
+    # Provider-specific auth + path via the SAME helpers _probe_endpoint uses
+    # (_provider_headers/_models_url): an Anthropic ping must hit /v1/models
+    # with x-api-key — the generic Bearer + /models fallback 404s there, so a
+    # REJECTED key would be misclassified as "unreachable" (fix the URL)
+    # instead of bad_key (replace the key).
     headers = _provider_headers(api_key, base)
-    if _detect_provider(base) == "anthropic":
-        url = _anthropic_api_root(base) + "/v1/models"
-    else:
-        url = base + "/models"
+    url = _models_url(base)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         if 300 <= r.status_code < 400:
