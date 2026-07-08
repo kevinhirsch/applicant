@@ -237,6 +237,46 @@ each against the actual `src/` code (file:line in [traceability.md](traceability
 | **Credentials / screenshots not persisted; digest email pull-only.** | `PgCredentialStore` persists libsodium-sealed rows to Postgres and a fresh instance unseals them (survives restart, FR-VAULT-1); screenshots persisted via the storage repo + migration (FR-LOG-2); digest email is actually SENT (FR-DIG-2); source-yield / converting-signature / attr-reuse producers wired (FR-DISC-5, FR-LEARN-5/6, FR-ATTR-5). |
 | **Render fidelity was a passthrough; egress/redaction were seams only.** | Real docx→moderncv conversion via the vendored Jinja2 template + LaTeX escaping (FR-RESUME-3/3a/4); real `fc-cache` shell-out + auto compile/convert when the engine is present (FR-FONT-2); residential egress threaded into the real browser launch with a datacenter-refusal guardrail + honest caveat (FR-STEALTH-4/5); value-based secret redaction (FR-OBS-1); pending-action producers, criteria/attribute editor surfaces, per-task LLM tier (FR-UI-3/6, FR-LLM-4). |
 
+### Session log — 2026-07-08 (Phase 2 trust/security + Phase 0 close-out)
+
+Six PRs merged this session, all green on CI (Python 3.12) with both review bots (Greptile
+T-Rex + CodeRabbit) satisfied:
+
+- **P2-7 — protected questions never AI-answered (PR #755).** Work authorization joined EEO
+  as a protected question class in BOTH lanes (screening-answer generation + pre-fill field
+  resolution): answered only in the user's own stored words (presence-aware — an unanswered
+  intake is never "no"), else an honest deferral; the caller's `essay` flag cannot opt a
+  protected question into the LLM path. Claim 3 in `docs/proof/citable-invariants.md`.
+- **P2-9 — app-door hardening (PR #756).** Shared server-side strong-password policy
+  (`workspace/src/password_policy.py`, 12-char floor + denylists, passphrase-first) at all
+  four password-set routes; existing rate-limit + TOTP flow pinned; HTTPS reverse-proxy guide
+  (`docs/reverse-proxy-https.md`).
+- **P2-11 — verified local-only private mode (PR #757).** `LLM_LOCAL_ONLY` hard mode filters
+  non-private LLM tiers at the single ladder chokepoint AND the gate/status (no silent cloud
+  fallback); strict host classifier (`core/rules/private_endpoints.py`, IPv4-mapped IPv6
+  unwrapped). Contract in `docs/private-mode.md`.
+- **P2-3 — security pass (PR #758).** Cross-account read isolation on Results/Research/Gallery
+  (the residual DISC-15 hole — moved to `require_engine_owner`); `.docx` XXE guard on résumé
+  ingest (whole-part DTD scan, version-independent); dependency + secrets-at-rest audit.
+  Write-up in `docs/security-review.md`; two deferred low/unreachable dep bumps as known-issues K7.
+- **Phase 0 close-out (PR #759).** P0-2 (seeded demo mode) was fully built + merged earlier
+  (#731) but unmarked — flipped to DONE; fixed the P2-3 index-row drift.
+
+**Backlog reconciliation finding:** several stories are *further along than their status
+showed* — built (often by the concurrent lane, or for older issues) but never marked done.
+Reconciled this session: **P0-2** (built #731 → DONE), **P2-6** (judge/rubric/regression
+machinery already built for #309 → PARTIAL, golden set is the DoR-gated remainder). When
+picking future work, verify against the code, not the status column.
+
+**Phase 0 remaining:** P0-3 (3-pane shell / window retirement) is in the concurrent
+retirement lane (not yet on main); P0-6 (visual-regression harness) is sequenced last and
+blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lands, then P0-6.
+
+**Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy), P2-4 (license/#722),
+P2-6 (golden set + weights), P2-14 (LinkedIn account); live-deploy — P2-10 (ATS-parse),
+P2-12 (durability drills), P2-13 (source-reliability matrix). The cleanly-hermetic Phase-2
+eng lane is otherwise complete.
+
 ### Founder-trust track — first slice (road-to-market Phase 1.5)
 
 The master backlog is [backlog/road-to-market.md](backlog/road-to-market.md) (every story

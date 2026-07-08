@@ -77,7 +77,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-3 | Security pass | M | eng | DONE — cross-account read isolation + .docx XXE guard + dep/secrets audit (docs/security-review.md) |
 | P2-4 | License compliance | S | eng+you | — |
 | P2-5 | Fabrication-guard evidence | S | eng | DONE — citable claim + red-team suite (docs/proof/citable-invariants.md) |
-| P2-6 | LLM output eval harness | M | eng | — |
+| P2-6 | LLM output eval harness | M | eng | PARTIAL — judge/rubric/regression machinery built (`applicant.evaluation`, issue #309); golden set (real profiles × postings) + per-rubric-dimension material runner + trigger remain (owner/egress-gated DoR) |
 | P2-7 | Sensitive-question policy | M | eng | DONE — EEO + work-auth never AI-answered, both lanes (docs/proof/citable-invariants.md Claim 3) |
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
@@ -1038,6 +1038,19 @@ free re-wording — is documented rather than hidden.)*
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (fixtures)
 **DoR:** Golden set assembled (3–4 profiles × ~20 real postings); rubric agreed
 (relevance, tone, honesty/zero-fabrication, diff quality).
+**Status: PARTIAL** — the harness *machinery* already exists (built for issue #309,
+`src/applicant/evaluation/`): `material_judge.judge_material` scores a generated
+material against `DEFAULT_RUBRIC` (truthfulness/relevance/formatting/completeness) via
+LLM-as-judge with a deterministic heuristic fallback, `MaterialQualityScore` carries
+per-dimension scores, and `run_suite`/`ab_gate` provide A/B regression detection
+(threshold-gated). **Remaining (DoR-gated):** (1) the *golden set* — 3–4 profiles ×
+~20 REAL postings — needs live egress or owner curation, not synthesizable here; (2) a
+*material runner* that feeds the golden set through tailoring/scoring/digest and gates
+per-rubric-dimension (today's `ab_gate` keys on planner success-rate, not material
+dimensions); (3) a trigger ("on every meaningful prompt/model change" — a dispatch/CI
+lane like `ci-integration.yml`, since live judging needs an LLM key). Recommend pairing
+a starter golden set + agreed rubric weights, then wiring the runner around the existing
+#309 machinery in one focused pass.
 **DoD:**
 - [ ] Harness runs the golden set through tailoring/scoring/digest on every meaningful
       prompt or model change and scores against the rubric.
