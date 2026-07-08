@@ -758,6 +758,11 @@ function _formatGuardrailsLine(today) {
 async function _loadGuardrails() {
   const slot = _guardrailsSlot();
   if (!slot) return;
+  // Clear FIRST: a refresh where campaigns/guardrails fail or come back empty
+  // must not leave a previous run's spend/pace line rendered as current
+  // (stale numbers presented as live would be a silent lie).
+  slot.textContent = '';
+  slot.style.display = 'none';
   try {
     const list = await _fetchJSON(CAMPAIGNS_API);
     const campaigns = (list && list.campaigns) || [];
@@ -770,7 +775,7 @@ async function _loadGuardrails() {
     slot.textContent = _formatGuardrailsLine(today);
     slot.style.display = '';
   } catch {
-    // Best-effort only (see header comment) — leave the slot hidden.
+    // Best-effort only (see header comment) — the slot stays cleared/hidden.
   }
 }
 
