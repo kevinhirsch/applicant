@@ -29,6 +29,11 @@ on:
         description: "Optional state-name regex (e.g. rail-.*) to run a subset"
         required: false
         default: ""
+  schedule:
+    # Weekly sweep (Sunday 03:00 UTC, an hour after the Integration Lane) so
+    # visual regressions / environment drift can't go unnoticed indefinitely
+    # between manual dispatches.
+    - cron: "0 3 * * 0"
 
 concurrency:
   group: visual-${{ github.ref }}
