@@ -38,6 +38,52 @@ _SENSITIVE_WORD_RE = re.compile(
 )
 
 
+# === work authorization (P2-7) ==============================================
+# Work-authorization questions are in the same never-guess family as the EEO
+# fields below, but with the OPPOSITE default: EEO defaults to declining to
+# self-identify, while work auth is a routine, expected application question —
+# answered from the user's OWN stored answer when present, and otherwise left
+# for the human. This module only decides membership; the handling lives with
+# the callers (MaterialService / PrefillService).
+
+#: Strong multi-word substrings that unambiguously mark a work-auth question.
+_WORK_AUTH_SUBSTRING_CUES: tuple[str, ...] = DEFAULT_LOCALE.work_auth_cues
+
+#: Short/ambiguous markers ("visa", "citizen", "sponsorship") matched on word
+#: boundaries — and only for SHORT questions, so a long essay prompt that merely
+#: mentions a visa or citizens does not misroute (mirrors the EEO word markers).
+_WORK_AUTH_WEAK_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(m) for m in DEFAULT_LOCALE.work_auth_weak_markers)
+    + r")\b"
+)
+
+#: A weak marker counts only when the question is this short (a bare field
+#: label or closed question, e.g. "Visa status" / "Are you a citizen?").
+_MAX_WEAK_WORK_AUTH_WORDS = 8
+
+
+def is_work_auth_question(text: str) -> bool:
+    """True if ``text`` asks about the candidate's own work authorization,
+    visa, or sponsorship status (P2-7).
+
+    These questions must NEVER be answered by an LLM guess: an invented "No, I
+    don't need sponsorship" contains no fact-class tokens, so it would sail
+    through the fabrication check — the refusal has to happen at classification
+    time. Detection is deliberately conservative in the safe direction: a
+    matched question routes to the user's own stored answer (or to the human),
+    and an unmatched phrasing still lands in the ordinary review lane.
+    """
+    if not text:
+        return False
+    low = text.lower()
+    if any(cue in low for cue in _WORK_AUTH_SUBSTRING_CUES):
+        return True
+    if len(low.split()) <= _MAX_WEAK_WORK_AUTH_WORDS:
+        return bool(_WORK_AUTH_WEAK_RE.search(low))
+    return False
+
+
 @dataclass(frozen=True)
 class SensitiveFillDecision:
     """Outcome of evaluating a sensitive field."""

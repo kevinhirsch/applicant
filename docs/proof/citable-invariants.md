@@ -1,10 +1,10 @@
-# Citable invariants: the truthfulness claim and the human-final-say claim
+# Citable invariants: truthfulness, human final say, and protected questions
 
-Two product claims are strong enough to market only because they are pinned by
-executable evidence. This page names each claim exactly, states its honest
-boundaries, and gives the one-command reproduction. If either suite goes red,
-the claim is no longer citable — treat that as a launch blocker, not a flaky
-test. (Backlog: P2-5 and P2-8; both pair with the Phase 1.5 honesty
+Three product claims are strong enough to market only because they are pinned
+by executable evidence. This page names each claim exactly, states its honest
+boundaries, and gives the one-command reproduction. If any suite goes red, the
+claim is no longer citable — treat that as a launch blocker, not a flaky test.
+(Backlog: P2-5, P2-8, and P2-7; all pair with the Phase 1.5 honesty
 invariants.)
 
 ## Claim 1 — "It rewrites freely; it never invents facts."
@@ -74,6 +74,45 @@ What the suite proves:
   submission-class types on that path (the human's "I submitted this myself"
   action is mark-submitted, which runs the gate), and the refusal is pinned
   behaviorally with unapproved material in place.
+
+## Claim 3 — "Protected questions are never answered by AI."
+
+**Evidence:** `tests/unit/test_sensitive_question_policy.py`
+
+```bash
+DATABASE_URL='postgresql+psycopg://x:x@127.0.0.1:1/none' \
+  uv run pytest -q tests/unit/test_sensitive_question_policy.py
+```
+
+Two question classes are protected (P2-7), in BOTH lanes — screening-answer
+generation and the pre-fill field resolver:
+
+- **Demographic / EEO self-identification** — filled only from the user's
+  explicit stored answer, else the canned decline-to-self-identify. Never
+  guessed, and never saved into the reusable cross-application answer library.
+- **Work authorization / visa / sponsorship** — answered only in the user's
+  OWN words: an explicit answer, their onboarding intake, or a stored
+  attribute. With nothing stored the engine defers with an honest
+  needs-your-answer placeholder; it never answers a sponsorship question
+  either way on its own. Presence-aware on purpose: an *unanswered* intake is
+  never treated as "no".
+
+Why this needs its own lane at classification time: an invented "No, I don't
+require sponsorship" contains no fact-class tokens (no employer, date, or
+number), so the fabrication guard of Claim 1 could not catch it downstream —
+the refusal has to happen before any model is consulted. The tests wire an
+LLM stub that fails the suite on ANY consultation, the strongest form of
+"never guessed", and pin that a caller's `essay` flag cannot opt a protected
+question back into the LLM path (enforcement is server-side).
+
+Honest boundaries of the claim:
+
+- Detection is cue-based (locale-configurable). A phrasing the cues miss does
+  not fail silent — it lands in the ordinary essay/review lane, where Claim 2
+  still holds: nothing reaches a submission without human approval.
+- Each policy answer carries a visible `policy` provenance marker into the
+  review UI's "What I drew on" panel, so a canned decline or deferral is
+  distinguishable from a generated answer at review (no silent degradation).
 
 Related, already-pinned guards this page does not restate: the engine cannot
 self-authorize a final click past the pre-fill stop boundary (FR-PREFILL-5,

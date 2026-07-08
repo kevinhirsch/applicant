@@ -67,11 +67,25 @@ class LocaleConfig:
         "pay expectation", "salary expectation",
     )
 
-    #: Work authorization cue phrases.
+    #: Work-authorization cue phrases: STRONG multi-word substrings that
+    #: unambiguously mark a question as being about the candidate's own work
+    #: authorization / visa / sponsorship status. Questions matching these are
+    #: never answered by an LLM guess — they fill only from the user's own
+    #: stored answer (see ``core.rules.sensitive_fields.is_work_auth_question``).
     work_auth_cues: tuple[str, ...] = (
-        "work authorization", "authorized to work", "require sponsorship",
-        "need sponsorship", "visa",
+        "work authorization", "authorization to work", "authorized to work",
+        "legally authorized", "eligible to work", "eligibility to work",
+        "right to work", "require sponsorship", "requires sponsorship",
+        "need sponsorship", "needs sponsorship", "sponsorship to work",
+        "employer sponsorship", "sponsorship for employment", "visa sponsorship",
+        "visa status", "work visa", "employment visa", "work permit",
+        "immigration status", "citizenship status",
     )
+
+    #: Short/ambiguous work-auth markers, matched on WORD BOUNDARIES and only
+    #: for SHORT questions (a bare field label / closed question) — so an essay
+    #: prompt that merely mentions a visa or citizens does not misroute.
+    work_auth_weak_markers: tuple[str, ...] = ("visa", "citizen", "sponsorship")
 
     #: Date format patterns for parsing work history (month names).
     month_names: tuple[str, ...] = (

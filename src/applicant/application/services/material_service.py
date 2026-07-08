@@ -266,6 +266,55 @@ class MaterialService:
             return (*provenance, self._degraded_marker())
         return provenance
 
+    #: ``LearnedProvenance.kind`` for POLICY-driven screening answers (P2-7):
+    #: demographic self-identification and work-authorization questions, which
+    #: are never AI-answered. Rides the same durable ``provenance`` carrier as
+    #: the degraded sentinel (no schema migration); unlike that sentinel it IS
+    #: shown in the review UI's "What I drew on" list — the label explains WHY
+    #: the answer looks canned/deferred, which is the transparency the review
+    #: needs to distinguish a policy decline from a normal generated answer.
+    POLICY_PROVENANCE_KIND = "policy"
+
+    _SENSITIVE_POLICY_LABEL_EXPLICIT = (
+        "A demographic self-identification question — I used your stored "
+        "answer, word for word. These are never guessed."
+    )
+    _SENSITIVE_POLICY_LABEL_DECLINED = (
+        "A demographic self-identification question — you have no stored "
+        "answer, so I defaulted to declining to self-identify. These are "
+        "never guessed."
+    )
+    _WORK_AUTH_POLICY_LABEL_STORED = (
+        "A work-authorization question — I used your own stored answer. "
+        "These are never guessed."
+    )
+    _WORK_AUTH_POLICY_LABEL_NEEDED = (
+        "A work-authorization question — only you can answer it, so I left "
+        "it for you instead of guessing."
+    )
+
+    def _sensitive_policy_marker(self, from_explicit: bool) -> LearnedProvenance:
+        return LearnedProvenance(
+            kind=self.POLICY_PROVENANCE_KIND,
+            label=(
+                self._SENSITIVE_POLICY_LABEL_EXPLICIT
+                if from_explicit
+                else self._SENSITIVE_POLICY_LABEL_DECLINED
+            ),
+            ref="policy:sensitive",
+        )
+
+    def _work_auth_policy_marker(self, from_user: bool) -> LearnedProvenance:
+        return LearnedProvenance(
+            kind=self.POLICY_PROVENANCE_KIND,
+            label=(
+                self._WORK_AUTH_POLICY_LABEL_STORED
+                if from_user
+                else self._WORK_AUTH_POLICY_LABEL_NEEDED
+            ),
+            ref="policy:work_auth",
+        )
+
     # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
     def tailoring_for(self, campaign_id: CampaignId):
         """Return the tailoring adapter for the campaign's chosen engine.
@@ -1284,27 +1333,39 @@ class MaterialService:
         essay: bool | None = None,
         explicit_answer: str | None = None,
     ) -> GeneratedDocument:
-        """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive.
+        """Generate a screening answer (FR-ANSWER-1): factual / essay / sensitive /
+        work-auth.
 
-        When ``essay`` is None the question is CLASSIFIED (factual / essay /
-        sensitive). Factual answers come deterministically from the true source / the
-        attribute cloud (no fabrication); sensitive (EEO) ones follow the
-        sensitive-field policy (``explicit_answer`` only, else decline — NEVER the
-        flattened true source, which would leak the full attribute cloud / resume,
-        FR-ATTR-6 / NFR-PRIV-1). Essay/long-form answers are LLM-generated from true
-        history, voice + em-dash filtered, and routed through review. All go through
-        the post-filter + truthfulness check and the review gate.
+        When ``essay`` is None the question is CLASSIFIED. Factual answers come
+        deterministically from the true source / the attribute cloud (no
+        fabrication); sensitive (EEO) ones follow the sensitive-field policy
+        (``explicit_answer`` only, else decline — NEVER the flattened true source,
+        which would leak the full attribute cloud / resume, FR-ATTR-6 /
+        NFR-PRIV-1); work-authorization ones answer only from the user's OWN
+        stored answer, else an honest needs-your-answer placeholder (P2-7).
+        Essay/long-form answers are LLM-generated from true history, voice +
+        em-dash filtered, and routed through review. All go through the
+        post-filter + truthfulness check and the review gate.
         """
         self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
         true_source = self._resolve_true_source(campaign_id, true_source)
-        kind = (
-            (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
-            if essay is not None
-            else classify_screening_question(question)
-        )
-        # Only the essay path consults the learned-context block; the factual /
-        # sensitive paths draw on nothing learned, so their provenance is empty.
+        # Protected question classes are decided SERVER-SIDE and always win: the
+        # caller's ``essay`` flag cannot opt a demographic or work-authorization
+        # question back into the LLM path (P2-7 — same principle as the
+        # fabrication guard deriving its own ground truth).
+        classified = classify_screening_question(question)
+        if classified in (ScreeningKind.SENSITIVE, ScreeningKind.WORK_AUTH):
+            kind = classified
+        elif essay is not None:
+            kind = ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL
+        else:
+            kind = classified
+        # Only the essay path consults the learned-context block; the factual path
+        # draws on nothing learned, so its provenance is empty. The sensitive /
+        # work-auth paths carry a POLICY marker instead, so the review UI can say
+        # WHY the answer is canned/deferred rather than generated.
         provenance: tuple[LearnedProvenance, ...] = ()
+        work_auth_from_user = False
         if kind is ScreeningKind.ESSAY:
             answer = self._generate_text(
                 true_source, [question], kind="essay_answer", campaign_id=campaign_id
@@ -1320,6 +1381,18 @@ class MaterialService:
             # NEVER fall back to true_source (FR-ATTR-6, NFR-PRIV-1).
             decision = decide_sensitive_fill(question, explicit_answer)
             answer = decision.value or DECLINE_TO_SELF_IDENTIFY
+            provenance = (self._sensitive_policy_marker(decision.from_explicit_answer),)
+        elif kind is ScreeningKind.WORK_AUTH:
+            # Work authorization / visa (P2-7): answered ONLY in the user's own
+            # words — the caller's explicit answer or their stored onboarding /
+            # attribute-cloud answer — never drafted or inferred by the LLM (an
+            # invented "no sponsorship needed" has no fact-class tokens, so the
+            # fabrication guard could not catch it). Absent a stored answer, an
+            # honest needs-your-answer placeholder routes to review.
+            answer, work_auth_from_user = self._work_auth_answer(
+                campaign_id, question, explicit_answer
+            )
+            provenance = (self._work_auth_policy_marker(work_auth_from_user),)
         else:
             # Factual: answer SCOPED to the question (FR-ANSWER-1, NFR-PRIV-1). In the
             # live loop ``true_source`` is the WHOLE flattened attribute cloud + history,
@@ -1328,16 +1401,17 @@ class MaterialService:
             # cloud. Return a safe minimal answer when nothing matches.
             answer = self._scope_factual_answer(campaign_id, question, true_source)
         report = self.apply_post_filter(answer)
-        # Sensitive answers are policy-driven (explicit EEO answer or the canned
-        # decline), not generated from true_source, so the fabrication guard (which
-        # compares against true_source) does not apply to them (FR-ATTR-6); they are
+        # Sensitive and work-auth answers are policy-driven (an explicit/stored
+        # answer, the canned decline, or the needs-your-answer placeholder), not
+        # generated from true_source, so the fabrication guard (which compares
+        # against true_source) does not apply to them (FR-ATTR-6, P2-7); they are
         # persisted as policy-exempt. Essay/factual answers ARE derived from the true
         # source, so the fabrication post-check is enforced fail-closed at the
         # persistence boundary by ``_store_document`` (NFR-TRUTH-1): essay answers are
         # free prose (entity-shaped check); factual answers stay on the strict
         # per-token check. The target company/role is legitimate context (the position
         # being answered about), not a claim.
-        if kind is ScreeningKind.SENSITIVE:
+        if kind in (ScreeningKind.SENSITIVE, ScreeningKind.WORK_AUTH):
             doc = self._store_document(
                 campaign_id,
                 application_id,
@@ -1347,6 +1421,15 @@ class MaterialService:
                 verify_source=None,
                 policy_exempt=True,
             )
+            # A REAL work-auth answer (the user's own words) is reusable for the
+            # next application asking the same thing (#20). The needs-your-answer
+            # placeholder is not an answer, and SENSITIVE (EEO) answers must never
+            # leak into a cross-application store (FR-ATTR-6, NFR-PRIV-1) — neither
+            # is saved.
+            if kind is ScreeningKind.WORK_AUTH and work_auth_from_user:
+                self._save_to_screening_library(
+                    campaign_id, question, report.text, essay=False
+                )
         else:
             check_source = self._with_application_context(true_source, application_id)
             doc = self._store_document(
@@ -1359,15 +1442,27 @@ class MaterialService:
                 prose=(kind is ScreeningKind.ESSAY),
             )
             # Product-gaps backlog #20: build the reusable screening-answer library
-            # over time. NEVER for SENSITIVE (EEO/demographic) answers -- those are
-            # policy-driven, never AI-guessed, and must never leak into a cross-
-            # application store (FR-ATTR-6, NFR-PRIV-1); the ``else`` branch above
-            # already excludes them.
+            # over time (the policy-driven kinds are handled above).
             self._save_to_screening_library(
                 campaign_id, question, report.text, essay=(kind is ScreeningKind.ESSAY)
             )
-        self._announce_review_ready(doc, "Screening answer ready for review")
+        self._announce_review_ready(doc, self._screening_review_title(kind, work_auth_from_user))
         return doc
+
+    @staticmethod
+    def _screening_review_title(kind: ScreeningKind, work_auth_from_user: bool) -> str:
+        """The review-ready notification title, honest about what review means here
+        (P2-7): a policy-driven answer needs the human to CONFIRM or SUPPLY it, not
+        just proofread prose."""
+        if kind is ScreeningKind.SENSITIVE:
+            return "Self-identification question needs your review"
+        if kind is ScreeningKind.WORK_AUTH:
+            return (
+                "Work-authorization answer ready for review"
+                if work_auth_from_user
+                else "Work-authorization question needs your answer"
+            )
+        return "Screening answer ready for review"
 
     def _save_to_screening_library(
         self, campaign_id: CampaignId, question: str, answer_text: str, *, essay: bool
@@ -1919,6 +2014,108 @@ class MaterialService:
                     return str(a.value)
         return None
 
+    # --- work-authorization answers (P2-7) ---------------------------------
+
+    #: Honest placeholder when the user has not stored a work-auth answer: the
+    #: engine defers instead of guessing, and says so in plain language.
+    _WORK_AUTH_NEEDS_ANSWER = (
+        "Needs your answer: this asks about your work authorization, which I "
+        "never guess. Fill it in here, or add it to your profile so I can "
+        "answer it for you next time."
+    )
+
+    def _work_auth_answer(
+        self, campaign_id: CampaignId, question: str, explicit_answer: str | None
+    ) -> tuple[str, bool]:
+        """``(answer, from_user)`` for a work-authorization question (P2-7).
+
+        The answer is ALWAYS the user's own words: the caller's explicit answer,
+        or their stored onboarding/attribute answer. When neither exists the
+        honest needs-your-answer placeholder is returned with ``from_user=False``
+        so the caller can route it to the human (and keep it out of the reusable
+        answer library). Never inferred, never LLM-drafted.
+        """
+        if explicit_answer and explicit_answer.strip():
+            return explicit_answer.strip(), True
+        stored = self._stored_work_auth_answer(campaign_id, question)
+        if stored:
+            return stored, True
+        return self._WORK_AUTH_NEEDS_ANSWER, False
+
+    def _stored_work_auth_answer(
+        self, campaign_id: CampaignId, question: str
+    ) -> str | None:
+        """The user's own stored work-auth answer, or ``None`` (P2-7).
+
+        PRESENCE-aware on purpose: an absent answer is never treated as "no" —
+        a sponsorship yes/no is synthesized only when the user actually answered
+        that intake question (contrast ``presubmit_safety``'s extractor, which
+        may default to False because it only GATES; here we would be ANSWERING a
+        legal question on the user's behalf). Free-form values are returned
+        verbatim — the user's words, no inference on top of them.
+        """
+        q = (question or "").lower()
+        intake = self._work_auth_intake(campaign_id)
+        if "sponsor" in q:
+            for key in (
+                "needs_sponsorship",
+                "requires_sponsorship",
+                "visa_sponsorship_required",
+            ):
+                if key in intake:
+                    flag = _as_yes_no(intake.get(key))
+                    if flag is True:
+                        return "Yes, I will require sponsorship for employment."
+                    if flag is False:
+                        return "No, I do not require sponsorship for employment."
+        for key in (
+            "status",
+            "work_authorization",
+            "work_authorization_status",
+            "citizenship",
+        ):
+            val = intake.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        # Attribute-cloud fallback (e.g. the missing-detail flow stored the
+        # user's typed answer as an attribute): their stored words, verbatim.
+        try:
+            attrs = self._storage.attributes.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return None
+        for a in attrs:
+            name = (a.name or "").lower()
+            if any(
+                marker in name
+                for marker in (
+                    "work authorization",
+                    "work_authorization",
+                    "citizenship",
+                    "work permit",
+                    "sponsorship",
+                    "visa",
+                )
+            ):
+                value = str(a.value or "").strip()
+                if value:
+                    return value
+        return None
+
+    def _work_auth_intake(self, campaign_id: CampaignId) -> dict:
+        """The onboarding intake's ``work_authorization`` section, or ``{}``."""
+        profiles = getattr(self._storage, "onboarding_profiles", None)
+        if profiles is None:
+            return {}
+        try:
+            profile = profiles.get_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return {}
+        intake = getattr(profile, "intake", None) if profile is not None else None
+        if not isinstance(intake, dict):
+            return {}
+        section = intake.get("work_authorization")
+        return section if isinstance(section, dict) else {}
+
     def _announce_variant_review_ready(
         self, variant: ResumeVariant, application_id: ApplicationId | None
     ) -> None:
@@ -2341,6 +2538,23 @@ def _word_tokens(text: str) -> set[str]:
     import re
 
     return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 2}
+
+
+def _as_yes_no(value: object) -> bool | None:
+    """Parse a stored yes/no-ish intake value; ``None`` when unparseable (P2-7).
+
+    Exact-match on purpose: "not required" must never parse as yes because it
+    CONTAINS "required". An unparseable value yields ``None`` so the caller
+    defers to the human rather than guessing either way.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in ("yes", "y", "true", "1", "required", "needed"):
+        return True
+    if text in ("no", "n", "false", "0", "not required", "not needed", "none"):
+        return False
+    return None
 
 
 _SYSTEM_PROMPT = (

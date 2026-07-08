@@ -204,9 +204,14 @@ def work_auth_section_present(spiritctx):
 
 @given("the material-policy sponsorship lexicon")
 def sponsorship_lexicon(spiritctx):
-    from applicant.core.rules import materials
+    # P2-7 moved the sponsorship/visa phrasing out of the FACTUAL cues into the
+    # dedicated work-auth lane (never LLM-drafted): the locale work-auth cues,
+    # consumed by ``is_work_auth_question`` / ``classify_screening_question``.
+    from applicant.core.locale_config import DEFAULT_LOCALE
 
-    spiritctx["lexicon"] = materials._FACTUAL_CUES
+    spiritctx["lexicon"] = (
+        DEFAULT_LOCALE.work_auth_cues + DEFAULT_LOCALE.work_auth_weak_markers
+    )
 
 
 @when("a sponsorship-requirement phrase is checked against it")

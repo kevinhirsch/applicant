@@ -13,6 +13,8 @@ Field resolution (FR-PREFILL-3, FR-ATTR-5/6, FR-ANSWER-1):
 
 * **Sensitive (EEO) fields** route through ``decide_sensitive_fill`` — explicit
   stored answer only, else "decline to self-identify"; never AI-guessed.
+* **Work-authorization questions** fill from the user's stored answer only —
+  never LLM-drafted; absent an answer, the user is asked (P2-7).
 * **Factual screening questions** fill from stored attributes like any field.
 * **Essay screening questions** are NOT answered here — they are recorded and
   deferred to Phase 3 generation + the FR-RESUME-8 review gate (a clean handoff);
@@ -51,7 +53,11 @@ from applicant.core.rules.ats_match_rate import (
     field_match_rate,
     is_probable_wrong_ats,
 )
-from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
+from applicant.core.rules.sensitive_fields import (
+    decide_sensitive_fill,
+    is_sensitive_field,
+    is_work_auth_question,
+)
 from applicant.core.rules.underdelivery import prefill_shortfall
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
@@ -1962,6 +1968,9 @@ class PrefillService:
         * Essay screening questions defer (Phase 3) — never auto-answered here.
         * Sensitive (EEO) fields route through ``decide_sensitive_fill``: explicit
           answer only, else decline; never AI-guessed (FR-ATTR-6).
+        * Work-authorization questions fill from the user's stored answer (the
+          explicit/mapping paths) but are NEVER LLM-drafted — absent a stored
+          answer they resolve to None so the user is asked (P2-7).
         * Factual fields use the explicit answer, escalating an ambiguous mapping to
           the LLM port when configured (FR-PREFILL-3).
         """
@@ -2061,8 +2070,13 @@ class PrefillService:
         A ``<textarea>`` is inherently a free-text prompt; a text input qualifies only
         when its label READS like a question (ends with '?' or uses question-like
         phrasing such as "describe", "explain", "tell us about"). Never sensitive
-        (FR-ATTR-6 — EEO is never AI-drafted)."""
+        (FR-ATTR-6 — EEO is never AI-drafted), and never work-authorization (P2-7 —
+        an LLM-guessed "no sponsorship needed" has no fact-class tokens, so the
+        fabrication check could not catch it; work auth fills only from the user's
+        stored answer via the explicit/mapping paths, else asks the user)."""
         if is_sensitive_field(fld.label):
+            return False
+        if is_work_auth_question(fld.label):
             return False
         if fld.field_type == "textarea":
             return True
@@ -2108,6 +2122,10 @@ class PrefillService:
         (FR-RESUME-5). Returns ``None`` — so the caller asks the user — when the LLM is
         absent, signals INSUFFICIENT, is low-confidence, or the draft would fabricate.
         The drafted answer is review-gated by the caller (FR-RESUME-8)."""
+        # Defence in depth (P2-7): even if a caller bypasses _is_screening_question,
+        # a work-authorization question is never LLM-drafted — stored answers only.
+        if is_work_auth_question(fld.label):
+            return None
         if self._llm is None or not attributes:
             return None
         from applicant.core.rules.truthfulness import (

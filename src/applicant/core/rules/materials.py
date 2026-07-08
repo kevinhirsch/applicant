@@ -7,7 +7,8 @@ domain rules cannot be bypassed by an adapter:
   (FR-RESUME-10): a per-campaign default (off by default) the role can override.
 * :func:`classify_screening_question` — split a screening question into **factual**
   (answer deterministically, no fabrication; EEO ones decline) vs **essay**
-  (LLM-generated from true history, filtered, reviewed) (FR-ANSWER-1).
+  (LLM-generated from true history, filtered, reviewed) vs **work-auth**
+  (the user's own stored answer only — never LLM-drafted, P2-7) (FR-ANSWER-1).
 * :func:`clamp_aggressiveness` / :data:`AGGRESSIVENESS_*` — the truthful framing
   dial (FR-RESUME-9). The control ships present-but-grayed (FR-UI-2); the backend
   setting is clamped and ready so wiring it live is a UI change only.
@@ -21,7 +22,7 @@ from __future__ import annotations
 import re
 from enum import Enum
 
-from applicant.core.rules.sensitive_fields import is_sensitive_field
+from applicant.core.rules.sensitive_fields import is_sensitive_field, is_work_auth_question
 
 # === cover letters on demand (FR-RESUME-10) ================================
 
@@ -52,6 +53,7 @@ class ScreeningKind(str, Enum):
     FACTUAL = "factual"  # deterministic from the attribute cloud; no fabrication
     ESSAY = "essay"  # LLM-generated from true history; filtered + reviewed
     SENSITIVE = "sensitive"  # EEO/demographic: follow the sensitive-field policy
+    WORK_AUTH = "work_auth"  # work authorization/visa: user's stored answer only (P2-7)
 
 
 #: Cue phrases that mark a long-form / essay question (FR-ANSWER-1). Conservative:
@@ -85,14 +87,12 @@ _ESSAY_CUES: tuple[str, ...] = (
 )
 
 #: Cue phrases that mark a short, factual question answerable from stored data.
+#: Work-authorization cues used to live here too; they now classify WORK_AUTH
+#: (checked first — see ``classify_screening_question``) so they can never be
+#: LLM-drafted (P2-7).
 _FACTUAL_CUES: tuple[str, ...] = (
     "how many years",
     "years of experience",
-    "work authorization",
-    "authorized to work",
-    "require sponsorship",
-    "need sponsorship",
-    "visa",
     # Salary cues are locale-configurable (issue #194); defaults are US/English.
     "salary", "compensation", "desired pay", "expected pay",
     "willing to relocate",
@@ -125,19 +125,25 @@ def _is_eeo_self_identification(text: str) -> bool:
 
 
 def classify_screening_question(question: str) -> ScreeningKind:
-    """Classify a screening question as factual, essay, or sensitive (FR-ANSWER-1).
+    """Classify a screening question: work-auth, essay, sensitive, or factual
+    (FR-ANSWER-1, P2-7).
 
-    Order matters: explicit ESSAY cues win first so a long-form prompt that merely
-    mentions a protected attribute ("How do you foster gender diversity?") routes
-    through review instead of the sensitive-field decline path. Then an actual EEO
-    self-identification FIELD (short label / closed question) is detected, then
-    factual cues. Anything ambiguous defaults to **essay** so it always passes
-    through the truthfulness filters + the review gate rather than being answered
-    blindly.
+    Order matters. WORK-AUTH cues are checked before everything else — even
+    essay cues — because "Describe your work authorization status" must never
+    reach the LLM: an invented "authorized" carries no fact-class tokens, so
+    the fabrication guard could not catch it downstream. Then explicit ESSAY
+    cues win, so a long-form prompt that merely mentions a protected attribute
+    ("How do you foster gender diversity?") routes through review instead of
+    the sensitive-field decline path. Then an actual EEO self-identification
+    FIELD (short label / closed question) is detected, then factual cues.
+    Anything ambiguous defaults to **essay** so it always passes through the
+    truthfulness filters + the review gate rather than being answered blindly.
     """
     text = (question or "").strip().lower()
     if not text:
         return ScreeningKind.ESSAY
+    if is_work_auth_question(text):
+        return ScreeningKind.WORK_AUTH
     if any(cue in text for cue in _ESSAY_CUES):
         return ScreeningKind.ESSAY
     if _is_eeo_self_identification(text):
