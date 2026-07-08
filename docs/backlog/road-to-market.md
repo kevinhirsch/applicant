@@ -84,7 +84,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-10 | ATS-parseability proof | M | eng | — |
 | P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
 | P2-12 | Durability drills | M | eng | — |
-| P2-13 | Source reliability matrix | M | eng | — |
+| P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains |
 | P2-14 | Easy Apply: assisted mode | M | both | — |
 | P3-1 | Install on tested targets | M–L | eng | — |
 | P3-2 | Requirements & model matrix | S–M | eng | — |
@@ -1158,8 +1158,39 @@ offline — each drill passes (restart-survival) or files a bug.
 
 ### P2-13 — Source reliability matrix
 **Effort:** M · **Owner:** eng · **Depends on:** —
+**Status: PARTIAL — hermetic quality matrix + documented expectations done; live board
+coverage confirmation is the remaining live-deploy half.**
 **DoD:** Discovery quality tested across 2–3 regions/categories; per-source health
 surfaced in UI (ties to P1-3); expectations documented.
+- [x] **Discovery quality tested across regions/categories:** a hermetic scenario
+      matrix — US-remote/Software Engineer, UK/Account Executive, Germany/Data
+      Scientist — exercises the real `DiscoveryService` → `JobSpySearxngDiscovery`
+      path per scenario with a deliberately mixed per-source outcome (one board ok,
+      one genuinely empty, one simulated block/error) in the SAME run, asserting
+      normalization/matching carry the region+category through untouched, every
+      queried source's outcome is exactly right, and the outcome round-trips into
+      `discovery_sources.yield_stats.last_run`
+      (`tests/unit/test_p2_13_source_reliability.py`). This is hermetic/code-derived,
+      not a live probe of the real job boards — honestly scoped as such in
+      `docs/discovery-source-reliability.md`.
+- [x] **Per-source health surfaced in UI (ties to P1-3):** already built by H2 —
+      Settings → Job searches shows each source's yield + a highlighted last-run note
+      when it underdelivered (`applicantCampaignSettings.js::_lastRunNote`), and the
+      digest states a shortfall per underdelivering source on every send
+      (`applicantDigest.js`). This story's tests confirm that pipeline holds across
+      the region/category matrix, not just H2's single-scenario case.
+- [x] **Expectations documented:** `docs/discovery-source-reliability.md` — a
+      per-source table (all `jobspy:*` boards, `searxng`, `rss:*`, `sample`) of what
+      each supports, its failure modes, its rate limit (`PerBoardRateLimiter`, 5
+      calls/60s per source key, distinct from the `SourcePacer` per-domain posting
+      spacing), its degradation behavior, and how outcomes surface — plus an explicit
+      "what's static/hermetic vs. real-board-verified" section so the doc never
+      overclaims.
+- [ ] **Live-deploy coverage confirmation:** a `DISCOVERY_LIVE_TEST=1` run of
+      `tests/integration/test_discovery_live.py` (network-gated, skipped by default)
+      plus a manual `DISCOVERY_LIVE=1` deployment check against the real boards for
+      2–3 regions — deferred to the live-deploy pass per
+      `docs/delivery-status.md`'s Phase-2 remaining list; not claimed done here.
 
 ### P2-14 — LinkedIn Easy Apply: assisted mode *(launch feature; parallel track)*
 **Effort:** M · **Owner:** both (you: real aged LinkedIn account; eng: build)
