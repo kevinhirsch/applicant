@@ -80,6 +80,10 @@ def test_tracker_empty_states_carry_the_activity_cta():
     # Both the fetch-level empty state and the board's own inline empty case
     # pass the CTA and wire it.
     assert src.count("_EMPTY_ACTIVITY_CTA_HTML") >= 3  # const + two call sites
+    # The CTA opens Activity via its exported launcher (this modal is not
+    # hash-router-registered, so a bare setHash could dead-end — Greptile on
+    # #747); the hash write remains as fallback.
+    assert "window.applicantActivityModule.openApplicantActivity()" in src
     assert "setHash('activity')" in src
     empty = _fn(src, "_renderEmpty")
     assert "_EMPTY_ACTIVITY_CTA_HTML" in empty and "_wireEmptyActivityCTA" in empty

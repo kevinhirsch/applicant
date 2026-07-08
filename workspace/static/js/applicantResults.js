@@ -312,7 +312,20 @@ function _renderEmpty(host) {
     '<button type="button" class="cal-btn" id="applicant-results-empty-activity">See what I’m working on</button>',
   );
   const btn = host.querySelector('#applicant-results-empty-activity');
-  if (btn) btn.addEventListener('click', () => { _close(); setHash('activity'); });
+  if (btn) btn.addEventListener('click', () => {
+    _close();
+    // Open Activity via its own exported launcher — this modal is not
+    // registered with the hash router, so a bare setHash('activity') from
+    // here can change the URL without opening anything (Greptile on #747);
+    // the hash write stays as the fallback/URL-state keeper.
+    try {
+      if (window.applicantActivityModule && window.applicantActivityModule.openApplicantActivity) {
+        window.applicantActivityModule.openApplicantActivity();
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    setHash('activity');
+  });
 }
 
 // NOTE: the body text below keeps its straight apostrophe ("I'm") deliberately

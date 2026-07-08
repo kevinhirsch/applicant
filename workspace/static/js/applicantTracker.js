@@ -338,7 +338,20 @@ const _EMPTY_ACTIVITY_CTA_HTML =
 
 function _wireEmptyActivityCTA(host) {
   const btn = host.querySelector('#applicant-tracker-empty-activity');
-  if (btn) btn.addEventListener('click', () => { _close(); setHash('activity'); });
+  if (btn) btn.addEventListener('click', () => {
+    _close();
+    // Open Activity via its own exported launcher — this modal is not
+    // registered with the hash router, so a bare setHash('activity') from
+    // here can change the URL without opening anything (Greptile on #747);
+    // the hash write stays as the fallback/URL-state keeper.
+    try {
+      if (window.applicantActivityModule && window.applicantActivityModule.openApplicantActivity) {
+        window.applicantActivityModule.openApplicantActivity();
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    setHash('activity');
+  });
 }
 
 // Designed empty state for a brand-new user: reachable engine + a campaign,
