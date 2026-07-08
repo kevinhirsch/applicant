@@ -128,7 +128,14 @@ else
 fi
 
 log "4/4 Restoring config (.env)"
-bkup_restore_config "${STAGE_DIR}/config" "${ENV_FILE}" "${APPLY}"
+if [[ "${APPLY}" -ne 1 ]]; then
+  # The dry run never extracts the tarball, so the member check inside
+  # bkup_restore_config would always (wrongly) report "no config/.env member" —
+  # preview the action instead, mirroring the DB/workspace steps above.
+  echo "    (would run) install -m 600 ${STAGE_DIR}/config/.env ${ENV_FILE} (or ${ENV_FILE}.restored if it exists)"
+else
+  bkup_restore_config "${STAGE_DIR}/config" "${ENV_FILE}" "${APPLY}"
+fi
 
 if [[ "${APPLY}" -eq 1 ]]; then
   log "Restore complete from ${FROM}."

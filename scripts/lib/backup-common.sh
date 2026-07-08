@@ -35,7 +35,9 @@ bkup_load_env() {
   local env_file="$1"
   [[ -f "${env_file}" ]] || return 0
   local _k _v
-  while IFS='=' read -r _k _v; do
+  # The "|| [[ -n ${_k} ]]" keeps the FINAL line when the file lacks a trailing
+  # newline (read returns non-zero on that partial line but still fills _k/_v).
+  while IFS='=' read -r _k _v || [[ -n "${_k}" ]]; do
     [[ "${_k}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
     [[ -n "${!_k:-}" ]] || export "${_k}=${_v}"
   done <"${env_file}"
@@ -196,7 +198,9 @@ bkup_make_tarball() {
     echo "    (would run) tar -czf ${out_path} -C ${work_dir} ."
     return 0
   fi
-  tar -czf "${out_path}" -C "${work_dir}" .
+  # The tarball bundles config/.env (secrets) + the full DB dump — never let
+  # the process umask leave it group/world-readable on the host.
+  ( umask 077; tar -czf "${out_path}" -C "${work_dir}" . )
 }
 
 # bkup_extract_tarball TARBALL_PATH DEST_DIR APPLY

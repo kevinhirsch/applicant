@@ -81,7 +81,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 [[ -n "${OUTPUT}" ]] || OUTPUT="${BACKUP_DIR}/applicant-full-${TS}.tar.gz"
 
 if [[ "${APPLY}" -eq 1 ]]; then
-  mkdir -p "${BACKUP_DIR}"
+  ( umask 077; mkdir -p "${BACKUP_DIR}" )
   # Same belt-and-suspenders as update.sh: a stray `git add -A` must never
   # commit a backup (these tarballs contain ALL user data).
   if [[ ! -e "${BACKUP_DIR}/.gitignore" ]]; then

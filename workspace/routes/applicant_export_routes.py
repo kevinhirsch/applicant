@@ -133,7 +133,16 @@ def setup_applicant_export_routes() -> APIRouter:
         variants_by_campaign: list[dict] = []
         variant_pdfs: dict[str, bytes] = {}
 
-        async with ApplicantEngineClient() as engine:
+        try:
+            engine_client = ApplicantEngineClient()
+        except Exception as exc:  # construction reads env/config — degrade, don't 500
+            manifest["errors"].append(f"engine client unavailable: {exc}")
+            engine_client = None
+
+        if engine_client is None:
+            campaigns = []
+        else:
+          async with engine_client as engine:
             campaigns = await _owner_campaigns(engine, manifest)
 
             # -- applications: reuse the EXACT tracker-board fan-out (lift-and-

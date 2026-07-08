@@ -384,7 +384,9 @@ prune_backups
 # replacement: the DB-only dump above (and its restore_dump/--rollback path) is
 # untouched and remains the update flow's real migration-safety net. A failure
 # producing the fuller tarball is logged but never aborts the update.
-if ! "${REPO_ROOT}/scripts/backup.sh" $([[ "${APPLY}" -eq 1 ]] && echo --apply) --reuse-db-dump "${DUMP_FILE}"; then
+backup_args=(--reuse-db-dump "${DUMP_FILE}")
+[[ "${APPLY}" -eq 1 ]] && backup_args+=(--apply)
+if ! "${REPO_ROOT}/scripts/backup.sh" "${backup_args[@]}"; then
   echo "Full tarball backup (scripts/backup.sh) failed — continuing; the database dump above is still a valid rollback point." >&2
 fi
 else
