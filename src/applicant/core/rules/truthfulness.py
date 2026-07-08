@@ -482,6 +482,14 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
 #: Quote/apostrophe code points stripped from token edges (straight + curly).
 _QUOTE_CHARS = "'\"\u2018\u2019\u201c\u201d"
 
+#: Word split for free-prose checking: whitespace/punctuation AND hyphens +
+#: markdown markers (*`~_|<>#), shared by the prose checker and the provenance
+#: attribution so the two can never tokenize differently.
+_PROSE_WORD_SPLIT_RE = re.compile(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+")
+
+#: Contraction split ("I've"/"it's" never read as proper nouns).
+_CONTRACTION_SPLIT_RE = re.compile(r"['\u2019\u2018]")
+
 
 def _prose_source_tokens(true_text: str) -> frozenset[str]:
     """Lenient source-token set for free-prose checking.
@@ -549,8 +557,8 @@ def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
         # Split on whitespace/punctuation AND hyphens + markdown markers (*`~_|<>#),
         # so "LLM-powered" matches the hyphen-split source and "**Subject**" sheds its
         # bold markers instead of reading as a fabricated proper noun.
-        for raw in re.split(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+", sentence):
-            for piece in re.split(r"['’‘]", raw):  # split contractions
+        for raw in _PROSE_WORD_SPLIT_RE.split(sentence):
+            for piece in _CONTRACTION_SPLIT_RE.split(raw):  # split contractions
                 word = piece.strip(_QUOTE_CHARS)
                 if not word:
                     continue
@@ -705,15 +713,47 @@ class LineProvenance:
     facts: tuple[FactTrace, ...] = ()
 
 
-def _claim_tokens_in_line(line: str, *, prose: bool) -> list[str]:
-    """All checkable fact-class tokens in ``line``, in order of appearance.
+def _line_words(line: str, *, prose: bool) -> frozenset[str]:
+    """Every word token on ``line``, split exactly as the matching checker splits.
 
-    Runs the SAME extraction the fabrication checkers run — with an empty
-    source, every checkable token is "unsupported", i.e. the full claim-token
-    list — so provenance tracing inspects exactly the tokens the guard would.
+    Attribution only — no claim-shape filtering happens here (that already ran
+    document-wide), so a token the guard extracted is found on its line even
+    when the line, read in isolation, would misclassify it.
     """
-    checker = unsupported_prose_claims if prose else unsupported_claims
-    return checker("", line)
+    if not prose:
+        return frozenset(candidate_claim_tokens(line))
+    words: set[str] = set()
+    for raw in _PROSE_WORD_SPLIT_RE.split(line):
+        for piece in _CONTRACTION_SPLIT_RE.split(raw):
+            word = piece.strip(_QUOTE_CHARS)
+            if word:
+                words.add(word)
+    return frozenset(words)
+
+
+def _claim_tokens_in_line(line: str, doc_tokens: list[str], *, prose: bool) -> list[str]:
+    """The document-extracted claim tokens that occur on ``line``.
+
+    ``doc_tokens`` is the checker's SINGLE pass over the whole document (empty
+    source ⇒ every checkable token), so extraction shares the guard's sentence
+    state; this helper only ATTRIBUTES each extracted token to the lines it
+    appears on. Re-running the extractor per isolated line (the old approach)
+    reset sentence-initial state at every newline, so a proper noun that a
+    wrapped sentence pushed to the start of a line ("I worked at\\nStanford.")
+    read as sentence-initial grammar and vanished from the per-line view even
+    while the document-level guard flagged it.
+    """
+    words = _line_words(line, prose=prose)
+    out: list[str] = []
+    for token in doc_tokens:
+        if any(c.isdigit() for c in token):
+            # Figures are regex-extracted spans ("40,000"), which a word split
+            # would shred — locate them on the line with the same regex.
+            if any(m.group(0).strip() == token for m in _NUM_TOKEN_RE.finditer(line)):
+                out.append(token)
+        elif token in words:
+            out.append(token)
+    return out
 
 
 def _component_supports(text: str, token: str, *, prose: bool) -> bool:
@@ -748,13 +788,18 @@ def trace_line_provenance(
     # the document-level set (not a per-line re-check) keeps this view exactly
     # consistent with ``flagged_facts_for_document`` / ``assert_no_fabrication``.
     unsourced = set(checker(combined, generated))
+    # The full claim-token list, extracted ONCE over the whole document (empty
+    # source ⇒ every checkable token is "unsupported") so sentence state spans
+    # newlines exactly as it does in the guard's own pass; each line below only
+    # attributes these tokens, never re-extracts.
+    doc_tokens = checker("", generated)
     out: list[LineProvenance] = []
     for line in generated.splitlines():
         if not line.strip():
             continue
         facts: list[FactTrace] = []
         seen: set[str] = set()
-        for token in _claim_tokens_in_line(line, prose=prose):
+        for token in _claim_tokens_in_line(line, doc_tokens, prose=prose):
             if token in seen:
                 continue
             seen.add(token)

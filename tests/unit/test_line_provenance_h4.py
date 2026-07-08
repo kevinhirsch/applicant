@@ -87,6 +87,23 @@ class TestTraceLineProvenance:
         facts = {f.token: f for f in out[0].facts}
         assert facts["kubernetes"].unsourced
 
+    def test_wrapped_sentence_still_surfaces_the_flagged_proper_noun(self) -> None:
+        # A prose sentence wrapped across a newline pushes the proper noun to the
+        # start of a LINE without starting a SENTENCE. The document-level guard
+        # flags it; the per-line provenance view must agree — a per-line re-run of
+        # the extractor would reset sentence-initial state and silently drop it.
+        generated = "I worked at\nStanford."
+        combined = "\n".join(text for _, text in SOURCES)
+        guard = set(unsupported_prose_claims(combined, generated))
+        assert "Stanford" in guard  # the guard flags the wrapped proper noun
+        out = trace_line_provenance(SOURCES, generated, prose=True)
+        by_line = {lp.line: {f.token: f for f in lp.facts} for lp in out}
+        # ...and the provenance view lists it, unsourced, on its own line.
+        assert "Stanford" in by_line["Stanford."]
+        assert by_line["Stanford."]["Stanford"].unsourced
+        traced_unsourced = {f.token for lp in out for f in lp.facts if f.unsourced}
+        assert traced_unsourced == guard
+
     def test_empty_generated_returns_nothing(self) -> None:
         assert trace_line_provenance(SOURCES, "", prose=True) == ()
 
