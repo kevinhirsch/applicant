@@ -193,6 +193,48 @@ def test_flagged_facts_unknown_document_is_404(client):
     assert res.status_code == 404
 
 
+def test_line_provenance_traces_lines_and_flags_unsourced(client):
+    """H4 visible provenance: the read-only per-line trace names which profile
+    attribute supports each fact-class token, and returns tokens tracing to
+    nothing as ``unsourced`` — flagged, never hidden. Same matchers as
+    ``/flagged-facts`` so the two reads always agree."""
+    cid, aid = "camp-prov-1", "app-prov-1"
+    _seed_profile(client, cid)  # Python / SQL / data pipelines, no Kubernetes
+    made = client.post(
+        "/api/documents/screening-answer",
+        json={
+            "campaign_id": cid,
+            "application_id": aid,
+            "question": "Describe your proudest project.",
+            "true_source": "I built data pipelines and deployed them on Kubernetes.",
+            "essay": True,
+        },
+    )
+    assert made.status_code == 201
+    doc_id = made.json()["id"]
+    res = client.get(f"/api/documents/{doc_id}/provenance")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["document_id"] == doc_id
+    assert body["campaign_id"] == cid
+    assert body["type"] == "screening_answer"
+    assert body["checked"] is True
+    assert isinstance(body["lines"], list)
+    for line in body["lines"]:
+        assert "line" in line
+        for fact in line["facts"]:
+            assert "token" in fact and "sources" in fact
+    # The unsourced set is exactly the flagged-facts set (they may both be
+    # empty for a fully-grounded draft — equality is the invariant).
+    flagged = client.get(f"/api/documents/{doc_id}/flagged-facts").json()["flagged"]
+    assert set(body["unsourced"]) == set(flagged)
+
+
+def test_line_provenance_unknown_document_is_404(client):
+    res = client.get("/api/documents/no-such-doc/provenance")
+    assert res.status_code == 404
+
+
 def test_invalid_turn_kind_is_422(client):
     cid, aid = "camp-docs-3", "app-docs-3"
     made = client.post(

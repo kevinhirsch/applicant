@@ -482,6 +482,14 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
 #: Quote/apostrophe code points stripped from token edges (straight + curly).
 _QUOTE_CHARS = "'\"\u2018\u2019\u201c\u201d"
 
+#: Word split for free-prose checking: whitespace/punctuation AND hyphens +
+#: markdown markers (*`~_|<>#), shared by the prose checker and the provenance
+#: attribution so the two can never tokenize differently.
+_PROSE_WORD_SPLIT_RE = re.compile(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+")
+
+#: Contraction split ("I've"/"it's" never read as proper nouns).
+_CONTRACTION_SPLIT_RE = re.compile(r"['\u2019\u2018]")
+
 
 def _prose_source_tokens(true_text: str) -> frozenset[str]:
     """Lenient source-token set for free-prose checking.
@@ -549,8 +557,8 @@ def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
         # Split on whitespace/punctuation AND hyphens + markdown markers (*`~_|<>#),
         # so "LLM-powered" matches the hyphen-split source and "**Subject**" sheds its
         # bold markers instead of reading as a fabricated proper noun.
-        for raw in re.split(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+", sentence):
-            for piece in re.split(r"['’‘]", raw):  # split contractions
+        for raw in _PROSE_WORD_SPLIT_RE.split(sentence):
+            for piece in _CONTRACTION_SPLIT_RE.split(raw):  # split contractions
                 word = piece.strip(_QUOTE_CHARS)
                 if not word:
                     continue
@@ -666,3 +674,190 @@ def policy_blocks(flagged: list[str], policy: TruthPolicy) -> bool:
     if not flagged:
         return False
     return policy is TruthPolicy.STRICT
+
+
+# === visible provenance (H4) ==============================================
+#
+# The fabrication guard already decides WHETHER a generated fact traces to the
+# candidate's real history; H4 makes that decision LEGIBLE at review time — for
+# each line of a generated document, WHICH ground-truth source (which profile
+# attribute, the base résumé, the job posting being addressed) supports each
+# fact-class token, and which tokens trace to nothing (unsourced ⇒ flagged, not
+# hidden). Pure, deterministic re-use of the same tokenizers/matchers the guard
+# itself runs, so the provenance view can never disagree with the guard.
+
+
+@dataclass(frozen=True)
+class FactTrace:
+    """One fact-class token on a generated line and the sources that support it.
+
+    ``sources`` holds the labels of the ground-truth components (a profile
+    attribute, the base résumé, the posting context) containing the token; empty
+    means the token traces to NOTHING the candidate provided — unsourced, to be
+    flagged in review (H4), never hidden.
+    """
+
+    token: str
+    sources: tuple[str, ...] = ()
+
+    @property
+    def unsourced(self) -> bool:
+        return not self.sources
+
+
+@dataclass(frozen=True)
+class LineProvenance:
+    """Provenance of one generated line: its fact-class tokens, each traced."""
+
+    line: str
+    facts: tuple[FactTrace, ...] = ()
+
+
+def _line_words(line: str, *, prose: bool) -> frozenset[str]:
+    """Every word token on ``line``, split exactly as the matching checker splits.
+
+    Attribution only — no claim-shape filtering happens here (that already ran
+    document-wide), so a token the guard extracted is found on its line even
+    when the line, read in isolation, would misclassify it.
+    """
+    if not prose:
+        return frozenset(candidate_claim_tokens(line))
+    words: set[str] = set()
+    for raw in _PROSE_WORD_SPLIT_RE.split(line):
+        for piece in _CONTRACTION_SPLIT_RE.split(raw):
+            word = piece.strip(_QUOTE_CHARS)
+            if word:
+                words.add(word)
+    return frozenset(words)
+
+
+def _claim_tokens_in_line(line: str, doc_tokens: list[str], *, prose: bool) -> list[str]:
+    """The document-extracted claim tokens that occur on ``line``.
+
+    ``doc_tokens`` is the checker's SINGLE pass over the whole document (empty
+    source ⇒ every checkable token), so extraction shares the guard's sentence
+    state; this helper only ATTRIBUTES each extracted token to the lines it
+    appears on. Re-running the extractor per isolated line (the old approach)
+    reset sentence-initial state at every newline, so a proper noun that a
+    wrapped sentence pushed to the start of a line ("I worked at\\nStanford.")
+    read as sentence-initial grammar and vanished from the per-line view even
+    while the document-level guard flagged it.
+    """
+    words = _line_words(line, prose=prose)
+    out: list[str] = []
+    for token in doc_tokens:
+        if any(c.isdigit() for c in token):
+            # Figures are regex-extracted spans ("40,000"), which a word split
+            # would shred — locate them on the line with the same regex.
+            if any(m.group(0).strip() == token for m in _NUM_TOKEN_RE.finditer(line)):
+                out.append(token)
+        elif token in words:
+            out.append(token)
+    return out
+
+
+def _sentence_initial_sourced_tokens(
+    generated: str, sources: list[tuple[str, str]], skip: set[str]
+) -> list[str]:
+    """Sentence-initial entity-shaped tokens that trace to a source (prose only).
+
+    The prose guard deliberately reads a sentence-initial capital as grammar,
+    never a claim — right for FLAGGING (an ordinary sentence start must not
+    read as a fabrication), but the provenance view also wants to SHOW support
+    for a real detail the writer happened to lead a sentence with ("Python
+    powered the migration."). This walks sentences exactly as the checker does,
+    keeps only the first word when it would be entity-shaped mid-sentence, and
+    returns it only when a source actually supports it — an unsupported
+    sentence starter stays grammar (excluded), so the unsourced set still
+    matches the guard's flag set exactly.
+    """
+    out: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", generated):
+        first_word = ""
+        for raw in _PROSE_WORD_SPLIT_RE.split(sentence):
+            for piece in _CONTRACTION_SPLIT_RE.split(raw):
+                word = piece.strip(_QUOTE_CHARS)
+                if word:
+                    first_word = word
+                    break
+            if first_word:
+                break
+        word = first_word
+        if (
+            len(word) < 2
+            or word.lower() in _NON_CLAIM
+            or any(c.isdigit() for c in word)
+            or word in skip
+            or word in out
+            or not _is_entity_shaped(word, sentence_initial=False)
+        ):
+            continue
+        if any(_component_supports(text, word, prose=True) for _, text in sources):
+            out.append(word)
+    return out
+
+
+def _component_supports(text: str, token: str, *, prose: bool) -> bool:
+    """Whole-token (or numeric-value) support of ``token`` by one source text."""
+    if any(c.isdigit() for c in token):
+        value = _number_value(token)
+        return value is not None and value in _numeric_values(text)
+    low = token.lower()
+    if prose:
+        toks = _prose_source_tokens(text)
+        return low in toks or (low.endswith("s") and low[:-1] in toks)
+    return low in _source_token_set(text)
+
+
+def trace_line_provenance(
+    sources: list[tuple[str, str]], generated: str, *, prose: bool = False
+) -> tuple[LineProvenance, ...]:
+    """Trace each line of ``generated`` back to labelled ground-truth sources (H4).
+
+    ``sources`` is ``[(label, text), ...]`` — the candidate's real history broken
+    into its named components (each profile attribute, the base résumé, the
+    posting context). For every non-empty line the fact-class tokens are
+    extracted with the same tokenizer the fabrication guard uses (``prose``
+    selects the cover-letter/essay entity-shaped check), and each token is
+    matched against each component: the result names WHICH source supports it,
+    or leaves ``sources`` empty when nothing does (unsourced ⇒ the review UI
+    flags it, mirroring the guard's own flag set). Deterministic; no I/O.
+    """
+    checker = unsupported_prose_claims if prose else unsupported_claims
+    combined = "\n".join(text for _, text in sources)
+    # The guard's own document-level verdict: tokens tracing to nothing. Using
+    # the document-level set (not a per-line re-check) keeps this view exactly
+    # consistent with ``flagged_facts_for_document`` / ``assert_no_fabrication``.
+    unsourced = set(checker(combined, generated))
+    # The full claim-token list, extracted ONCE over the whole document (empty
+    # source ⇒ every checkable token is "unsupported") so sentence state spans
+    # newlines exactly as it does in the guard's own pass; each line below only
+    # attributes these tokens, never re-extracts.
+    doc_tokens = checker("", generated)
+    if prose:
+        # Sentence-initial sourced details ("Python powered the migration."):
+        # shown WITH their source, never flagged — see the helper's docstring.
+        doc_tokens = doc_tokens + _sentence_initial_sourced_tokens(
+            generated, sources, skip=set(doc_tokens) | unsourced
+        )
+    out: list[LineProvenance] = []
+    for line in generated.splitlines():
+        if not line.strip():
+            continue
+        facts: list[FactTrace] = []
+        seen: set[str] = set()
+        for token in _claim_tokens_in_line(line, doc_tokens, prose=prose):
+            if token in seen:
+                continue
+            seen.add(token)
+            if token in unsourced:
+                facts.append(FactTrace(token=token))
+                continue
+            supporting = tuple(
+                label
+                for label, text in sources
+                if _component_supports(text, token, prose=prose)
+            )
+            facts.append(FactTrace(token=token, sources=supporting))
+        out.append(LineProvenance(line=line, facts=tuple(facts)))
+    return tuple(out)

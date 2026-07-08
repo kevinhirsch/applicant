@@ -672,6 +672,16 @@ class ApplicantEngineClient:
             "GET", f"/api/documents/{document_id}/flagged-facts"
         )
 
+    async def document_provenance(self, document_id: str) -> Any:
+        """Per-line provenance for a generated draft (H4 visible provenance;
+        engine ``GET /api/documents/{id}/provenance``). Read-only trace of each
+        line's fact-class tokens back to the named ground-truth source (a profile
+        attribute, the base résumé, the target posting) — unsourced tokens come
+        back flagged, never hidden."""
+        return await self._request(
+            "GET", f"/api/documents/{document_id}/provenance"
+        )
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 

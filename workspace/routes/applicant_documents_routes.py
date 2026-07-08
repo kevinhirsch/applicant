@@ -313,6 +313,37 @@ def setup_applicant_documents_routes() -> APIRouter:
             )
         return JSONResponse(content=data)
 
+    @router.get("/{document_id}/provenance")
+    async def line_provenance(document_id: str, request: Request) -> JSONResponse:
+        """Per-line provenance of a generated draft (H4 — visible provenance;
+        engine ``GET /api/documents/{id}/provenance``).
+
+        The review panel's "where this came from" view: each line's fact-class
+        specifics traced to the NAMED source that supports them — a profile
+        attribute, the base résumé, the posting being addressed — with unsourced
+        specifics flagged rather than hidden. Provenance names the owner's
+        profile attributes and résumé content — owner data on the single-tenant
+        engine — so this read is gated with ``require_engine_owner`` (like the
+        flagged-facts read above), not plain ``require_user``. On an engine
+        error it degrades to ``checked: false`` WITH a reason — the absence of
+        the check is said out loud, never rendered as a clean check (H-series)."""
+        require_engine_owner(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.document_provenance(document_id)
+        except EngineError as exc:
+            logger.info("applicant provenance unavailable: %s", exc)
+            return JSONResponse(
+                content={
+                    "document_id": document_id,
+                    "checked": False,
+                    "reason": "I couldn't check where this draft's details came from just now.",
+                    "lines": [],
+                    "unsourced": [],
+                }
+            )
+        return JSONResponse(content=data)
+
     @router.get("/jd-match/{application_id}")
     async def jd_match(application_id: str, request: Request) -> JSONResponse:
         """Résumé <-> job-posting keyword match score for the redline surface
