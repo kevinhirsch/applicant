@@ -7,8 +7,10 @@ the operator UI onto the white-labeled workspace app plus a reachability re-audi
 first slice of the **founder-trust track** (road-to-market Phase 1.5: truth policy,
 parse-verify, honest wizard surfacing — see the section below). The engine's hermetic
 lane is green — **3,794 passed** (2026-07-07, the unreachable-`DATABASE_URL` command in
-`CLAUDE.md`) with 26 integration-gated skips on the full lane (count guarded by a
-meta-test).
+`CLAUDE.md`) with 30 integration-gated skips on the full lane (count guarded by a
+meta-test; P2-10's ATS-parseability proof harness added 2 new real-render integration
+tests, each carrying a `@pytest.mark.skipif` guard plus an in-body `pytest.skip(...)`
+fallback for "binary present but non-functional").
 
 > **Done means reachable.** A requirement is delivered only when it is reachable/operable
 > in the white-labeled workspace **front door** (`workspace/`), not merely when the engine
@@ -53,7 +55,7 @@ for the bug ledger. It also closed the cross-user isolation thread (single-tenan
 The **3704 hermetic engine tests prove the logic** of every requirement against fakes / in-memory
 adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
 conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
-the **26 integration-gated skips** cover those and run only on a live deployment with the
+the **30 integration-gated skips** cover those and run only on a live deployment with the
 matching toolchain/service present (live Postgres/DBOS, a real browser + chromium binary,
 live job boards, real TeX/LibreOffice, a live Neko session, live Discord/SMTP). The
 production code paths for those boundaries exist and are wired — only their live execution is
@@ -262,6 +264,14 @@ in the same session and is recorded in the founder-trust track below):
   Write-up in `docs/security-review.md`; two deferred low/unreachable dep bumps as known-issues K7.
 - **Phase 0 close-out (PR #759).** P0-2 (seeded demo mode) was fully built + merged earlier
   (#731) but unmarked — flipped to DONE; fixed the P2-3 index-row drift.
+- **P2-13 — source reliability matrix (PR TBD).** Hermetic region/category discovery-quality
+  matrix (`tests/unit/test_p2_13_source_reliability.py`) exercising the real
+  `DiscoveryService`/`JobSpySearxngDiscovery` path with a mixed per-source outcome (ok/empty/
+  simulated-error) in the same run across three region+category scenarios; per-source
+  reliability doc (`docs/discovery-source-reliability.md`) covering every registered source's
+  regions/categories, failure modes, rate limits, and how outcomes surface, plus an explicit
+  static-vs-live verification-level note. Per-source health-in-UI was already reachable via H2;
+  live board-coverage confirmation remains (below) — flipped to PARTIAL, not DONE.
 
 **Backlog reconciliation finding:** several stories are *further along than their status
 showed* — built (often by the concurrent lane, or for older issues) but never marked done.
@@ -275,8 +285,9 @@ blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lan
 
 **Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy), P2-4 (license/#722),
 P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account); live-deploy — P2-10 (ATS-parse),
-P2-12 (durability drills), P2-13 (source-reliability matrix). The cleanly-hermetic Phase-2
-eng lane is otherwise complete.
+P2-12 (durability drills), P2-13's live board-coverage confirmation (the hermetic quality-matrix +
+documentation half of P2-13 is now done, above). The cleanly-hermetic Phase-2 eng lane is otherwise
+complete.
 
 ### Founder-trust track — first slice (road-to-market Phase 1.5)
 

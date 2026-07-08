@@ -2711,69 +2711,12 @@ function _boot() {
   refreshBadge();
   if (_badgePollStop) { _badgePollStop(); _badgePollStop = null; }
   _badgePollStop = pollVisible(refreshBadge, BADGE_POLL_MS);
-  _autoLandOnToday();
-}
-
-// Post-login HOME BASE: on a cold load, greet the user at Today (the Portal),
-// not the bare chat shell they'd otherwise restore into. Guarded so it never
-// fights a deliberate deep link and never races the onboarding wizard:
-//   · a surface deep-link hash (#chat / #compare / #settings / …) owns the
-//     screen — the hash router will open it, so we stand down;
-//   · the onboarding wizard, when it shows, simply stacks ABOVE Today and
-//     reveals it on dismiss (it also hands off to the Portal on completion),
-//     so opening Today underneath is exactly the home base we want behind it.
-// Fires once, after a short settle so the hash router + module wiring exist.
-let _autoLandedOnToday = false;
-const _LAND_SURFACES = ['chat', 'compare', 'debug', 'gallery', 'mind', 'results',
-  'activity', 'portal', 'today', 'settings', 'tracker', 'memory', 'email',
-  'calendar', 'library', 'archive'];
-function _onboardingUp() {
-  const o = document.getElementById('applicant-onboarding-overlay');
-  return !!(o && o.offsetParent !== null && !o.classList.contains('hidden'));
-}
-function _landNow() {
-  try {
-    // A named surface deep-link means the user asked for something specific —
-    // respect it and don't override with the home base.
-    const hash = (window.location.hash || '').replace(/^#/, '').trim();
-    if (_LAND_SURFACES.includes(hash)) return;
-    // Only land on the BARE shell. If the user already opened a window in the
-    // settle window (Settings, a chat, another surface) — or the Portal itself
-    // is already up — don't pop Today on top of it.
-    const otherOpen = [...document.querySelectorAll('.modal')].some((m) => {
-      if (m.id === 'applicant-onboarding-overlay') return false;
-      const s = getComputedStyle(m);
-      return s.display !== 'none' && !m.classList.contains('hidden') && m.offsetParent !== null;
-    });
-    if (otherOpen) return;
-    openApplicantPortal({ skipHashUpdate: true });
-  } catch { /* best-effort landing — never block boot */ }
-}
-function _autoLandOnToday() {
-  if (_autoLandedOnToday) return;
-  _autoLandedOnToday = true;
-  // The onboarding wizard mounts asynchronously (it probes engine status first),
-  // so its timing races a fixed delay. Watch instead: never open Today WHILE the
-  // wizard is up (a single Escape would then close both, dropping the user on the
-  // bare chat), and land the moment it's absent — including RE-landing if the
-  // wizard pops up late and then closes. _landNow() is idempotent (skips a deep
-  // link or an already-open Portal), so re-calling it is safe.
-  let sawOnboarding = false;
-  let ticks = 0;
-  const iv = setInterval(() => {
-    ticks += 1;
-    // While the wizard owns the screen, wait — never land underneath it.
-    if (_onboardingUp()) { sawOnboarding = true; return; }
-    // Land exactly ONCE, the first moment it's safe: either the wizard has been
-    // seen and is now gone, or ~4s passed with no wizard (setup complete — its
-    // async status probe resolves well inside that window, so we never land only
-    // to have the wizard mount on top a beat later). _landNow() itself no-ops if
-    // the user already opened a surface, so a single attempt is correct.
-    if (sawOnboarding || ticks >= 16) {
-      clearInterval(iv);
-      _landNow();
-    }
-  }, 250);
+  // Note: the redundant boot-time "auto-land on Today" watcher added in PR #640
+  // was retired with the 3-pane shell (P0-3). The gadget rail now surfaces the
+  // Today state permanently as the third pane, so there is no need for a second
+  // setInterval watcher popping the Portal modal on top of the shell at boot.
+  // The single home-base landing that remains lives in app.js's onboarding chain
+  // (guarded against deep links); this file no longer duplicates it.
 }
 
 if (document.readyState === 'loading') {
