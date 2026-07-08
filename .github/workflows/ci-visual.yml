@@ -1,0 +1,100 @@
+# Visual Lane (P0-6) — the screenshot-matrix regression harness
+# (workspace/tests/visual/run.js): boots the front-door hermetically (fresh
+# SQLite, engine offline on purpose), walks login → Today → each nav section →
+# Settings groups → theme picker → wizard steps → the P0-3 rail states at
+# 1440×900 and 1024×768 under the white-glass and dark themes, runs the
+# off-screen/overflow layout detectors on every state, and pixel-compares
+# against the committed baselines. Any diff fails the run and uploads the
+# diff images as an artifact; `--bless` (run locally) is the only way to
+# accept a change.
+#
+# ON-DEMAND, NOT A PER-PR GATE — deliberately, and honestly:
+# pixel-exact baselines are rendering-environment-sensitive (font stack,
+# glyph rasterization, GPU-less compositing), so a baseline blessed on a dev
+# box only reproduces bit-for-bit in an equivalent environment. On a hosted
+# runner the first run may therefore diff on text antialiasing alone; that is
+# environment drift, not a product regression. Until the lane is pinned to
+# the same container the baselines are blessed in, wiring it into the per-PR
+# gate would add a flaky check — the pre-push green gate (CLAUDE.md) is where
+# the harness runs authoritatively today. The determinism contract (two
+# consecutive runs on ONE machine ⇒ zero diff) is machine-independent and is
+# what this lane still proves: it always runs the walk twice and requires the
+# second run to be pixel-identical to the first.
+name: Visual Lane
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Optional state-name regex (e.g. rail-.*) to run a subset"
+        required: false
+        default: ""
+
+concurrency:
+  group: visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv (Python 3.12 toolchain)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync engine deps + vendored front-door deps
+        run: |
+          uv sync
+          uv pip install -r workspace/requirements.txt
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright + Chromium
+        run: |
+          npm install -g playwright@1.56.1
+          npx playwright@1.56.1 install --with-deps chromium
+
+      # Pass 1: bless into a scratch dir? No — compare against the committed
+      # baselines first so a REAL regression on an equivalent environment is
+      # caught; keep going either way so pass 2 can prove determinism.
+      - name: Visual walk vs committed baselines
+        id: walk
+        continue-on-error: true
+        run: |
+          node workspace/tests/visual/run.js ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+      - name: Stash run-1 output
+        run: mv workspace/tests/visual/.out /tmp/visual-run-1
+
+      # Pass 2: an identical fresh run — MUST be pixel-identical to pass 1
+      # (the determinism contract). This check is environment-independent.
+      - name: Determinism proof (second run, zero diff vs first)
+        run: |
+          rm -rf workspace/tests/visual/baselines
+          mkdir -p workspace/tests/visual/baselines
+          cp -r /tmp/visual-run-1/current/* workspace/tests/visual/baselines/
+          node workspace/tests/visual/run.js ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+
+      - name: Upload screenshots + diffs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-run
+          path: |
+            /tmp/visual-run-1
+            workspace/tests/visual/.out
+          retention-days: 14
+
+      - name: Fail if baseline comparison diffed
+        if: steps.walk.outcome == 'failure'
+        run: |
+          echo "::error::Visual walk diverged from the committed baselines — inspect the visual-run artifact. If the environment (not the product) changed, re-bless locally with --bless."
+          exit 1
