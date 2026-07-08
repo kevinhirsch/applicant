@@ -49,6 +49,7 @@ bkup_load_env "${ENV_FILE}"
 
 DB_SERVICE="postgres"
 UI_SERVICE="applicant-ui"
+API_SERVICE="api"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
 
@@ -98,9 +99,10 @@ fi
 
 HAS_DB=0
 HAS_WORKSPACE=0
+HAS_SECRETS=0
 HAS_CONFIG=0
 
-log "1/4 Postgres dump"
+log "1/5 Postgres dump"
 if [[ -n "${REUSE_DB_DUMP}" ]]; then
   if [[ -s "${REUSE_DB_DUMP}" ]]; then
     log "    reusing an already-taken dump: ${REUSE_DB_DUMP}"
@@ -126,23 +128,30 @@ if [[ "${HAS_DB}" -ne 1 ]]; then
   fi
 fi
 
-log "2/4 Workspace data/ (front-door UI)"
+log "2/5 Workspace data/ (front-door UI)"
 if bkup_export_workspace_data "${COMPOSE_FILE}" "${UI_SERVICE}" "${WORK_DIR}/workspace-data.tar.gz" "${APPLY}"; then
   HAS_WORKSPACE=1
 else
   echo "    (warn) workspace data export failed (is the applicant-ui container up?) — the backup will NOT include workspace-data.tar.gz." >&2
 fi
 
-log "3/4 Config (.env)"
+log "3/5 Engine secrets (credential vault master key)"
+if bkup_export_engine_secrets "${COMPOSE_FILE}" "${API_SERVICE}" "${WORK_DIR}/engine-secrets.tar.gz" "${APPLY}"; then
+  HAS_SECRETS=1
+else
+  echo "    (warn) engine secrets export failed — the backup will NOT include the credential vault key; sealed credentials in db.sql cannot be decrypted from this backup after a volume wipe." >&2
+fi
+
+log "4/5 Config (.env)"
 if bkup_collect_config "${ENV_FILE}" "${WORK_DIR}/config" "${APPLY}"; then
   [[ -f "${ENV_FILE}" ]] && HAS_CONFIG=1
 fi
 
-log "4/4 Assembling one tarball -> ${OUTPUT}"
+log "5/5 Assembling one tarball -> ${OUTPUT}"
 if [[ "${APPLY}" -eq 1 ]]; then
-  bkup_write_manifest "${WORK_DIR}/MANIFEST.txt" "${HAS_DB}" "${HAS_WORKSPACE}" "${HAS_CONFIG}"
+  bkup_write_manifest "${WORK_DIR}/MANIFEST.txt" "${HAS_DB}" "${HAS_WORKSPACE}" "${HAS_CONFIG}" "${HAS_SECRETS}"
 else
-  echo "    (would run) write MANIFEST.txt (db=${HAS_DB} workspace=${HAS_WORKSPACE} config=${HAS_CONFIG})"
+  echo "    (would run) write MANIFEST.txt (db=${HAS_DB} workspace=${HAS_WORKSPACE} secrets=${HAS_SECRETS} config=${HAS_CONFIG})"
 fi
 bkup_make_tarball "${OUTPUT}" "${WORK_DIR}" "${APPLY}"
 
@@ -154,6 +163,9 @@ if [[ "${APPLY}" -eq 1 ]]; then
   log "Backup complete: ${OUTPUT} ($(wc -c <"${OUTPUT}") bytes)."
   if [[ "${HAS_DB}" -ne 1 ]]; then
     echo "WARNING: this backup has NO Postgres dump — it cannot restore the database." >&2
+  fi
+  if [[ "${HAS_SECRETS}" -ne 1 ]]; then
+    echo "WARNING: this backup has NO credential vault key — after a volume wipe, sealed credentials restored from db.sql cannot be decrypted." >&2
   fi
 
   # Retention: keep only the newest BACKUP_KEEP_COUNT full tarballs (issue #282

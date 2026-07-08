@@ -60,6 +60,7 @@ bkup_load_env "${ENV_FILE}"
 
 DB_SERVICE="postgres"
 UI_SERVICE="applicant-ui"
+API_SERVICE="api"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
 
@@ -103,7 +104,7 @@ else
   STAGE_DIR="${BACKUP_DIR}/.dry-run-restore-preview"
 fi
 
-log "1/4 Extracting ${FROM}"
+log "1/5 Extracting ${FROM}"
 bkup_extract_tarball "${FROM}" "${STAGE_DIR}" "${APPLY}"
 
 if [[ "${APPLY}" -eq 1 && -f "${STAGE_DIR}/MANIFEST.txt" ]]; then
@@ -111,7 +112,7 @@ if [[ "${APPLY}" -eq 1 && -f "${STAGE_DIR}/MANIFEST.txt" ]]; then
   sed 's/^/    /' "${STAGE_DIR}/MANIFEST.txt"
 fi
 
-log "2/4 Restoring the Postgres database"
+log "2/5 Restoring the Postgres database"
 if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/db.sql" ]]; then
   echo "    (skip) this backup has no db.sql member — nothing to restore into Postgres." >&2
 else
@@ -119,7 +120,7 @@ else
     "${STAGE_DIR}/db.sql" "${APPLY}"
 fi
 
-log "3/4 Restoring workspace data/ (front-door UI)"
+log "3/5 Restoring workspace data/ (front-door UI)"
 if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/workspace-data.tar.gz" ]]; then
   echo "    (skip) this backup has no workspace-data.tar.gz member." >&2
 else
@@ -127,7 +128,15 @@ else
     "${STAGE_DIR}/workspace-data.tar.gz" "${APPLY}"
 fi
 
-log "4/4 Restoring config (.env)"
+log "4/5 Restoring engine secrets (credential vault master key)"
+if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/engine-secrets.tar.gz" ]]; then
+  echo "    (skip) this backup has no engine-secrets.tar.gz member — sealed credentials in the restored database CANNOT be decrypted; re-enter provider keys in Settings." >&2
+else
+  bkup_restore_engine_secrets "${COMPOSE_FILE}" "${API_SERVICE}" \
+    "${STAGE_DIR}/engine-secrets.tar.gz" "${APPLY}"
+fi
+
+log "5/5 Restoring config (.env)"
 if [[ "${APPLY}" -ne 1 ]]; then
   # The dry run never extracts the tarball, so the member check inside
   # bkup_restore_config would always (wrongly) report "no config/.env member" —

@@ -65,7 +65,15 @@ def test_apply_produces_one_tarball_with_expected_members(tmp_path):
         names = set(tf.getnames())
         assert "./db.sql" in names or "db.sql" in names
         assert "./workspace-data.tar.gz" in names or "workspace-data.tar.gz" in names
+        # The credential vault master key MUST ride along: without it, sealed
+        # credentials in the restored db.sql are permanently undecryptable
+        # after a volume wipe (Greptile finding on #736).
+        assert "./engine-secrets.tar.gz" in names or "engine-secrets.tar.gz" in names
         assert "./MANIFEST.txt" in names or "MANIFEST.txt" in names
+        manifest = tf.extractfile(
+            [n for n in tf.getnames() if n.endswith("MANIFEST.txt")][0]
+        ).read().decode("utf-8")
+        assert "credential vault master key: present" in manifest
         db_member = tf.extractfile([n for n in tf.getnames() if n.endswith("db.sql")][0])
         assert db_member.read().decode("utf-8").strip() == "-- fake dump body"
         ws_member = tf.extractfile([n for n in tf.getnames() if n.endswith("workspace-data.tar.gz")][0])
