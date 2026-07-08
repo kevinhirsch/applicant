@@ -140,6 +140,9 @@ _TIMEOUT_EXEMPT_PREFIXES = (
                                     # loop (incl. remote-LLM round trips); bounded by the
                                     # proxy's own 90s engine-client read budget
     "/api/applicant/research",  # manual deep-research trigger (engine-backed; can be multi-minute)
+    "/api/applicant/export",    # "Download my data" zip — serially fans out campaigns,
+                                # applications, document metadata and every rendered PDF;
+                                # a real history blows the 45s hard cap (P1-7)
     "/api/applicant/internal/research",  # engine deep-research callback (multi-minute; must not be killed)
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
