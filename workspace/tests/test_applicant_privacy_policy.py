@@ -167,6 +167,15 @@ def test_privacy_policy_reachable_from_settings_account_tab():
     )
     assert account_panel, "could not find the Account settings panel"
     assert 'href="/privacy"' in account_panel.group(0)
+    # PR #766 review (Greptile): don't hand-roll inline color/weight on the
+    # link (CLAUDE.md principle #4) — the anchor must not carry a style
+    # attribute. (style.css defines no anchor class, verified before choosing
+    # the plain-link form over inventing one.)
+    anchor = re.search(r'<a\b[^>]*href="/privacy"[^>]*>', account_panel.group(0))
+    assert anchor, "privacy anchor not found in the Account panel"
+    assert "style=" not in anchor.group(0), (
+        "the Settings privacy link must not hand-roll inline styles"
+    )
 
 
 def test_privacy_policy_reachable_from_landing_page():
