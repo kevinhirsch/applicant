@@ -102,6 +102,14 @@ def test_tracker_attention_panel_hides_itself_on_failure_or_empty():
     body = _TRACKER_JS[_TRACKER_JS.index(marker):]
     body = body[: body.index("async function _approveFollowUp")]
     assert body.count("panel.style.display = 'none'") >= 2
+    # And concurrent loads (board load + campaign change) never let a SLOWER
+    # earlier fan-out overwrite the panel with rows for a filter that is no
+    # longer active: a monotonic seq is captured at entry and re-checked after
+    # the awaits (alongside the campaign-id key) before the panel is touched.
+    assert "let _attentionLoadSeq = 0;" in _TRACKER_JS
+    assert "const seq = ++_attentionLoadSeq;" in body
+    assert "if (seq !== _attentionLoadSeq) return;" in body
+    assert "if (_attentionCampaignIds().join('|') !== campaignIds.join('|')) return;" in body
 
 
 def test_tracker_attention_fanout_honors_the_shared_campaign_filter():
@@ -297,6 +305,30 @@ def test_learning_zero_volume_model_never_claims_learning(activity_client):
         "converting_roles": [],
         "decline_reasons": [],
     }
+    r = activity_client.get("/api/applicant/activity/learning")
+    assert r.status_code == 200
+    assert r.json()["has_learning"] is False
+
+
+def test_learning_malformed_summary_counters_degrade_soft(activity_client):
+    # A malformed-but-200 engine payload (a non-numeric counter string) must
+    # not escape the soft-degrade contract as a ValueError 500: the junk value
+    # counts as 0 and has_learning is computed from the rest of the model.
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.learning["c1"] = {
+        "summary": {"total_matched": "n/a", "total_approved": 0, "total_submitted": 3},
+        "sources": [],
+        "converting_roles": [],
+        "decline_reasons": [],
+    }
+    r = activity_client.get("/api/applicant/activity/learning")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["has_learning"] is True  # total_submitted=3 still counts
+    # And when EVERY signal is junk/empty, the section honestly stays dark.
+    FakeEngine.learning["c1"]["summary"] = {"total_matched": "n/a"}
+    FakeEngine.learning["c1"]["decline_reasons"] = []
     r = activity_client.get("/api/applicant/activity/learning")
     assert r.status_code == 200
     assert r.json()["has_learning"] is False

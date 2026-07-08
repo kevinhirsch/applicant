@@ -120,6 +120,19 @@ def _first_campaign(campaigns: list[dict]) -> Optional[tuple[str, str]]:
     return None
 
 
+def _as_int(value: Any) -> int:
+    """Coerce an untyped engine value to an int, treating junk as 0.
+
+    The learning read is normalising an untyped admin payload; a malformed-but-200
+    engine response (e.g. ``total_matched: "n/a"``) must degrade soft like every
+    other failure here, not escape the docstring's promise via a ValueError 500.
+    """
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def setup_applicant_activity_routes() -> APIRouter:
     router = APIRouter(prefix="/api/applicant/activity", tags=["applicant-activity"])
 
@@ -309,7 +322,7 @@ def setup_applicant_activity_routes() -> APIRouter:
         # learning card out of an all-zero model (H-series: the absence of data
         # must never render as data).
         has_volume = any(
-            int(summary.get(k, 0) or 0)
+            _as_int(summary.get(k))
             for k in ("total_matched", "total_approved", "total_submitted")
         )
         return {

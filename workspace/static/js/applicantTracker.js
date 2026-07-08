@@ -776,9 +776,15 @@ function _renderAttentionPanel(followups, ghosted) {
   return `<div style="padding:8px 10px;">${sections.join('')}</div>`;
 }
 
+// Monotonic load counter: concurrent _loadAttention triggers (board load +
+// campaign change) race, and a slower EARLIER fan-out must never overwrite
+// the panel with follow-ups for a filter that is no longer active.
+let _attentionLoadSeq = 0;
+
 async function _loadAttention() {
   const panel = _attentionPanelEl();
   if (!panel) return;
+  const seq = ++_attentionLoadSeq;
   const campaignIds = _attentionCampaignIds();
   if (!campaignIds.length) {
     panel.style.display = 'none';
@@ -807,6 +813,11 @@ async function _loadAttention() {
   } catch {
     // Bonus surface — never show an error banner over the primary tracker.
   }
+  // Stale-response guard: a newer load started (or the active campaign-id set
+  // changed) while this one awaited — its results describe the WRONG filter,
+  // so drop them and let the newest load own the panel.
+  if (seq !== _attentionLoadSeq) return;
+  if (_attentionCampaignIds().join('|') !== campaignIds.join('|')) return;
   if (!followups.length && !ghosted.length) {
     panel.style.display = 'none';
     panel.innerHTML = '';
