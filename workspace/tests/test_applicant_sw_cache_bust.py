@@ -103,6 +103,6 @@ def test_app_serves_sw_through_the_stamp_seam():
     route_at = source.index('@app.get("/static/sw.js")')
     mount_at = source.index('app.mount("/static"')
     assert route_at < mount_at, "sw.js route must precede the /static mount to win routing"
-    body = source[route_at:route_at + 1200]
+    body = source[route_at:route_at + 1600]
     assert "stamp_sw_cache_name(source, static_asset_fingerprint(static_dir))" in body
     assert '"Cache-Control": "no-cache"' in body

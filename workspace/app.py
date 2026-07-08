@@ -529,12 +529,13 @@ async def serve_service_worker():
 
     try:
         stamped = await anyio.to_thread.run_sync(_read_and_stamp)
-    except FileNotFoundError:
-        # A broken deploy artifact should read as a clean 404, not a traceback.
+    except OSError:
+        # A broken deploy artifact (missing, unreadable, or a directory)
+        # should read as a clean 404, not a traceback.
         return Response(content="service worker not found", status_code=404, media_type="text/plain")
     return Response(
         content=stamped,
-        media_type="application/javascript",
+        media_type="text/javascript",
         headers={"Cache-Control": "no-cache"},
     )
 
