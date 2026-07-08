@@ -75,7 +75,14 @@ def test_tracker_row_renders_easy_apply_chip_gated_on_app_flag():
 
 def test_tracker_chip_is_informational_only():
     src = _tracker_src()
-    chip_fn = src.split("function _easyApplyChip", 1)[1].split("function ", 1)[0]
+    # Anchor the slice on the NEXT top-of-line function declaration, not any
+    # occurrence of "function " (which could legitimately appear inside the
+    # chip's own template text and silently mis-scope this pin).
+    m = re.search(
+        r"function _easyApplyChip[\s\S]*?(?=^(?:async\s+)?function\s)", src, re.M
+    )
+    assert m, "_easyApplyChip definition not found"
+    chip_fn = m.group(0)
     # Render-only: no click handler, no data-action hook on the chip itself.
     assert "addEventListener" not in chip_fn
     assert "data-tracker" not in chip_fn
