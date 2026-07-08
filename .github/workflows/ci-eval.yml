@@ -1,0 +1,98 @@
+name: Eval Lane (LLM output quality)
+
+# The P2-6 trigger: runs the golden-set material eval harness and gates on a
+# per-rubric-dimension regression. Live judging needs an LLM key + costs tokens,
+# so — like the integration lane — this is NOT a per-PR gate. It fires on demand
+# (after a meaningful prompt/model change) and weekly to catch drift.
+#
+# The OpenRouter key comes from the repo secret OPENROUTER_API_KEY. It is passed
+# to the runner through the environment ONLY (never interpolated into a shell
+# line, never logged). With no secret configured the run still executes OFFLINE
+# (deterministic generation + heuristic judging) so the wiring stays exercised.
+on:
+  workflow_dispatch:
+    inputs:
+      max_cases:
+        description: "Cap the number of golden cases (blank = all; lower = cheaper)."
+        required: false
+        default: ""
+      gen_model:
+        description: "Generation model slug (blank = runner default)."
+        required: false
+        default: ""
+      judge_model:
+        description: "Judge model slug (blank = runner default)."
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * 0"   # weekly Sunday 03:00 UTC
+
+concurrency:
+  group: ci-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      # DB is unreachable on purpose: the eval runner uses in-memory storage only,
+      # and this keeps any incidental engine import off a real Postgres.
+      DATABASE_URL: "postgresql+psycopg://x:x@127.0.0.1:1/none"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run the material eval (live when the key secret is set; offline wiring smoke otherwise)
+        env:
+          # Secret injected via env only — never inlined into the command, never
+          # echoed.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Input-derived shell vars (NOT the EVAL_* names the runner reads, so a
+          # blank input can never override the runner's model defaults with "").
+          # Routed through env — never template-spliced into `run:` — and forwarded
+          # as ONE QUOTED ARRAY ELEMENT each, so an input containing spaces/flags
+          # (e.g. "some/model --offline") stays a single argv token instead of
+          # injecting extra arguments into the runner.
+          MAX_CASES_INPUT: ${{ github.event.inputs.max_cases }}
+          GEN_MODEL_INPUT: ${{ github.event.inputs.gen_model }}
+          JUDGE_MODEL_INPUT: ${{ github.event.inputs.judge_model }}
+        run: |
+          # Honesty (H-series): the live baseline in docs/proof/eval/ was produced by
+          # a real model, so comparing an OFFLINE (deterministic + heuristic) run
+          # against it fails by design — a false red that evaluates nothing. With no
+          # key, run a clearly-labelled wiring SMOKE instead (offline, low absolute
+          # floor, no live baseline) — it proves the harness executes end to end and
+          # never masquerades as a live quality eval, in the step summary or anywhere.
+          if [ -n "$OPENROUTER_API_KEY" ]; then
+            mode="LIVE quality eval (gated against docs/proof/eval/baseline.json)"
+            args=(--baseline docs/proof/eval/baseline.json --out reports/eval)
+          else
+            mode="OFFLINE wiring smoke — OPENROUTER_API_KEY secret not configured. \
+          Deterministic generation + heuristic judging; NOT a live quality eval; \
+          not gated against the live baseline."
+            echo "::notice::$mode"
+            args=(--offline --min-score 1.0 --out reports/eval)
+          fi
+          echo "### Eval lane mode" >> "$GITHUB_STEP_SUMMARY"
+          echo "$mode" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$MAX_CASES_INPUT" ] && args+=(--max-cases "$MAX_CASES_INPUT")
+          [ -n "$GEN_MODEL_INPUT" ] && args+=(--gen-model "$GEN_MODEL_INPUT")
+          [ -n "$JUDGE_MODEL_INPUT" ] && args+=(--judge-model "$JUDGE_MODEL_INPUT")
+          uv run python -m applicant.evaluation.material_runner "${args[@]}"
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: material-eval-report-${{ github.run_number }}
+          path: reports/eval/
+          retention-days: 30

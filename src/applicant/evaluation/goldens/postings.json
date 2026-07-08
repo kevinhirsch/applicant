@@ -1,0 +1,165 @@
+{
+  "provenance": "SYNTHETIC — authored for the eval harness; not real live job postings.",
+  "postings": [
+    {
+      "id": "post-be-01",
+      "company": "Meridian Pay",
+      "title": "Senior Backend Engineer, Payments",
+      "location": "Remote (US)",
+      "jd_text": "We are hiring a senior backend engineer to own our payments and settlement services. You will design high-throughput services in Go and Python, tighten p99 latency, and improve reliability of our checkout path. You will work with PostgreSQL and Redis at scale and mentor other engineers on distributed systems. On-call ownership expected.",
+      "jd_terms": ["Go", "Python", "payments", "settlement", "PostgreSQL", "Redis", "distributed systems", "p99 latency", "reliability", "on-call"]
+    },
+    {
+      "id": "post-be-02",
+      "company": "Lumen Search",
+      "title": "Backend Engineer, Search Infrastructure",
+      "location": "Austin, TX",
+      "jd_text": "Join our search infrastructure team building services that index and serve millions of documents. You will write Python and Go services, own latency and throughput, and run systems on Kubernetes in AWS. Experience with caching, gRPC, and observability is valued.",
+      "jd_terms": ["search", "Python", "Go", "Kubernetes", "AWS", "gRPC", "caching", "observability", "latency", "throughput"]
+    },
+    {
+      "id": "post-be-03",
+      "company": "Harbor Cloud",
+      "title": "Platform Engineer",
+      "location": "Remote (US)",
+      "jd_text": "We need a platform engineer to improve our CI/CD, deployment tooling, and Kubernetes platform. You will reduce deploy times, own reliability of the developer platform, and standardize observability. Strong Go or Python and Docker/Kubernetes experience required.",
+      "jd_terms": ["platform", "CI/CD", "Kubernetes", "Docker", "Go", "Python", "deployment", "reliability", "observability", "developer tooling"]
+    },
+    {
+      "id": "post-be-04",
+      "company": "Fintable",
+      "title": "Software Engineer, Backend (Fintech)",
+      "location": "New York, NY",
+      "jd_text": "Backend engineer for a fintech building reconciliation and reporting systems. You will build APIs in FastAPI, model financial data in PostgreSQL, and ensure correctness of end-of-day reconciliation. Comfort with high data volumes and event-driven design is important.",
+      "jd_terms": ["backend", "fintech", "reconciliation", "FastAPI", "PostgreSQL", "APIs", "event-driven", "financial data", "reporting", "Python"]
+    },
+    {
+      "id": "post-be-05",
+      "company": "Vela Systems",
+      "title": "Senior Software Engineer, Distributed Systems",
+      "location": "Remote (Global)",
+      "jd_text": "Own the design of distributed services that must stay up under heavy load. You will drive latency and reliability improvements, mentor engineers, and reduce incident MTTR. We use Go, Kubernetes, and AWS. Prior on-call leadership is a plus.",
+      "jd_terms": ["distributed systems", "Go", "Kubernetes", "AWS", "latency", "reliability", "MTTR", "on-call", "mentorship", "scalability"]
+    },
+    {
+      "id": "post-da-01",
+      "company": "Brightpath Retail",
+      "title": "Data Analyst, Growth",
+      "location": "Remote (US)",
+      "jd_text": "We are hiring a data analyst to support our growth team. You will write SQL, build dashboards in Looker, and design and analyze A/B tests to improve conversion. Comfort with Python (pandas) and dbt is a plus. You will turn data into clear recommendations for product and marketing.",
+      "jd_terms": ["SQL", "Looker", "A/B testing", "conversion", "Python", "pandas", "dbt", "dashboards", "growth", "experimentation"]
+    },
+    {
+      "id": "post-da-02",
+      "company": "Cadence Media",
+      "title": "Product Data Analyst",
+      "location": "Chicago, IL",
+      "jd_text": "Product analyst to partner with product managers on funnel and retention analysis. You will build self-serve dashboards, run experiments, and present findings to leadership. Strong SQL and a track record of turning analysis into decisions required.",
+      "jd_terms": ["product analytics", "SQL", "funnel", "retention", "dashboards", "experiments", "A/B testing", "stakeholder", "data visualization", "decisions"]
+    },
+    {
+      "id": "post-da-03",
+      "company": "Northstar Subscriptions",
+      "title": "Analytics Engineer",
+      "location": "Remote (US)",
+      "jd_text": "Analytics engineer to own our dbt models and reporting layer. You will replace hand-built spreadsheets with tested data models, maintain Looker, and cut reporting cycle time. Strong SQL and dbt experience required; Python a plus.",
+      "jd_terms": ["dbt", "SQL", "analytics engineering", "Looker", "data models", "ETL", "reporting", "Python", "testing", "data warehouse"]
+    },
+    {
+      "id": "post-da-04",
+      "company": "Evergreen Bank",
+      "title": "Business Intelligence Analyst",
+      "location": "Boston, MA",
+      "jd_text": "BI analyst to build dashboards and reports for retention and revenue teams. You will write SQL, maintain Tableau dashboards, and automate recurring reports. Experience presenting to non-technical stakeholders is important.",
+      "jd_terms": ["business intelligence", "SQL", "Tableau", "dashboards", "reporting", "retention", "revenue", "automation", "stakeholders", "analysis"]
+    },
+    {
+      "id": "post-da-05",
+      "company": "Tally Commerce",
+      "title": "Data Analyst, Experimentation",
+      "location": "Remote (US)",
+      "jd_text": "Analyst focused on experimentation for our e-commerce checkout. You will design A/B tests, analyze results with statistical rigor, and recommend changes that lift conversion. SQL and Python required; statistics background valued.",
+      "jd_terms": ["experimentation", "A/B testing", "checkout", "conversion", "SQL", "Python", "statistics", "e-commerce", "analysis", "recommendations"]
+    },
+    {
+      "id": "post-mk-01",
+      "company": "Apex CRM",
+      "title": "Demand Generation Manager",
+      "location": "Remote (US)",
+      "jd_text": "B2B SaaS demand generation manager to own pipeline contribution. You will run webinars, content, paid media, and lifecycle email, and report on cost per MQL and pipeline. Experience with HubSpot or Marketo and managing a budget required.",
+      "jd_terms": ["demand generation", "B2B SaaS", "pipeline", "webinars", "content", "paid media", "lifecycle email", "HubSpot", "Marketo", "cost per MQL"]
+    },
+    {
+      "id": "post-mk-02",
+      "company": "Cobalt Software",
+      "title": "Marketing Manager, Content & Lifecycle",
+      "location": "Denver, CO",
+      "jd_text": "Marketing manager to lead content and lifecycle programs for a growing SaaS product. You will build the content calendar, own nurture email, and grow marketing-sourced pipeline. HubSpot experience and strong writing required; team leadership a plus.",
+      "jd_terms": ["content marketing", "lifecycle", "SaaS", "nurture email", "pipeline", "HubSpot", "writing", "team leadership", "campaigns", "demand generation"]
+    },
+    {
+      "id": "post-mk-03",
+      "company": "Beacon Analytics",
+      "title": "Growth Marketing Lead",
+      "location": "Remote (US)",
+      "jd_text": "Growth marketing lead to own trial signups and CAC for a B2B analytics product. You will run paid search and social, build lead scoring, and partner with sales. Track record of lowering acquisition cost and a data-driven approach required.",
+      "jd_terms": ["growth marketing", "trial signups", "CAC", "paid search", "paid social", "lead scoring", "sales alignment", "B2B", "acquisition cost", "analytics"]
+    },
+    {
+      "id": "post-mk-04",
+      "company": "Trellis Cloud",
+      "title": "Senior Marketing Manager",
+      "location": "Seattle, WA",
+      "jd_text": "Senior marketing manager to run demand generation and manage a small team and budget. You will own pipeline targets, reallocate spend for efficiency, and report to leadership. B2B SaaS experience and budget ownership required.",
+      "jd_terms": ["demand generation", "team management", "budget", "pipeline", "B2B SaaS", "spend efficiency", "reporting", "leadership", "marketing automation", "campaigns"]
+    },
+    {
+      "id": "post-mk-05",
+      "company": "Orchard Labs",
+      "title": "Marketing Operations Manager",
+      "location": "Remote (US)",
+      "jd_text": "Marketing operations manager to own our marketing automation and lead-scoring model. You will maintain HubSpot, build reporting on funnel and pipeline, and improve data hygiene. Strong systems and analytics orientation required.",
+      "jd_terms": ["marketing operations", "marketing automation", "lead scoring", "HubSpot", "funnel", "pipeline", "reporting", "data hygiene", "analytics", "systems"]
+    },
+    {
+      "id": "post-rn-01",
+      "company": "Lakeside Medical Center",
+      "title": "ICU Registered Nurse",
+      "location": "Portland, OR",
+      "jd_text": "We are hiring an experienced ICU registered nurse for our intensive-care unit. You will manage critically ill patients including ventilator and post-op cardiac cases, coordinate care, and precept newer nurses. Active RN license, BLS, and ACLS required.",
+      "jd_terms": ["ICU", "registered nurse", "critical care", "ventilator", "post-op cardiac", "care coordination", "preceptor", "RN license", "BLS", "ACLS"]
+    },
+    {
+      "id": "post-rn-02",
+      "company": "Grand Valley Hospital",
+      "title": "Charge Nurse, Medical-Surgical",
+      "location": "Sacramento, CA",
+      "jd_text": "Charge nurse for a busy medical-surgical unit. You will coordinate staffing and admissions, support the care team, and maintain safety and quality. Med-surg experience, charge experience, active RN license, and BLS required.",
+      "jd_terms": ["charge nurse", "medical-surgical", "staffing", "admissions", "patient safety", "quality", "care team", "RN license", "BLS", "coordination"]
+    },
+    {
+      "id": "post-rn-03",
+      "company": "Cedar Health System",
+      "title": "Registered Nurse, Critical Care",
+      "location": "Phoenix, AZ",
+      "jd_text": "Critical-care RN to join our ICU team. You will provide direct patient care for high-acuity patients, administer IV therapy, document in Epic, and mentor new graduates. ACLS and BLS certification and critical-care experience required.",
+      "jd_terms": ["critical care", "ICU", "patient care", "IV therapy", "Epic", "mentorship", "ACLS", "BLS", "high acuity", "assessment"]
+    },
+    {
+      "id": "post-rn-04",
+      "company": "Riverbend Community Hospital",
+      "title": "Med-Surg Registered Nurse",
+      "location": "Nashville, TN",
+      "jd_text": "Medical-surgical RN to care for post-surgical patients. You will manage 5 to 6 patients per shift, administer medications safely, and use our barcode medication-administration system. Active RN license and BLS required; new grads with clinicals welcome.",
+      "jd_terms": ["medical-surgical", "post-surgical", "medication administration", "patient care", "barcode medication", "RN license", "BLS", "assessment", "documentation", "safety"]
+    },
+    {
+      "id": "post-rn-05",
+      "company": "Summit Care Network",
+      "title": "Nurse Preceptor, ICU",
+      "location": "Salt Lake City, UT",
+      "jd_text": "Experienced ICU nurse to serve as a preceptor for new-graduate nurses while carrying a patient assignment. You will teach clinical skills, model safe practice, and support onboarding. Several years of critical-care experience, ACLS, and BLS required.",
+      "jd_terms": ["preceptor", "ICU", "new graduate", "critical care", "teaching", "onboarding", "clinical skills", "ACLS", "BLS", "patient assignment"]
+    }
+  ]
+}

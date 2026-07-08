@@ -7,11 +7,62 @@ dimensions like truthfulness, relevance, formatting, and completeness.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+#: A ```json ... ``` (or bare ``` ... ```) fence a model often wraps JSON in.
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+#: Last-resort ``"score": 4`` extractor when no valid JSON object can be parsed.
+#: ``(?!\d)`` rejects the first digit of a multi-digit value ("score: 10" must
+#: NOT read as 1) so an out-of-range reply falls to the honest unparsed default.
+_SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*([1-5])(?!\d)')
+
+
+def _parse_judge_response(text: str | None) -> tuple[int, str]:
+    """Parse a judge model's reply into ``(score, rationale)``, tolerantly.
+
+    Real models don't always honor "respond with JSON": they wrap it in a
+    ```json fence, prepend prose, or add a trailing sentence (FR-LLM-4a — the
+    system must be robust to model variance in JSON-mode). This tries, in order:
+    the raw text as JSON, the first fenced block, the first ``{...}`` object,
+    then a bare ``"score": N`` regex — before conceding an unparseable reply
+    (which is reported honestly, never silently scored as a passing 3).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return 3, "Judge returned an empty response; scored neutral."
+
+    candidates: list[str] = [raw]
+    fence = _FENCE_RE.search(raw)
+    if fence:
+        candidates.append(fence.group(1).strip())
+    brace_start = raw.find("{")
+    brace_end = raw.rfind("}")
+    if brace_start != -1 and brace_end > brace_start:
+        candidates.append(raw[brace_start : brace_end + 1])
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and "score" in data:
+            try:
+                score = int(data.get("score", 3))
+            except (ValueError, TypeError):
+                continue
+            rationale = str(data.get("rationale", "LLM-judged")).strip() or "LLM-judged"
+            return score, rationale
+
+    m = _SCORE_RE.search(raw)
+    if m:
+        return int(m.group(1)), "Parsed score from a non-JSON reply."
+    return 3, "Judge response could not be parsed; scored neutral."
 
 
 # Default rubric dimensions
@@ -368,15 +419,7 @@ def _llm_score_dimension(
             [ChatMessage(role="user", content=prompt)],
         )
 
-        import json
-        try:
-            data = json.loads(result.text)
-            score = int(data.get("score", 3))
-            rationale = str(data.get("rationale", "LLM-judged"))
-        except (json.JSONDecodeError, ValueError, TypeError):
-            score = 3
-            rationale = "LLM response could not be parsed."
-
+        score, rationale = _parse_judge_response(result.text)
         return MaterialQualityScore(
             dimension=dimension,
             score=max(1, min(5, score)),

@@ -1,0 +1,29 @@
+{
+  "provenance": "SYNTHETIC — curated profile x posting cases for the eval harness. Interleaved by profile so a capped run stays diverse.",
+  "pairs": [
+    {"profile_id": "prof-backend-eng", "posting_id": "post-be-01", "cover_letter": true, "screening_question": "Describe a time you improved the reliability or latency of a production system."},
+    {"profile_id": "prof-data-analyst", "posting_id": "post-da-01", "cover_letter": true, "screening_question": "Describe an experiment you ran that changed a product decision."},
+    {"profile_id": "prof-marketing-mgr", "posting_id": "post-mk-01", "cover_letter": true, "screening_question": "How have you grown marketing-sourced pipeline in a B2B SaaS company?"},
+    {"profile_id": "prof-registered-nurse", "posting_id": "post-rn-01", "cover_letter": true, "screening_question": "Describe your experience caring for critically ill patients in the ICU."},
+
+    {"profile_id": "prof-backend-eng", "posting_id": "post-be-02", "cover_letter": true, "screening_question": "Why are you interested in working on search infrastructure?"},
+    {"profile_id": "prof-data-analyst", "posting_id": "post-da-03", "cover_letter": true, "screening_question": "What is your experience with dbt and building tested data models?"},
+    {"profile_id": "prof-marketing-mgr", "posting_id": "post-mk-04", "cover_letter": true, "screening_question": "Describe how you manage a marketing budget for efficiency."},
+    {"profile_id": "prof-registered-nurse", "posting_id": "post-rn-02", "cover_letter": true, "screening_question": "What is your experience as a charge nurse?"},
+
+    {"profile_id": "prof-backend-eng", "posting_id": "post-be-04", "cover_letter": true, "screening_question": "What is your experience building financial or reconciliation systems?"},
+    {"profile_id": "prof-data-analyst", "posting_id": "post-da-05", "cover_letter": true, "screening_question": "How do you ensure statistical rigor in an A/B test?"},
+    {"profile_id": "prof-marketing-mgr", "posting_id": "post-mk-03", "cover_letter": true, "screening_question": "What is your approach to lowering customer acquisition cost?"},
+    {"profile_id": "prof-registered-nurse", "posting_id": "post-rn-05", "cover_letter": true, "screening_question": "How do you approach precepting new-graduate nurses?"},
+
+    {"profile_id": "prof-backend-eng", "posting_id": "post-be-05", "cover_letter": false, "screening_question": "Tell us about your experience leading incident response or on-call."},
+    {"profile_id": "prof-data-analyst", "posting_id": "post-da-02", "cover_letter": false, "screening_question": "How do you present analysis to non-technical stakeholders?"},
+    {"profile_id": "prof-marketing-mgr", "posting_id": "post-mk-02", "cover_letter": false, "screening_question": "How do you build a content and lifecycle program from scratch?"},
+    {"profile_id": "prof-registered-nurse", "posting_id": "post-rn-03", "cover_letter": false, "screening_question": "How do you maintain safety and accuracy in medication administration?"},
+
+    {"profile_id": "prof-backend-eng", "posting_id": "post-be-03", "cover_letter": false, "screening_question": "How have you improved CI/CD or deployment tooling?"},
+    {"profile_id": "prof-data-analyst", "posting_id": "post-da-04", "cover_letter": false, "screening_question": "Tell us about a dashboard you built that people actually used."},
+    {"profile_id": "prof-marketing-mgr", "posting_id": "post-mk-05", "cover_letter": false, "screening_question": "What is your experience with marketing automation and lead scoring?"},
+    {"profile_id": "prof-registered-nurse", "posting_id": "post-rn-04", "cover_letter": false, "screening_question": "Tell us about your experience with medical-surgical nursing."}
+  ]
+}
