@@ -358,3 +358,105 @@ class TestFinalApprovalShortfall:
         assert shortfall is not None
         assert "First Name" in shortfall["failed_fields"]
         assert "failed to fill" in shortfall["summary"]
+
+    def test_redrive_refreshes_the_open_items_stale_shortfall(self):
+        # IDEM-2 dedupes the final-approval item per (application, kind), but a
+        # re-driven run recomputes the payload — the ONE open item must carry
+        # the FRESH emission's shortfall, never the first run's stale claim
+        # (Today/Portal render payload.shortfall straight off the open item).
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent))
+        from test_prefill_service import _app, _service
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        first = service._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=None,
+            payload={
+                "shortfall": {
+                    "summary": "1 field failed to fill — double-check the form",
+                    "failed_fields": ["First Name"],
+                }
+            },
+        )
+        second = service._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=None,
+            payload={
+                "shortfall": {
+                    "summary": "1 screening question deferred to you",
+                    "failed_fields": [],
+                }
+            },
+        )
+        assert second == first, "IDEM-2: redrive still dedupes to the one open item"
+        open_final = [
+            p for p in storage.pending_actions.list_open(cid) if p.kind == "final_approval"
+        ]
+        assert len(open_final) == 1
+        assert (
+            open_final[0].payload["shortfall"]["summary"]
+            == "1 screening question deferred to you"
+        )
+        assert open_final[0].payload["shortfall"]["failed_fields"] == []
+        # A redrive that now fully fills clears the stale shortfall entirely —
+        # an honest absence, not a leftover warning.
+        third = service._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=None,
+            payload=None,
+        )
+        assert third == first
+        refreshed = storage.pending_actions.get(first)
+        assert "shortfall" not in (refreshed.payload or {})
+
+    def test_redrive_refresh_keeps_snooze_and_dedup_key_sticky(self):
+        # The payload refresh must not clobber keys the emission never computes:
+        # a user's snooze ("remind me later") and the indexed dedup_key.
+        import dataclasses
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent))
+        from test_prefill_service import _app, _service
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        pid = service._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=None,
+            payload={"shortfall": {"summary": "stale", "failed_fields": ["X"]}},
+        )
+        action = storage.pending_actions.get(pid)
+        stamped = dict(action.payload)
+        stamped["snoozed_until"] = "2099-01-01T00:00:00+00:00"
+        stamped["dedup_key"] = "final:sticky"
+        storage.pending_actions.add(dataclasses.replace(action, payload=stamped))
+        storage.commit()
+        again = service._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=None,
+            payload={"shortfall": {"summary": "fresh", "failed_fields": []}},
+        )
+        assert again == pid
+        refreshed = storage.pending_actions.get(pid)
+        assert refreshed.payload["shortfall"]["summary"] == "fresh"
+        assert refreshed.payload["snoozed_until"] == "2099-01-01T00:00:00+00:00"
+        assert refreshed.payload["dedup_key"] == "final:sticky"

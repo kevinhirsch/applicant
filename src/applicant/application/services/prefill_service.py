@@ -2379,19 +2379,38 @@ class PrefillService:
 
         IDEM-2: deduped by ``(application_id, kind)`` — ``_resume_in_flight`` re-drives
         an in-flight app every ~60s tick, re-landing the same waiting state; without
-        this guard each redrive piled up another identical pending action.
+        this guard each redrive piled up another identical pending action. The dedupe
+        keeps ONE open action but the redrive recomputes the payload (e.g. the H2
+        ``shortfall`` honesty record), so the existing action is refreshed with the
+        fresh emission's payload — otherwise Today/Portal keep rendering a stale
+        claim (a shortfall that has since cleared, or worse, none where one now
+        exists). Keys the fresh emission never computes stay sticky: ``snoozed_until``
+        (a user's "remind me later" must not reset every tick) and ``dedup_key``
+        (mirrored into an indexed column on every write).
         """
         cid: CampaignId = application.campaign_id
+        body = dict(payload or {})
+        if session_url:
+            body["session_url"] = session_url
         for existing in self._storage.pending_actions.list_open(cid):
             if (
                 str(getattr(existing, "application_id", "")) == str(application.id)
                 and existing.kind == kind
             ):
+                old = dict(existing.payload or {})
+                fresh = dict(body)
+                for sticky in ("snoozed_until", "dedup_key"):
+                    if sticky in old and sticky not in fresh:
+                        fresh[sticky] = old[sticky]
+                if fresh != old:
+                    # ``add`` is an upsert (merge) keyed on id — the same
+                    # payload-update path ``PendingActionsService.snooze`` uses.
+                    self._storage.pending_actions.add(
+                        dataclasses.replace(existing, payload=fresh)
+                    )
+                    self._storage.commit()
                 return existing.id
         pid = PendingActionId(new_id())
-        body = dict(payload or {})
-        if session_url:
-            body["session_url"] = session_url
         action = PendingAction(
             id=pid,
             campaign_id=cid,
