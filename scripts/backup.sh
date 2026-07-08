@@ -119,7 +119,10 @@ if [[ "${HAS_DB}" -ne 1 ]]; then
        "${WORK_DIR}/db.sql" "${APPLY}"; then
     HAS_DB=1
   else
-    echo "    (warn) Postgres dump failed — the backup will NOT include a db.sql member." >&2
+    # A "backup" that cannot restore Postgres is not a backup — automation
+    # keying off exit 0 must never archive one (disaster-recovery invariant).
+    echo "Backup FAILED: Postgres dump failed; refusing to create a backup without db.sql." >&2
+    exit 1
   fi
 fi
 

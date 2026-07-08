@@ -111,10 +111,10 @@ def test_reuse_db_dump_skips_a_second_pg_dump(tmp_path):
         assert db_member.read().decode("utf-8").strip() == "-- pre-existing dump"
 
 
-def test_pg_dump_failure_still_bundles_a_tarball_with_a_warning(tmp_path):
-    # Best-effort: a failed DB dump degrades to a WARNING, not a hard abort --
-    # this is a "download my data" style safety net, not the migration-gating
-    # dump update.sh's own inline step already guards strictly.
+def test_pg_dump_failure_fails_the_backup_hard(tmp_path):
+    # A "backup" without db.sql cannot restore Postgres — automation keying
+    # off exit 0 must never archive one, so a failed dump is a hard abort,
+    # not a warning (disaster-recovery invariant; Greptile finding on #736).
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     fake = bin_dir / "docker"
@@ -129,11 +129,10 @@ def test_pg_dump_failure_still_bundles_a_tarball_with_a_warning(tmp_path):
     )
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     res = _run(tmp_path, "--apply", bin_dir=bin_dir)
-    assert res.returncode == 0, res.stderr
-    assert "will NOT include a db.sql member" in res.stderr
-    assert "NO Postgres dump" in res.stderr
+    assert res.returncode != 0
+    assert "Backup FAILED" in res.stderr
     backups = sorted((tmp_path / "backups").glob("applicant-full-*.tar.gz"))
-    assert len(backups) == 1
+    assert backups == []
 
 
 def test_retention_prunes_older_full_backups(tmp_path):
