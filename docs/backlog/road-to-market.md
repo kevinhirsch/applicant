@@ -76,10 +76,10 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-2 | Privacy policy + rights | M | eng/you | — |
 | P2-3 | Security pass | M | eng | — |
 | P2-4 | License compliance | S | eng+you | — |
-| P2-5 | Fabrication-guard evidence | S | eng | — |
+| P2-5 | Fabrication-guard evidence | S | eng | DONE — citable claim + red-team suite (docs/proof/citable-invariants.md) |
 | P2-6 | LLM output eval harness | M | eng | — |
 | P2-7 | Sensitive-question policy | M | eng | — |
-| P2-8 | Final-say invariant test | S | eng | — |
+| P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | — |
 | P2-10 | ATS-parseability proof | M | eng | — |
 | P2-11 | Local-only private mode | M | eng | — |
@@ -996,10 +996,15 @@ authenticated-endpoint sweep).
 
 ### P2-5 — Fabrication-guard evidence
 **Effort:** S · **Owner:** eng · **Depends on:** P1-13 (aligns the claim to the loosened policy)
+**Status: DONE** — `tests/unit/test_truth_claim_evidence.py` (one red-team case per fact
+class × both policies + two rewrite-freedom cases + the balanced default pinned) with the
+citable write-up and repro commands in `docs/proof/citable-invariants.md`.
 **DoD:** The guard's tests are turned into a citable **"rewrites freely, never invents
 facts"** claim (employers, titles, credentials, dates, numbers) with a reproducible
 artifact — the honest, defensible line under the P1-13 truth policy, not an
-over-broad "never rewrites" promise the product does not make.
+over-broad "never rewrites" promise the product does not make. *(Done as above; the
+honest boundary — résumé-class checks are verbatim about claim tokens, prose mode owns
+free re-wording — is documented rather than hidden.)*
 
 ### P2-6 — LLM output eval harness *(product-value protection — was the biggest gap)*
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (fixtures)
@@ -1021,8 +1026,13 @@ veteran; plus work-authorization handling).
 
 ### P2-8 — "Human final say" invariant test
 **Effort:** S · **Owner:** eng · **Depends on:** —
+**Status: DONE** — `tests/unit/test_final_say_invariant.py`: behavioral (every submit
+entry refuses unapproved material and records nothing; approval refuses until review
+was opened; the full review→approve→submit chain) + structural (AST scan pins the gated
+service as the only submitted-outcome writer, so a bypass turns the suite red).
+Write-up: `docs/proof/citable-invariants.md`.
 **DoD:** A test proves no code path reaches final submit without an approval record
-(citable invariant, like the fabrication guard).
+(citable invariant, like the fabrication guard). *(Done as above.)*
 
 ### P2-9 — App-door hardening
 **Effort:** M · **Owner:** eng · **Depends on:** —
