@@ -514,8 +514,9 @@ function _renderFinal(wrap, item) {
     <div data-role="caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
     <div style="margin-bottom:8px;">
       <button type="button" class="cal-btn" data-role="payload-toggle" aria-expanded="false"
+              aria-controls="applicant-today-final-payload"
               title="The exact answers, documents, and posting — word for word, before anything is sent">See exactly what will be sent</button>
-      <div data-role="payload" hidden
+      <div data-role="payload" id="applicant-today-final-payload" hidden
            style="margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:260px;overflow-y:auto;font-size:12px;text-align:left;"></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">

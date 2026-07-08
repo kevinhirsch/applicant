@@ -1564,8 +1564,9 @@ function _renderFinal(item) {
     <div style="margin-bottom:8px;">
       <button type="button" class="cal-btn applicant-portal-final-payload-toggle"
               data-app-id="${esc(appId)}" aria-expanded="false"
+              aria-controls="applicant-portal-final-payload-${esc(appId)}"
               title="The exact answers, documents, and posting — word for word, before anything is sent">See exactly what will be sent</button>
-      <div class="applicant-portal-final-payload" data-app-id="${esc(appId)}" hidden
+      <div class="applicant-portal-final-payload" id="applicant-portal-final-payload-${esc(appId)}" data-app-id="${esc(appId)}" hidden
            style="margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:260px;overflow-y:auto;font-size:12px;"></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
