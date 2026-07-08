@@ -293,3 +293,96 @@ def test_approve_forwards_a_404_from_the_engine_when_already_approved(client):
     r = client.post("/api/applicant/followups/applications/a-1/approve")
 
     assert r.status_code == 404
+
+
+# --- cross-account isolation (DISC-15/DISC-15b): engine-owner gate ------------
+#
+# The engine is single-tenant, so the id-ownership fan-outs above only guard
+# against foreign ids -- ``list_campaigns()`` returns the SAME rows to every
+# authenticated workspace account. Both endpoints must therefore gate with
+# ``require_engine_owner`` (a second, non-admin account is denied on the read
+# AND the write), mirroring ``test_applicant_crossuser_write_isolation_disc15b``'s
+# two-account convention exactly.
+
+
+class _AuthMgr:
+    """Minimal stand-in for the real ``AuthManager`` (mirrors DISC-15b's
+    ``_AuthMgr`` exactly)."""
+
+    def __init__(self, *, configured: bool, admins: "set[str] | None" = None):
+        self.is_configured = configured
+        self._admins = set(admins or ())
+
+    def is_admin(self, user: str) -> bool:
+        return user in self._admins
+
+
+def _mount_with_accounts(*, user, configured: bool, admins=("owner",)) -> TestClient:
+    app = FastAPI()
+    app.state.auth_manager = _AuthMgr(configured=configured, admins=admins)
+
+    @app.middleware("http")
+    async def _auth(request, call_next):
+        request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(setup_applicant_followups_routes())
+    return TestClient(app)
+
+
+def test_attention_read_second_account_denied(monkeypatch):
+    """A SECOND, non-admin workspace account must be denied the read -- the
+    engine fan-out is never even attempted (it has no owner concept to
+    protect the real owner's drafted follow-ups with)."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    _own("c1", "a-1")
+    c = _mount_with_accounts(user="teammate", configured=True, admins=("owner",))
+
+    r = c.get("/api/applicant/followups/c1")
+
+    assert r.status_code == 403
+    assert "list_campaigns" not in FakeEngine.calls
+
+
+def test_attention_read_owner_in_configured_mode_passes(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    _own("c1", "a-1")
+    c = _mount_with_accounts(user="owner", configured=True, admins=("owner",))
+
+    r = c.get("/api/applicant/followups/c1")
+
+    assert r.status_code == 200
+    assert len(r.json()["followups_due"]) == 1
+
+
+def test_approve_second_account_denied(monkeypatch):
+    """A SECOND, non-admin workspace account must be denied the WRITE -- and
+    the engine mutation must never be reached. Before this fix, plain
+    ``require_user`` let any authenticated account approve/schedule the real
+    owner's drafted follow-up (outbound email in the owner's name)."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    _own("c1", "a-1")
+    c = _mount_with_accounts(user="teammate", configured=True, admins=("owner",))
+
+    r = c.post("/api/applicant/followups/applications/a-1/approve")
+
+    assert r.status_code == 403
+    assert not any(
+        call[0] == "follow_up_approve" for call in FakeEngine.calls if isinstance(call, tuple)
+    )
+    assert "list_campaigns" not in FakeEngine.calls
+
+
+def test_approve_lone_owner_single_user_mode_passes(monkeypatch):
+    """Single-user / unconfigured mode: the lone owner must still be able to
+    approve their own drafted follow-up -- this gate must not lock them out."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    _own("c1", "a-1")
+    c = _mount_with_accounts(user="solo", configured=False, admins=())
+
+    r = c.post("/api/applicant/followups/applications/a-1/approve")
+
+    assert r.status_code == 201
+    assert any(
+        call[0] == "follow_up_approve" for call in FakeEngine.calls if isinstance(call, tuple)
+    )

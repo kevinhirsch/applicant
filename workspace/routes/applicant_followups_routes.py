@@ -46,14 +46,23 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
 
-def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
+def _require_owner(request: Request) -> str:
+    """Require the ENGINE-OWNER account, not just any authenticated user
+    (DISC-15/DISC-15b). The engine is single-tenant — the id-ownership
+    fan-outs below only guard against foreign ids, not against a SECOND
+    workspace account, since ``list_campaigns()`` returns the same rows to
+    every authenticated caller. Gated by
+    ``src.auth_helpers.require_engine_owner``, mirroring
+    ``applicant_activity_routes.py`` / ``applicant_tracker_routes.py``:
+    the lone owner passes in single-user mode; a second account is denied
+    on reads AND writes.
+    """
+    return require_engine_owner(request)
 
 
 def _empty(campaign_id: str) -> dict:
@@ -125,7 +134,7 @@ def setup_applicant_followups_routes() -> APIRouter:
         false``; a setup gate returns ``gated: true``; a campaign that doesn't
         belong to this owner 404s.
         """
-        _require_user(request)
+        _require_owner(request)
         empty = _empty(campaign_id)
         async with ApplicantEngineClient() as engine:
             try:
@@ -177,7 +186,7 @@ def setup_applicant_followups_routes() -> APIRouter:
         ``PostSubmissionService.send_scheduled_follow_ups``) actually sends it
         once its delay has elapsed — never in this same request.
         """
-        _require_user(request)
+        _require_owner(request)
         b = body or ApproveFollowUpIn()
         async with ApplicantEngineClient() as engine:
             owned = await _owner_followup_application_ids(engine)

@@ -104,6 +104,77 @@ def test_tracker_attention_panel_hides_itself_on_failure_or_empty():
     assert body.count("panel.style.display = 'none'") >= 2
 
 
+def test_tracker_attention_fanout_honors_the_shared_campaign_filter():
+    # The panel fans out over the SAME shared campaign filter the board itself
+    # renders through (_renderFiltered -> filterByCampaign) — never the raw
+    # application list — so it can never show follow-ups/ghosting rows from a
+    # search the board below is hiding.
+    marker = "function _attentionCampaignIds()"
+    body = _TRACKER_JS[_TRACKER_JS.index(marker):]
+    body = body[: body.index("function _renderGhostRow")]
+    assert "filterByCampaign(_lastApplications || [])" in body
+    # And switching the shared campaign selection refreshes the panel under
+    # the new lens (not just the board), so the two can never contradict.
+    lmarker = "window.addEventListener('applicant-campaign-change'"
+    listener = _TRACKER_JS[_TRACKER_JS.index(lmarker):]
+    listener = listener[: listener.index("});") + 3]
+    assert "_renderFiltered(host);" in listener
+    assert "_loadAttention();" in listener
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node is required to execute the sliced JS")
+def test_attention_fanout_filters_by_active_campaign_headlessly():
+    # Slice the REAL shared filter (applicantCampaignSwitcher.filterByCampaign)
+    # and the REAL fan-out (_attentionCampaignIds) out of the shipped sources
+    # and run them together: with no selection every board campaign fans out;
+    # with a campaign selected, only that campaign's id survives — the exact
+    # lens _renderFiltered applies to the board below.
+    switcher = (_JS / "applicantCampaignSwitcher.js").read_text(encoding="utf-8")
+    f_start = switcher.index("export function filterByCampaign(items)")
+    f_end = switcher.index("export async function loadCampaigns", f_start)
+    filter_fn = switcher[f_start:f_end].replace("export function", "function", 1)
+    a_start = _TRACKER_JS.index("function _attentionCampaignIds()")
+    a_end = _TRACKER_JS.index("function _renderGhostRow", a_start)
+    fanout_fn = _TRACKER_JS[a_start:a_end]
+    script = f"""
+let _active = '';
+function _read() {{ return _active; }}
+{filter_fn}
+let _lastApplications = [
+  {{ application_id: 'a-1', campaign_id: 'c1' }},
+  {{ application_id: 'a-2', campaign_id: 'c2' }},
+  {{ application_id: 'a-3', campaign_id: 'c1' }},
+];
+{fanout_fn}
+const all = _attentionCampaignIds().sort();
+_active = 'c1';
+const filtered = _attentionCampaignIds();
+console.log(JSON.stringify({{ all, filtered }}));
+"""
+    res = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=str(_REPO), capture_output=True, text=True, timeout=30,
+    )
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip())
+    assert out["all"] == ["c1", "c2"]
+    assert out["filtered"] == ["c1"]
+
+
+def test_followups_proxy_is_owner_gated_in_source():
+    # DISC-15/DISC-15b: the followups proxy surfaces (read) and schedules
+    # (write) the deployment owner's drafted follow-ups on a single-tenant
+    # engine, so BOTH routes must gate with require_engine_owner, not plain
+    # require_user (behavioral two-account coverage lives in
+    # test_applicant_followups_routes.py).
+    src = (_REPO / "routes" / "applicant_followups_routes.py").read_text(encoding="utf-8")
+    assert "require_user" not in src.replace("require_engine_owner", "")
+    read_block = src[src.index("async def attention"): src.index("@router.post")]
+    assert "_require_owner(request)" in read_block
+    write_block = src[src.index("async def approve_follow_up"):]
+    assert "_require_owner(request)" in write_block
+
+
 # ── 2. Activity: the learning loop's owner-scoped read + section ─────────────
 
 

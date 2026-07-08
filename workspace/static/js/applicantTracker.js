@@ -700,8 +700,13 @@ function _attentionPanelEl() {
 }
 
 function _attentionCampaignIds() {
+  // Fan out ONLY over the campaigns the board itself is currently showing:
+  // the SAME shared campaign filter _renderFiltered renders through
+  // (filterByCampaign over the shared switcher's selection), so the panel
+  // can never surface follow-ups/ghosting rows from a search the board
+  // below is hiding.
   const ids = new Set();
-  (_lastApplications || []).forEach((app) => {
+  filterByCampaign(_lastApplications || []).forEach((app) => {
     if (app && app.campaign_id) ids.add(String(app.campaign_id));
   });
   return Array.from(ids);
@@ -862,6 +867,10 @@ window.addEventListener('applicant-campaign-change', () => {
   if (!_modalEl || _modalEl.classList.contains('hidden')) return;
   const host = _body();
   if (host && _lastApplications.length) _renderFiltered(host);
+  // The attention panel fans out over the SAME filtered campaign ids the
+  // board renders through — refresh it under the new lens too, so it never
+  // contradicts the board below (fire-and-forget; hides itself on failure).
+  _loadAttention();
 });
 
 // Renders the board through the shared campaign filter. When the filter
