@@ -705,7 +705,7 @@ def build_demo_agent_runs(
                 run_mode=RunMode.CONTINUOUS,
                 throughput_target=15,
                 stats=stats,
-                timestamp=ref - timedelta(days=days_ago, hours=1),
+                timestamp=ref - timedelta(days=days_ago),
             )
         )
     return tuple(out)

@@ -184,8 +184,10 @@ def _walk_strings(obj):
         for k, v in obj.items():
             yield from _walk_kv(str(k), v)
     elif isinstance(obj, (list, tuple)):
+        # Route items through the key-aware path: a bare str inside a list
+        # (e.g. campaign.criteria["titles"]) must still be checked.
         for item in obj:
-            yield from _walk_strings(item)
+            yield from _walk_kv("<list-item>", item)
 
 
 def _walk_kv(key, value):
