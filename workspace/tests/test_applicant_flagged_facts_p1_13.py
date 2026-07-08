@@ -96,6 +96,17 @@ def test_proxy_exposes_flagged_facts_read():
     assert "engine.document_flagged_facts(document_id)" in py
 
 
+def test_flagged_facts_read_is_owner_gated_disc15():
+    """Flagged facts are the owner's profile gaps / draft personal facts on the
+    single-tenant engine — the read must use require_engine_owner, not plain
+    require_user (a second workspace account must never see them)."""
+    py = _read(DOCS_ROUTES)
+    body = py.split('@router.get("/{document_id}/flagged-facts")')[1]
+    body = body.split("@router.get", 1)[0]
+    assert "require_engine_owner(request)" in body
+    assert "require_user(request)" not in body
+
+
 def test_engine_client_has_flagged_facts_method():
     py = _read(ENGINE_CLIENT)
     assert "async def document_flagged_facts(self, document_id: str)" in py

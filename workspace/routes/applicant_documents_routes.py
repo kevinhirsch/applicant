@@ -43,7 +43,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, engine_base_url
-from src.auth_helpers import require_privilege, require_user
+from src.auth_helpers import require_engine_owner, require_privilege, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -297,11 +297,12 @@ def setup_applicant_documents_routes() -> APIRouter:
         The balanced truth policy lets the assistant rewrite freely and SURFACES
         invented fact-class tokens rather than blocking them; this read hands the
         review surface the tokens to double-check, each with a one-tap "yes, that's
-        true, add to my profile" / "remove" choice. Same read-only auth tier as
-        ``application_documents`` above (the materials for an application are visible
-        to any logged-in user of this single-tenant deployment). Degrades to an empty
-        list on an engine error rather than blocking the review card."""
-        require_user(request)
+        true, add to my profile" / "remove" choice. Flagged facts are profile gaps /
+        draft personal facts — owner data on the single-tenant engine — so this read
+        is gated with ``require_engine_owner`` (DISC-15), not plain ``require_user``.
+        Degrades to an empty list on an engine error rather than blocking the review
+        card."""
+        require_engine_owner(request)
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.document_flagged_facts(document_id)
