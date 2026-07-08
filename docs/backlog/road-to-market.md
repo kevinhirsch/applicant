@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
-| P0-3 | Today becomes a page | M | eng | — |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | RESPEC'd 2026-07-08 |
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
@@ -175,23 +175,45 @@ comes from consistent, non-empty data.
 - [ ] The seed path is unreachable when `DEMO_MODE` is unset (guarded + tested).
 - [ ] No secret/API key is ever written into seed data (ties to P1-0).
 
-### P0-3 — Today becomes a page (not a modal)
-**As** a user, **I want** Today to be the app's home *page* rather than a floating
-window over a chat **so that** the product reads as a job-autopilot dashboard.
-**Effort:** M · **Owner:** eng · **Depends on:** P0-1 (P0-2 recommended for review)
+### P0-3 — The 3-pane shell (chat center, gadget rail)
+**As** a user, **I want** the app to be one 3-pane shell — nav sidebar, the Applicant
+chat as the permanent center, and a right-hand gadget rail for at-a-glance state —
+**so that** the product reads as a job-autopilot I talk to, not windows floating over
+a chat.
+
+*(Owner respec 2026-07-08 — supersedes "Today becomes a page (not a modal)". Floating
+windows are removed as a primitive: every former window becomes a rail gadget, a full
+page, or both — a gadget expands to its page in one click. "Today" is the shell itself,
+not a separate view; there is no `#portal`/`#chat` center toggle.)*
+
+**Effort:** L · **Owner:** eng · **Depends on:** P0-1 (P0-2 recommended for review)
 **DoR:**
-- Decision recorded that only Today (not all surfaces) converts to a page in v1.
-- Mobile behaviour agreed (keep bottom-sheet for now).
+- Gadget set v1 confirmed (owner, 2026-07-08): waiting-on-you queue, pipeline counts by
+  stage, activity feed tail, cost & pace meter (pairs with P1-6), next-interview /
+  calendar peek, digest countdown + send-now, momentum/streak, system health chip
+  (pairs with P1-3).
+- Notification surfaces confirmed — exactly three: top-bar bell + dropdown, the rail's
+  notification area, transient toasts (reuse `ui.js` `showToast`).
+- Mobile behaviour agreed (keep bottom-sheet for now; the rail collapses away on small
+  viewports).
 **DoD:**
-- [ ] Login lands on Today rendered in the main content area — no scrim, no dim, no
-      close ×, no focus trap.
-- [ ] Chat is reachable in one click and back to Today in one click; hash routes
-      `#portal`/`#chat` map to the two views.
-- [ ] The brand wordmark switches to Today (consistent with P0-1's Home behaviour).
+- [ ] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
+      gadget rail — no scrim, no dim, no close ×, no focus trap, no floating windows
+      anywhere.
+- [ ] On small viewports the rail collapses away; the mobile bottom-sheet fallback
+      remains acceptable.
+- [ ] Rail top is the notification area: it auto-expands when action-required items
+      arrive and shrinks when handled; gadgets reflow below it; the rail is pinnable and
+      collapses to a slim badge strip.
+- [ ] Notifications are reachable from all three surfaces (bell, rail, toasts); acting
+      on an item clears it from all three at once.
+- [ ] Each v1 gadget renders live data and expands to its full page in one click; deep
+      links route to pages, never windows.
+- [ ] The window manager is retired from the default product surface; modal-stack tests
+      are replaced by the shell/page view contract.
 - [ ] The auto-land watcher added in PR #640 is removed; the "Today pops over a window"
       timing quirk no longer reproduces (there is nothing to stack).
-- [ ] Deep links to other surfaces still open them; modal-stack tests updated to the
-      view contract.
+- [ ] The brand wordmark routes home to the shell (consistent with P0-1's Home behaviour).
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
