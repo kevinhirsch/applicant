@@ -358,7 +358,9 @@ class TestDrillCaptchaWall:
         assert app.status == ApplicationState.AWAITING_FINAL_APPROVAL
 
         # Tick 3: deliver the approval decision and let it submit.
-        orch.send(f"application:{app.id}", "final_approval", {"decision": "finished_by_engine"})
+        orch.send(
+            f"application:{app.id}", FINAL_APPROVAL_TOPIC, {"decision": "finished_by_engine"}
+        )
         t3 = datetime(2026, 6, 16, 0, 2, tzinfo=UTC)
         loop.run_once(cid, now=t3)
         assert str(app.id) in submission.recorded
