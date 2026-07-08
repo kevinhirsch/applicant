@@ -2286,7 +2286,20 @@ function _removeNotifRow(host, id) {
 // ── Count badge ────────────────────────────────────────────────────────────────
 
 function _setBadge(n) {
-  _lastBadgeCount = Math.max(0, Number(n) || 0);
+  const next = Math.max(0, Number(n) || 0);
+  // P0-3 (P0-3b): the authoritative pending count just moved. Tell the shell's
+  // other two notification surfaces (the top-bar bell + the gadget rail's
+  // waiting area) to re-read the ONE shared backing feed so a resolve/snooze
+  // here clears everywhere at once — never a per-surface private copy. Only on a
+  // real change, so a steady poll doesn't fan out redundantly. Headless (no
+  // CustomEvent) just falls back to each surface's own poll.
+  const changed = next !== _lastBadgeCount;
+  _lastBadgeCount = next;
+  if (changed) {
+    try {
+      document.dispatchEvent(new CustomEvent('applicant:pending-changed', { detail: { count: next } }));
+    } catch { /* no CustomEvent available — surfaces converge on their own poll */ }
+  }
   const btn = document.getElementById('rail-portal');
   if (!btn) return;
   let badge = btn.querySelector('.rail-notes-badge');

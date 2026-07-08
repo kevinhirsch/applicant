@@ -175,6 +175,9 @@ _DEMO_POSTINGS: tuple[dict, ...] = (
         "source": "linkedin",
         "score": 0.88,
         "why": "Strong match on Python/Postgres backend depth and remote-first team.",
+        # P1-11: the demo digest/tracker show the quick-apply channel chip on
+        # exactly one row, so the surface is visible in demo mode too.
+        "easy_apply": True,
     },
     {
         "suffix": "globex",
@@ -287,6 +290,7 @@ def build_demo_postings(campaign_id: str = DEMO_CAMPAIGN_ID) -> tuple[JobPosting
                     "Build and operate high-throughput backend services."
                 ),
                 source_key=spec["source"],
+                easy_apply=bool(spec.get("easy_apply", False)),
                 viability_score=spec["score"],
                 rationale={"summary": spec["why"], "score": spec["score"]},
             )

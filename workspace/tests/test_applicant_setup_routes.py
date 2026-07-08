@@ -75,8 +75,8 @@ class _FakeEngine:
     async def setup_configure_channels(self, body):
         return await self._dispatch("setup_configure_channels", body)
 
-    async def setup_test_channels(self):
-        return await self._dispatch("setup_test_channels")
+    async def setup_test_channels(self, channel=""):
+        return await self._dispatch("setup_test_channels", channel)
 
     async def setup_get_quiet_hours(self):
         return await self._dispatch("setup_get_quiet_hours")
@@ -330,6 +330,26 @@ def test_channels_test(monkeypatch):
     resp = _make_client().post("/api/applicant/setup/channels/test")
     assert resp.status_code == 200
     assert resp.json()["channels"] == ["discord"]
+
+
+def test_channels_test_forwards_single_channel(monkeypatch):
+    # P1-4: a `{"channel": ...}` body scopes the test to one channel; the proxy
+    # forwards the channel name to the engine client verbatim.
+    _patch_engine(monkeypatch, result={"sent": True, "live": False, "channels": ["discord"]})
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/test", json={"channel": "discord"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["channels"] == ["discord"]
+    assert _FakeEngine.last_call == ("setup_test_channels", ("discord",))
+
+
+def test_channels_test_without_body_forwards_empty_channel(monkeypatch):
+    # The historical no-body shape keeps the fan-out behavior (empty channel).
+    _patch_engine(monkeypatch, result={"sent": True, "channels": ["discord", "ntfy"]})
+    resp = _make_client().post("/api/applicant/setup/channels/test")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("setup_test_channels", ("",))
 
 
 def test_channels_test_passes_through_dry_run_state(monkeypatch):

@@ -1012,20 +1012,26 @@ async function _renderChannels() {
             ${_tip('In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.')}
           </label>
           <input id="ao-ch-discord" class="settings-select" type="text" placeholder="https://discord.com/api/webhooks/…" value="${esc(cur.discord_webhook_url || '')}" />
+          <button type="button" class="cal-btn" id="ao-ch-test-discord" title="Save your channels, then send a test message to Discord only">Send test</button>
         </div>
+        <div class="settings-row"><span id="ao-ch-test-discord-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div class="settings-row">
           <label class="settings-label">Email / SMTP
             ${_tip('An Apprise-style URL, e.g. mailto://user:pass@gmail.com. You can add several, comma-separated.')}
           </label>
           <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
+          <button type="button" class="cal-btn" id="ao-ch-test-email" title="Save your channels, then send a test email only">Send test</button>
         </div>
+        <div class="settings-row"><span id="ao-ch-test-email-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div class="settings-row">
           <label class="settings-label">Phone push (ntfy)
             ${_tip('A free ntfy topic URL for instant push to your phone, e.g. ntfy://ntfy.sh/your-secret-topic. Install the ntfy app, subscribe to the same topic, and urgent action alerts arrive as push notifications. Add several, comma-separated.')}
           </label>
           <input id="ao-ch-ntfy" class="settings-select" type="text" placeholder="${cur.ntfy_configured ? '•••• already saved — leave blank to keep' : 'ntfy://ntfy.sh/your-secret-topic'}" value="" />
+          <button type="button" class="cal-btn" id="ao-ch-test-ntfy" title="Save your channels, then send a test push to your phone only">Send test</button>
         </div>
-        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add any of these — or skip for now.</div>
+        <div class="settings-row"><span id="ao-ch-test-ntfy-msg" style="font-size:11px;margin-left:auto;"></span></div>
+        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add any of these — or skip for now. In-app updates are always on with zero setup: everything I send shows up in your Pending portal either way.</div>
       </div>
     </div>
     <div class="admin-card ao-help">
@@ -1178,6 +1184,50 @@ async function _renderChannels() {
       testBtn.disabled = false;
     }
   };
+
+  // P1-4: per-channel Send test — same save-then-test shape as the all-channels
+  // button above, but scoped to ONE channel (`POST /channels/test {channel}`), so
+  // a failing webhook/SMTP/topic reports failure on ITS row instead of hiding
+  // behind the channels that worked.
+  const _wireChannelTest = (btnId, channel, msgId, hasValue) => {
+    const btn = document.getElementById(btnId);
+    const msg = document.getElementById(msgId);
+    if (!btn || !msg) return;
+    btn.onclick = async () => {
+      const body = collect();
+      if (!hasValue(body)) {
+        msg.textContent = 'Add this channel first.'; msg.className = 'admin-error'; return;
+      }
+      btn.disabled = true;
+      msg.textContent = 'Saving and sending…'; msg.className = '';
+      try {
+        // Save first so the test uses what's typed in the form — but only when
+        // something is typed (an all-empty save is rejected by the engine, and
+        // testing an already-saved channel needs no re-save).
+        if (body.discord_webhook_url || body.apprise_urls || body.ntfy_url) {
+          await _post(`${SETUP}/channels`, body);
+        }
+        const res = await _post(`${SETUP}/channels/test`, { channel });
+        // UX honesty: a dry-run deployment captured the test but sent nothing.
+        if (res.live === false) {
+          msg.textContent = res.note ? `Saved. ${res.note}.` : 'Saved (dry run — nothing sent yet).';
+          msg.className = 'admin-warn';
+        } else {
+          msg.textContent = 'Test sent — check it arrived.'; msg.className = 'admin-success';
+        }
+      } catch (e) {
+        msg.textContent = "That didn’t send: " + (e.message || 'delivery failed.'); msg.className = 'admin-error';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  };
+  _wireChannelTest('ao-ch-test-discord', 'discord', 'ao-ch-test-discord-msg',
+    (b) => !!(b.discord_webhook_url || cur.discord_configured));
+  _wireChannelTest('ao-ch-test-email', 'email', 'ao-ch-test-email-msg',
+    (b) => !!(b.apprise_urls || cur.email_configured));
+  _wireChannelTest('ao-ch-test-ntfy', 'ntfy', 'ao-ch-test-ntfy-msg',
+    (b) => !!(b.ntfy_url || cur.ntfy_configured));
 
   // Quiet hours (FR-NOTIF-5). The mode select reveals the window, mirroring the
   // sandbox-backend reveal above. Saving is independent of the channel save so it

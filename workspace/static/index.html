@@ -160,11 +160,11 @@
         '/calendar': 'Calendar — Applicant',
         '/notes': 'Notes — Applicant',
         '/cookbook': 'Cookbook — Applicant',
-        '/email': 'Email — Applicant',
+        '/email': 'Daily updates — Applicant',
         '/memory': 'Memory — Applicant',
         '/gallery': 'Gallery — Applicant',
         '/tasks': 'Tasks — Applicant',
-        '/library': 'Library — Applicant',
+        '/library': 'Documents — Applicant',
       };
       if (titles[path]) document.title = titles[path];
       // Per-route Android home-screen icon. We swap the <link rel="manifest">
@@ -1145,6 +1145,23 @@
 
   <main class="chat-container welcome-active" id="chat-container" role="region" aria-label="Chat area">
     <div class="chat-top-bar">
+      <!-- P0-3 (P0-3b) — top-bar NOTIFICATION BELL: the THIRD notification surface
+           (the rail's waiting-on-you area + transient toasts already exist). Reuses
+           the SAME owner-scoped backing the rail and Portal read
+           (GET /api/applicant/portal/pending) — no new engine endpoint. Shows the
+           pending count and a dropdown of the same items; each item opens Today (via
+           the existing window.openApplicantToday launcher) to act. Wired + polled
+           client-side by applicantBell.js, which unhides this wrap only when the
+           owner's pending feed is actually reachable (else it stays hidden — no dead UI). -->
+      <div class="applicant-bell-wrap" id="applicant-bell-wrap" style="display:none;">
+        <button type="button" class="applicant-bell-btn" id="applicant-bell-btn"
+                aria-label="Notifications — nothing waiting on you" title="Notifications — things waiting on you"
+                aria-haspopup="true" aria-expanded="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="applicant-bell-badge" id="applicant-bell-badge" aria-hidden="true" style="display:none;"></span>
+        </button>
+        <div class="applicant-bell-dropdown" id="applicant-bell-dropdown" role="menu" aria-label="Things waiting on you"></div>
+      </div>
       <!-- Always-visible agent status strip. Compact "Applicant is: <current action>"
            with a live/paused dot. Hidden until there's activity; populated + polled by
            applicantActivity.js. Click opens the Activity page. -->
@@ -2621,6 +2638,7 @@
 <script type="module" src="/static/js/applicantAutomationSettings.js"></script>  <!-- automation preferences panel (Settings → Automation Preferences) — mounts via window.mountApplicantAutomationSettings -->
 <script type="module" src="/static/js/applicantHealth.js"></script>  <!-- P1-3 (#655): honest health panel (Settings → System) — mounts via window.mountApplicantHealthPanel; also exports renderApplicantPortalHealthBanner for the Today/Portal banner -->
 <script type="module" src="/static/js/applicantRail.js"></script>  <!-- P0-3: the right-hand gadget rail (3-pane shell) — self-boots into #applicant-gadget-rail; a new LENS over existing proxies (portal/tracker/activity/guardrails/results/health/digest), no new engine endpoints -->
+<script type="module" src="/static/js/applicantBell.js"></script>  <!-- P0-3 (P0-3b): the top-bar notification BELL — the third notification surface; self-boots into #applicant-bell-wrap; reuses GET /api/applicant/portal/pending (same backing as the rail + Portal), no new engine endpoint -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
      seams exist for other lanes to call. -->

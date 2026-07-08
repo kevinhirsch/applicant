@@ -421,6 +421,38 @@ class AppriseNotifier:
         """
         return bool(self._send_real)
 
+    def send_test(self, channel: str) -> None:
+        """Send a test ping to ONE channel, honestly (P1-4 per-channel Send test).
+
+        The all-channels test rides ``notify()``, whose ladder isolates per-channel
+        failures (a dead webhook is logged and retried, never raised) — right for
+        real alerts, wrong for a test button: the user is watching and wants THIS
+        channel's truth. This dispatches directly to the named channel and lets a
+        live delivery failure propagate (``NotificationDeliveryError``) so the
+        button can say "that didn't send" instead of claiming success.
+
+        Raises ``ValueError`` when the channel name is unknown or not configured.
+        """
+        known = {
+            NotificationChannel.DISCORD.value,
+            NotificationChannel.EMAIL.value,
+            NotificationChannel.NTFY.value,
+            NotificationChannel.IN_APP.value,
+        }
+        if channel not in known:
+            raise ValueError(f"Unknown notification channel: {channel!r}.")
+        if channel not in self.configured_channels():
+            raise ValueError(f"The {channel} channel isn't set up yet — add it first.")
+        self._dispatch(
+            channel,
+            Notification(
+                title="Applicant test notification",
+                body=f"Test delivery on your {channel.replace('_', '-')} channel — it works.",
+                urgency=NotificationUrgency.IMMEDIATE,
+                dedup_key=f"channels-test:{channel}",
+            ),
+        )
+
     def configure(
         self,
         *,
@@ -634,13 +666,15 @@ class AppriseNotifier:
         key = notification.dedup_key or ""
         if notification.web_preemptable or key.startswith("decision:"):
             return "action"
-        if key == "channels-test":
+        if key == "channels-test" or key.startswith("channels-test:"):
             # #14: the Settings "Send a test" ping (setup.py's ``/channels/test``)
             # uses IMMEDIATE urgency purely so it bypasses quiet hours and fans out
             # to every configured channel at once — it is not a real alert, so it
             # must not fall into the IMMEDIATE->error mapping below (a user's very
             # first in-app notification should not render as a failure). Any other
             # IMMEDIATE notification still classifies as ``error`` unchanged.
+            # P1-4: the per-channel test (``channels-test:<channel>``) is the same
+            # not-a-real-alert ping, scoped to one channel.
             return "info"
         if notification.urgency is NotificationUrgency.IMMEDIATE:
             return "error"
@@ -673,13 +707,67 @@ class AppriseNotifier:
             if len(self._inbox) > self._max_inbox:
                 del self._inbox[: len(self._inbox) - self._max_inbox]
         if self._send_real:
-            self._send_real_dispatch(channel, notification)
+            try:
+                self._send_real_dispatch(channel, notification)
+            except Exception:
+                # P1-4 / H-series (nothing silently drops): a live push channel that
+                # fails must not vanish into the logs — surface it in the in-app
+                # inbox (the zero-config channel that cannot fail over the wire) so
+                # the user learns their webhook/SMTP/topic is broken and where to
+                # fix it. The exception still propagates so callers keep their
+                # retry/report semantics.
+                self._note_channel_failure(channel, notification)
+                raise
         log.info(
             "notification_dispatched",
             channel=channel,
             urgency=notification.urgency.value,
             dedup_key=notification.dedup_key,
         )
+
+    def _note_channel_failure(self, channel: str, notification: Notification) -> None:
+        """Record an in-app "this channel is failing" entry (nothing silently drops).
+
+        Deduped per channel: while an undismissed failure entry for the same channel
+        is still in the inbox, retries (the ladder re-scans failed rungs every tick)
+        do not stack a new copy. Test pings are skipped — the Send-test button
+        already reports its failure inline, right where the user is looking.
+        """
+        if channel == NotificationChannel.IN_APP.value:
+            return  # the in-app sink is local; it cannot fail over the wire
+        key = notification.dedup_key or ""
+        if key == "channels-test" or key.startswith("channels-test:"):
+            return
+        failure_key = f"channel_failure:{channel}"
+        for entry in self._inbox:
+            if entry.dedup_key == failure_key and entry.id not in self._dismissed:
+                return  # an undismissed failure note for this channel already shows
+        labels = {
+            NotificationChannel.DISCORD.value: "Discord webhook",
+            NotificationChannel.EMAIL.value: "email",
+            NotificationChannel.NTFY.value: "phone push (ntfy)",
+        }
+        label = labels.get(channel, channel)
+        entry = CapturedSend(
+            channel=NotificationChannel.IN_APP.value,
+            title=f"A notification could not reach your {label} channel",
+            body=(
+                f"I tried to send “{notification.title}” to your {label} "
+                "channel and the delivery failed. I'll keep retrying, and everything "
+                "still shows up here in the app — but until the channel is fixed, "
+                "pushes to it won't arrive. Check it in Settings → Notifications "
+                "(Send test shows whether it works)."
+            ),
+            deep_link=None,
+            urgency=NotificationUrgency.IMMEDIATE.value,
+            id=f"inapp-{next(self._inbox_ids)}",
+            created_at=self._clock(),
+            dedup_key=failure_key,
+            kind="error",
+        )
+        self._inbox.append(entry)
+        if len(self._inbox) > self._max_inbox:
+            del self._inbox[: len(self._inbox) - self._max_inbox]
 
     def _prune_old(
         self, entries: list[CapturedSend], now: datetime, *, exempt_unseen: bool = False
