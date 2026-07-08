@@ -7,10 +7,15 @@ résumé parse-verify, ...), not scoped to one request or campaign. This is the
 single point where "how many tokens / how many dollars has the engine spent"
 gets tallied.
 
-Keyed by UTC date only: MVP-1 runs a single active campaign (see
-``core/entities/campaign.py``) and the guardrail is about the OWNER's total LLM
-spend, not one campaign's slice of it, so there is no per-campaign key to thread
-through the adapter singleton.
+Keyed by UTC date only — deliberately OWNER-level, not per-campaign. P1-10 lit
+up multi-campaign (several campaigns can now run side by side, each with its own
+base résumé, digest, and pacing ledger), and this ledger intentionally stays
+un-scoped: the guardrail is about the OWNER's total LLM spend across every
+campaign, and the shared ``OpenAICompatibleLLM`` singleton has no campaign
+context to attribute a completion to (chat/parse-verify calls serve no single
+campaign). Per-campaign *pacing* attribution lives where campaign context
+exists — the agent loop's per-(campaign, day) throughput ledger and the
+per-campaign ``agent_runs.stats`` drain target — never here.
 
 Durability mirrors the existing ``AgentLoop._acted`` daily-throughput ledger:
 this in-memory total is the NOT-YET-persisted delta. The scheduler's tick

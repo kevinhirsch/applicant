@@ -153,6 +153,44 @@ def _clean(value: object) -> str | None:
     return text
 
 
+_TRUTHY_STRINGS = frozenset({"true", "1", "yes", "y"})
+
+
+def detect_easy_apply(raw: dict) -> bool:
+    """Server-side Easy-Apply detection for one raw board row (P1-11).
+
+    Detection ONLY — this never drives automation or logins by itself; it just
+    tags the posting so the digest/tracker can show the channel per role. Pure,
+    zero-token, and deliberately conservative (H-series honesty: a missing
+    signal stays untagged rather than guessed):
+
+    1. An explicit truthy ``easy_apply`` attribute on the row wins — the shape
+       python-jobspy uses for its Easy-Apply flag, and the shape any future
+       source/client can set directly.
+    2. LinkedIn rows: when the detail page was actually fetched (a non-empty
+       ``description`` proves that) and it exposed NO external apply URL
+       (``job_url_direct`` empty), the apply flow is hosted on LinkedIn itself
+       — its built-in quick-apply. A row whose detail was never fetched has an
+       empty description and is left untagged, never guessed.
+    """
+    explicit = raw.get("easy_apply")
+    if isinstance(explicit, bool):
+        return explicit
+    if explicit is not None:
+        text = str(explicit).strip().lower()
+        if text in _TRUTHY_STRINGS:
+            return True
+        if text in {"false", "0", "no", "n"}:
+            return False
+    url = _clean(raw.get("job_url") or raw.get("source_url") or raw.get("url")) or ""
+    if "linkedin.com/jobs" in url.lower():
+        has_detail = bool(_clean(raw.get("description")))
+        direct = _clean(raw.get("job_url_direct"))
+        if has_detail and "job_url_direct" in raw and direct is None:
+            return True
+    return False
+
+
 def _clip(value: str | None, limit: int) -> str | None:
     """Truncate a scraped value to its DB column width.
 
@@ -196,6 +234,7 @@ def normalize_row(
         salary=_clip(salary, 128),
         description=_clean(raw.get("description")) or "",
         source_key=source_key,
+        easy_apply=detect_easy_apply(raw),
     )
 
 
@@ -437,6 +476,7 @@ class SampleSource:
                     salary=raw.get("salary"),
                     description=raw.get("description", ""),
                     source_key=self.key,
+                    easy_apply=detect_easy_apply(raw),
                 )
             )
         return out

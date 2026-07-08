@@ -110,6 +110,7 @@ def test_render_runs_shows_newest_first_for_oldest_first_engine_data():
     function _statSummary() {{ return ''; }}
     function _runTime(run) {{ return run.timestamp || ''; }}
     function _renderEmpty() {{}}
+    function _receiptHTML() {{ return ''; }}
     {cap_m.group(0)}
     {fn_src}
     const items = [
@@ -151,6 +152,7 @@ def test_render_runs_caps_a_long_history_to_a_short_list():
     function _statSummary() {{ return ''; }}
     function _runTime(run) {{ return run.id; }}
     function _renderEmpty() {{}}
+    function _receiptHTML() {{ return ''; }}
     {cap_m.group(0)}
     {fn_src}
     const items = [];

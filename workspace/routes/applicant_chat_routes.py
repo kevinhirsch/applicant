@@ -89,9 +89,13 @@ _CHAT_TURN_TIMEOUT = httpx.Timeout(connect=3.0, read=90.0, write=10.0, pool=3.0)
 #: its sends to the engine proxy instead of the LLM streaming path; it is not
 #: a real endpoint and is never dialled.
 ENGINE_SESSION_URL = "applicant://engine"
-#: User-facing session name + assistant label ("model" column) for that session.
+#: User-facing session name ("Chats" list label) + "model" column for that session.
 ENGINE_SESSION_NAME = "Job assistant"
 ENGINE_SESSION_MODEL = "Job assistant"
+#: The speaker label persisted on every assistant turn (``character_name``), so
+#: the bubble reads "Applicant" — the product speaking — never a model name or
+#: tool persona (P0-4 de-workspacing; mirrors ASSISTANT_LABEL in applicantChat.js).
+ENGINE_SPEAKER_NAME = "Applicant"
 
 
 # --- request bodies ---------------------------------------------------------
@@ -361,7 +365,7 @@ def _persist_chat_turn(session_manager, session_id: str, user_text: str, reply: 
     ``metadata.applicant`` so the native renderer's decoration seam
     (``chatRenderer.addMessage`` → ``applicantChat.decorateEngineMessage``)
     can rebuild the inline chips on a history reload, and
-    ``character_name`` so the bubble is labelled "Job assistant" like the
+    ``character_name`` so the bubble is labelled "Applicant" like the
     live turn. Best-effort: a persistence hiccup must never eat a reply the
     engine already produced."""
     extras = {
@@ -375,7 +379,7 @@ def _persist_chat_turn(session_manager, session_id: str, user_text: str, reply: 
     }
     assistant_meta: dict = {
         "model": ENGINE_SESSION_MODEL,
-        "character_name": ENGINE_SESSION_NAME,
+        "character_name": ENGINE_SPEAKER_NAME,
     }
     if extras:
         assistant_meta["applicant"] = extras

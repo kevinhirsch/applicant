@@ -341,6 +341,9 @@ class DigestService:
                 "work_mode": posting.work_mode,
                 "salary": posting.salary,
                 "source": posting.source_key,
+                # P1-11: surface the apply channel per role (detection-only tag
+                # set at discovery time; never drives automation by itself).
+                "easy_apply": bool(getattr(posting, "easy_apply", False)),
             }
             if self._scoring is not None:
                 # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
@@ -572,21 +575,66 @@ class DigestService:
         digest ONCE and passes it in, instead of ``render_email`` re-scoring the full
         set a second time per delivery.
 
-        Lens 10 #31: the body is a minimal, INLINE-styled single-column card list —
-        no ``<style>`` block (mail clients strip those) and no flex/grid (mail
-        clients don't support either); table-based layout is kept for the widest
-        client compatibility, it's just one card per role instead of the old
-        multi-column ``<table border='1' cellpadding='6'>`` grid that was unreadable
-        at phone width. A hidden preheader span carries the inbox-list preview text.
+        Lens 10 #31 / P1-4: the body is an INLINE-styled, single-column, branded
+        card list — no ``<style>`` block (mail clients strip those) and no flex/grid
+        (mail clients don't support either); table-based layout is kept for the
+        widest client compatibility. A hidden preheader span leads the body so the
+        inbox-list preview text is a real summary. P1-4 polish: an "Applicant"
+        masthead, a lead summary line, and a footer explaining where these matches
+        came from and where to change delivery (Settings → Notifications) — so the
+        daily email reads as a product, not a dump (it doubles as the marketing
+        asset for the launch material).
+
+        NOTE for tests/consumers: each role card opens with the literal ``<tr><td>``
+        marker (no attributes) and every wrapper cell carries attributes, so
+        ``html.count("<tr><td>")`` remains an exact card count.
         """
         if payload is None:
             payload = self.build_digest_payload(campaign_id, criteria)
-        lines = ["<h1>Your daily digest</h1>"]
+        lines: list[str] = []
         top_row: dict | None = None
+        # Shared shell: neutral canvas, centered 640px column, text masthead.
+        shell_open = (
+            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            "border='0' style='width:100%;background-color:#f4f5f6;'>"
+            "<tr><td align='center' style='padding:24px 12px;'>"
+            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            "border='0' style='width:100%;max-width:640px;font-family:Arial,Helvetica,"
+            "sans-serif;text-align:left;'>"
+            "<tr><td style='padding:0 6px 14px;'>"
+            "<span style='font-size:18px;font-weight:bold;color:#111111;"
+            "letter-spacing:0.4px;'>Applicant</span>"
+            "<span style='font-size:12px;color:#8a8f98;'> &nbsp;&middot;&nbsp; "
+            "your job search, working for you</span>"
+            "</td></tr>"
+            "<tr><td style='background-color:#ffffff;border:1px solid #e4e6ea;"
+            "border-radius:10px;padding:22px;'>"
+        )
+        shell_close = (
+            "</td></tr>"
+            "<tr><td style='padding:14px 6px 0;font-size:11.5px;line-height:1.6;"
+            "color:#8a8f98;'>"
+            "Applicant searched your enabled sources against your criteria and "
+            "scored every role before it reached you. Nothing is ever submitted "
+            "without your approval. Change how — and when — these updates reach "
+            "you in Settings &rarr; Notifications."
+            "</td></tr>"
+            "</table>"
+            "</td></tr></table>"
+        )
+        heading = (
+            "<h1 style='margin:0 0 6px;font-size:20px;line-height:1.3;"
+            "color:#111111;'>Your daily digest</h1>"
+        )
         if payload["empty"]:
             note = str(payload["note"] or "")
             lines.append(_preheader_html(note))
-            lines.append(f"<p><em>{html.escape(note)}</em></p>")
+            lines.append(shell_open)
+            lines.append(heading)
+            lines.append(
+                "<p style='margin:0;font-size:13.5px;line-height:1.6;color:#555555;'>"
+                f"<em>{html.escape(note)}</em></p>"
+            )
         else:
             all_rows = payload["rows"]
             total = len(all_rows)
@@ -607,10 +655,18 @@ class DigestService:
                 f" — including {first_summary}." if first_summary else "."
             )
             lines.append(_preheader_html(preheader, already_escaped=True))
+            lines.append(shell_open)
+            lines.append(heading)
+            noun = "role cleared" if total == 1 else "roles cleared"
+            lines.append(
+                "<p style='margin:0 0 16px;font-size:13.5px;line-height:1.6;"
+                f"color:#555555;'>{total} new {noun} your bar today — the best "
+                "matches are below, ranked by score. Review and approve them in "
+                "the app; nothing goes out without you.</p>"
+            )
             lines.append(
                 "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
-                "border='0' style='width:100%;max-width:640px;font-family:Arial,Helvetica,"
-                "sans-serif;'>"
+                "border='0' style='width:100%;'>"
             )
             for r in top_rows:
                 # SECURITY: every interpolated cell is untrusted scraped data
@@ -619,6 +675,9 @@ class DigestService:
                 # emailed/rendered digest.
                 summary = html.escape(str(r["summary"] or ""))
                 work_mode = html.escape(str(r["work_mode"] or "-"))
+                # P1-11: show the apply channel per role — a static, trusted
+                # label (never scraped text), appended to the meta line.
+                channel = " &middot; Easy Apply" if r.get("easy_apply") else ""
                 score = html.escape(str(r["viability_score"]))
                 why = html.escape(str(r["why_suggested"] or ""))
                 href = _safe_href(r["link"])
@@ -630,7 +689,7 @@ class DigestService:
                     "<tr><td style='padding:16px;'>"
                     f"<div style='font-size:16px;font-weight:bold;color:#111111;'>{summary}</div>"
                     "<div style='font-size:13px;color:#555555;margin:4px 0 0;'>"
-                    f"{work_mode} &middot; Score {score}</div>"
+                    f"{work_mode}{channel} &middot; Score {score}</div>"
                     f"<div style='font-size:13px;color:#555555;margin:4px 0 0;'>{why}</div>"
                     "<div style='margin:12px 0 0;'>"
                     f"<a href='{href}' style='display:inline-block;padding:8px 14px;"
@@ -654,7 +713,9 @@ class DigestService:
                 )
         # H2 (no silent underdelivery): sources that underdelivered on the last
         # check are stated in the email itself, even when other sources yielded
-        # rows — a digest that reads as a full sweep must actually be one.
+        # rows — a digest that reads as a full sweep must actually be one. The
+        # block renders INSIDE the branded card (before ``shell_close``) on both
+        # the empty-day and match-day paths.
         shortfall_items = "".join(
             f"<li style='margin:0 0 4px;'>{html.escape(str(s.get('message') or ''))}</li>"
             for s in (payload.get("source_shortfalls") or [])
@@ -666,6 +727,7 @@ class DigestService:
                 "Where I came up short on the last check:</p>"
                 f"<ul style='font-size:13px;color:#8a6d3b;margin:0 0 8px;padding-left:18px;'>{shortfall_items}</ul>"
             )
+        lines.append(shell_close)
         return {
             "subject": _digest_subject(payload, top_row),
             "html": "\n".join(lines),
