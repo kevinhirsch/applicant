@@ -29,6 +29,7 @@ from applicant.app.routers import (
     feedback,
     fonts,
     gallery,
+    health,
     model_endpoints,
     notifications,
     onboarding,
@@ -48,6 +49,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(setup.router)
     app.include_router(model_endpoints.router)
     app.include_router(ui.router)
+    # health/capabilities (P1-3): ungated, like the trio above — an owner must be
+    # able to see WHY automated work hasn't started before the gate even opens.
+    app.include_router(health.router)
     # gated driving-port routers
     app.include_router(campaigns.router)
     app.include_router(criteria.router)

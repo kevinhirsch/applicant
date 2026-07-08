@@ -231,6 +231,20 @@ function mountRelocatedSetupStep(tab) {
       });
     }
   }
+  // The System tab hosts the honest health panel (P1-3, issue #655): the
+  // engine's boot-time capability report (postgres / résumé renderer /
+  // browser / orchestrator), mounted the same lazy-on-open way as the
+  // Campaign/AI-ladder/Automation panels above.
+  if (tab === 'system') {
+    const healthHost = document.getElementById('ao-settings-health');
+    const mountHealth = window.mountApplicantHealthPanel;
+    if (healthHost && typeof mountHealth === 'function') {
+      Promise.resolve(mountHealth(healthHost)).catch(e => {
+        console.error('Failed to mount engine health panel:', e);
+        healthHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load engine health.</p>';
+      });
+    }
+  }
   const cfg = RELOCATED_SETUP_STEPS[tab];
   if (!cfg) return;
   const host = document.getElementById(cfg.host);

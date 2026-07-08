@@ -377,6 +377,16 @@ class ApplicantEngineClient:
         result = await self._request("GET", "/api/dormant-surfaces")
         return result if isinstance(result, list) else []
 
+    # -- honest health panel (P1-3, issue #655) ----------------------------
+
+    async def health_capabilities(self) -> dict:
+        """The boot-time capability self-report: postgres, résumé renderer,
+        browser, orchestrator — each real-vs-stub with a plain-language label
+        and actionable fix copy. Ungated on the engine (no llm-configured
+        gate — see ``routers/health.py``), so it is reachable even before the
+        owner has connected a model."""
+        return await self._request("GET", "/api/health/capabilities")
+
     # -- setup wizard: LLM + channels + step advance (FR-OOBE-2/3) --------
 
     async def setup_configure_llm(self, body: dict) -> Any:
