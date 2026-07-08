@@ -336,13 +336,16 @@ async function main() {
   };
   const exe = chromiumExecutable();
   if (exe) launch.executablePath = exe;
-  const browser = await playwright.chromium.launch(launch);
 
   const results = [];
   let captured = 0;
   const failures = [];
+  // Launch inside the try: a launch failure must still stop the uvicorn the
+  // harness just booted, or it lingers holding the port for every later run.
+  let browser = null;
 
   try {
+    browser = await playwright.chromium.launch(launch);
     // WARM-UP (determinism): the very first render in a fresh browser process
     // rasterizes text measurably differently from every later one (font/glyph
     // cache warm-up — verified: shot 1 of N differs by a few hundred px, shots
@@ -449,7 +452,7 @@ async function main() {
       }
     }
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
     if (server) await server.stop();
   }
 

@@ -74,19 +74,25 @@ jobs:
       - name: Visual walk vs committed baselines
         id: walk
         continue-on-error: true
+        # inputs.only rides env, never template-spliced into the shell text —
+        # actor-supplied workflow_dispatch input is an injection surface.
+        env:
+          ONLY_INPUT: ${{ inputs.only }}
         run: |
-          node workspace/tests/visual/run.js ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+          node workspace/tests/visual/run.js ${ONLY_INPUT:+--only "$ONLY_INPUT"}
       - name: Stash run-1 output
         run: mv workspace/tests/visual/.out /tmp/visual-run-1
 
       # Pass 2: an identical fresh run — MUST be pixel-identical to pass 1
       # (the determinism contract). This check is environment-independent.
       - name: Determinism proof (second run, zero diff vs first)
+        env:
+          ONLY_INPUT: ${{ inputs.only }}
         run: |
           rm -rf workspace/tests/visual/baselines
           mkdir -p workspace/tests/visual/baselines
           cp -r /tmp/visual-run-1/current/* workspace/tests/visual/baselines/
-          node workspace/tests/visual/run.js ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+          node workspace/tests/visual/run.js ${ONLY_INPUT:+--only "$ONLY_INPUT"}
 
       - name: Upload screenshots + diffs
         if: always()

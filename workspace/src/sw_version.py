@@ -41,8 +41,10 @@ def static_asset_fingerprint(static_dir: str) -> str:
     per-release cache label.
     """
     digest = hashlib.sha256()
-    for root, dirs, files in sorted(os.walk(static_dir)):
-        dirs.sort()
+    # Determinism comes from the outer sorted() over the walk tuples plus
+    # sorted(files) — a dirs.sort() here would be dead code (the generator is
+    # already fully consumed by sorted()).
+    for root, _dirs, files in sorted(os.walk(static_dir)):
         for name in sorted(files):
             if not name.endswith((".js", ".css", ".html")):
                 continue

@@ -514,8 +514,12 @@ async def serve_service_worker():
     from src.sw_version import static_asset_fingerprint, stamp_sw_cache_name
 
     static_dir = abs_join(BASE_DIR, "static")
-    with open(abs_join(static_dir, "sw.js"), "r", encoding="utf-8") as fh:
-        source = fh.read()
+    try:
+        with open(abs_join(static_dir, "sw.js"), "r", encoding="utf-8") as fh:
+            source = fh.read()
+    except FileNotFoundError:
+        # A broken deploy artifact should read as a clean 404, not a traceback.
+        return Response(content="service worker not found", status_code=404, media_type="text/plain")
     stamped = stamp_sw_cache_name(source, static_asset_fingerprint(static_dir))
     return Response(
         content=stamped,

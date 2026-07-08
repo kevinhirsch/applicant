@@ -240,9 +240,21 @@ function posterize(data) {
 // ── Compare ──────────────────────────────────────────────────────────────────
 
 /**
- * Exact per-channel pixel comparison. Returns a diff image (baseline dimmed
- * to grayscale, differing pixels solid red) when the two differ. A size
- * mismatch is reported as a total diff with a note (no pixel walk).
+ * Per-channel pixel comparison with a bounded GLYPH-EDGE tolerance. Returns a
+ * diff image (baseline dimmed to grayscale, differing pixels solid red) when
+ * the two differ. A size mismatch is reported as a total diff with a note (no
+ * pixel walk).
+ *
+ * The tolerance (the standard anti-aliasing heuristic, cf. pixelmatch): a
+ * differing pixel is excused when the CURRENT pixel's exact value appears
+ * among the baseline's 8 neighbors at that location, or vice versa — i.e. the
+ * paint moved by at most one pixel of glyph-edge/AA rounding, which Chromium's
+ * per-launch glyph cache genuinely does to text edges (verified: runs within
+ * one launch are byte-identical; separate launches disagree by ±1px on
+ * scattered text rows). A REAL regression — moved, added, removed or recolored
+ * UI — changes pixel blocks whose values match no neighbor, and still fails.
+ * The excused count is capped (0.5% of the frame) so large coherent movement
+ * can never hide inside the tolerance, and is reported in `note` honestly.
  */
 function comparePNG(bufA, bufB) {
   const a = decodePNG(bufA);
@@ -259,12 +271,35 @@ function comparePNG(bufA, bufB) {
     };
   }
   const total = a.width * a.height;
+  const W = a.width, H = a.height;
+  const sameRGBA = (buf, j, r, g, bl, al) =>
+    buf[j] === r && buf[j + 1] === g && buf[j + 2] === bl && buf[j + 3] === al;
+  // Does (x,y)'s exact RGBA in `self` appear among (x,y)'s 8 neighbors in `other`?
+  const neighborMatch = (self, other, x, y) => {
+    const i = (y * W + x) * 4;
+    const r = self[i], g = self[i + 1], bl = self[i + 2], al = self[i + 3];
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        if (sameRGBA(other, (ny * W + nx) * 4, r, g, bl, al)) return true;
+      }
+    }
+    return false;
+  };
   let diffCount = 0;
+  let aaTolerated = 0;
   let diff = null;
   for (let p = 0; p < total; p++) {
     const i = p * 4;
     if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] ||
         a.data[i + 2] !== b.data[i + 2] || a.data[i + 3] !== b.data[i + 3]) {
+      const x = p % W, y = (p / W) | 0;
+      if (neighborMatch(b.data, a.data, x, y) && neighborMatch(a.data, b.data, x, y)) {
+        aaTolerated++;
+        continue;
+      }
       if (!diff) {
         // Lazily build the diff canvas: grayscale-dimmed baseline.
         diff = Buffer.alloc(total * 4);
@@ -278,13 +313,19 @@ function comparePNG(bufA, bufB) {
       diffCount++;
     }
   }
+  // The tolerance is bounded: past 0.5% of the frame, "AA jitter" is not a
+  // credible explanation and the frame fails outright.
+  if (aaTolerated > total * 0.005) diffCount += aaTolerated;
   return {
     equal: diffCount === 0,
     diffCount,
+    aaTolerated,
     total,
     width: a.width,
     height: a.height,
-    note: diffCount ? `${diffCount}/${total} pixels differ` : '',
+    note: diffCount
+      ? `${diffCount}/${total} pixels differ${aaTolerated ? ` (+${aaTolerated} within the glyph-edge tolerance)` : ''}`
+      : (aaTolerated ? `equal (${aaTolerated} px within the glyph-edge tolerance)` : ''),
     diffImage: diff ? encodePNG(a.width, a.height, diff) : null,
   };
 }
