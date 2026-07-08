@@ -32,6 +32,7 @@ import uiModule from './ui.js';
 import digestModule from './emailLibrary/applicantDigest.js';
 import remoteModule from './applicantRemote.js';
 import { trustLine } from './applicantOnboarding.js';
+import { renderApplicantPortalHealthBanner } from './applicantHealth.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 import {
   errText, loadingHTML, errorHTML, wireRetry, pollVisible,
@@ -578,6 +579,11 @@ function _ensureModalEl() {
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
         <div id="applicant-portal-greeting"></div>
+        <!-- P1-3 (#655): honest health panel banner — renders ONLY when the
+             engine is unreachable or a LOAD-BEARING capability is degraded
+             (postgres/résumé renderer/browser); empty otherwise. See
+             applicantHealth.js renderApplicantPortalHealthBanner. -->
+        <div id="applicant-portal-health"></div>
         <div id="applicant-portal-today"></div>
         <div id="applicant-portal-streak"></div>
         <div id="applicant-portal-recap"></div>
@@ -589,7 +595,7 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   modal.querySelector('#applicant-portal-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); _loadMomentum(); _loadStreak(); });
+  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); _loadMomentum(); _loadStreak(); _loadHealth(); });
   modal.querySelector('#applicant-portal-neverdoes').addEventListener('click', _toggleNeverDoesPanel);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -1115,6 +1121,26 @@ function _neverDoesHTML() {
     <div style="max-width:380px;margin:14px auto 0;text-align:left;border-top:1px solid var(--border);padding-top:12px;">
       <div style="font-size:11px;opacity:0.75;line-height:1.5;">${esc(line)}</div>
     </div>`;
+}
+
+// ── Honest health panel banner (P1-3, issue #655) ────────────────────────────
+//
+// Reads the SAME owner-gated proxy Settings -> System's full panel reads
+// (applicantHealth.js's shared API constant) and renders a compact banner —
+// or nothing — into its own always-present host, independent of the pending
+// list (mirrors _loadMomentum/_loadStreak/_loadAgentPulse: a slow/offline
+// health read never blocks or delays the queue the user opened Portal for).
+
+function _healthHost() { return _modalEl && _modalEl.querySelector('#applicant-portal-health'); }
+
+async function _loadHealth() {
+  const host = _healthHost();
+  if (!host) return;
+  try {
+    await renderApplicantPortalHealthBanner(host);
+  } catch {
+    host.innerHTML = ''; // best-effort supplementary strip — never break Portal over this
+  }
 }
 
 // ── Agent pulse (task #10 data half) ─────────────────────────────────────────
@@ -2520,6 +2546,7 @@ export async function openApplicantPortal(opts) {
   _loadDigest(true);
   _loadMomentum();
   _loadStreak();
+  _loadHealth();
   await _load(true);
 }
 

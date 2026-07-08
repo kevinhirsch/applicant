@@ -57,6 +57,9 @@ class _FakeEngine:
     async def generate_screening_answer(self, body):
         return await self._dispatch("generate_screening_answer", body)
 
+    async def document_flagged_facts(self, document_id):
+        return await self._dispatch("document_flagged_facts", document_id)
+
     async def review_document(self, document_id):
         return await self._dispatch("review_document", document_id)
 
@@ -157,6 +160,40 @@ def test_application_documents_passes_provenance_through(monkeypatch):
     assert resp.json() == payload
     prov = resp.json()["items"][0]["provenance"]
     assert {p["kind"] for p in prov} == {"memory", "playbook"}
+
+
+def test_flagged_facts_forwards_document_id_and_passes_through(monkeypatch):
+    """P1-13: the review surface reads the fact-class specifics a draft uses that
+    aren't in the profile yet, so it can offer a one-tap 'add to my profile' /
+    'remove'. The proxy forwards the document id and hands the engine JSON back
+    unchanged (campaign id + flagged tokens)."""
+    payload = {
+        "document_id": "doc-1",
+        "campaign_id": "camp-9",
+        "type": "cover_letter",
+        "flagged": ["Kubernetes", "Stanford"],
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/doc-1/flagged-facts")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("document_flagged_facts", ("doc-1",))
+
+
+def test_flagged_facts_requires_auth(monkeypatch):
+    _patch_engine(monkeypatch, result={"document_id": "doc-1", "flagged": []})
+    resp = _make_client(authed=False).get("/api/applicant/documents/doc-1/flagged-facts")
+    assert resp.status_code in (401, 403)
+
+
+def test_flagged_facts_degrades_to_empty_on_engine_error(monkeypatch):
+    """A flagged-facts read must never block the review card: an engine
+    timeout/error degrades to an empty list (nothing to double-check) rather than
+    surfacing an error, mirroring the research-provenance panel."""
+    _patch_engine(monkeypatch, error=EngineError("boom", status=None))
+    resp = _make_client().get("/api/applicant/documents/doc-1/flagged-facts")
+    assert resp.status_code == 200
+    assert resp.json() == {"document_id": "doc-1", "flagged": []}
 
 
 def test_application_documents_passes_degraded_flag_through(monkeypatch):

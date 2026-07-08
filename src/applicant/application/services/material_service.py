@@ -721,6 +721,40 @@ class MaterialService:
             )
         return flagged
 
+    def flagged_facts_for_document(self, document_id: GeneratedDocumentId) -> dict:
+        """Facts in an already-persisted document not traceable to the profile.
+
+        P1-13 truth policy (BALANCED): the fabrication guard SURFACES rather than
+        blocks flagged facts, so a stored draft may legitimately contain fact-class
+        tokens (skills, orgs, credentials, dates, numbers) that are not yet in the
+        candidate's attribute cloud / base résumé. This read-only method recomputes
+        those flagged tokens so the review UI can surface them for the user to
+        confirm ("yes, that's true, add it to my profile") or remove from the draft.
+
+        Pure detection: no raise, no write, no LLM call, no company research
+        (side-effect-free). The ground truth is the same flattened true-attribute
+        text the persistence guard checks against, plus the application's own
+        addressee/role context (so the target company/role is never itself flagged).
+        The free-prose (entity-shaped) check is used for cover letters / screening
+        answers, matching how they were generated; résumé-class docs use the strict
+        per-token check. Returns the campaign id (so the caller can add a confirmed
+        fact to that campaign's profile), the document type, and the flagged tokens.
+        """
+        doc = self._storage.documents.get(document_id)
+        if doc is None:
+            raise NotFound(f"no such document {document_id}")
+        prose = doc.type in (DocumentType.COVER_LETTER, DocumentType.SCREENING_ANSWER)
+        source = self.true_attribute_text(doc.campaign_id)
+        if doc.application_id:
+            source = self._with_application_context(source, doc.application_id)
+        flagged = self.detect_fabrication(source, doc.content or "", prose=prose)
+        return {
+            "document_id": str(doc.id),
+            "campaign_id": str(doc.campaign_id),
+            "type": doc.type.value,
+            "flagged": flagged,
+        }
+
     # === fit scoring / selection (FR-RESUME-6/7) ==========================
     def score_fit(
         self, variant: ResumeVariant, posting_id: JobPostingId, jd_terms: list[str], source: str
