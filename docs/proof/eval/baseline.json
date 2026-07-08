@@ -1,0 +1,12 @@
+{
+  "dimension_means": {
+    "relevance": 4.938,
+    "tone": 4.219,
+    "honesty": 4.781,
+    "specificity": 4.625,
+    "completeness": 4.438
+  },
+  "note": "Baseline from the first live run (P2-6). gpt-4o-mini generation + judge over the synthetic golden set (32 materials). Regenerate by re-running the runner and copying dimension_means. The eval lane gates new runs against this with a 0.5 regression threshold.",
+  "source_report": "material_eval_report.json",
+  "generated_at": "2026-07-08T21:10:13Z"
+}

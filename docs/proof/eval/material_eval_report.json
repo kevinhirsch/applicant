@@ -1,0 +1,644 @@
+{
+  "provenance": "SYNTHETIC — authored for the eval harness; not real people or real résumés.",
+  "gen_model": "openai/gpt-4o-mini",
+  "judge_model": "openai/gpt-4o-mini",
+  "live": true,
+  "case_count": 20,
+  "material_count": 32,
+  "degraded_count": 0,
+  "fabrication_material_count": 2,
+  "dimension_means": {
+    "relevance": 4.938,
+    "tone": 4.219,
+    "honesty": 4.781,
+    "specificity": 4.625,
+    "completeness": 4.438
+  },
+  "overall_mean": 4.6,
+  "results": [
+    {
+      "case_id": "prof-backend-eng|post-be-01",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-01",
+      "material_type": "cover_letter",
+      "text": "Jordan Avery \nBackend Software Engineer \n\nI am a backend engineer with 6 years of experience building high-throughput services in Go and Python. I focus on reliability, latency, and cost, particularly in payment and search infrastructure.\n\n**Experience** \n\n**Senior Backend Engineer, Northwind Payments** (2021-Present) \nI rebuilt the settlement pipeline in Go. This reduced end-of-day reconciliation from 40 minutes to 6 minutes. \nI reduced p99 checkout latency by 38% through a Redis read-through cache and connection pooling. \nI led the migration of 22 services from a monolith to Kubernetes without any customer-facing downtime. \nAs an on-call rotation owner, I lowered incident MTTR from 55 to 18 minutes by improving runbooks. \n\n**Backend Engineer, Cedar Analytics** (2018-2021) \nI built an event-ingestion service in Python (FastAPI) that handled 12k events per second. \nI designed a PostgreSQL sharding scheme that supported 4x data growth. \nI created a CI pipeline using GitHub Actions to cut deploy time from 30 to 8 minutes. \n\n**Education** \nB.S. in Computer Science, State University (2018) \n\n**Skills** \nGo, Python, PostgreSQL, Redis, Kubernetes, Docker, gRPC, FastAPI, AWS, distributed systems, observability, CI/CD",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 5.0,
+      "judge_summary": "Cover letter quality: 5.0/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-01",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-01",
+      "material_type": "screening_answer",
+      "text": "I’ve always focused on improving the reliability and latency of production systems. At Northwind Payments, I rebuilt the settlement pipeline in Go, which significantly cut end-of-day reconciliation from 40 minutes to just 6 minutes. \n\nI also tackled checkout latency, reducing p99 times by 38% through a Redis read-through cache and connection pooling. This had a direct impact on user experience.\n\nDuring my time leading the migration of 22 services from a monolith to Kubernetes, I ensured zero customer-facing downtime. This project required meticulous planning and execution to maintain reliability throughout. \n\nI took on the on-call rotation, where I drove incident mean time to resolution down from 55 to 18 minutes by improving our runbooks. Each of these experiences has strengthened my ability to create robust, efficient backend systems.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 5.0,
+      "judge_summary": "Material quality: 5.0/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-01",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-01",
+      "material_type": "cover_letter",
+      "text": "**Priya Raman** \n**Data Analyst** \n\nI'm a data analyst with 4 years of experience converting product and marketing data into actionable insights. I excel in SQL, Python (pandas), and dashboarding tools like Looker.\n\n**Experience** \n\n**Data Analyst, Brightleaf Commerce** (2022-present) \nAt Brightleaf, I built a self-serve funnel dashboard in Looker, utilized daily by 40 team members across product and growth. I also ran an A/B test that successfully increased checkout conversion by 11% through a simpler shipping process. Additionally, I streamlined our reporting cycle, reducing it from 2 days to just 3 hours by transitioning hand-built spreadsheets into dbt models.\n\n**Junior Data Analyst, Harbor Media** (2020-2022) \nIn my role at Harbor Media, I developed SQL queries for subscriber-retention analysis that informed our quarterly board deck. I also automated a churn-flag report using Python, creating a tool that the retention team continues to rely on.\n\n**Education** \nB.A. Economics, City College (2020) \n\n**Skills** \nI am proficient in SQL, Python, pandas, dbt, Looker, Tableau, A/B testing, statistics, data visualization, and ETL. I specialize in product and growth analytics, with a focus on experimentation and improving conversion rates.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Cover letter quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-01",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-01",
+      "material_type": "screening_answer",
+      "text": "I have spent the last four years as a data analyst, transforming product and marketing data into actionable insights. I am fluent in SQL, Python with pandas, and various dashboarding tools.\n\nCurrently, as a Data Analyst at Brightleaf Commerce, I built a self-serve funnel dashboard in Looker. This dashboard is currently used by 40 team members across product and growth daily. I also ran an A/B test that increased checkout conversion by 11% by streamlining the shipping process. Through this experience, I learned how to utilize data to directly influence product decisions. Additionally, I improved our reporting efficiency significantly by reducing the cycle from two days to just three hours through dbt modeling.\n\nEarlier, in my role as a Junior Data Analyst at Harbor Media, I wrote SQL queries for subscriber-retention analyses that contributed to our quarterly board deck. I also automated a churn-flag report in Python, which continues to support our retention efforts.\n\nI hold a B.A. in Economics from City College, completed in 2020. My skills include SQL, Python, pandas, dbt, Looker, Tableau, A/B testing, and data visualization. I am committed to leveraging data analytics to drive product and growth decisions.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Material quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-01",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-01",
+      "material_type": "cover_letter",
+      "text": "**Marcus Bell** \n**Marketing Manager** \n\nI bring 8 years of experience in B2B SaaS marketing. My focus is on demand generation, content, and lifecycle programs. I take ownership of pipeline contribution and customer acquisition cost. \n\n**Experience** \n\n**Marketing Manager, Summit CRM** (2019-present) \nI grew the marketing-sourced pipeline by 62% in two years. This success came from rebuilding our webinar and content program. I also reduced the cost per marketing-qualified lead by 28% by reallocating spend from paid search to lifecycle email. I manage a team of 4 and oversee a $1.2M annual budget. \n\n**Demand Generation Specialist, Orbit Software** (2015-2019) \nIn this role, I ran paid social and search campaigns that produced 30% of new-trial signups. I collaborated with the sales team to build the lead-scoring model in HubSpot. \n\n**Education** \nB.A. Communications, Lakeside University (2015) \n\n**Skills** \nDemand generation, content marketing, marketing automation, HubSpot, Marketo, SEO, paid media, lifecycle email, analytics, team leadership.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-01",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-01",
+      "material_type": "screening_answer",
+      "text": "I have extensive experience in growing marketing-sourced pipeline within the B2B SaaS sector. As the Marketing Manager at Summit CRM, I led the charge to rebuild the webinar and content program. This effort resulted in a 62% increase in our marketing-sourced pipeline over just two years.\n\nAdditionally, I focused on optimizing our spending to enhance efficiency. By reallocating our resources from paid search to lifecycle email, I successfully reduced our cost per marketing-qualified lead by 28%. My strategic approach ensured we added significant value to our pipeline while managing a team of four and a $1.2M budget. \n\nBefore Summit CRM, I worked as a Demand Generation Specialist at Orbit Software. There, I ran paid social and search campaigns, which contributed to 30% of new-trial signups. I also collaborated with the sales team to build a lead-scoring model in HubSpot, which further streamlined our pipeline management. \n\nWith eight years in B2B SaaS marketing, I am committed to driving demand generation, content, and lifecycle marketing efforts that deliver measurable results.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Material quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-01",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-01",
+      "material_type": "cover_letter",
+      "text": "Elena Torres, RN\n\nAs a registered nurse with 7 years of experience, I specialize in critical care. My background includes extensive work in both medical-surgical and intensive-care units. I am certified in BLS and ACLS.\n\nCurrently, I serve as an ICU registered nurse at Riverside General Hospital. I manage the care of up to 3 critically ill patients per shift, including those on ventilators and post-op cardiac cases. I also precept new-graduate nurses, having onboarded 9 over the past three years. As a charge nurse on two shifts a week, I coordinate staffing and admissions for a busy 24-bed unit.\n\nPreviously, I worked as a Med-Surg registered nurse at Valley Health. There, I cared for 5 to 6 post-surgical patients per shift with a documented zero medication error record. I played a key role in rolling out a barcode medication-administration system on the floor.\n\nI hold a B.S. in Nursing from State University, earned in 2017. My active RN license reflects my commitment to patient care and my expertise in critical care, medical-surgical nursing, and care coordination.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 4,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-01",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-01",
+      "material_type": "screening_answer",
+      "text": "I am a registered nurse with 7 years of experience in medical-surgical and intensive-care units. Currently, I work as an ICU Registered Nurse at Riverside General Hospital. Here, I manage care for up to 3 critically ill patients each shift. This includes caring for patients on ventilators and those recovering from cardiac surgeries.\n\nI have a strong commitment to teaching and mentoring. Over the past three years, I've precepted nine new-graduate nurses, helping them adapt to the fast-paced ICU environment. In addition, I serve as a charge nurse for two shifts each week. This role involves coordinating staffing and admissions for our 24-bed unit, ensuring efficient patient flow and care delivery.\n\nMy previous experience at Valley Health as a Med-Surg Registered Nurse further solidified my skills. I cared for 5 to 6 post-surgical patients per shift. I am proud of my documented zero medication-error record during this time. I also contributed to the team that rolled out the barcode medication-administration system, enhancing patient safety.\n\nI hold a B.S. in Nursing from State University and maintain active certifications in BLS and ACLS. My experience has equipped me with expertise in critical care, patient assessment, care coordination, and IV therapy. I am dedicated to providing high-quality care to my patients.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 4,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Material quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-02",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-02",
+      "material_type": "cover_letter",
+      "text": "**Jordan Avery** \nBackend Software Engineer \n\nI am a backend engineer with 6 years of experience in building high-throughput services using Python and Go. I focus on reliability, latency, and cost in search and payment infrastructures.\n\n**Experience** \n\n**Senior Backend Engineer, Northwind Payments (2021-present)** \nI rebuilt the settlement pipeline in Go, reducing end-of-day reconciliation from 40 minutes to just 6 minutes. \nBy implementing a Redis read-through cache and connection pooling, I cut p99 checkout latency by 38%. \nI led the migration of 22 services from a monolith to Kubernetes with zero customer downtime. \nAs the owner of the on-call rotation, I drove down incident MTTR from 55 to 18 minutes through better runbooks.\n\n**Backend Engineer, Cedar Analytics (2018-2021)** \nI built an event-ingestion service in Python (FastAPI) capable of handling 12,000 events per second. \nDesigned a PostgreSQL sharding scheme, I supported a 4x data growth seamlessly. \nI wrote the CI pipeline using GitHub Actions, which reduced deploy time from 30 minutes to 8 minutes.\n\n**Education** \nB.S. Computer Science, State University (2018)\n\n**Skills** \nPython, Go, PostgreSQL, Redis, Kubernetes, Docker, gRPC, FastAPI, AWS, distributed systems, observability, CI/CD \n\nI'm eager to leverage my expertise in search, caching, and latency optimization in future endeavors.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Cover letter quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-02",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-02",
+      "material_type": "screening_answer",
+      "text": "I'm passionate about working on search infrastructure due to its critical role in user experience. Search capabilities can make or break how users interact with a system. I thrive in building reliable, efficient infrastructure that directly impacts performance and satisfaction. \n\nMy experience as a backend engineer has solidified my understanding of the nuances in performance and latency. I’ve successfully reduced p99 checkout latency by 38% in my current role. I enjoy optimizing processes to ensure fast and seamless interactions for users.\n\nAdditionally, I believe that strong search infrastructure can harness vast amounts of data efficiently. My work migration experience to Kubernetes taught me the importance of scalability and reliability. I look forward to contributing my skills to enhance search systems.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 4,
+        "completeness": 4
+      },
+      "overall_score": 4.4,
+      "judge_summary": "Material quality: 4.4/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-03",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-03",
+      "material_type": "cover_letter",
+      "text": "**Priya Raman**\n\n**Data Analyst**\n\nI'm a data analyst with 4 years of experience converting product and marketing data into actionable insights. I'm proficient in SQL, Python (pandas), and leveraging dashboarding tools like Looker and Tableau.\n\n**Experience**\n\n**Data Analyst, Brightleaf Commerce (2022-present)** \nAt Brightleaf, I built a self-serve funnel dashboard in Looker. This dashboard is utilized daily by 40 team members in product and growth. I led an A/B test that improved checkout conversion by 11% through a simplified shipping process. Additionally, I reduced our weekly reporting cycle from 2 days to just 3 hours by transitioning from hand-built spreadsheets to dbt models. \n\n**Junior Data Analyst, Harbor Media (2020-2022)** \nIn my role at Harbor Media, I wrote SQL queries for subscriber-retention analysis, contributing to the quarterly board deck. I also automated a churn-flag report using Python, which remains an essential tool for the retention team.\n\n**Education** \nB.A. in Economics, City College (2020)\n\n**Skills** \n- SQL, Python, pandas \n- dbt, Looker, Tableau \n- A/B testing, statistics \n- Data visualization, ETL \n\nI take pride in using analytics engineering to enhance data models and reporting efficiency.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-03",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-03",
+      "material_type": "screening_answer",
+      "text": "I have extensive experience with dbt, particularly in building tested data models. At Brightleaf Commerce, I transitioned our weekly reporting cycle from 2 days to just 3 hours by transforming hand-built spreadsheets into robust dbt models. This change not only improved efficiency but also ensured the accuracy of our data pipeline, making it a reliable resource for decision-making. My background in SQL and Python complements my work with dbt, allowing me to create effective and scalable models that support our product and growth analytics.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Material quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-04",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-04",
+      "material_type": "cover_letter",
+      "text": "**Marcus Bell** \n**Marketing Manager** \n\nI am a B2B SaaS marketing manager with eight years of experience in demand generation, content marketing, and lifecycle programs. I focus on pipeline contribution and customer acquisition cost.\n\n**Experience** \n\n**Marketing Manager, Summit CRM (2019-present)** \nI grew the marketing-sourced pipeline by 62% over two years. This success came from rebuilding our webinar and content program. I also cut our cost per marketing-qualified lead by 28% by shifting spend from paid search to lifecycle email. In this role, I manage a team of four and oversee a $1.2 million annual budget. \n\n**Demand Generation Specialist, Orbit Software (2015-2019)** \nI ran paid social and search campaigns, generating 30% of new trial signups. Collaborating with the sales team, I built the lead-scoring model in HubSpot.\n\n**Education** \nB.A. Communications, Lakeside University (2015) \n\n**Skills** \nI am skilled in demand generation, marketing automation, and team leadership. I am experienced with HubSpot, Marketo, SEO, analytics, and paid media.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-04",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-04",
+      "material_type": "screening_answer",
+      "text": "I have eight years of experience in B2B SaaS marketing, focusing on demand generation, content, and lifecycle programs. My role involves managing budgets efficiently to maximize impact. \n\nAt Summit CRM, I oversaw a $1.2 million annual budget. I successfully cut the cost per marketing-qualified lead by 28% by reallocating spend from paid search to lifecycle email marketing. This strategy not only improved budget efficiency but also enhanced our lead generation efforts.\n\nPreviously, at Orbit Software, I ran paid social and search campaigns that generated 30% of new trial signups. My understanding of budget allocation is grounded in data-driven decision-making and collaboration with my team.\n\nI believe in continuously optimizing marketing spend to support our pipeline contributions and achieve better CAC.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 4,
+        "completeness": 4
+      },
+      "overall_score": 4.4,
+      "judge_summary": "Material quality: 4.4/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-02",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-02",
+      "material_type": "cover_letter",
+      "text": "**Elena Torres, RN** \nRegistered Nurse\n\nI am a registered nurse with 7 years of experience in medical-surgical and intensive care units. I hold an active RN license and am certified in BLS and ACLS. \n\n**Experience** \n\n**ICU Registered Nurse, Riverside General Hospital** (2020-Present) \nI manage the care of up to 3 critically ill patients each shift. This includes ventilator and post-op cardiac cases. I precept new graduates, having onboarded 9 nurses in three years. Additionally, I serve as charge nurse twice a week, coordinating staffing and admissions for a 24-bed unit.\n\n**Med-Surg Registered Nurse, Valley Health** (2017-2020) \nI cared for 5 to 6 post-surgical patients per shift, achieving a documented zero medication-error record. I played a key role in rolling out the barcode medication-administration system.\n\n**Education** \nB.S. Nursing, State University (2017) \n\n**Licensure & Certifications** \nActive RN license, BLS, ACLS \n\n**Skills** \nI am skilled in critical care, medical-surgical nursing, patient assessment, IV therapy, EHR (Epic), care coordination, and preceptorship. I have a strong commitment to patient safety and quality care.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-02",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-02",
+      "material_type": "screening_answer",
+      "text": "As a registered nurse with 7 years of experience, I have valuable insights as a charge nurse. Currently, at Riverside General Hospital, I serve as a charge nurse for two shifts a week in a 24-bed ICU. I coordinate staffing and manage admissions during these shifts, ensuring seamless operations and patient care.\n\nIn this role, I precept new-graduate nurses, having onboarded nine over the last three years. This has strengthened my skills in mentorship and leadership. I enjoy fostering a supportive environment for new nurses while maintaining high standards of patient care.\n\nMy experience also includes serving as a med-surg registered nurse where I maintained a documented zero medication-error record, ensuring patient safety and care quality. Each position has equipped me with the expertise needed to step into a charge nurse role confidently.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 3,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.2,
+      "judge_summary": "Material quality: 4.2/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-04",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-04",
+      "material_type": "cover_letter",
+      "text": "**Jordan Avery** \nBackend Software Engineer \n\nI am a backend engineer with 6 years of experience building high-throughput services in Python and Go. I focus on reliability, latency, and cost-effectiveness in payment and search infrastructure.\n\n**Experience** \n\n**Senior Backend Engineer, Northwind Payments (2021-present)** \nI rebuilt the settlement pipeline in Go, reducing end-of-day reconciliation from 40 minutes to 6 minutes. I also cut p99 checkout latency by 38% by implementing a Redis read-through cache and connection pooling. I led the successful migration of 22 services from a monolith to Kubernetes while ensuring zero customer-facing downtime. As the owner of the on-call rotation, I improved the incident MTTR from 55 to 18 minutes with enhanced runbooks. \n\n**Backend Engineer, Cedar Analytics (2018-2021)** \nI built an event-ingestion service using Python (FastAPI), capable of handling 12k events per second. I designed a PostgreSQL sharding scheme that effectively supported a 4x data growth. Additionally, I developed the CI pipeline with GitHub Actions, which reduced deployment time from 30 to 8 minutes.\n\n**Education** \nB.S. Computer Science, State University (2018) \n\n**Skills** \n- Languages: Python, Go \n- Databases: PostgreSQL \n- Other Technologies: Redis, Kubernetes, Docker, gRPC, FastAPI, AWS \n- Areas of Expertise: Distributed systems, observability, CI/CD \n\nI excel in creating efficient APIs, managing financial data, and driving reporting capabilities. My background in fintech positions me well for tackling challenges in this domain.",
+      "degraded": false,
+      "deterministic_fabrications": [
+        "Languages",
+        "Databases",
+        "Technologies",
+        "Areas",
+        "Expertise",
+        "APIs"
+      ],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 5.0,
+      "judge_summary": "Cover letter quality: 5.0/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-04",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-04",
+      "material_type": "screening_answer",
+      "text": "I have 6 years of experience as a backend engineer specializing in high-throughput services, particularly in the financial sector. At Northwind Payments, I rebuilt the settlement pipeline using Go. This project led to a significant reduction in end-of-day reconciliation times, bringing it down from 40 minutes to just 6.\n\nI also improved payment processing by reducing p99 checkout latency by 38%. I achieved this by adding a Redis read-through cache and implementing connection pooling. My work focused on enhancing the reliability and efficiency of the payment infrastructure.\n\nIn my role, I was responsible for leading the migration of 22 services from a monolithic architecture to Kubernetes. I managed to do this with zero customer-facing downtime, ensuring a smooth transition for our users.\n\nHandling on-call rotations was also part of my responsibilities. I lowered the mean time to recovery (MTTR) for incidents from 55 minutes to 18 minutes by implementing more effective runbooks.\n\nBefore Northwind Payments, I worked at Cedar Analytics, where I built an event-ingestion service in Python using FastAPI. This service processed 12,000 events per second, showcasing my ability to work under high loads in a data-driven environment. Additionally, I designed a PostgreSQL sharding scheme that accommodated fourfold data growth.\n\nWith my background in building financial systems and my technical skills in Python, Go, and distributed architectures, I have a solid foundation in delivering reliable and efficient solutions.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 5.0,
+      "judge_summary": "Material quality: 5.0/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-05",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-05",
+      "material_type": "cover_letter",
+      "text": "**Priya Raman** \nData Analyst \n\nI’m a data analyst with four years of experience transforming product and marketing data into actionable insights. I excel in SQL, Python, and dashboarding, and I’m passionate about driving decisions through data.\n\n**Experience**\n\n**Data Analyst, Brightleaf Commerce** \n2022-present \nI built a self-serve funnel dashboard in Looker. It's now used daily by 40 people in product and growth. I led an A/B test that improved checkout conversion by 11% by simplifying the shipping step. Additionally, I streamlined our reporting process, reducing the cycle from two days to three hours by creating dbt models.\n\n**Junior Data Analyst, Harbor Media** \n2020-2022 \nI wrote SQL scripts for subscriber-retention analysis that contributed to our quarterly board deck. I also automated a churn-flag report in Python, which the retention team continues to utilize.\n\n**Education** \nB.A. Economics, City College, 2020 \n\n**Skills** \nSQL, Python, pandas, dbt, Looker, Tableau, A/B testing, statistics, data visualization, ETL \n\nI have a solid foundation in experimentation and analysis, particularly in e-commerce. My work focuses on actionable recommendations that drive results.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Cover letter quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-05",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-05",
+      "material_type": "screening_answer",
+      "text": "In my experience with A/B testing, I prioritize statistical rigor to ensure valid results. I begin by clearly defining the hypothesis and objectives. This gives structure to the test. I also determine the target sample size, using power analysis to minimize error.\n\nRandomization is key. I randomize participants to eliminate bias in the groups. While running the test, I monitor data quality. This includes checking for confounding variables that might skew results. \n\nOnce the test concludes, I analyze the data with attention to statistical significance. P-values help me gauge the strength of the findings. I often present these insights visually, making it easier for stakeholders to understand the outcomes.\n\nI ensure that any conclusions drawn from the A/B tests are actionable and informed by the data, serving to enhance decision-making in product and marketing strategies.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 3,
+        "completeness": 4
+      },
+      "overall_score": 4.2,
+      "judge_summary": "Material quality: 4.2/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-03",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-03",
+      "material_type": "cover_letter",
+      "text": "**Marcus Bell** \n**Marketing Manager** \n\nI am a B2B SaaS marketing manager with 8 years of experience in demand generation, content, and lifecycle programs. I focus on pipeline contribution and customer acquisition cost. \n\n**Experience** \n\n**Marketing Manager, Summit CRM (2019-present)** \nAt Summit, I grew the marketing-sourced pipeline by 62% in two years. I achieved this by rebuilding our webinar and content program. I also cut the cost per marketing-qualified lead by 28% by reallocating spend from paid search to lifecycle email. I manage a team of 4 and oversee a $1.2M annual budget. \n\n**Demand Generation Specialist, Orbit Software (2015-2019)** \nIn my role at Orbit, I ran paid social and search campaigns, which generated 30% of new-trial signups. I collaborated with the sales team to build a lead-scoring model in HubSpot, enhancing our sales alignment. \n\n**Education** \nB.A. Communications, Lakeside University (2015) \n\n**Skills** \nI am skilled in demand generation, content marketing, marketing automation, and analytics. I have experience with HubSpot, Marketo, SEO, paid media, and lifecycle email. I also provide team leadership. \n\nI am passionate about driving growth marketing strategies, improving trial signups, and optimizing acquisition costs through data-driven insights.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Cover letter quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-03",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-03",
+      "material_type": "screening_answer",
+      "text": "I focus on strategic reallocations to maximize ROI. At Summit CRM, I reduced our cost per marketing-qualified lead by 28%. I achieved this by shifting budget from paid search to lifecycle email campaigns. This approach allowed us to leverage our existing customer interactions and nurture leads more effectively.\n\nI also believe in building strong, data-driven strategies. While at Orbit Software, I ran targeted paid social and search campaigns that contributed to 30% of our new-trial signups. I worked closely with the sales team to develop a lead-scoring model in HubSpot. This collaboration improved our understanding of lead quality and further reduced acquisition costs.\n\nOverall, it’s about using analytics to guide spending and ensuring every dollar works harder for us. My experience managing a $1.2 million budget has taught me the importance of thoughtful investment in the right channels.",
+      "degraded": false,
+      "deterministic_fabrications": [
+        "ROI"
+      ],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 4,
+        "specificity": 2,
+        "completeness": 4
+      },
+      "overall_score": 3.8,
+      "judge_summary": "Material quality: 3.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-05",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-05",
+      "material_type": "cover_letter",
+      "text": "**Elena Torres, RN**\n\nI am a registered nurse with seven years of experience in medical-surgical and intensive care settings. I hold BLS and ACLS certifications.\n\n**Experience**\n\n**ICU Registered Nurse, Riverside General Hospital (2020-present)** \nI manage care for up to three critically ill patients each shift. My patients often include those on ventilators and post-operative cardiac cases. I also precept new graduate nurses, having onboarded nine over the last three years. As a charge nurse two shifts a week, I coordinate staffing and admissions for a 24-bed unit.\n\n**Med-Surg Registered Nurse, Valley Health (2017-2020)** \nI provided care for 5 to 6 post-surgical patients per shift. I maintained a documented zero medication-error record throughout my tenure. Additionally, I played a role in rolling out the barcode medication-administration system on the floor.\n\n**Education** \nB.S. Nursing, State University (2017) \n\n**Licensure & Certifications** \nActive RN license, BLS, ACLS \n\n**Skills** \nI excel in critical care and medical-surgical nursing, patient assessment, and IV therapy. I am proficient in the Epic EHR and focus on care coordination and teaching. Preceptorship is a significant aspect of my role, particularly for helping new nurses develop their clinical skills.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Cover letter quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-05",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-05",
+      "material_type": "screening_answer",
+      "text": "As a registered nurse, I strongly believe in supporting new-graduate nurses through mentorship. My approach to precepting focuses on building confidence and competence.\n\nI start by understanding their background and learning styles. This helps me tailor my guidance. I clearly outline expectations and provide constructive feedback often. Encouragement is key, celebrating small victories builds their confidence.\n\nDuring shifts, I ensure they get hands-on experience while overseeing their patient care. I emphasize critical thinking and decision-making, guiding them to become independent practitioners.\n\nBeing approachable is essential. I create an environment where they feel safe to ask questions and express concerns. It's rewarding to see new nurses grow and develop their skills.\n\nOver three years, I precepted nine new-graduate nurses. Each experience taught me as much as it taught them. The journey of mentoring is fulfilling, and it reinforces my commitment to nursing excellence.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 3,
+        "completeness": 4
+      },
+      "overall_score": 4.4,
+      "judge_summary": "Material quality: 4.4/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-05",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-05",
+      "material_type": "screening_answer",
+      "text": "I have significant experience leading incident response as the on-call rotation owner at Northwind Payments. In this role, I focused on improving response times for incidents. I implemented better runbooks, which helped reduce our mean time to recovery (MTTR) from 55 minutes to 18 minutes. This change enhanced our team's efficiency and ensured quicker resolutions for any issues that arose. \n\nDuring my tenure, I also led the migration of 22 services to Kubernetes without any customer-facing downtime. This initiative reinforced my commitment to reliability and operational excellence. It's always been important to me to keep our systems running smoothly and effectively during any incidents.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Material quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-02",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-02",
+      "material_type": "screening_answer",
+      "text": "I'm Priya Raman, a data analyst with 4 years of experience translating product and marketing data into actionable insights. My skill set includes SQL, Python, and dashboarding tools, which I use to streamline processes and enhance decision-making.\n\nIn my current role at Brightleaf Commerce, I built a self-serve funnel dashboard in Looker. This dashboard is now a daily resource for 40 team members across product and growth. I also led an A/B test that increased checkout conversion by 11% through a simplified shipping process. Additionally, I transformed our weekly reporting cycle, reducing it from 2 days to just 3 hours by implementing dbt models.\n\nBefore this, I worked as a junior data analyst at Harbor Media. There, I wrote SQL queries for subscriber retention analysis that contributed to our quarterly board deck. I also automated a churn-flag report in Python, which remains a vital resource for the retention team.\n\nI focus on presenting data in a clear and relatable manner for non-technical stakeholders. Using visuals and simplified narratives, I ensure they grasp the significance of the data. I aim to create an inclusive environment where insights drive informed decisions and foster collaboration. \n\nI hold a B.A. in Economics from City College, which provides a strong foundation for my analytical work.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 5.0,
+      "judge_summary": "Material quality: 5.0/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-02",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-02",
+      "material_type": "screening_answer",
+      "text": "I'm a B2B SaaS marketing manager with 8 years of experience in demand generation, content, and lifecycle programs. I focus on pipeline contribution and customer acquisition cost.\n\nAt Summit CRM, where I've been since 2019, I built our content and lifecycle program from the ground up. I completely revamped our webinar strategy and content offerings, resulting in a 62% increase in marketing-sourced pipeline over two years. By analyzing our marketing spend, I also cut the cost per marketing-qualified lead by 28% by shifting budget from paid search to lifecycle email campaigns.\n\nPrior to that, I was a demand generation specialist at Orbit Software from 2015 to 2019. I managed paid social and search campaigns that accounted for 30% of new trial signups. Collaborating closely with the sales team, I developed a lead-scoring model in HubSpot that streamlined our lead management process.\n\nI hold a B.A. in Communications from Lakeside University, completed in 2015. My expertise includes demand generation, content marketing, marketing automation, and analytics. I also have experience leading teams and managing substantial budgets.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.6,
+      "judge_summary": "Material quality: 4.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-03",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-03",
+      "material_type": "screening_answer",
+      "text": "As a registered nurse with 7 years of experience, I've committed myself to maintaining safety and accuracy in medication administration. My background includes a documented zero medication-error record during my time in medical-surgical nursing. This achievement reflects my strong focus on detail and protocols designed to ensure patient safety.\n\nIn my current role as an ICU Registered Nurse at Riverside General Hospital, I manage care for up to three critically ill patients each shift. I prioritize careful medication administration, especially for those on ventilators or recovering from cardiac procedures. My familiarity with Epic EHR aids me in tracking medication records efficiently.\n\nAdditionally, I contributed to the rollout of a barcode medication-administration system in my previous role at Valley Health. This initiative enhanced the accuracy of medication delivery, reducing the chances of errors.\n\nTraining new graduate nurses also allows me to emphasize the importance of safe practices when administering medications. I guide them in following established protocols and staying vigilant during their shifts. My commitment to patient safety is evident in every aspect of my nursing practice.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 4,
+        "specificity": 5,
+        "completeness": 5
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Material quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-backend-eng|post-be-03",
+      "profile_id": "prof-backend-eng",
+      "posting_id": "post-be-03",
+      "material_type": "screening_answer",
+      "text": "I have significantly improved CI/CD processes in my previous roles. At Cedar Analytics, I developed a CI pipeline using GitHub Actions. This helped us reduce our deployment time from 30 minutes to just 8 minutes. It streamlined our deployment process and made it more efficient. \n\nIn my current role at Northwind Payments, I'm focused on reliability and performance across our services. While I haven't directly worked on CI/CD initiatives recently, I always prioritize automated processes that support seamless deployments. I'm committed to making improvements in this area.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 4,
+        "tone": 3,
+        "honesty": 4,
+        "specificity": 4,
+        "completeness": 3
+      },
+      "overall_score": 3.6,
+      "judge_summary": "Material quality: 3.6/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-data-analyst|post-da-04",
+      "profile_id": "prof-data-analyst",
+      "posting_id": "post-da-04",
+      "material_type": "screening_answer",
+      "text": "I'm Priya Raman, a data analyst with four years of experience transforming product and marketing data into actionable decisions. I excel in SQL, Python, and dashboarding.\n\nAt Brightleaf Commerce, I built a self-serve funnel dashboard in Looker. This dashboard is actively used by 40 team members in product and growth. It provides essential insights that drive our initiatives. \n\nI also ran an A/B test that simplified our shipping step, boosting checkout conversion by 11%. Additionally, I streamlined our weekly reporting cycle. By transitioning hand-built spreadsheets into dbt models, I reduced the time from two days to just three hours.\n\nBefore that, as a junior data analyst at Harbor Media, I contributed to our quarterly board deck through SQL-driven subscriber-retention analysis. I automated a churn-flag report in Python that continues to support the retention team.\n\nI hold a B.A. in Economics from City College, earned in 2020. My technical skills include SQL, Python, dbt, Looker, and Tableau. I focus on product and growth analytics and enjoy experimentation to find impactful solutions.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 5,
+        "honesty": 5,
+        "specificity": 5,
+        "completeness": 4
+      },
+      "overall_score": 4.8,
+      "judge_summary": "Material quality: 4.8/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-marketing-mgr|post-mk-05",
+      "profile_id": "prof-marketing-mgr",
+      "posting_id": "post-mk-05",
+      "material_type": "screening_answer",
+      "text": "I have extensive experience with marketing automation and lead scoring. At Summit CRM, I managed lifecycle programs and adapted our marketing strategy to improve efficiency. This included reallocating spend to lifecycle email, which cut costs per marketing-qualified lead by 28%.\n\nWhile at Orbit Software, I built the lead-scoring model in HubSpot alongside the sales team. This initiative enhanced our ability to qualify leads effectively. My experience with tools like HubSpot and Marketo has enabled me to streamline processes and drive results in demand generation.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 5,
+        "specificity": 4,
+        "completeness": 4
+      },
+      "overall_score": 4.4,
+      "judge_summary": "Material quality: 4.4/5.0",
+      "errors": []
+    },
+    {
+      "case_id": "prof-registered-nurse|post-rn-04",
+      "profile_id": "prof-registered-nurse",
+      "posting_id": "post-rn-04",
+      "material_type": "screening_answer",
+      "text": "I have 7 years of experience in medical-surgical nursing, primarily at Valley Health. During my time there, I cared for 5 to 6 post-surgical patients each shift. I maintained a documented zero medication-error record, which I take pride in. \n\nI helped implement the barcode medication-administration system, improving patient safety and efficiency. This experience honed my skills in patient assessment, care coordination, and IV therapy.\n\nIn my role, I gained a solid foundation in providing compassionate and high-quality care. My passion for supporting patients motivates me every day. I believe my medical-surgical background equips me well for future challenges in nursing.",
+      "degraded": false,
+      "deterministic_fabrications": [],
+      "dimension_scores": {
+        "relevance": 5,
+        "tone": 4,
+        "honesty": 4,
+        "specificity": 4,
+        "completeness": 4
+      },
+      "overall_score": 4.2,
+      "judge_summary": "Material quality: 4.2/5.0",
+      "errors": []
+    }
+  ],
+  "generated_at": "2026-07-08T21:10:13Z",
+  "note": "Live run: a real model generated and judged every material.",
+  "gate": {
+    "passed": true,
+    "failures": [],
+    "dimension_deltas": {}
+  }
+}

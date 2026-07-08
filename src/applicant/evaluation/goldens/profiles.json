@@ -1,0 +1,84 @@
+{
+  "provenance": "SYNTHETIC — authored for the eval harness; not real people or real résumés.",
+  "profiles": [
+    {
+      "id": "prof-backend-eng",
+      "name": "Jordan Avery",
+      "headline": "Backend software engineer, 6 years, Python/Go, distributed systems",
+      "base_resume": "Jordan Avery\nBackend Software Engineer\n\nSummary\nBackend engineer with 6 years building high-throughput services in Python and Go. Owns reliability, latency, and cost of payment and search infrastructure.\n\nExperience\nSenior Backend Engineer, Northwind Payments (2021-present)\n- Rebuilt the settlement pipeline in Go, cutting end-of-day reconciliation from 40 minutes to 6 minutes.\n- Reduced p99 checkout latency 38% by adding a Redis read-through cache and connection pooling.\n- Led migration of 22 services from a monolith to Kubernetes with zero customer-facing downtime.\n- On-call rotation owner; drove incident MTTR down from 55 to 18 minutes with better runbooks.\n\nBackend Engineer, Cedar Analytics (2018-2021)\n- Built an event-ingestion service in Python (FastAPI) handling 12k events/second.\n- Designed the PostgreSQL sharding scheme that supported 4x data growth.\n- Wrote the CI pipeline (GitHub Actions) that cut deploy time from 30 to 8 minutes.\n\nEducation\nB.S. Computer Science, State University (2018)\n\nSkills\nPython, Go, PostgreSQL, Redis, Kubernetes, Docker, gRPC, FastAPI, AWS, distributed systems, observability, CI/CD",
+      "attributes": [
+        {"name": "years_experience", "value": "6 years professional software engineering"},
+        {"name": "primary_languages", "value": "Python and Go"},
+        {"name": "specialty", "value": "distributed systems, payments and search infrastructure"},
+        {"name": "notable_result", "value": "cut p99 checkout latency 38% with a Redis read-through cache"},
+        {"name": "notable_result_2", "value": "migrated 22 services to Kubernetes with zero downtime"},
+        {"name": "cloud", "value": "AWS (EC2, RDS, S3, EKS)"},
+        {"name": "education", "value": "B.S. Computer Science, State University, 2018"}
+      ],
+      "voice": [
+        "I like owning a problem end to end and measuring the result.",
+        "I keep things direct and concrete; I would rather show a number than a buzzword.",
+        "I care about reliability and the on-call experience of the whole team."
+      ]
+    },
+    {
+      "id": "prof-data-analyst",
+      "name": "Priya Raman",
+      "headline": "Data analyst, 4 years, SQL/Python, product & growth analytics",
+      "base_resume": "Priya Raman\nData Analyst\n\nSummary\nData analyst with 4 years turning product and marketing data into decisions. Fluent in SQL, Python (pandas), and dashboarding.\n\nExperience\nData Analyst, Brightleaf Commerce (2022-present)\n- Built the self-serve funnel dashboard in Looker used daily by 40 people across product and growth.\n- Ran the A/B test that raised checkout conversion 11% by simplifying the shipping step.\n- Cut the weekly reporting cycle from 2 days to 3 hours by moving hand-built spreadsheets into dbt models.\n\nJunior Data Analyst, Harbor Media (2020-2022)\n- Wrote SQL for subscriber-retention analysis feeding the quarterly board deck.\n- Automated a churn-flag report in Python that the retention team still uses.\n\nEducation\nB.A. Economics, City College (2020)\n\nSkills\nSQL, Python, pandas, dbt, Looker, Tableau, A/B testing, statistics, data visualization, ETL",
+      "attributes": [
+        {"name": "years_experience", "value": "4 years in data / product analytics"},
+        {"name": "primary_tools", "value": "SQL, Python (pandas), dbt, Looker, Tableau"},
+        {"name": "specialty", "value": "product and growth analytics, experimentation"},
+        {"name": "notable_result", "value": "A/B test raised checkout conversion 11%"},
+        {"name": "notable_result_2", "value": "cut weekly reporting cycle from 2 days to 3 hours with dbt"},
+        {"name": "education", "value": "B.A. Economics, City College, 2020"}
+      ],
+      "voice": [
+        "I start from the decision the data needs to support, then work backward.",
+        "I keep dashboards simple enough that people actually use them.",
+        "I would rather ship a clear answer than a perfect model nobody reads."
+      ]
+    },
+    {
+      "id": "prof-marketing-mgr",
+      "name": "Marcus Bell",
+      "headline": "Marketing manager, 8 years, B2B SaaS demand generation & content",
+      "base_resume": "Marcus Bell\nMarketing Manager\n\nSummary\nB2B SaaS marketing manager with 8 years running demand generation, content, and lifecycle programs. Owns pipeline contribution and CAC.\n\nExperience\nMarketing Manager, Summit CRM (2019-present)\n- Grew marketing-sourced pipeline 62% in two years by rebuilding the webinar and content program.\n- Cut cost per marketing-qualified lead 28% by reallocating spend from paid search to lifecycle email.\n- Managed a team of 4 and a $1.2M annual budget.\n\nDemand Generation Specialist, Orbit Software (2015-2019)\n- Ran paid social and search campaigns that produced 30% of new-trial signups.\n- Built the lead-scoring model in HubSpot with the sales team.\n\nEducation\nB.A. Communications, Lakeside University (2015)\n\nSkills\ndemand generation, content marketing, marketing automation, HubSpot, Marketo, SEO, paid media, lifecycle email, analytics, team leadership",
+      "attributes": [
+        {"name": "years_experience", "value": "8 years in B2B SaaS marketing"},
+        {"name": "specialty", "value": "demand generation, content, and lifecycle marketing"},
+        {"name": "notable_result", "value": "grew marketing-sourced pipeline 62% in two years"},
+        {"name": "notable_result_2", "value": "cut cost per MQL 28% by reallocating spend to lifecycle email"},
+        {"name": "tools", "value": "HubSpot, Marketo, Google Analytics"},
+        {"name": "leadership", "value": "managed a team of 4 and a $1.2M budget"},
+        {"name": "education", "value": "B.A. Communications, Lakeside University, 2015"}
+      ],
+      "voice": [
+        "I tie every program back to pipeline, not vanity metrics.",
+        "I write plainly and I expect campaigns to earn their budget.",
+        "I like building programs the sales team actually trusts."
+      ]
+    },
+    {
+      "id": "prof-registered-nurse",
+      "name": "Elena Torres",
+      "headline": "Registered nurse, 7 years, med-surg & ICU, charge nurse experience",
+      "base_resume": "Elena Torres, RN\nRegistered Nurse\n\nSummary\nRegistered nurse with 7 years in medical-surgical and intensive-care units, including charge-nurse shifts. BLS and ACLS certified.\n\nExperience\nICU Registered Nurse, Riverside General Hospital (2020-present)\n- Manage care for up to 3 critically ill patients per shift, including ventilator and post-op cardiac cases.\n- Precept new-graduate nurses; onboarded 9 over three years.\n- Serve as charge nurse two shifts a week, coordinating staffing and admissions for a 24-bed unit.\n\nMed-Surg Registered Nurse, Valley Health (2017-2020)\n- Cared for 5 to 6 post-surgical patients per shift with a documented 0 medication-error record.\n- Helped roll out the barcode medication-administration system to the floor.\n\nEducation\nB.S. Nursing, State University (2017)\n\nLicensure & Certifications\nRN license (active), BLS, ACLS\n\nSkills\ncritical care, medical-surgical nursing, patient assessment, IV therapy, EHR (Epic), care coordination, preceptorship, charge nurse",
+      "attributes": [
+        {"name": "years_experience", "value": "7 years as a registered nurse"},
+        {"name": "specialty", "value": "medical-surgical and intensive-care nursing"},
+        {"name": "certifications", "value": "RN license (active), BLS, ACLS"},
+        {"name": "notable_result", "value": "documented zero medication-error record on med-surg"},
+        {"name": "leadership", "value": "charge nurse two shifts a week on a 24-bed unit"},
+        {"name": "ehr", "value": "Epic EHR"},
+        {"name": "education", "value": "B.S. Nursing, State University, 2017"}
+      ],
+      "voice": [
+        "I put the patient first and I communicate clearly with families.",
+        "I stay calm under pressure and I document carefully.",
+        "I like teaching newer nurses what I wish I had known."
+      ]
+    }
+  ]
+}
