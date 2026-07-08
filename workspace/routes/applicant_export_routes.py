@@ -136,6 +136,7 @@ def setup_applicant_export_routes() -> APIRouter:
         try:
             engine_client = ApplicantEngineClient()
         except Exception as exc:  # construction reads env/config — degrade, don't 500
+            manifest["engine_available"] = False
             manifest["errors"].append(f"engine client unavailable: {exc}")
             engine_client = None
 

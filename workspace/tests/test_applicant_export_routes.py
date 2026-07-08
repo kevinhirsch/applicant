@@ -242,6 +242,23 @@ def test_export_degrades_soft_when_engine_unreachable(client):
     assert applications == []
 
 
+def test_export_marks_engine_unavailable_when_client_construction_fails(monkeypatch):
+    # An empty zip must never CLAIM the engine was available (H-series honesty;
+    # Greptile finding on #736) — a failed client construction skips every
+    # engine-backed section, and the manifest has to say so.
+    class Unconstructable:
+        def __init__(self):
+            raise RuntimeError("bad engine config")
+
+    monkeypatch.setattr(mod, "ApplicantEngineClient", Unconstructable)
+    c = TestClient(_make_app())
+    r = c.get("/api/applicant/export/data.zip")
+    zf = _open_zip(r)
+    manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["engine_available"] is False
+    assert any("engine client unavailable" in e for e in manifest["errors"])
+
+
 def test_variant_pdf_download_failure_is_skipped_not_fatal(client):
     FakeEngine.campaigns = [{"id": "c1", "name": "Search"}]
     FakeEngine.variants = {"c1": {"variants": [{"variant_id": "v1"}]}}
