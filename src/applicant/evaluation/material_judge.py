@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 #: A ```json ... ``` (or bare ``` ... ```) fence a model often wraps JSON in.
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 #: Last-resort ``"score": 4`` extractor when no valid JSON object can be parsed.
-_SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*([1-5])')
+#: ``(?!\d)`` rejects the first digit of a multi-digit value ("score: 10" must
+#: NOT read as 1) so an out-of-range reply falls to the honest unparsed default.
+_SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*([1-5])(?!\d)')
 
 
 def _parse_judge_response(text: str | None) -> tuple[int, str]:

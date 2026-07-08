@@ -477,6 +477,10 @@ class MaterialEvalReport:
     results: list[MaterialResult]
     generated_at: str = ""
     note: str = ""
+    # Pairs referencing an unknown profile/posting id, skipped without running.
+    # Kept OUT of case_count so the report counts only what actually ran (H-series);
+    # defaulted so reports serialized before this field existed still deserialize.
+    skipped_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -494,13 +498,17 @@ def run_golden_set(
     material_types: tuple[str, ...] = ("cover_letter", "screening_answer"),
 ) -> MaterialEvalReport:
     """Run every (optionally capped) golden case and aggregate per dimension."""
-    pairs = golden.pairs[:max_cases] if max_cases else golden.pairs
+    # ``is not None`` on purpose: an explicit cap of 0 means "run zero cases"
+    # (a dry wiring check), not "uncapped".
+    pairs = golden.pairs[:max_cases] if max_cases is not None else golden.pairs
     all_results: list[MaterialResult] = []
+    skipped = 0
     for pair in pairs:
         profile = golden.profiles.get(pair.profile_id)
         posting = golden.postings.get(pair.posting_id)
         if profile is None or posting is None:
             log.warning("skipping pair with unknown ids: %s / %s", pair.profile_id, pair.posting_id)
+            skipped += 1
             continue
         all_results.extend(
             run_case(
@@ -538,7 +546,7 @@ def run_golden_set(
         gen_model=gen_model,
         judge_model=judge_model,
         live=live,
-        case_count=len(pairs),
+        case_count=len(pairs) - skipped,
         material_count=len(all_results),
         degraded_count=sum(1 for r in all_results if r.degraded),
         fabrication_material_count=sum(1 for r in all_results if r.deterministic_fabrications),
@@ -547,6 +555,7 @@ def run_golden_set(
         results=all_results,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         note=note,
+        skipped_count=skipped,
     )
 
 
@@ -650,15 +659,20 @@ def _render_markdown(report: MaterialEvalReport, gate: GateOutcome) -> str:
     lines.append(f"- **Generation model:** `{report.gen_model}`")
     lines.append(f"- **Judge model:** `{report.judge_model}`")
     lines.append(f"- **Generated at:** {report.generated_at}")
-    lines.append(f"- **Cases:** {report.case_count} · **Materials:** {report.material_count}")
+    cases_line = f"- **Cases:** {report.case_count} · **Materials:** {report.material_count}"
+    if report.skipped_count:
+        cases_line += f" · **Skipped (unresolved ids, not run):** {report.skipped_count}"
+    lines.append(cases_line)
     lines.append(
         f"- **Degraded (fallback) generations:** {report.degraded_count} · "
         f"**Materials with a fabrication flag:** {report.fabrication_material_count}"
     )
     lines.append(f"- **Gate:** {'PASS' if gate.passed else 'FAIL'}")
     lines.append("")
+    # One contiguous blockquote (a `>` continuation line, not a bare blank line
+    # between two quotes — markdownlint MD028).
     lines.append(f"> {report.note}")
-    lines.append("")
+    lines.append(">")
     lines.append(
         "> Deterministic fabrication flags are surfaced by the service's own "
         "entity-shaped prose guard under the shipped BALANCED policy, which flags "

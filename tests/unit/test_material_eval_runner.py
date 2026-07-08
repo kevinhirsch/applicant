@@ -118,6 +118,60 @@ def test_regression_gate_fails_when_dimension_drops_vs_baseline() -> None:
 
 
 @pytest.mark.unit
+def test_score_regex_rejects_multi_digit_values() -> None:
+    """"score: 10" must not read as 1 — it falls to the honest unparsed default."""
+    score, rationale = _parse_judge_response("I would rate this a score: 10 overall.")
+    assert score == 3
+    assert "could not be parsed" in rationale
+
+
+@pytest.mark.unit
+def test_max_cases_zero_runs_zero_cases() -> None:
+    """An explicit cap of 0 means zero cases (dry wiring check), not uncapped."""
+    gs = load_golden_set()
+    report = run_golden_set(
+        gs, gen_llm=None, judge_llm=None, gen_model="x", judge_model="x", max_cases=0
+    )
+    assert report.case_count == 0
+    assert report.material_count == 0
+
+
+@pytest.mark.unit
+def test_skipped_unresolved_pairs_are_counted_apart_from_cases() -> None:
+    """A pair naming an unknown profile/posting is skipped and reported as such;
+    case_count reflects only what actually ran (H-series)."""
+    import dataclasses
+
+    gs = load_golden_set()
+    bad_pair = dataclasses.replace(gs.pairs[0], profile_id="prof-does-not-exist")
+    gs2 = dataclasses.replace(gs, pairs=[gs.pairs[0], bad_pair])
+    report = run_golden_set(
+        gs2, gen_llm=None, judge_llm=None, gen_model="x", judge_model="x"
+    )
+    assert report.case_count == 1
+    assert report.skipped_count == 1
+    md = _render_markdown(report, gate_report(report, min_score=0.0))
+    assert "Skipped (unresolved ids, not run):** 1" in md
+
+
+@pytest.mark.unit
+def test_markdown_note_blockquote_is_contiguous() -> None:
+    """The two note paragraphs form ONE blockquote via a `>` continuation line
+    (markdownlint MD028: no bare blank line inside a blockquote)."""
+    gs = load_golden_set()
+    report = run_golden_set(
+        gs, gen_llm=None, judge_llm=None, gen_model="x", judge_model="x", max_cases=1
+    )
+    md = _render_markdown(report, gate_report(report, min_score=0.0))
+    md_lines = md.splitlines()
+    quote_idx = [i for i, ln in enumerate(md_lines) if ln.startswith(">")]
+    assert quote_idx, "expected blockquote lines"
+    # The quote block is contiguous: no bare blank line between two `>` lines.
+    for a, b in zip(quote_idx, quote_idx[1:], strict=False):
+        assert b == a + 1, f"blockquote broken by a blank line at line {a + 1}"
+
+
+@pytest.mark.unit
 def test_markdown_report_escapes_pipes_in_dynamic_cells() -> None:
     """Case ids are ``profile|posting`` — an unescaped pipe splits the table column."""
     gs = load_golden_set()

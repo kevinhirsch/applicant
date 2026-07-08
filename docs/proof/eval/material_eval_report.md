@@ -10,7 +10,7 @@
 - **Gate:** PASS
 
 > Live run: a real model generated and judged every material.
-
+>
 > Deterministic fabrication flags are surfaced by the service's own entity-shaped prose guard under the shipped BALANCED policy, which flags tokens *for human review* rather than blocking. It is deliberately conservative (it flags verb synonyms like "Developed" for "Built", or a bare acronym the candidate genuinely uses), so a nonzero count is expected and reviewed — it is reported here, not treated as a gate failure unless `--max-fabrication-materials` is set.
 
 ## Per-dimension mean score (1-5)
