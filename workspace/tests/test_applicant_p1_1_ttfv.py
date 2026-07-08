@@ -100,6 +100,23 @@ def test_test_endpoint_classifies_bad_key_no_models_unreachable():
     assert '"reason": reason' in block, "the reason must ship in the response"
 
 
+def test_ping_endpoint_uses_provider_specific_auth_and_path():
+    # A rejected Anthropic key must classify as bad_key, not unreachable
+    # (Greptile on #738): the fallback ping has to hit the SAME /v1/models +
+    # x-api-key surface the probe uses — the generic Bearer + /models pair
+    # 404s on Anthropic, which would tell the user to fix the URL instead of
+    # replacing the rejected key.
+    src = _read(MODEL_ROUTES)
+    block = _slice_between(src, "def _ping_endpoint", "\ndef ")
+    assert "_provider_headers(api_key, base)" in block, (
+        "ping must build provider-specific auth headers (x-api-key for Anthropic)"
+    )
+    assert '_detect_provider(base) == "anthropic"' in block
+    assert '_anthropic_api_root(base) + "/v1/models"' in block, (
+        "the Anthropic ping must hit the same /v1/models path the probe uses"
+    )
+
+
 # ===========================================================================
 # Verify round-trip: admin.js renders reason-specific recovery copy
 # ===========================================================================

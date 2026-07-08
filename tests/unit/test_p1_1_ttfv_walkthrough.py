@@ -206,3 +206,22 @@ def test_single_year_education_parses_clean_at_the_parser_level(tmp_path):
     assert edu.institution == "UC Berkeley"
     assert edu.start_year == ""
     assert edu.end_year == "2013"
+
+
+def test_mid_line_year_like_numbers_are_not_graduation_years(tmp_path):
+    """A bare 19xx/20xx that is NOT at the end of the line (an address, a course
+    code) must never be captured as end_year or stripped from the institution
+    (CodeRabbit on #738 — the single-year regex is end-of-line anchored)."""
+    resume = (
+        "Jane Q Candidate\n"
+        "jane@example.com | (415) 555-0199\n\n"
+        "Education:\n"
+        "B.S. Computer Science, 2013 University College\n"
+    )
+    p = tmp_path / "r.txt"
+    p.write_text(resume, encoding="utf-8")
+    parsed = ResumeParser().parse(str(p))
+    assert len(parsed.education) == 1
+    edu = parsed.education[0]
+    assert edu.end_year == "", "a mid-line year-like number is not a graduation year"
+    assert "2013 University College" in edu.institution

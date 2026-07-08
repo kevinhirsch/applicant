@@ -60,7 +60,10 @@ _YEAR_RANGE_RE = re.compile(
 #: Berkeley — 2013"). Real résumés frequently list only the completion year;
 #: without this the year leaked into the institution text ("UC Berkeley — 2013")
 #: and both year fields rendered empty in the review form.
-_SINGLE_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+#: Anchored to the END of the line (optionally after a separator) so a bare
+#: 19xx/20xx elsewhere on the line — an address ("2013 University Ave"), a
+#: course code ("CS 2013") — is never misread as the graduation year.
+_SINGLE_YEAR_RE = re.compile(r"(?:^|[\s,|\u2013\u2014-])((?:19|20)\d{2})\s*$")
 #: Degree token. Every alternative is wrapped with letter-boundary lookaround
 #: (below) rather than plain ``\b`` so it also works around the trailing dots
 #: on abbreviations like "B.S." (``\b`` doesn't fire between two non-word
@@ -407,8 +410,8 @@ class ResumeParser:
             # and strip it from the institution text below, so it renders in the
             # review form's year field instead of polluting the school name.
             single = None if ym else _SINGLE_YEAR_RE.search(line)
-            if single and single.group(0) in degree:
-                degree = degree[: degree.index(single.group(0))].strip(" \t,-|–—")
+            if single and single.group(1) in degree:
+                degree = degree[: degree.index(single.group(1))].strip(" \t,-|–—")
             # Institution: whatever's left on the line once the degree (and its
             # own year range, if any) are removed. This used to be run through
             # `_split_title_company` (built for 2-part "Title, Company" splits),
@@ -422,8 +425,8 @@ class ResumeParser:
             rest = line.replace(dm.group(0), "", 1).strip(" \t,-|")
             if ym and ym.group(0) in rest:
                 rest = rest.replace(ym.group(0), "", 1)
-            if single and single.group(0) in rest:
-                rest = rest.replace(single.group(0), "", 1)
+            if single and single.group(1) in rest:
+                rest = rest.replace(single.group(1), "", 1)
             institution = rest.strip(" \t,-|–—")
             if not institution:
                 # Layout where degree / dates / institution each sit on their own
