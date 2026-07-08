@@ -19,6 +19,21 @@ whereas DBOS is decorator-based. We bridge by:
 * running each idempotent step inside ``DBOS.run_step`` (deterministic by
   ``step_name``) so completed steps return their checkpointed result on resume;
 * delegating ``send``/``recv`` and ``recover_pending`` straight to DBOS.
+
+No ``clear`` (Greptile P1 on PR #767)
+-------------------------------------
+This adapter deliberately exposes NO ``clear(workflow_id)``: DBOS's exactly-once
+recording has no public API to reset a completed step or workflow (``fork_workflow``
+mints a NEW workflow id, which the engine's deterministic ``application:<id>``
+mapping would never find). Callers must therefore never RELY on checkpoint-clearing
+for correctness — ``AgentLoop._clear_checkpoint`` treats a missing ``clear`` as a
+loud no-op, and the stale-hand-off guard lives backend-agnostically in
+``application_pipeline.run_pipeline`` (the ``persisted_state`` live re-check).
+Known residual (docs/known-issues.md): a workflow that RETURNED with a hand-off
+result is COMPLETED in DBOS terms, and DBOS returns a completed workflow's cached
+result on a same-id re-drive without re-executing the body — so hand-off resume on
+this backend additionally needs per-attempt workflow executions (its own story);
+the primary lane for hand-off recovery today is the default shim backend.
 """
 
 from __future__ import annotations

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from applicant.application.services.prefill_service import FINAL_APPROVAL_TOPIC
+from applicant.core.state_machine import TERMINAL_STATES
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -48,6 +49,25 @@ _HANDOFF_STATES = frozenset(
         "EMERGENCY_DATA_HANDOFF",
     }
 )
+
+#: Public alias (P2-12 durability drill finding): the caller (``AgentLoop.
+#: _apply_outcome``) needs this SAME set to decide whether a hand-off must clear the
+#: workflow's durable checkpoint before the next re-drive — see the long comment on
+#: that branch for why. Reuses this module's existing set rather than a second
+#: hard-coded copy of the same five state names.
+PREFILL_HANDOFF_STATES = _HANDOFF_STATES
+
+#: P2-12 durability drill finding: a pre-fill that already landed in a §7 TERMINAL
+#: state (``FAILED`` — "any unrecoverable error", e.g. a crashed browser tab/context
+#: mid-walk, see #207/#336) must stop the pipeline HERE, exactly like a hand-off.
+#: Before this check existed, a terminally-FAILED pre-fill fell through to material
+#: generation + a final-approval request for an application that had already died —
+#: and if a human then approved it, ``submit`` raised ``IllegalStateTransition``
+#: (FAILED is not a legal ``AWAITING_FINAL_APPROVAL`` pre-state) every single retry,
+#: forever, with the sandbox slot never released (DUR-2 leak). Reuses the SAME
+#: ``TERMINAL_STATES`` the rest of the state machine already treats as terminal
+#: (``core/state_machine.py``) rather than inventing a parallel notion of "done".
+_TERMINAL_STATE_VALUES = frozenset(s.value for s in TERMINAL_STATES)
 
 
 @dataclass
@@ -70,6 +90,15 @@ class PipelineContext:
     #: OUTSIDE the checkpointed ``material`` step on every re-drive (#1) so a stale
     #: cached "not approved" can never park the pipeline before the recv gate forever.
     material_approved: Callable[[], bool] | None = None
+    #: -> str|None: the application's CURRENT persisted §7 state (read live from
+    #: storage — the durable source of truth). Mirrors ``material_approved`` (#1):
+    #: consulted OUTSIDE the checkpointed ``prefill`` step whenever that step served
+    #: a CACHED hand-off, so a stale checkpoint can never lock the pipeline at the
+    #: wall on an orchestrator that cannot clear a completed step (Greptile P1 on
+    #: PR #767: the DBOS adapter exposes no ``clear``, so the run loop's
+    #: checkpoint-clear-on-handoff silently no-ops there). ``None`` (default)
+    #: preserves the exact prior behavior (side_effects-only resumption tests).
+    persisted_state: Callable[[], str | None] | None = None
     #: -> str|None: notify the user the app awaits final approval (returns notify handle).
     request_final_approval: Callable[[], Any] | None = None
     #: -> dict: record the submission/outcome once approval is delivered.
@@ -120,6 +149,10 @@ def _is_handoff(state: str | None) -> bool:
     return state in _HANDOFF_STATES
 
 
+def _is_terminal(state: str | None) -> bool:
+    return state in _TERMINAL_STATE_VALUES
+
+
 def run_pipeline(
     orchestrator: Any,
     workflow_id: str,
@@ -132,7 +165,11 @@ def run_pipeline(
     Returns a dict summarizing each completed step. When the pre-fill step lands a
     ``BLOCKED_*`` / ``AWAITING_*`` / ``EMERGENCY_*`` hand-off state, the pipeline
     returns early (``status="handoff"``) so the run loop pivots to other work; the
-    workflow resumes from its last checkpoint once the user resolves the gate.
+    workflow resumes from its last checkpoint once the user resolves the gate. When
+    pre-fill instead lands a §7 TERMINAL state (``FAILED`` — an unrecoverable error,
+    e.g. a crashed browser mid-walk), the pipeline tears down and returns early
+    (``status="failed"``) rather than generating material / requesting approval for
+    an application that already died (P2-12 durability drill finding).
 
     ``side_effects`` (optional) records which step bodies actually executed this run
     so a resumption test can prove already-checkpointed steps were skipped.
@@ -141,19 +178,75 @@ def run_pipeline(
     out: dict[str, Any] = {"workflow_id": workflow_id}
 
     # 1. Open sandbox + maximal pre-fill (one checkpointed step). ------------
+    executed_this_pass = {"prefill": False}
+
     def _prefill() -> dict:
+        executed_this_pass["prefill"] = True
         sink.append("prefill")
         if ctx is not None and ctx.prefill is not None:
             return ctx.prefill()
         return {"state": "AWAITING_FINAL_APPROVAL"}
 
     prefill_result = orchestrator.run_step(workflow_id, "prefill", _prefill)
+
+    # Greptile P1 (PR #767): a CACHED hand-off must not be trusted blindly. The run
+    # loop clears the checkpoint after a pre-fill hand-off so the next drive re-runs
+    # the step — but only on orchestrators that expose ``clear`` (the shim). On a
+    # backend without it (the DBOS adapter has no ``clear``, and DBOS's exactly-once
+    # step recording cannot be reset through its public API), the stale checkpointed
+    # hand-off would replay on every re-drive FOREVER, so an application could never
+    # leave the wall even after the human resolved it — the exact lockout the P2-12
+    # CAPTCHA drill first found on the shim. Mirror the ``material_approved`` (#1)
+    # pattern: when the step was served from cache AND it claims a hand-off, re-read
+    # the PERSISTED §7 state (the durable source of truth) live:
+    #   * still parked at a hand-off  -> re-drive pre-fill LIVE (``ctx.prefill`` —
+    #     the run loop's closure picks the targeted ``resume_after_*`` entry, #4);
+    #   * already past the wall       -> trust the persisted state and continue
+    #     (the checkpoint is only a cache of it).
+    # No live source wired (``persisted_state=None`` — the side_effects-only
+    # resumption tests) keeps the exact prior cached behavior.
+    if (
+        _is_handoff(prefill_result.get("state"))
+        and not executed_this_pass["prefill"]
+        and ctx is not None
+        and ctx.persisted_state is not None
+    ):
+        live_state = ctx.persisted_state()
+        if _is_handoff(live_state) and ctx.prefill is not None:
+            log.info(
+                "prefill_handoff_checkpoint_stale_redriving_live",
+                workflow_id=workflow_id,
+                cached_state=prefill_result.get("state"),
+                live_state=live_state,
+            )
+            prefill_result = _prefill()
+        elif live_state is not None and not _is_handoff(live_state):
+            prefill_result = {"state": live_state}
+
     out["prefill"] = prefill_result
 
     # Human-in-the-loop hand-off: yield + stop this pass (FR-AGENT-4/6, FR-DUR-4).
     if _is_handoff(prefill_result.get("state")):
         out["status"] = "handoff"
         out["handoff_state"] = prefill_result.get("state")
+        return out
+
+    # P2-12 durability drill finding: a TERMINAL pre-fill outcome (FAILED) stops the
+    # pipeline here too — material/approval/submit are meaningless (and unsafe: a
+    # later approve would raise IllegalStateTransition forever, see the module-level
+    # comment on ``_TERMINAL_STATE_VALUES``). Still tear down (as its own checkpointed,
+    # idempotent step) so the sandbox slot is released exactly like the ``done`` path.
+    if _is_terminal(prefill_result.get("state")):
+        out["status"] = "failed"
+        out["failure_state"] = prefill_result.get("state")
+
+        def _terminal_teardown() -> dict:
+            sink.append("teardown")
+            if ctx is not None and ctx.teardown is not None:
+                ctx.teardown()
+            return {"torn_down": True}
+
+        out["teardown"] = orchestrator.run_step(workflow_id, "teardown", _terminal_teardown)
         return out
 
     # 2. Generate + review material when the role warrants it (FR-RESUME-1/8). -
