@@ -174,6 +174,14 @@ function _signalBadges(app) {
   }).join('');
 }
 
+// Easy-Apply channel chip (detection only — the engine tags the posting at
+// discovery time when the source board hosts its own quick-apply flow, e.g.
+// LinkedIn’s built-in apply). Purely informational on the tracker row.
+function _easyApplyChip(app) {
+  if (!app || !app.easy_apply) return '';
+  return `<span class="applicant-easy-apply-chip" title="This role’s board has a built-in quick-apply flow — usually fewer form steps" style="display:inline-block;padding:2px 8px;margin-right:4px;border-radius:10px;font-size:10px;font-weight:600;background:color-mix(in srgb, var(--color-accent,#00aaff) 16%, transparent);color:var(--color-accent,#0077cc);">Easy Apply</span>`;
+}
+
 function _optionsHTML(currentStatus) {
   // Rejected/ghosted/archived applications are already at (or past) that
   // outcome — offering to re-record the same terminal state again is noise.
@@ -207,7 +215,7 @@ function _renderRow(app) {
     <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 4px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label} ${campaign}</div>
-        <div style="margin-top:3px;">${_signalBadges(app)}</div>
+        <div style="margin-top:3px;">${_easyApplyChip(app)}${_signalBadges(app)}</div>
       </div>
       <select class="cal-btn" data-tracker-record="${id}" style="font-size:11px;" ${busy ? 'disabled' : ''} aria-label="Record what happened for ${label}">
         <option value="">Record what happened…</option>

@@ -519,6 +519,18 @@ export function buildDigestRow(row, ctx = {}) {
       style: 'font-size:10px;opacity:0.7;white-space:nowrap;',
     }));
   }
+  // Easy-Apply channel chip (detection only — set server-side at discovery
+  // time): tells you the board hosts its own quick-apply flow for this role.
+  if (row.easy_apply) {
+    head.appendChild(_el('span', {
+      cls: 'memory-count applicant-easy-apply-chip',
+      text: 'Easy Apply',
+      title: 'This board has a built-in quick-apply flow for this role — usually fewer form steps.',
+      style: 'font-size:10px;white-space:nowrap;font-weight:600;padding:1px 7px;border-radius:9px;'
+        + 'background:color-mix(in srgb, var(--color-accent,#00aaff) 16%, transparent);'
+        + 'color:var(--color-accent,#0077cc);',
+    }));
+  }
   // Keyword-coverage chip (P1-8): the engine's deterministic resume<->posting
   // keyword check, distinct from the model-driven "% match" above — how many of
   // this posting's keywords your resume already covers, with the missing ones in
