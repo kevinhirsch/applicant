@@ -45,7 +45,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +93,11 @@ class ResearchRunIn(BaseModel):
 
 
 def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
+    """Require the engine-OWNER account, not merely any authenticated one (P2-3,
+    DISC-15). Company research is the owner's data off a single-tenant engine, so
+    ``require_engine_owner`` isolates it cross-account while the lone owner still
+    passes in single-user mode."""
+    return require_engine_owner(request)
 
 
 def _engine_http_error(exc: EngineError) -> HTTPException:

@@ -982,9 +982,22 @@ GDPR/CCPA export+delete mechanism (builds on P1-7 export + P1-5 purge).
 **Effort:** M · **Owner:** eng · **Depends on:** P1-5
 **DoR:** `security-review` skill available; scope agreed (secrets-at-rest, deps,
 authenticated-endpoint sweep).
+**Status: DONE** — full pass in `docs/security-review.md`. Two high findings
+fixed: (1) the Results/Research/Gallery read proxies were gated only by
+`require_user`, letting a second workspace account read the single-tenant
+owner's data — all three moved to `require_engine_owner` (the residual DISC-15
+hole class), pinned by `workspace/tests/test_applicant_crossuser_isolation_p2_3.py`;
+(2) `lxml` XXE via a crafted `.docx` upload — closed at BOTH résumé boundaries
+(read path rejects any DTD-bearing part before python-docx; edit path already
+used a hardened no-entity parser), version-independently, pinned by
+`tests/unit/test_resume_parser_xxe_guard.py`. Dependency audit's other two
+advisories triaged as not-reachable (`langsmith` `TracingMiddleware` unused) /
+low (`markdownify` DoS) with bumps deferred to a pinned-uv lockfile refresh
+(see `docs/known-issues.md`). Secrets-at-rest audit passed (vault refs; demo
+seed writes no key). npm audit clean.
 **DoD:**
-- [ ] Security review run; findings triaged and high/critical fixed.
-- [ ] Secrets-at-rest audit + dependency audit + authenticated-endpoint sweep complete.
+- [x] Security review run; findings triaged and high/critical fixed.
+- [x] Secrets-at-rest audit + dependency audit + authenticated-endpoint sweep complete.
 
 ### P2-4 — License compliance *(launch-blocking, cheap now)*
 **Effort:** S · **Owner:** eng + you confirm · **Depends on:** —

@@ -52,7 +52,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +61,12 @@ logger = logging.getLogger(__name__)
 
 
 def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
+    """Require the engine-OWNER account, not merely any authenticated one (P2-3,
+    DISC-15). Results surfaces the owner's learning/outcomes off a single-tenant
+    engine, so ``require_user`` would let a second workspace account read the
+    owner's data; ``require_engine_owner`` denies that while the lone owner still
+    passes in single-user mode."""
+    return require_engine_owner(request)
 
 
 def _campaign_label(campaign: dict) -> str:
