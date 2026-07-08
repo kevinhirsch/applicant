@@ -75,7 +75,10 @@ def test_deliver_builds_payloads_and_pings_discord():
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     result = digest.deliver(cid, crit)
     assert result["payload"]["rows"], "viable role should be in the digest"
-    assert result["email"]["html"].startswith("<h1>")
+    # P1-4 polish: the body leads with the hidden preheader (inbox preview text)
+    # and carries the branded heading inside the shell.
+    assert result["email"]["html"].startswith("<span")
+    assert "Your daily digest" in result["email"]["html"]
     # Discord-ready ping queued (FR-DIG-2).
     assert result["notify_handle"]
     # Each viable row materializes a pending digest-approval (FR-UI-3).

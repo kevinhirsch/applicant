@@ -558,12 +558,37 @@ export function _essentialsChecklistHTML(essentials) {
   if (!Array.isArray(essentials) || !essentials.length) return '';
   const rows = essentials.map((e) => {
     const done = !!(e && e.done);
+    // P1-4: the notifications item is optional (it never gates the search), so
+    // the "Finish setup" wizard button below won't reach it — give the unchecked
+    // row its own one-tap jump into Settings → Notifications instead.
+    const setupLink = (!done && e && e.key === 'notifications')
+      ? ' <a href="#" data-role="essential-notifications" style="font-size:11px;">Set up</a>'
+      : '';
     return `<li style="list-style:none;font-size:12px;line-height:1.8;text-align:left;${done ? 'opacity:0.65;' : ''}">`
       + `<span aria-hidden="true" style="margin-right:6px;">${done ? '✓' : '○'}</span>`
-      + `${esc((e && e.label) || '')}${done ? ' <span style="opacity:0.7;">— done</span>' : ''}`
+      + `${esc((e && e.label) || '')}${done ? ' <span style="opacity:0.7;">— done</span>' : ''}${setupLink}`
       + '</li>';
   }).join('');
   return `<ul style="margin:0 0 10px;padding:0;display:inline-block;" aria-label="Setup essentials">${rows}</ul>`;
+}
+
+// Wire the checklist's notifications "Set up" jump (if rendered) onto a host
+// element's fresh innerHTML. Opens Settings on the Notifications tab — the same
+// panel the wizard's channels step mounts (`mountApplicantSettingsStep`).
+function _wireEssentialsSetupLink(host) {
+  const link = host && host.querySelector('[data-role="essential-notifications"]');
+  if (!link) return;
+  link.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    try {
+      if (window.settingsModule && typeof window.settingsModule.open === 'function') {
+        window.settingsModule.open('notifications');
+        _close();
+        return;
+      }
+    } catch { /* fall through */ }
+    _toast('Open Settings → Notifications to set up a channel');
+  });
 }
 
 function _renderComplete(wrap, item) {
@@ -580,6 +605,7 @@ function _renderComplete(wrap, item) {
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
     ${essentials}${list}
     <button type="button" class="cal-btn cal-btn-primary" data-role="finish">Finish your profile</button>`;
+  _wireEssentialsSetupLink(wrap);
   wrap.querySelector('[data-role="finish"]').addEventListener('click', () => {
     try {
       if (typeof window.launchApplicantSetup === 'function') {
@@ -743,6 +769,7 @@ function _renderGated(host, data) {
   host.innerHTML = gatedHTML(msg,
     essentials
     + '<button type="button" class="cal-btn cal-btn-primary" id="applicant-today-gated-setup">Finish setup</button>');
+  _wireEssentialsSetupLink(host);
   const btn = host.querySelector('#applicant-today-gated-setup');
   if (btn) {
     btn.addEventListener('click', () => {

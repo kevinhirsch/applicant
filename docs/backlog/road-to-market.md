@@ -56,7 +56,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
-| P1-4 | Notifications out of the box | M | eng | — |
+| P1-4 | Notifications out of the box | M | eng | DONE — per-channel Send test (single-channel engine lane + honest failure), branded digest email, Today checklist "Set up" jump, failed-push in-app error notes; digest send-now already reachable via the rail |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
@@ -426,10 +426,38 @@ digest immediately **so that** the product's heartbeat reaches me.
 **Effort:** M · **Owner:** eng · **Depends on:** P1-1 (onboarding), P0-2 (on-demand digest)
 **DoR:** Channels in scope confirmed (in-app always; email SMTP, ntfy, Discord webhook opt-in).
 **DoD:**
-- [ ] Channel setup appears as a Today checklist item (not buried in Settings).
-- [ ] Each channel has a **Send test** button that delivers a real message.
-- [ ] The digest email template is polished (doubles as marketing asset for P4).
-- [ ] A "send my digest now" control exists so demos/first-runs don't wait for the tick.
+- [x] Channel setup appears as a Today checklist item (not buried in Settings).
+      *(Today's setup-essentials checklist (P1-1) includes the notifications item;
+      P1-4 gives its unchecked state a one-tap "Set up" jump straight into
+      Settings → Notifications — the wizard's "Finish setup" button can't reach
+      it since channels are deliberately not a gating wizard step.)*
+- [x] Each channel has a **Send test** button that delivers a real message.
+      *(Every channel row — Discord / email / phone-push — has its own Send test
+      over the new single-channel lane of `POST /api/setup/channels/test`; a
+      live delivery failure PROPAGATES to the button (502, plain-language)
+      instead of hiding behind the escalation ladder's log-and-retry isolation,
+      and the dry-run lane keeps saying "nothing sent yet" honestly. The in-app
+      inbox works with zero config and is testable the same way.)*
+- [x] The digest email template is polished (doubles as marketing asset for P4).
+      *(Branded shell: preheader-first body, "Applicant" text masthead, lead
+      summary line, inline-styled card list, and a footer explaining where the
+      matches came from — sources × criteria, nothing submitted without
+      approval — plus the Settings → Notifications pointer. Still table-based
+      + inline styles for mail-client compatibility.)*
+- [x] A "send my digest now" control exists so demos/first-runs don't wait for
+      the tick. *(Already reachable before this story: the Today rail's
+      Daily-digest gadget "Send it now" (P0-3) and the digest page's manual
+      delivery, both over `POST /campaigns/{id}/digest/deliver` — verified, not
+      rebuilt.)*
+
+**Status note (P1-4).** "Nothing silently drops" also gained a server-side seam:
+when a LIVE push delivery fails (dead webhook, broken SMTP, bad ntfy topic), the
+notifier now leaves an error entry in the zero-config in-app inbox — deduped per
+channel while undismissed — telling the user which channel failed and to check
+it with Send test in Settings → Notifications, instead of only logging
+server-side while the ladder retries. Engine tests:
+`tests/unit/test_p1_4_notifications_oob.py`; front-door pins:
+`workspace/tests/test_applicant_p1_4_notifications.py`.
 
 ### P1-5 — Rescue the stranded hardening commits
 **As** the team, **I want** the two unmerged 1.0-hardening waves rebased onto `main`
