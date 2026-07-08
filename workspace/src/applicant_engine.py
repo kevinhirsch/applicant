@@ -634,6 +634,15 @@ class ApplicantEngineClient:
         reusable for "what changed vs. the original" outside a review session."""
         return await self._request("POST", "/api/documents/redline", json=body)
 
+    async def document_flagged_facts(self, document_id: str) -> Any:
+        """Facts in a generated draft not yet traceable to the candidate's profile
+        (P1-13 truth-policy surfacing; engine ``GET
+        /api/documents/{id}/flagged-facts``). Read-only detection the review UI shows
+        with a one-tap confirm ("add to my profile") / remove choice."""
+        return await self._request(
+            "GET", f"/api/documents/{document_id}/flagged-facts"
+        )
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 

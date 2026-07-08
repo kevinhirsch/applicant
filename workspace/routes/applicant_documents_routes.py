@@ -43,7 +43,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, engine_base_url
-from src.auth_helpers import require_privilege, require_user
+from src.auth_helpers import require_engine_owner, require_privilege, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +287,30 @@ def setup_applicant_documents_routes() -> APIRouter:
         except EngineError as exc:
             logger.info("applicant documents for application unavailable: %s", exc)
             return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.get("/{document_id}/flagged-facts")
+    async def flagged_facts(document_id: str, request: Request) -> JSONResponse:
+        """Facts in a generated draft not yet in the owner's profile (P1-13; engine
+        ``GET /api/documents/{id}/flagged-facts``).
+
+        The balanced truth policy lets the assistant rewrite freely and SURFACES
+        invented fact-class tokens rather than blocking them; this read hands the
+        review surface the tokens to double-check, each with a one-tap "yes, that's
+        true, add to my profile" / "remove" choice. Flagged facts are profile gaps /
+        draft personal facts — owner data on the single-tenant engine — so this read
+        is gated with ``require_engine_owner`` (DISC-15), not plain ``require_user``.
+        Degrades to an empty list on an engine error rather than blocking the review
+        card."""
+        require_engine_owner(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.document_flagged_facts(document_id)
+        except EngineError as exc:
+            logger.info("applicant flagged-facts unavailable: %s", exc)
+            return JSONResponse(
+                content={"document_id": document_id, "flagged": []}
+            )
         return JSONResponse(content=data)
 
     @router.get("/jd-match/{application_id}")
