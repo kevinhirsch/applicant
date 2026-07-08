@@ -208,7 +208,7 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
       card frame) when action-required items arrive and shrinks to an "all clear" line
       when empty; gadgets reflow below it; each gadget is pinnable (pins float to the top,
       persisted in localStorage) and the whole rail collapses to a slim badge strip.
-- [~] Notifications reachable from THREE surfaces: **rail waiting-on-you area** (new) +
+- [ ] Notifications reachable from THREE surfaces (**partial**): **rail waiting-on-you area** (new) +
       **transient toasts** (reused `ui.js` `showToast` via `_toast`) are live; the
       **existing sidebar count badge** on the Today/Portal nav entry is the third. A
       dedicated *top-bar bell + dropdown* is **deferred** — the Portal already owns the

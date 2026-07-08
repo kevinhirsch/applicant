@@ -23,6 +23,7 @@ reverted, then restored to GREEN.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -115,6 +116,12 @@ def test_digest_send_now_reuses_the_shared_deliver_helper(rail_src: str) -> None
 def test_notifications_reuse_showtoast_not_a_new_toast_system(rail_src: str) -> None:
     # The third notification surface (transient toasts) reuses ui.js showToast
     # via applicantCore's _toast — the rail must not rebuild a toast stack.
+    # Pin the actual IMPORT binding (a locally-defined _toast helper would
+    # otherwise satisfy the call-site check below).
+    core_import = re.search(
+        r"import\s*\{[^}]*\b_toast\b[^}]*\}\s*from\s*'\./applicantCore\.js'", rail_src
+    )
+    assert core_import, "_toast must be imported from applicantCore.js, not locally defined"
     assert "_toast(" in rail_src
     # Reuse the _toast wrapper; never call ui.js showToast directly or rebuild a
     # toast stack here (a bare `showToast(` call would be the tell).

@@ -143,7 +143,11 @@ test('_healthChip renders all-real / degraded / offline / gated verdicts', () =>
 test('_streakDays counts back over consecutive local days and resets on a gap', () => {
   const _streakDays = new Function(`${extractFunction(SRC, '_streakDays')}\nreturn _streakDays;`)();
   const DAY = 86400000;
-  const now = Date.parse('2026-07-08T12:00:00Z');
+  // Anchor on LOCAL noon (not a UTC instant): _streakDays keys days off local
+  // date components, so a UTC-anchored fixture could cross a day boundary on a
+  // runner far from UTC. Local noon ± whole days stays inside the same local
+  // day even across a DST shift.
+  const now = new Date(2026, 6, 8, 12, 0, 0).getTime();
   const iso = (offsetDays) => ({ finished_at: new Date(now - offsetDays * DAY).toISOString() });
 
   assert.equal(_streakDays([iso(0), iso(1), iso(2)], now), 3, 'today + 2 prior days = 3');

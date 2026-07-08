@@ -61,8 +61,10 @@ let _mounted = false;
 let _pollStop = null;
 // The waiting-count last surfaced as a toast — a genuinely-new item toasts
 // once; a steady or shrinking queue never re-toasts (mirrors the Portal badge
-// contract: a transient blip must not spam the same signal).
-let _lastWaitingToasted = 0;
+// contract: a transient blip must not spam the same signal). -1 = unseeded
+// (nothing rendered yet): the boot render seeds silently, but a real 0 → N
+// transition after "Nothing needs you right now." DOES toast.
+let _lastWaitingToasted = -1;
 
 // ── Pure helpers (unit-tested headlessly via the JS harness) ─────────────────
 
@@ -209,6 +211,22 @@ async function _firstCampaignId() {
   return '';
 }
 
+// Per-refresh memos: pipeline+interview share ONE tracker read and cost+digest
+// share ONE campaign-id read per refresh cycle (gadget loads run concurrently,
+// so without these each poll would hit the same proxy twice). Reset by
+// _renderGadgets at the top of every refresh; caching the PROMISE means
+// concurrent gadgets await the same in-flight request.
+let _trackerMemo = null;
+let _campaignIdMemo = null;
+function _trackerJSON() {
+  if (!_trackerMemo) _trackerMemo = _fetchJSON(TRACKER_API);
+  return _trackerMemo;
+}
+function _campaignIdOnce() {
+  if (!_campaignIdMemo) _campaignIdMemo = _firstCampaignId();
+  return _campaignIdMemo;
+}
+
 // ── Gadget definitions ───────────────────────────────────────────────────────
 //
 // Each gadget is { id, title, open, load(bodyEl) }. `load` fills the gadget's
@@ -223,7 +241,7 @@ const _GADGETS = {
   pipeline: {
     id: 'pipeline', title: 'Pipeline', open: _openTracker,
     async load(body) {
-      const data = await _fetchJSON(TRACKER_API);
+      const data = await _trackerJSON();
       if (!data || data.engine_available === false || data.gated === true || data.has_data === false) return false;
       const c = _pipelineCounts(data.applications);
       if (!c.total) return false;
@@ -249,7 +267,7 @@ const _GADGETS = {
   cost: {
     id: 'cost', title: 'Cost & pace', open: _openToday,
     async load(body) {
-      const cid = await _firstCampaignId();
+      const cid = await _campaignIdOnce();
       if (!cid) return false;
       const data = await _fetchJSON(`${CAMPAIGNS_API}/${encodeURIComponent(cid)}/guardrails`);
       const today = data && data.today;
@@ -263,7 +281,7 @@ const _GADGETS = {
   interview: {
     id: 'interview', title: 'Next interview', open: _openTracker,
     async load(body) {
-      const data = await _fetchJSON(TRACKER_API);
+      const data = await _trackerJSON();
       if (!data || data.engine_available === false || data.gated === true || data.has_data === false) return false;
       const c = _pipelineCounts(data.applications);
       if (!c.interview) return false;
@@ -275,7 +293,7 @@ const _GADGETS = {
   digest: {
     id: 'digest', title: 'Daily digest', open: _openDigest,
     async load(body) {
-      const cid = await _firstCampaignId();
+      const cid = await _campaignIdOnce();
       if (!cid) return false;
       let count = 0;
       try {
@@ -438,20 +456,31 @@ async function _renderGadgets() {
   const pinnedSet = new Set(pins);
   const order = _railOrderIds(pins);
   host.innerHTML = '';
-  const badgeParts = [];
-  for (const id of order) {
-    const gadget = _GADGETS[id];
-    if (!gadget) continue;
-    const card = _gadgetCard(gadget, pinnedSet.has(id));
-    host.appendChild(card);
-    const bodyEl = card.querySelector('[data-rail-body]');
+  // Fresh per-refresh memos (see _trackerJSON/_campaignIdOnce): the concurrent
+  // loads below share one tracker read and one campaign-id read per cycle.
+  _trackerMemo = null;
+  _campaignIdMemo = null;
+  // Append every card first (keeps the default/pinned DOM order), then load
+  // them CONCURRENTLY — one slow endpoint must not waterfall-stall the gadgets
+  // below it on every poll.
+  const cards = order
+    .map((id) => ({ id, gadget: _GADGETS[id] }))
+    .filter(({ gadget }) => gadget)
+    .map(({ id, gadget }) => {
+      const card = _gadgetCard(gadget, pinnedSet.has(id));
+      host.appendChild(card);
+      return { id, gadget, card };
+    });
+  const results = await Promise.all(cards.map(async ({ id, gadget, card }) => {
     try {
-      const shown = await gadget.load(bodyEl);
-      if (shown === false) { card.remove(); }
-      else { badgeParts.push(`<button type="button" class="applicant-rail-badge" data-rail-badge="${esc(id)}" title="${esc(gadget.title)}" aria-label="${esc(gadget.title)}">${esc(gadget.title.charAt(0))}</button>`); }
-    } catch {
-      card.remove();
-    }
+      const shown = await gadget.load(card.querySelector('[data-rail-body]'));
+      return { id, gadget, card, shown };
+    } catch { return { id, gadget, card, shown: false }; }
+  }));
+  const badgeParts = [];
+  for (const { id, gadget, card, shown } of results) {
+    if (shown === false) { card.remove(); continue; }
+    badgeParts.push(`<button type="button" class="applicant-rail-badge" data-rail-badge="${esc(id)}" title="${esc(gadget.title)}" aria-label="${esc(gadget.title)}">${esc(gadget.title.charAt(0))}</button>`);
   }
   // Collapsed-rail badge strip: one initial per live gadget, click expands +
   // opens that gadget's page.
@@ -508,9 +537,11 @@ async function _renderWaiting() {
     ${rows}`;
   const openBtn = host.querySelector('#applicant-rail-waiting-open');
   if (openBtn) openBtn.addEventListener('click', _openToday);
-  // Toast a genuinely-new waiting item (count grew) exactly once.
-  if (count > _lastWaitingToasted && _lastWaitingToasted >= 0) {
-    if (_lastWaitingToasted > 0) _toast(`${count} item${count === 1 ? '' : 's'} waiting on you`);
+  // Toast a genuinely-new waiting item (count grew) exactly once. The boot
+  // render (_lastWaitingToasted === -1) seeds without toasting; after that any
+  // growth — including 0 → N after the queue cleared — notifies.
+  if (_lastWaitingToasted >= 0 && count > _lastWaitingToasted) {
+    _toast(`${count} item${count === 1 ? '' : 's'} waiting on you`);
   }
   _lastWaitingToasted = count;
 }
