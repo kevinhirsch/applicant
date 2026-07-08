@@ -44,13 +44,25 @@ def test_cover_letter_role_override_wins_both_ways():
     "question",
     [
         "How many years of Python experience do you have?",
-        "Are you authorized to work in the US?",
         "What is your desired salary?",
-        "Do you require sponsorship? yes/no",
     ],
 )
 def test_factual_questions_classified_factual(question):
     assert classify_screening_question(question) is ScreeningKind.FACTUAL
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "question",
+    [
+        # These two classified FACTUAL before P2-7; work auth now has its own
+        # never-LLM-drafted lane (see test_sensitive_question_policy.py).
+        "Are you authorized to work in the US?",
+        "Do you require sponsorship? yes/no",
+    ],
+)
+def test_work_auth_questions_classified_work_auth(question):
+    assert classify_screening_question(question) is ScreeningKind.WORK_AUTH
 
 
 @pytest.mark.unit

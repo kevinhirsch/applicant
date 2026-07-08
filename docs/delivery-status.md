@@ -262,6 +262,20 @@ acceptance gate defined there govern launch. Landed so far:
   "Not double-checked (why)" — the absence of a check never renders as a check (H2).
 - **Window-chrome baseline (P0-1, PR #640)** and the **road-to-market backlog itself
   (PR #641)** merged earlier in the same push.
+- **Citable invariants (P2-5 + P2-8, PR #754).** The two marketable claims pinned by
+  executable evidence in `docs/proof/citable-invariants.md`: the truthfulness claim
+  ("rewrites freely, never invents facts" — one red-team case per fact class under both
+  policies, rewrite-freedom cases) and the human-final-say claim (every submit entry
+  refuses unapproved material; an AST scan pins the gated service as the only
+  submitted-outcome writer). The review pass also found and closed a real bypass: the
+  manual tracker's outcome endpoint now refuses submission-class types outright.
+- **Sensitive-question policy (P2-7).** Work authorization joined EEO as a protected,
+  never-AI-answered question class in both lanes (screening-answer generation and
+  pre-fill field resolution): answers come only in the user's own stored words, an
+  unanswered intake is never treated as "no", the caller's essay flag cannot opt a
+  protected question back into the LLM path, and policy provenance markers say WHY at
+  review. Claim 3 in `docs/proof/citable-invariants.md`;
+  `tests/unit/test_sensitive_question_policy.py` (exploding-LLM harness).
 
 ## Boundaries that require a live deployment
 

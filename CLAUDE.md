@@ -96,8 +96,13 @@ per tick** (per-tick Session isolation, `container._build_tick_services`), so an
 persist across ticks (e.g. the resume backoff/failure ledger) lives in a process-lived object
 injected into every loop — NOT on the instance, or it silently resets each tick. Safety is enforced
 in the core: review-before-submit and the pre-fill stop-boundary mean the engine **cannot**
-self-authorize a final submit. Enforce such guards server-side (e.g. the fabrication guard derives
-its own ground truth) — never rely on a caller-supplied input to opt a safety check in.
+self-authorize a final submit, and protected question classes (EEO/demographic AND
+work-authorization, `core/rules/sensitive_fields.py`) are never AI-answered in either lane — the
+user's stored words or an honest deferral, decided at classification time because an invented
+"no sponsorship needed" has no fact-class tokens for the fabrication guard to catch. Enforce such
+guards server-side (e.g. the fabrication guard derives its own ground truth; a caller's `essay`
+flag cannot opt a protected question back into the LLM path) — never rely on a caller-supplied
+input to opt a safety check in.
 
 Two truth-preserving layers sit on that foundation. **Parse-verify** (`adapters/resume_parser/
 llm_verify.py`, `PARSE_VERIFY_ENABLED`): résumé ingest wraps the deterministic parser in

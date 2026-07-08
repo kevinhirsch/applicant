@@ -115,7 +115,7 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | FR-ATTR-3 | 1 | "Attribute editable by UI and feedback" | Delivered — Phase 1; attributes router (driving port); contract+BDD |
 | FR-ATTR-4 | 1 | "AI adds attributes dynamically" | Delivered — Phase 1; AttributeStore dynamic-add in core; unit test |
 | FR-ATTR-5 | 2 | "Missing attribute soft-errors and is reused" | Delivered (re-verified) — full loop: `prefill_service` blocks at BLOCKED_MISSING_ATTR + emits a pending action; `attribute_cloud_service.resume_after_missing_attr` upserts the supplied value to the campaign attribute cloud and resumes the stalled app; a later application reuses the stored value without re-asking; test `tests/unit/test_attribute_cloud.py` (end-to-end reuse) |
-| FR-ATTR-6 | 0 (rule), 2 (fill) | "Sensitive fields are never AI-guessed" | Delivered — Phase 0 rule + Phase 2 fill; sensitive-field policy in core; unit+BDD |
+| FR-ATTR-6 | 0 (rule), 2 (fill) | "Sensitive fields are never AI-guessed" | Delivered (extended, P2-7) — Phase 0 rule + Phase 2 fill; sensitive-field policy in core; work authorization joined the protected family (`is_work_auth_question`, `ScreeningKind.WORK_AUTH` — never LLM-drafted in either lane, user's stored words only); policy `provenance` markers say WHY at review; unit+BDD + `tests/unit/test_sensitive_question_policy.py` (Claim 3 in `docs/proof/citable-invariants.md`) |
 
 ## FR-ONBOARD
 
@@ -168,7 +168,7 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | FR-RESUME-8 | 3 | "Interactive resume review with highlighted edits" | Delivered (re-verified) — **review-before-submit is now ENFORCED at the service layer**, the single chokepoint every submit funnels through: `SubmissionService.record_submission` calls `ensure_submittable` first (`submission_service.py:65-99`), which raises `ReviewRequired` on any unapproved generated material (`core/rules/review_gate.py:47-54`); routers translate it to **409** (`documents.py:220-227`, `remote.py:89-119`); durable RevisionSession repo; tests `tests/bdd/steps/test_p3_steps.py` (raises ReviewRequired), `tests/integration/test_documents_router.py` |
 | FR-RESUME-9 | 3/4 | "Aggressiveness control (grayed stub)" | Delivered — Phase 3 stub / Phase 4 backlog; dormant-surface stub; test — see [dormant-surfaces.md](dormant-surfaces.md) |
 | FR-RESUME-10 | 3 | "Cover letters on demand" | Delivered — Phase 3; cover-letter generation in MaterialService; unit test |
-| FR-ANSWER-1 | 3 | "Screening answers go through review" | Delivered — Phase 3; screening-answer generation + review-gate; contract+BDD |
+| FR-ANSWER-1 | 3 | "Screening answers go through review" | Delivered (extended, P2-7) — Phase 3; screening-answer generation + review-gate; classifier now four-way (factual / essay / sensitive / work-auth, work-auth cues checked first so they can never reach the LLM; the caller's essay flag cannot override a protected class); contract+BDD + `tests/unit/test_sensitive_question_policy.py` |
 
 ## FR-SANDBOX
 

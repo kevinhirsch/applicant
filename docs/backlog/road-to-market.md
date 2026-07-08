@@ -78,7 +78,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-4 | License compliance | S | eng+you | — |
 | P2-5 | Fabrication-guard evidence | S | eng | DONE — citable claim + red-team suite (docs/proof/citable-invariants.md) |
 | P2-6 | LLM output eval harness | M | eng | — |
-| P2-7 | Sensitive-question policy | M | eng | — |
+| P2-7 | Sensitive-question policy | M | eng | DONE — EEO + work-auth never AI-answered, both lanes (docs/proof/citable-invariants.md Claim 3) |
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | — |
 | P2-10 | ATS-parseability proof | M | eng | — |
@@ -1019,10 +1019,24 @@ free re-wording — is documented rather than hidden.)*
 **Effort:** M · **Owner:** eng · **Depends on:** the screening-answer library (migration 0011)
 **DoR:** Confirmed the sensitive categories (EEO/demographic: race, gender, disability,
 veteran; plus work-authorization handling).
+**Status: DONE** — work authorization joins EEO as a protected question class
+(`ScreeningKind.WORK_AUTH`, cues checked before even the essay cues so
+"Describe your work authorization" can never reach the LLM; an invented
+"no sponsorship needed" has no fact-class tokens, so the fabrication guard
+alone could not catch it). Both lanes enforce it: `generate_screening_answer`
+answers only in the user's own words (explicit answer → onboarding intake →
+attribute cloud; presence-aware, so an unanswered intake is never "no") else
+an honest needs-your-answer placeholder, and the pre-fill resolver never
+LLM-drafts a work-auth field (stored answers still fill; missing → ask the
+user). The caller's `essay` flag cannot opt a protected question back into
+the LLM path (server-side). Policy `provenance` markers surface WHY in the
+review UI's "What I drew on" panel. Evidence + repro:
+`tests/unit/test_sensitive_question_policy.py` (exploding-LLM harness),
+written up as Claim 3 in `docs/proof/citable-invariants.md`.
 **DoD:**
-- [ ] The engine **never** auto-answers sensitive/demographic questions — they are
+- [x] The engine **never** auto-answers sensitive/demographic questions — they are
       flagged for the human at review, enforced server-side and tested.
-- [ ] Work-authorization questions get explicit, user-confirmed handling.
+- [x] Work-authorization questions get explicit, user-confirmed handling.
 
 ### P2-8 — "Human final say" invariant test
 **Effort:** S · **Owner:** eng · **Depends on:** —

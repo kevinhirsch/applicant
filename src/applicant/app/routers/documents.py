@@ -263,12 +263,16 @@ def _provenance_payload(provenance) -> list[dict]:
     """Serialize a material's advisory learned-item provenance for the review UI.
 
     Each entry is a plain ``{kind, label, ref}`` dict (FR-MIND-5/-11): ``kind`` is
-    ``memory`` | ``playbook`` | ``recall``, ``label`` is the plain-language phrase the
-    UI shows, ``ref`` is the underlying item id (memory line / playbook name / recall
-    run-id). Descriptive only — never authorization. Excludes the degraded-fallback
-    sentinel (dark-engine audit #40, ``kind == "degraded"``) — that is not a learned
-    item and is surfaced separately via ``_is_degraded``/``_degraded_reason`` so it
-    never gets rendered inside the "What I drew on" transparency list.
+    ``memory`` | ``playbook`` | ``recall`` | ``policy``, ``label`` is the plain-language
+    phrase the UI shows, ``ref`` is the underlying item id (memory line / playbook
+    name / recall run-id / policy name). Descriptive only — never authorization.
+    ``policy`` entries (P2-7) ride through ON PURPOSE: for a demographic
+    self-identification or work-authorization answer, the label explains WHY the
+    answer is canned/deferred — exactly what "What I drew on" is for. Excludes the
+    degraded-fallback sentinel (dark-engine audit #40, ``kind == "degraded"``) —
+    that is not a learned item and is surfaced separately via
+    ``_is_degraded``/``_degraded_reason`` so it never gets rendered inside the
+    "What I drew on" transparency list.
     """
     return [
         {"kind": p.kind, "label": p.label, "ref": p.ref}
