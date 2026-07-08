@@ -28,6 +28,33 @@ from applicant.ports.driven.resume_parser import (
 
 log = get_logger(__name__)
 
+
+def _docx_has_dtd(path: Path) -> bool:
+    """True when any XML part of the .docx archive declares a DTD (P2-3).
+
+    Legitimate OOXML never carries ``<!DOCTYPE``/``<!ENTITY`` declarations, but
+    python-docx parses parts with an entity-resolving lxml parser — so a
+    crafted archive could mount an XXE local-file read or an entity-expansion
+    bomb. Scanning the raw bytes BEFORE any XML parser touches them closes the
+    hole for every installed lxml version. Fail-closed: an unreadable/corrupt
+    archive reports True (the caller then skips python-docx entirely; the same
+    corrupt file would have failed to parse anyway).
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for name in zf.namelist():
+                if not name.lower().endswith((".xml", ".rels")):
+                    continue
+                # DTDs must appear in the prolog, before the root element —
+                # the first 4KB is more than enough to catch one.
+                head = zf.open(name).read(4096)
+                if b"<!DOCTYPE" in head or b"<!ENTITY" in head:
+                    return True
+    except Exception:
+        return True
+    return False
+
+
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PHONE_RE = re.compile(r"(?:\+?\(?\d[\d\s().-]{7,}\d)")
 # A dated work-history line: "Title, Company    Jan 2020 - Present"
@@ -146,6 +173,16 @@ class ResumeParser:
         try:
             from docx import Document
         except Exception:  # pragma: no cover - dep present in prod/test
+            return ""
+        # SECURITY (P2-3): python-docx parses the archive's XML parts with an
+        # entity-RESOLVING lxml parser, so a crafted .docx (e.g. a poisoned
+        # "résumé template" downloaded from the web) could mount an XXE local
+        # file read or an entity-expansion bomb. Legitimate OOXML never carries
+        # a DTD, so any part declaring one is rejected before python-docx ever
+        # parses it — independent of the installed lxml version. (The OOXML
+        # EDIT path is separately hardened: docx_tailor._SAFE_XML_PARSER.)
+        if _docx_has_dtd(path):
+            log.warning("docx_rejected_dtd", path=str(path))
             return ""
         try:
             doc = Document(str(path))

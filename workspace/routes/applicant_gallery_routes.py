@@ -37,7 +37,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def setup_applicant_gallery_routes() -> APIRouter:
     @router.get("/campaigns")
     async def list_campaigns(request: Request) -> dict:
         """Campaigns the gallery view can pick a collection for (read-only)."""
-        require_user(request)
+        require_engine_owner(request)  # P2-3/DISC-15: owner-scoped, not any authenticated account
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
         if not isinstance(campaigns, list):
@@ -109,7 +109,7 @@ def setup_applicant_gallery_routes() -> APIRouter:
         no campaign yet returns ``has_gallery: false`` with an empty, well-formed
         body so the grid renders its empty/offline state.
         """
-        require_user(request)
+        require_engine_owner(request)  # P2-3/DISC-15: owner-scoped, not any authenticated account
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
@@ -133,7 +133,7 @@ def setup_applicant_gallery_routes() -> APIRouter:
         requested ``campaign_id`` belongs to the owner before proxying — a caller
         cannot read another owner's gallery. Degrades soft like the default read.
         """
-        require_user(request)
+        require_engine_owner(request)  # P2-3/DISC-15: owner-scoped, not any authenticated account
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
