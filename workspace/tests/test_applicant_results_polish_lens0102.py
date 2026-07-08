@@ -135,10 +135,26 @@ def test_close_button_has_aria_label():
 
 def test_empty_state_has_a_forward_cta_not_a_dead_end():
     """#97: the empty state's CTA slot must be used with a real forward
-    action, wired to actually navigate (not a no-op decoration)."""
+    action, wired to actually navigate (not a no-op decoration). The click
+    closes Results, then prefers Activity's exported launcher — the Activity
+    modal is not registered with the hash router, so a bare setHash could
+    change the URL without opening anything (Greptile on #747) — keeping the
+    hash write as the fallback/URL-state keeper."""
     js = _read()
     assert "applicant-results-empty-activity" in js
-    assert "btn.addEventListener('click', () => { _close(); setHash('activity'); });" in js
+    # Wired (not decoration): the click closes Results first…
+    assert "if (btn) btn.addEventListener('click', () => {\n    _close();" in js
+    # …then opens Activity via its own launcher…
+    assert (
+        "if (window.applicantActivityModule && "
+        "window.applicantActivityModule.openApplicantActivity) {"
+        in js
+    )
+    assert "window.applicantActivityModule.openApplicantActivity();" in js
+    # …with setHash('activity') remaining as the fallback after the try/catch.
+    assert (
+        "} catch (_) { /* fall through */ }\n    setHash('activity');\n  });" in js
+    )
 
 
 def test_refresh_button_shows_busy_state_while_loading():
