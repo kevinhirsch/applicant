@@ -25,6 +25,7 @@ the directory with `APPLICANT_BACKUP_DIR`) containing:
 |----------------------------|----------------------------------------------------------------------|
 | `db.sql`                   | Postgres dump (`pg_dump --clean --if-exists`) — the engine's data.   |
 | `workspace-data.tar.gz`    | The front-door UI's own `data/` (its sqlite DB, uploaded documents, prefs, caches — the `ui-data` named volume). |
+| `engine-state.tar.gz`      | The engine's durable `/data` volumes: `secrets` (the credential vault master key — without it, sealed credentials in `db.sql` are permanently undecryptable), `checkpoints` (in-flight workflow state), `fonts` (runtime-installed fonts), and `profiles` (signed-in browser sessions). |
 | `config/.env`              | The deploy secrets/config (`POSTGRES_PASSWORD`, `APPLICANT_INTERNAL_TOKEN`, LLM keys, ...). Omitted (not an error) when no `.env` is present. |
 | `MANIFEST.txt`             | Which of the above actually landed in this tarball, and when.       |
 
@@ -67,6 +68,11 @@ Notes:
   at the destination — the restored copy is written to `.env.restored`
   alongside it instead, so you diff/merge by hand rather than losing whichever
   secrets were live before the restore.
+- After restoring the engine's durable state the script restarts the `api`
+  service if it is running — a live engine keeps the previous vault master key
+  in memory and would otherwise fail to decrypt the restored credentials.
+  Tarballs from before the state export covered every durable volume carry an
+  `engine-secrets.tar.gz` member (vault key only) — restore handles both names.
 - Without `--apply` it is a dry run.
 
 ## 3. The backup → destroy volumes → restore drill

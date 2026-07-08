@@ -134,22 +134,33 @@ bkup_restore_workspace_data() {
     tar -xzf - -C /app <"${tar_file}"
 }
 
-# --- engine secrets (credential vault master key) -------------------------------
+# --- engine durable state (vault key, checkpoints, fonts, browser profiles) -----
 
-# bkup_export_engine_secrets COMPOSE_FILE API_SERVICE OUT_FILE APPLY
+# The engine's durable named volumes, as mounted under /data inside the api
+# container (docker-compose.prod.yml `volumes:`): `secrets` (credential vault
+# master key — CREDENTIAL_KEYFILE), `checkpoints` (in-flight workflow/shim
+# state), `fonts` (runtime-installed fonts), `profiles` (the browser-profiles
+# volume: signed-in browser sessions). Compose creates every mount point, so
+# all four directories exist even when empty.
+_BKUP_ENGINE_STATE_DIRS="secrets checkpoints fonts profiles"
+
+# bkup_export_engine_state COMPOSE_FILE API_SERVICE OUT_FILE APPLY
 #
-# Captures the engine's /data/secrets volume — the credential vault master key
-# (CREDENTIAL_KEYFILE). docker-compose.prod.yml's own warning: lose this key and
-# every sealed credential in the restored database is permanently undecryptable,
-# so a full backup without it cannot actually bring the app back whole. Uses
-# `run --rm --entrypoint tar` so it works whether or not the api service is up.
-bkup_export_engine_secrets() {
+# Captures ALL of the engine's durable /data volumes in one archive. The vault
+# master key is the irreplaceable one (docker-compose.prod.yml's own warning:
+# lose it and every sealed credential in the restored database is permanently
+# undecryptable), but a restore after `docker compose down -v` also needs the
+# checkpoints, fonts, and browser profiles to bring the instance back whole.
+# Uses `run --rm --entrypoint tar` so it works whether or not the api service
+# is up.
+bkup_export_engine_state() {
   local compose_file="$1" api_service="$2" out_file="$3" apply="$4"
   if [[ "${apply}" -ne 1 ]]; then
-    echo "    (would run) docker compose -f ${compose_file} run --rm -T --entrypoint tar ${api_service} -czf - -C /data secrets >${out_file}"
+    echo "    (would run) docker compose -f ${compose_file} run --rm -T --no-deps --entrypoint tar ${api_service} -czf - -C /data ${_BKUP_ENGINE_STATE_DIRS} >${out_file}"
     return 0
   fi
-  if ! docker compose -f "${compose_file}" run --rm -T --entrypoint tar "${api_service}"       -czf - -C /data secrets >"${out_file}"; then
+  # shellcheck disable=SC2086  # the dir list is deliberately word-split
+  if ! docker compose -f "${compose_file}" run --rm -T --no-deps --entrypoint tar "${api_service}"       -czf - -C /data ${_BKUP_ENGINE_STATE_DIRS} >"${out_file}"; then
     rm -f "${out_file}"
     return 1
   fi
@@ -160,17 +171,18 @@ bkup_export_engine_secrets() {
   return 0
 }
 
-# bkup_restore_engine_secrets COMPOSE_FILE API_SERVICE TAR_FILE APPLY
+# bkup_restore_engine_state COMPOSE_FILE API_SERVICE TAR_FILE APPLY
 #
-# Inverse of bkup_export_engine_secrets: streams the captured secrets/ tree back
-# into the engine's /data volume (recreating /data/secrets/master.key).
-bkup_restore_engine_secrets() {
+# Inverse of bkup_export_engine_state: streams the captured secrets/,
+# checkpoints/, fonts/, and profiles/ trees back into the engine's /data
+# volumes (recreating /data/secrets/master.key among the rest).
+bkup_restore_engine_state() {
   local compose_file="$1" api_service="$2" tar_file="$3" apply="$4"
   if [[ "${apply}" -ne 1 ]]; then
-    echo "    (would run) docker compose -f ${compose_file} run --rm -T --entrypoint tar ${api_service} -xzf - -C /data <${tar_file}"
+    echo "    (would run) docker compose -f ${compose_file} run --rm -T --no-deps --entrypoint tar ${api_service} -xzf - -C /data <${tar_file}"
     return 0
   fi
-  docker compose -f "${compose_file}" run --rm -T --entrypoint tar "${api_service}"     -xzf - -C /data <"${tar_file}"
+  docker compose -f "${compose_file}" run --rm -T --no-deps --entrypoint tar "${api_service}"     -xzf - -C /data <"${tar_file}"
 }
 
 # --- config (.env) -------------------------------------------------------------
@@ -269,7 +281,7 @@ bkup_write_manifest() {
     printf 'created_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'db.sql (Postgres dump): %s\n' "$([[ "${has_db}" -eq 1 ]] && echo present || echo MISSING)"
     printf 'workspace-data.tar.gz (front-door UI data/): %s\n' "$([[ "${has_workspace}" -eq 1 ]] && echo present || echo MISSING)"
-    printf 'engine-secrets.tar.gz (credential vault master key): %s\n' "$([[ "${has_secrets}" -eq 1 ]] && echo present || echo "MISSING (sealed credentials in db.sql cannot be decrypted after a volume wipe)")"
+    printf 'engine-state.tar.gz (vault master key, checkpoints, fonts, browser profiles): %s\n' "$([[ "${has_secrets}" -eq 1 ]] && echo present || echo "MISSING (sealed credentials in db.sql cannot be decrypted after a volume wipe)")"
     printf 'config/.env: %s\n' "$([[ "${has_config}" -eq 1 ]] && echo present || echo "absent (no .env on this host)")"
   } >"${out_file}"
 }

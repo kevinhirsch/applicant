@@ -12,6 +12,9 @@
 #   - workspace-data.tar.gz      the front-door UI's own `data/` (its sqlite
 #                                DB, uploaded documents, prefs, caches — the
 #                                `ui-data` named volume)
+#   - engine-state.tar.gz        the engine's durable /data volumes: secrets
+#                                (credential vault master key), checkpoints,
+#                                fonts, profiles (signed-in browser sessions)
 #   - config/.env                the deploy secrets/config (POSTGRES_PASSWORD,
 #                                APPLICANT_INTERNAL_TOKEN, LLM keys, ...)
 #   - MANIFEST.txt                what actually landed in this tarball
@@ -135,11 +138,11 @@ else
   echo "    (warn) workspace data export failed (is the applicant-ui container up?) — the backup will NOT include workspace-data.tar.gz." >&2
 fi
 
-log "3/5 Engine secrets (credential vault master key)"
-if bkup_export_engine_secrets "${COMPOSE_FILE}" "${API_SERVICE}" "${WORK_DIR}/engine-secrets.tar.gz" "${APPLY}"; then
+log "3/5 Engine durable state (vault master key, checkpoints, fonts, browser profiles)"
+if bkup_export_engine_state "${COMPOSE_FILE}" "${API_SERVICE}" "${WORK_DIR}/engine-state.tar.gz" "${APPLY}"; then
   HAS_SECRETS=1
 else
-  echo "    (warn) engine secrets export failed — the backup will NOT include the credential vault key; sealed credentials in db.sql cannot be decrypted from this backup after a volume wipe." >&2
+  echo "    (warn) engine state export failed — the backup will NOT include the credential vault key (sealed credentials in db.sql cannot be decrypted from this backup after a volume wipe), nor checkpoints/fonts/browser profiles." >&2
 fi
 
 log "4/5 Config (.env)"

@@ -3,9 +3,10 @@
 # Applicant — full restore (P1-7, issue #659).
 #
 # The inverse of scripts/backup.sh: given ONE backup tarball (db.sql +
-# workspace-data.tar.gz + config/.env — see backup.sh's header for exactly what
-# each member is), restores Postgres, the front-door UI's own data/, and the
-# deploy config onto a running (or freshly-provisioned) compose stack.
+# workspace-data.tar.gz + engine-state.tar.gz + config/.env — see backup.sh's
+# header for exactly what each member is), restores Postgres, the front-door
+# UI's own data/, the engine's durable volumes, and the deploy config onto a
+# running (or freshly-provisioned) compose stack.
 #
 # ── Usage ────────────────────────────────────────────────────────────────────
 #
@@ -128,12 +129,28 @@ else
     "${STAGE_DIR}/workspace-data.tar.gz" "${APPLY}"
 fi
 
-log "4/5 Restoring engine secrets (credential vault master key)"
-if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/engine-secrets.tar.gz" ]]; then
-  echo "    (skip) this backup has no engine-secrets.tar.gz member — sealed credentials in the restored database CANNOT be decrypted; re-enter provider keys in Settings." >&2
+log "4/5 Restoring engine durable state (vault master key, checkpoints, fonts, browser profiles)"
+ENGINE_STATE_TAR="${STAGE_DIR}/engine-state.tar.gz"
+# Backups taken before the export covered every durable volume named this
+# member engine-secrets.tar.gz (vault key only) — restore those too.
+if [[ "${APPLY}" -eq 1 && ! -f "${ENGINE_STATE_TAR}" && -f "${STAGE_DIR}/engine-secrets.tar.gz" ]]; then
+  ENGINE_STATE_TAR="${STAGE_DIR}/engine-secrets.tar.gz"
+fi
+if [[ "${APPLY}" -eq 1 && ! -f "${ENGINE_STATE_TAR}" ]]; then
+  echo "    (skip) this backup has no engine-state.tar.gz member — sealed credentials in the restored database CANNOT be decrypted; re-enter provider keys in Settings." >&2
 else
-  bkup_restore_engine_secrets "${COMPOSE_FILE}" "${API_SERVICE}" \
-    "${STAGE_DIR}/engine-secrets.tar.gz" "${APPLY}"
+  bkup_restore_engine_state "${COMPOSE_FILE}" "${API_SERVICE}" \
+    "${ENGINE_STATE_TAR}" "${APPLY}"
+  # A live api container keeps the PREVIOUS master key in memory — restart it so
+  # it reloads /data/secrets/master.key. On a fresh host the api service is not
+  # up yet; restart is then a harmless no-op (and the header's `up -d` step
+  # starts it against the restored volume anyway).
+  if [[ "${APPLY}" -eq 1 ]]; then
+    docker compose -f "${COMPOSE_FILE}" restart "${API_SERVICE}" || \
+      echo "    (note) api restart skipped/failed — if the api service was already running, restart it manually so it picks up the restored master key." >&2
+  else
+    echo "    (would run) docker compose -f ${COMPOSE_FILE} restart ${API_SERVICE}"
+  fi
 fi
 
 log "5/5 Restoring config (.env)"
