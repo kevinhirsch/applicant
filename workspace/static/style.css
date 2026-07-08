@@ -38210,3 +38210,99 @@ body.has-applicant-demo-banner { padding-top: var(--applicant-demo-banner-h, 34p
 }
 #applicant-demo-banner .applicant-demo-banner__text { flex: 1 1 auto; }
 #applicant-demo-banner #applicant-demo-clear { flex: 0 0 auto; }
+
+/* ── P0-3: the right-hand gadget rail (3-pane shell) ───────────────────────
+   A static flex sibling of <main> (body is display:flex), so it reserves its
+   own column on desktop. Collapses to a slim badge strip; hides entirely on
+   small viewports (the mobile bottom-sheet fallback stays the phone
+   experience). Reuses the workspace design system (.admin-card / .cal-btn /
+   .memory-* live inside it) — this block only lays out the rail shell. */
+.applicant-gadget-rail {
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 10px 16px;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  box-sizing: border-box;
+}
+.applicant-gadget-rail.rail-collapsed {
+  flex-basis: 46px;
+  width: 46px;
+  max-width: 46px;
+  padding-left: 6px;
+  padding-right: 6px;
+  align-items: center;
+}
+.applicant-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.applicant-rail-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+.applicant-gadget-rail.rail-collapsed .applicant-rail-title { display: none; }
+.applicant-gadget-rail.rail-collapsed .applicant-rail-collapse svg { transform: scaleX(-1); }
+/* When collapsed: hide the full waiting area + gadget stack, show badge strip. */
+.applicant-rail-waiting,
+.applicant-rail-gadgets { display: block; }
+.applicant-rail-badges { display: none; }
+.applicant-gadget-rail.rail-collapsed .applicant-rail-waiting,
+.applicant-gadget-rail.rail-collapsed .applicant-rail-gadgets { display: none; }
+.applicant-gadget-rail.rail-collapsed .applicant-rail-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+/* Waiting-on-you notification area: auto-expands (gets a card frame) only when
+   it actually holds action-required items. */
+.applicant-rail-waiting { margin-bottom: 10px; }
+.applicant-rail-waiting.has-items {
+  border: 1px solid color-mix(in srgb, var(--color-danger, #e06c6c) 40%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-danger, #e06c6c) 8%, transparent);
+}
+.applicant-rail-waiting-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-danger, #e06c6c);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.applicant-rail-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.applicant-rail-badge:hover { border-color: color-mix(in srgb, var(--fg) 40%, var(--border)); }
+.applicant-rail-gadget:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
+/* Small viewports: the rail collapses away; the existing mobile bottom-sheet
+   fallback stays acceptable (P0-3 DoR). */
+@media (max-width: 768px) {
+  .applicant-gadget-rail { display: none !important; }
+}
