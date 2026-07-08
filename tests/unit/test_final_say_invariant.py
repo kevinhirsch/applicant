@@ -204,11 +204,19 @@ def _outcome_event_calls() -> list[tuple[str, ast.Call]]:
     for path in SRC_ROOT.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         rel = path.relative_to(SRC_ROOT).as_posix()
+        # Resolve import bindings first: `import ... as OE` must not evade the
+        # scan — the local alias is tracked as the same symbol.
+        bound_names = {"OutcomeEvent"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "OutcomeEvent":
+                        bound_names.add(alias.asname or alias.name)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 fn = node.func
                 name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
-                if name == "OutcomeEvent":
+                if name in bound_names:
                     calls.append((rel, node))
     return calls
 
