@@ -61,8 +61,13 @@ const API = '/api/applicant/chat';
 const ENGINE_SESSION_URL = 'applicant://engine';
 
 //: The assistant's bubble label in the native renderer (persisted turns carry
-//: it as metadata.character_name so history reloads label identically).
-const ASSISTANT_LABEL = 'Job assistant';
+//: it as metadata.character_name — ENGINE_SPEAKER_NAME server-side — so history
+//: reloads label identically). P0-4 de-workspacing: the speaker is the product,
+//: "Applicant" — never a model name or tool persona.
+const ASSISTANT_LABEL = 'Applicant';
+//: Legacy speaker label persisted by turns saved before the P0-4 rename;
+//: _normalizeSpeakerLabels rewrites it in-place on history render.
+const LEGACY_ASSISTANT_LABEL = 'Job assistant';
 
 // Design-audit #9: _fetchJSON's shared 15s default timeout is right for plain
 // CRUD calls, but a chat turn runs the engine's full agent loop server-side —
@@ -483,6 +488,21 @@ function _pruneBubbleActions(wrap) {
 
 function _pruneThreadActions() {
   document.querySelectorAll('#chat-history .msg').forEach((m) => _pruneBubbleActions(m));
+  _normalizeSpeakerLabels();
+}
+
+// P0-4 de-workspacing: turns persisted BEFORE the speaker rename carry the
+// legacy character_name, so a history reload would label old bubbles
+// differently from new ones. Rewrite only the label's leading text node —
+// the timestamp child appended by roleTimestamp() must survive untouched.
+function _normalizeSpeakerLabels() {
+  document.querySelectorAll('#chat-history .msg-ai .role').forEach((roleEl) => {
+    const textNode = roleEl.firstChild;
+    if (textNode && textNode.nodeType === 3
+        && textNode.nodeValue === LEGACY_ASSISTANT_LABEL) {
+      textNode.nodeValue = ASSISTANT_LABEL;
+    }
+  });
 }
 
 // ── Job-action chips (per-message decoration) ───────────────────────────────
@@ -624,6 +644,12 @@ export function decorateEngineMessage(wrap, payload) {
   const b = wrap.querySelector('.body');
   if (!b) return;
   _pruneBubbleActions(wrap);
+  // Pre-rename turns carry the legacy speaker label — fix this bubble now
+  // (the mount-time _normalizeSpeakerLabels sweep covers the rest).
+  const roleText = wrap.querySelector('.role') && wrap.querySelector('.role').firstChild;
+  if (roleText && roleText.nodeType === 3 && roleText.nodeValue === LEGACY_ASSISTANT_LABEL) {
+    roleText.nodeValue = ASSISTANT_LABEL;
+  }
   const old = wrap.querySelector('.applicant-msg-extras');
   if (old) old.remove();
   const html = _renderGaps(payload.gaps)

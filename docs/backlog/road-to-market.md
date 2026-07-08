@@ -48,7 +48,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
 | P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail shipped (see note) |
-| P0-4 | De-workspace the surface | M | eng | — |
+| P0-4 | De-workspace the surface | M | eng | DONE — speaker "Applicant", padlocks → absence, window titles fixed, no-model-name pin tests |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
@@ -250,18 +250,21 @@ AI playground.
 - Confirmed which workspace modules are out of the default product (Notes, Tasks, image
   editor, Cookbook, workspace gallery, research) vs. kept.
 **DoD:**
-- [ ] In the engine-backed Applicant chat: speaker reads "Applicant"; no model-name
+- [x] In the engine-backed Applicant chat: speaker reads "Applicant"; no model-name
       header, tok/s, %-context chip, per-message edit/delete controls, or composer model
       picker. (Raw-LLM path stays reachable via Compare/model list, unchanged.)
-- [ ] Non-product workspace modules are hidden from default nav/rail/commands.
-- [ ] **Padlocks → absence:** engine-gated sections (Results, Documents, Gallery, Profile,
+- [x] Non-product workspace modules are hidden from default nav/rail/commands.
+- [x] **Padlocks → absence:** engine-gated sections (Results, Documents, Gallery, Profile,
       Daily updates, Chat, etc.) no longer render a lock icon when unavailable — they
       *appear* once they become real (setup complete / data exists). A padlock reads as
       "broken/paywalled"; appearing reads as "the product grows as I use it."
-- [ ] Known mislabeled window titles fixed (Documents window no longer titled "Library";
+      (A configured-but-engine-offline section stays visible, dimmed — vanishing on a
+      transient outage would read as data loss.)
+- [x] Known mislabeled window titles fixed (Documents window no longer titled "Library";
       Daily updates window no longer titled "Email").
-- [ ] A test asserts the Applicant chat surface renders **no** model-name literals.
-- [ ] White-label greps still clean.
+- [x] A test asserts the Applicant chat surface renders **no** model-name literals
+      (`workspace/tests/test_applicant_p04_deworkspace.py`).
+- [x] White-label greps still clean.
 
 ### P0-5 — Empty states that sell
 **As** a first-run user, **I want** every empty section to tell me what the agent will

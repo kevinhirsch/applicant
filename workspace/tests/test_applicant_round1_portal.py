@@ -255,8 +255,9 @@ def test_set_composer_dimmed_toggles_and_restores_prior_style(node_available):
 
 
 # ===========================================================================
-# Lock badges (🔒) in app.js's refreshApplicantFeatures for genuinely
-# unlockable nav items
+# P0-4 (padlocks → absence): gated nav items HIDE instead of rendering a lock
+# glyph, and appear once their section becomes real. The lock badge (🔒) that
+# design-audit #43 introduced is retired — a padlock reads as broken/paywalled.
 # ===========================================================================
 
 def _refresh_applicant_features_block() -> str:
@@ -268,35 +269,45 @@ def _refresh_applicant_features_block() -> str:
     )
 
 
-def test_lock_badge_marks_genuinely_unlockable_nav_items():
+def test_gated_nav_items_hide_instead_of_rendering_a_padlock():
     block = _refresh_applicant_features_block()
-    assert "applicant-lock-badge" in block
-    assert "🔒" in block
-    # The badge-creation gate itself must condition on present_but_disabled (not
-    # just some unrelated `!!section.present_but_disabled` elsewhere in the
-    # function, e.g. the click handler's `disabledInBuild` flag, which would
-    # trivially satisfy a looser substring check).
+    # Absence, not padlocks: the gating pass toggles a hide class off the
+    # resolved state instead of decorating the element with a lock glyph.
+    assert "applicant-gated-hidden" in block
     assert re.search(
-        r"""!section\.present_but_disabled\s*&&\s*!e\.querySelector\(\s*['"]\.applicant-lock-badge['"]\s*\)""",
-        block,
-    ), (
-        "the lock glyph should be reserved for genuinely-unlockable items — a "
-        "present-but-disabled-in-this-build item has nothing to unlock and should "
-        "not get a 'finish setup to open this' promise"
-    )
+        r"""classList\.toggle\(\s*['"]applicant-gated-hidden['"]""", block,
+    ), "the hide class should be TOGGLED so a section that becomes real reappears"
+    # No lock glyph is ever created any more (neither the class-based badge
+    # nor the raw emoji). The only remaining badge reference is the legacy
+    # cleanup that REMOVES one rendered by a pre-P0-4 pass.
+    assert "🔒" not in block, "P0-4: no padlock glyph on gated nav items"
+    assert not re.search(
+        r"createElement[\s\S]{0,120}applicant-lock-badge", block,
+    ), "P0-4: the lock badge must not be created any more"
     assert "launchApplicantSetup" in block, (
-        "clicking a locked-but-unlockable nav item should route to the setup wizard"
+        "activating a gated launcher programmatically should still route to the "
+        "setup wizard (other surfaces forward clicks into these ids)"
     )
 
 
-def test_lock_badge_removed_once_a_section_unlocks():
+def test_legacy_lock_badges_are_cleaned_up_and_hidden_class_clears_on_active():
     block = _refresh_applicant_features_block()
     assert re.search(r"""querySelector\(['"]\.applicant-lock-badge['"]\)""", block), (
-        "the active branch should look up any existing lock badge on the element"
+        "the pass should look up any lock badge left by a pre-P0-4 render"
     )
     assert "lockBadge.remove()" in block, (
-        "the lock badge should be removed once its section goes active, so it doesn't "
-        "linger as a stale promise after setup finishes"
+        "a legacy lock badge should be removed so it doesn't linger after the rework"
+    )
+
+
+def test_shared_nav_ids_resolve_to_the_best_state_across_sections():
+    """memory + mind share the Profile launchers with different gates — an id
+    must show when ANY section that lists it is usable, not whichever section
+    happened to iterate last."""
+    block = _refresh_applicant_features_block()
+    assert "navStates" in block
+    assert re.search(r"rank\s*>\s*prev\.rank", block), (
+        "expected a best-state aggregation across sections sharing a nav id"
     )
 
 
