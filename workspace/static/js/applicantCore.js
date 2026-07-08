@@ -111,10 +111,26 @@ export function loadingHTML(label = 'Loading…') {
     + `</div>`;
 }
 
-/** Calm empty-state HTML string: title + optional sub + optional CTA slot. */
-export function emptyHTML(title, sub = '', ctaHTML = '') {
+/**
+ * Calm empty-state HTML string: icon + title + optional sub + optional CTA
+ * slot — the shared "what will live here, and what lights it up" design every
+ * Applicant section reuses (icon + sentence + one real CTA). `icon` is a
+ * ui.js emptyStateIcon kind ('smiley' | 'neutral' | 'sad'); the default
+ * 'smiley' fits hopeful first-run emptiness, 'neutral' fits offline/soft
+ * states. Pass null/'' to omit the icon entirely. The icon inherits
+ * currentColor, so it renders correctly in light and dark themes alike.
+ */
+export function emptyHTML(title, sub = '', ctaHTML = '', icon = 'smiley') {
+  let iconHTML = '';
+  if (icon) {
+    try {
+      if (typeof uiModule.emptyStateIcon === 'function') {
+        iconHTML = `<span style="vertical-align:-3px;margin-left:6px;" aria-hidden="true">${uiModule.emptyStateIcon(icon)}</span>`;
+      }
+    } catch { /* the icon is decoration — never let it block the copy */ }
+  }
   return `<div class="applicant-empty" style="text-align:center;color:var(--fg-muted);padding:24px 12px;">`
-    + `<div style="font-weight:600;color:var(--fg);">${esc(title)}</div>`
+    + `<div style="font-weight:600;color:var(--fg);">${esc(title)}${iconHTML}</div>`
     + (sub ? `<div style="margin-top:6px;font-size:12px;">${esc(sub)}</div>` : '')
     + (ctaHTML ? `<div style="margin-top:12px;">${ctaHTML}</div>` : '')
     + `</div>`;

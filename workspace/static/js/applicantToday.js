@@ -730,6 +730,8 @@ function _renderOffline(host) {
   host.innerHTML = emptyHTML(
     "I can’t check in right now",
     "I’ve lost my connection. I’ll keep trying — anything that needs you will appear here as soon as I’m back.",
+    '',
+    'neutral',
   );
 }
 

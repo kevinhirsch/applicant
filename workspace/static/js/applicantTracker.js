@@ -29,6 +29,7 @@ import {
   esc, _fetchJSON, _post, _toast, errText, loadingHTML, emptyHTML, errorHTML,
   gatedHTML, wireRetry, pollVisible,
 } from './applicantCore.js';
+import { setHash } from './hashRouter.js';
 
 const API = '/api/applicant/tracker';
 //: Product-gaps backlog #20 — the reusable screening-answer library lives on
@@ -306,7 +307,9 @@ function _renderBoard(host, applications) {
   host.innerHTML = html || emptyHTML(
     'Nothing to track yet',
     'Once I submit an application, it shows up here so you can follow where it stands.',
+    _EMPTY_ACTIVITY_CTA_HTML,
   );
+  if (!html) _wireEmptyActivityCTA(host);
   host.querySelectorAll('[data-tracker-record]').forEach((select) => {
     select.addEventListener('change', () => _recordOutcome(select));
   });
@@ -327,6 +330,17 @@ function _renderBoard(host, applications) {
   });
 }
 
+// P0-5 (empty states that sell): the one real next step out of an empty
+// tracker is watching me work — the Activity page shows what I'm already
+// doing to fill this board. Same CTA + route as Results' empty state.
+const _EMPTY_ACTIVITY_CTA_HTML =
+  '<button type="button" class="cal-btn" id="applicant-tracker-empty-activity">See what I’m working on</button>';
+
+function _wireEmptyActivityCTA(host) {
+  const btn = host.querySelector('#applicant-tracker-empty-activity');
+  if (btn) btn.addEventListener('click', () => { _close(); setHash('activity'); });
+}
+
 // Designed empty state for a brand-new user: reachable engine + a campaign,
 // but nothing submitted yet. Same wording as the board's own inline empty
 // case so the state reads the same whether the fetch is empty or the board
@@ -336,20 +350,36 @@ function _renderEmpty(host) {
     'Nothing to track yet',
     'Once I submit an application, it shows up here — applied, awaiting a response, '
     + 'an interview or offer, or a result — so you always know where things stand.',
+    _EMPTY_ACTIVITY_CTA_HTML,
   );
+  _wireEmptyActivityCTA(host);
 }
 
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
     'Tracker is offline',
     'Your tracker will appear here once I’m connected and running.',
+    '',
+    'neutral',
   );
 }
 
+// A GATED read (engine up, setup incomplete) gets the same one-tap "Finish
+// setup" resume as Today's gated state — never a dead end (P0-5).
 function _renderGated(host, data) {
   const msg = (data && data.message)
     || 'Finish onboarding and connect a model to start tracking your applications.';
-  host.innerHTML = gatedHTML(msg);
+  host.innerHTML = gatedHTML(msg,
+    '<button type="button" class="cal-btn cal-btn-primary" id="applicant-tracker-gated-setup">Finish setup</button>');
+  const btn = host.querySelector('#applicant-tracker-gated-setup');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); return; }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up Applicant');
+    });
+  }
 }
 
 // ── Paused applications (dark-engine audit #62) ─────────────────────────────

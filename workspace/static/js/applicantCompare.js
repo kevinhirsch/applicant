@@ -264,7 +264,7 @@ function _renderResult(container, data, kind, campaignId) {
     container.innerHTML = emptyHTML(
       'No comparison came back',
       "I couldn't build a comparison from those IDs — check them and try again.",
-      '');
+      '', 'neutral');
     return;
   }
   const entityIds = Array.isArray(data.entity_ids) ? data.entity_ids : [];
