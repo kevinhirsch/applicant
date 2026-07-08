@@ -103,6 +103,12 @@ def get_snapshot(application_id: str, storage=Depends(get_storage)) -> dict:
     Returns the exact answers, material versions, posting, and timestamp that
     were recorded at the stop-boundary — the durable evidence of what was
     submitted. 404 when no snapshot has been recorded for the application.
+
+    H3 (full-fidelity review): ``stage`` says WHERE the snapshot was captured —
+    ``"reviewed"`` (the pre-submit stop-boundary: this is exactly what will be
+    sent) or ``"submitted"`` (the terminal record: exactly what was sent). The
+    reviewed payload is promoted to submitted byte-identical, so the two stages
+    always carry the same content for one application.
     """
     snap = storage.submission_snapshots.get_for_application(
         ApplicationId(application_id)
@@ -119,6 +125,7 @@ def get_snapshot(application_id: str, storage=Depends(get_storage)) -> dict:
         "materials": list(snap.materials or []),
         "posting_url": getattr(snap, "posting_url", "") or "",
         "timestamp": snap.captured_at.isoformat() if snap.captured_at else None,
+        "stage": snap.stage,
     }
 
 

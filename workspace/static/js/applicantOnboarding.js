@@ -2256,7 +2256,7 @@ function _renderBaseResume(saved) {
     ${_intakeProgressHTML(total)}
     ${_applyReadinessBanner()}
     ${_profileGapsHTML()}
-    <h2 class="ao-step-title">Start with your résumé ${_tip('I read your résumé and fill in the rest of your profile — you just review and fix anything I got wrong. Then I build a polished version and show you a preview to accept or reject.')}</h2>
+    <h2 class="ao-step-title">Start with your résumé ${_tip('I read your résumé and fill in the rest of your profile — you just review and fix anything I got wrong. Then, if this install can render documents, I build a polished version and show you a preview to accept or reject — and if it can’t, I say so and keep using your original file.')}</h2>
     <p class="ao-step-desc">Optional but recommended: upload your current résumé and I’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell me what you want in chat. You can edit every field afterward.</p>
     <div class="admin-card">
       <div class="settings-row">

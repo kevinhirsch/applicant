@@ -544,6 +544,13 @@ function _renderFinal(wrap, item) {
     </div>
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <div data-role="caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
+    <div style="margin-bottom:8px;">
+      <button type="button" class="cal-btn" data-role="payload-toggle" aria-expanded="false"
+              aria-controls="applicant-today-final-payload"
+              title="The exact answers, documents, and posting — word for word, before anything is sent">See exactly what will be sent</button>
+      <div data-role="payload" id="applicant-today-final-payload" hidden
+           style="margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:260px;overflow-y:auto;font-size:12px;text-align:left;"></div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="button" class="cal-btn" data-role="self" title="Open the live view and click submit yourself">I’ll submit it myself</button>
       <button type="button" class="cal-btn cal-btn-primary" data-role="authorize" title="I’ll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
@@ -554,6 +561,45 @@ function _renderFinal(wrap, item) {
     const slot = wrap.querySelector('[data-role="caveat"]');
     if (slot) slot.textContent = String(line);
   }).catch(() => { /* best-effort */ });
+  // H3 (full-fidelity review): the literal reviewed payload, via the SAME
+  // remoteModule fetch + renderer the live-session modal and the Portal use —
+  // one implementation, never a summarized sibling.
+  const payloadToggle = wrap.querySelector('[data-role="payload-toggle"]');
+  const payloadPanel = wrap.querySelector('[data-role="payload"]');
+  const loadPayload = async () => {
+    if (!appId) {
+      payloadPanel.innerHTML = remoteModule.renderSubmissionSnapshot({ has_snapshot: false });
+      return;
+    }
+    payloadPanel.innerHTML = loadingHTML('Loading what will be sent…');
+    let data;
+    try {
+      data = await remoteModule.fetchSubmissionSnapshot(appId);
+    } catch (err) {
+      payloadPanel.innerHTML = errorHTML(errText(err));
+      wireRetry(payloadPanel, loadPayload);
+      return;
+    }
+    if (data && data.engine_available === false) {
+      payloadPanel.innerHTML = errorHTML("I can't load what will be sent right now — try again in a moment.");
+      wireRetry(payloadPanel, loadPayload);
+      return;
+    }
+    payloadPanel.innerHTML = remoteModule.renderSubmissionSnapshot(data || {});
+  };
+  payloadToggle.addEventListener('click', async () => {
+    if (!payloadPanel.hidden) {
+      payloadPanel.hidden = true;
+      payloadPanel.innerHTML = '';
+      payloadToggle.setAttribute('aria-expanded', 'false');
+      payloadToggle.textContent = 'See exactly what will be sent';
+      return;
+    }
+    payloadPanel.hidden = false;
+    payloadToggle.setAttribute('aria-expanded', 'true');
+    payloadToggle.textContent = 'Hide what will be sent';
+    await loadPayload();
+  });
   wrap.querySelector('[data-role="self"]').addEventListener('click', () => {
     try {
       if (typeof window.openApplicantRemoteSession === 'function') { window.openApplicantRemoteSession(appId, ''); }

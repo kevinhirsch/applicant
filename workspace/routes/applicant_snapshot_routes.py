@@ -17,10 +17,12 @@ and creates no new engine state — it is a thin, auth-protected proxy over
 :class:`src.applicant_engine.ApplicantEngineClient` (the browser never reaches the
 engine directly), modelled exactly on the sibling ``applicant_activity_routes.py``:
 
-* the owner is authenticated by the front-door (``require_user``); this is a
-  deliberate admin→owner downgrade of a READ (mirrors ``applicant_results_routes``),
-  NOT a weakening of the submit gates — the terminal authorize/submit controls keep
-  their ``can_use_documents`` privilege in ``applicant_remote_routes``;
+* the ENGINE OWNER is authenticated by the front-door (``require_engine_owner``,
+  H3 hardening: the snapshot is the owner's literal filled application, so a
+  second workspace account is denied); this remains a deliberate admin→owner
+  downgrade of a READ (mirrors ``applicant_results_routes``), NOT a weakening of
+  the submit gates — the terminal authorize/submit controls keep their
+  ``can_use_documents`` privilege in ``applicant_remote_routes``;
 * every engine failure degrades soft — an unreachable engine returns
   ``engine_available: false`` with a well-formed empty body, a setup gate returns
   ``gated: true`` with the engine's own message, and (crucially) **no snapshot yet**
@@ -28,12 +30,12 @@ engine directly), modelled exactly on the sibling ``applicant_activity_routes.py
   body so the preview renders its honest "not recorded yet" state instead of
   throwing or fabricating what will be sent.
 
-Pre-submit gap (see the INTEGRATION SPEC note): the engine records the snapshot
-INSIDE ``submission_service.record_submission`` — i.e. AFTER the terminal submit —
-so before the owner authorizes, the engine read is a 404 and this surface honestly
-shows "nothing recorded yet". This proxy is forward-compatible: the moment the engine
-exposes a provisional pre-submit snapshot at the stop-boundary, the same shape flows
-through unchanged.
+Pre-submit (H3, full-fidelity review): the engine now records a provisional
+``stage: "reviewed"`` snapshot AT the stop-boundary — the literal filled payload —
+and promotes it byte-identical to ``stage: "submitted"`` on the terminal submit, so
+what the owner reviews here is exactly what is sent. A 404 still means "nothing
+recorded yet" (e.g. the application never reached the boundary) and renders as the
+honest empty state, never a fabrication.
 
 Endpoint (one prefix, ``/api/applicant/snapshot``):
 
@@ -50,7 +52,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
-from src.auth_helpers import require_user
+from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,11 @@ logger = logging.getLogger(__name__)
 
 
 def _require_user(request: Request) -> str:
-    """Require an authenticated owner (the global gate also enforces this)."""
-    return require_user(request)
+    """Require the engine OWNER (H3): the snapshot is the owner's literal filled
+    application — answers, documents, posting. The engine is single-tenant, so
+    ``require_user`` alone would let a second workspace account read the owner's
+    data; ``require_engine_owner`` passes the lone owner and denies others."""
+    return require_engine_owner(request)
 
 
 def _empty(application_id: str) -> dict:
@@ -73,6 +78,7 @@ def _empty(application_id: str) -> dict:
         "materials": [],
         "posting_url": "",
         "timestamp": None,
+        "stage": "",
     }
 
 
@@ -138,6 +144,10 @@ def setup_applicant_snapshot_routes() -> APIRouter:
             "materials": materials,
             "posting_url": posting_url,
             "timestamp": timestamp,
+            # H3: where the snapshot was captured — "reviewed" (the pre-submit
+            # stop-boundary: exactly what WILL be sent) or "submitted" (the
+            # terminal record: exactly what WAS sent). Empty when unknown.
+            "stage": str(payload.get("stage") or ""),
         }
 
     return router
