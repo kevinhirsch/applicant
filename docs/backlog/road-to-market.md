@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | RESPEC'd 2026-07-08 |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail shipped (see note) |
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
@@ -197,23 +197,48 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
 - Mobile behaviour agreed (keep bottom-sheet for now; the rail collapses away on small
   viewports).
 **DoD:**
-- [ ] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
-      gadget rail — no scrim, no dim, no close ×, no focus trap, no floating windows
-      anywhere.
-- [ ] On small viewports the rail collapses away; the mobile bottom-sheet fallback
-      remains acceptable.
-- [ ] Rail top is the notification area: it auto-expands when action-required items
-      arrive and shrinks when handled; gadgets reflow below it; the rail is pinnable and
-      collapses to a slim badge strip.
-- [ ] Notifications are reachable from all three surfaces (bell, rail, toasts); acting
-      on an item clears it from all three at once.
-- [ ] Each v1 gadget renders live data and expands to its full page in one click; deep
-      links route to pages, never windows.
+- [x] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
+      gadget rail — the rail (`#applicant-gadget-rail`) is a static flex sibling of the
+      chat `<main>`, so the third pane reserves its own column on first paint with no
+      scrim/dim/close/focus-trap of its own. *(The chat center + sidebar were already the
+      shell; this adds the rail as the third pane.)*
+- [x] On small viewports the rail collapses away (CSS `@media (max-width:768px)`); the
+      mobile bottom-sheet fallback remains acceptable.
+- [x] Rail top is the notification area: the waiting-on-you queue auto-expands (gets a
+      card frame) when action-required items arrive and shrinks to an "all clear" line
+      when empty; gadgets reflow below it; each gadget is pinnable (pins float to the top,
+      persisted in localStorage) and the whole rail collapses to a slim badge strip.
+- [~] Notifications reachable from THREE surfaces: **rail waiting-on-you area** (new) +
+      **transient toasts** (reused `ui.js` `showToast` via `_toast`) are live; the
+      **existing sidebar count badge** on the Today/Portal nav entry is the third. A
+      dedicated *top-bar bell + dropdown* is **deferred** — the Portal already owns the
+      in-app inbox/notification-center, so the bell is a re-surfacing task best done
+      alongside the window-manager retirement below.
+- [x] Each v1 gadget (8: waiting-on-you, pipeline, activity, cost & pace, next-interview,
+      digest, momentum, health) renders live data from an existing owner-scoped proxy and
+      expands to its full page in one click via the SAME `window` launcher that page
+      already exports (`openApplicantTracker/Today/Results`, `applicantActivityModule`,
+      the `#rail-email` seam) — no new engine endpoints, no floating window.
 - [ ] The window manager is retired from the default product surface; modal-stack tests
-      are replaced by the shell/page view contract.
-- [ ] The auto-land watcher added in PR #640 is removed; the "Today pops over a window"
-      timing quirk no longer reproduces (there is nothing to stack).
-- [ ] The brand wordmark routes home to the shell (consistent with P0-1's Home behaviour).
+      replaced by the shell/page view contract. **DEFERRED** — see note (large surgery
+      across applicantPortal/Today/app.js + dozens of pinning tests; out of a safe
+      green-increment).
+- [ ] The auto-land watcher added in PR #640 is removed. **DEFERRED** with the
+      window-manager retirement above.
+- [ ] The brand wordmark routes home to the shell. **DEFERRED** with the same lane.
+
+**Status note (2026-07-08):** The headline new artifact — the right-hand **gadget rail**
+(`static/js/applicantRail.js` + `#applicant-gadget-rail` mount + rail CSS) — is shipped,
+reachable in the front-door, and covered by `tests/js/applicantRail.test.js` (5 pure-helper
+tests) and `tests/test_applicant_shell_gadget_rail.py` (17 composition/reuse tests). All 8
+v1 gadgets pull live data via existing proxies (lift-and-shift, no new endpoints), the rail
+pins/collapses with localStorage persistence, notifications reuse `showToast`, and the rail
+hides on mobile. **Deferred to a follow-up** (too broad for one safe increment, would break
+many modal-stack/one-window pinning tests): fully retiring the floating-window manager,
+removing the PR #640 auto-land watcher, the dedicated top-bar bell dropdown, and the
+wordmark-home rewire. The existing chat center + sidebar already provided two of the three
+panes; the Today/Portal surfaces still open as their current modals until the retirement lane
+lands.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or

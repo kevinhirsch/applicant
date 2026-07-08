@@ -1424,6 +1424,14 @@
 
 
   </main>
+  <!-- P0-3: the right-hand GADGET RAIL — third pane of the 3-pane shell
+       (sidebar | chat | rail). A static flex sibling of <main> so it reserves
+       its own column on desktop (body is display:flex) and hides on small
+       viewports via CSS (the mobile bottom-sheet stays the phone experience).
+       Built + polled client-side by static/js/applicantRail.js, which fills
+       this mount with the waiting-on-you notification area plus the live
+       gadgets — do NOT hand-author gadget markup here. -->
+  <aside id="applicant-gadget-rail" class="applicant-gadget-rail"></aside>
   <button type="button" id="scroll-bottom-btn" class="scroll-nav-btn" title="Scroll to bottom">▼</button>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -2609,6 +2617,7 @@
 <script type="module" src="/static/js/applicantCampaignSettings.js"></script>  <!-- #301: campaign config + discovery-source toggles (Settings → Campaign) -->
 <script type="module" src="/static/js/applicantAutomationSettings.js"></script>  <!-- automation preferences panel (Settings → Automation Preferences) — mounts via window.mountApplicantAutomationSettings -->
 <script type="module" src="/static/js/applicantHealth.js"></script>  <!-- P1-3 (#655): honest health panel (Settings → System) — mounts via window.mountApplicantHealthPanel; also exports renderApplicantPortalHealthBanner for the Today/Portal banner -->
+<script type="module" src="/static/js/applicantRail.js"></script>  <!-- P0-3: the right-hand gadget rail (3-pane shell) — self-boots into #applicant-gadget-rail; a new LENS over existing proxies (portal/tracker/activity/guardrails/results/health/digest), no new engine endpoints -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
      seams exist for other lanes to call. -->
