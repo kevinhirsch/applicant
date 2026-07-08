@@ -46,7 +46,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | ID | Story | Effort | Owner | Status |
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
-| P0-2 | Seeded demo mode | M | eng | — |
+| P0-2 | Seeded demo mode | M | eng | DONE — DEMO_MODE seed (5-stage apps, digest, redline, interview, activity, momentum, portal) + front-door banner/one-click clear (PR #731) |
 | P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; window-manager retirement + #640 watcher in the concurrent retirement lane (see note) |
 | P0-4 | De-workspace the surface | M | eng | DONE — speaker "Applicant", padlocks → absence, window titles fixed, no-model-name pin tests |
 | P0-5 | Empty states that sell | S–M | eng | DONE — shared kit gained the icon+sentence+CTA design; tracker/activity/results empty+gated states all route somewhere real (theme check via CI-run composition tests; live dark/light screenshot pass rides P0-6) |
@@ -74,7 +74,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
 | P2-1 | Terms of Use / ToS posture | M | you+eng | — |
 | P2-2 | Privacy policy + rights | M | eng/you | — |
-| P2-3 | Security pass | M | eng | — |
+| P2-3 | Security pass | M | eng | DONE — cross-account read isolation + .docx XXE guard + dep/secrets audit (docs/security-review.md) |
 | P2-4 | License compliance | S | eng+you | — |
 | P2-5 | Fabrication-guard evidence | S | eng | DONE — citable claim + red-team suite (docs/proof/citable-invariants.md) |
 | P2-6 | LLM output eval harness | M | eng | — |
@@ -161,19 +161,34 @@ comes from consistent, non-empty data.
 - Confirmed list of surfaces that must be non-empty (Today, Tracker, Results, Activity,
   Documents, Gallery, Profile, Daily updates, Calendar, Run log, chat).
 - Agreement that seed runs against both in-memory and Postgres.
+**Status: DONE** — built + merged (PR #731). The `DEMO_MODE=1`/`APPLICANT_ALLOW_SEED=1`
+gate (`app/routers/dev_seed.py`, 404 when unset — checked fresh per request, so no
+production trace) drives `application/services/dev_seed`'s pure builders through the
+REAL repositories: a demo campaign, seven scored postings, applications spanning every
+front-door state (digest / redline / final-approval / blocked-question / blocked-attr /
+tracker + interview-signal), a résumé variant + material under an OPEN redline session
+(add/subtract/free-text turns), `submitted` + `interview_invited` outcome events, a
+recent multi-day run history (momentum + streak), and six heterogeneous Portal actions.
+Two library documents (résumé + cover letter); the stale demo chat is replaced by the
+Applicant-branded greeting + starters (`applicantChat.js`). Front-door: an owner-scoped,
+`DEMO_MODE`-gated proxy (`workspace/routes/applicant_demo_routes.py`) backs the persistent
+"Demo data" banner + one-click **Clear demo data** (`applicantDemoBanner.js`). Idempotent
+(every repo add upserts by id), guarded, and secret-free — all pinned
+(`tests/unit/test_seed_demo_p0_2.py`, `test_seed_demo_gates.py`, `test_seed_demo_router.py`,
+`workspace/tests/test_applicant_demo_routes.py`).
 **DoD:**
-- [ ] `DEMO_MODE=1` seed loads: 5 applications, one per stage (discovered → prefilled →
+- [x] `DEMO_MODE=1` seed loads: 5 applications, one per stage (discovered → prefilled →
       waiting-on-you → submitted → interview); a digest of ~6
       scored roles each with a visible match rationale; 1 tailored résumé with a real
       redline diff (add + subtract + free-text edit); 1 interview event; ~15
       activity-feed entries; momentum + streak numbers; 2–3 Portal "waiting on you" items.
-- [ ] The stale `:wave:` demo chat is replaced by a scripted Applicant conversation;
+- [x] The stale `:wave:` demo chat is replaced by a scripted Applicant conversation;
       2 documents seeded into the library.
-- [ ] A visible "Demo data" banner is shown while seeded; a one-click **Clear demo data**
+- [x] A visible "Demo data" banner is shown while seeded; a one-click **Clear demo data**
       removes all of it with no residue.
-- [ ] Re-running the seed is idempotent (no duplicate rows).
-- [ ] The seed path is unreachable when `DEMO_MODE` is unset (guarded + tested).
-- [ ] No secret/API key is ever written into seed data (ties to P1-0).
+- [x] Re-running the seed is idempotent (no duplicate rows).
+- [x] The seed path is unreachable when `DEMO_MODE` is unset (guarded + tested).
+- [x] No secret/API key is ever written into seed data (ties to P1-0).
 
 ### P0-3 — The 3-pane shell (chat center, gadget rail)
 **As** a user, **I want** the app to be one 3-pane shell — nav sidebar, the Applicant
