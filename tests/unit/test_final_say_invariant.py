@@ -279,3 +279,31 @@ def test_post_submission_outcome_maps_cannot_emit_submitted():
         )
     ]
     assert keywords, "keyword vocabularies must exist (the maps moved? re-pin them)"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("outcome_type", ["submitted", "converted"])
+def test_the_manual_tracker_outcome_path_refuses_submission_class_types(
+    storage, outcome_type
+):
+    """The DYNAMIC bypass the literal scan cannot see (found by review): the
+    tracker's manual "record what happened" endpoint accepts any recognized
+    outcome type, and "submitted"/"converted" are recognized — recording one
+    there would skip the review gate AND poison the gated path's idempotency.
+    The service refuses both submission-class types outright: the human's
+    "I submitted this myself" action is mark-submitted, which runs the gate."""
+    from applicant.application.services.post_submission_service import (
+        PostSubmissionService,
+    )
+
+    app = _app()
+    _unapproved_doc(storage, app)  # the gate would have refused this material
+    storage.applications.add(app)
+    storage.commit()
+
+    with pytest.raises(ValueError):
+        PostSubmissionService(storage).record_manual_outcome(app.id, outcome_type)
+
+    assert storage.outcomes.list_for_application(app.id) == [], (
+        "the ungated path must record nothing"
+    )

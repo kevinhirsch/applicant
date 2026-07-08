@@ -67,6 +67,13 @@ What the suite proves:
   one. A new construction site anywhere in the engine turns the suite red, so
   a bypass cannot appear silently — the invariant is enforced against future
   code, not just today's.
+- **The dynamic path is refused, not just unscanned** — review found the one
+  writer a literal scan cannot see: the tracker's manual "record what
+  happened" endpoint passes its outcome type straight through, and
+  "submitted"/"converted" were recognized types. The service now refuses both
+  submission-class types on that path (the human's "I submitted this myself"
+  action is mark-submitted, which runs the gate), and the refusal is pinned
+  behaviorally with unapproved material in place.
 
 Related, already-pinned guards this page does not restate: the engine cannot
 self-authorize a final click past the pre-fill stop boundary (FR-PREFILL-5,

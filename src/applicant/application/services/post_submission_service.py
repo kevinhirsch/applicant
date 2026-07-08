@@ -1168,6 +1168,18 @@ class PostSubmissionService:
         """
         if not is_recognized_outcome(outcome_type):
             raise ValueError(f"Unrecognized outcome type: {outcome_type!r}")
+        if outcome_type in ("submitted", "converted"):
+            # Submission-class outcomes are the GATED service's job: recording
+            # one here would skip review-before-submit entirely AND make the
+            # real gated path a no-op afterwards (its idempotency would find
+            # this event and return it without ever checking the gate).
+            # "converted" is the auto-detector's legacy alias — never a manual
+            # write. The human's "I submitted this myself" action is
+            # mark-submitted, which runs the gate first.
+            raise ValueError(
+                "Recording a submission happens through the mark-submitted "
+                "action, which checks the review gate first."
+            )
         app = self._storage.applications.get(application_id)
         if app is None:
             return None
