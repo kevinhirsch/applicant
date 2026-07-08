@@ -232,11 +232,18 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    # Multi-campaign switcher (P1-10 — un-locked): the switcher is EMBEDDED in the
+    # surfaces it filters — the Today/Tracker header dropdown + the daily-updates
+    # panel's own picker (applicantCampaignSwitcher.js), plus campaign create/clone
+    # and per-campaign base résumés in Settings > Campaign — so, like desktop_assist,
+    # it has no standalone nav door (nav_ids empty; the old rail-campaigns /
+    # tool-campaigns-btn placeholders were never emitted). The engine registry key
+    # reports live, so this section activates once a model is configured.
     {
         "key": "multi_campaign_switcher",
         "lane": None,
         "title": "Multi-campaign switcher",
-        "nav_ids": ["rail-campaigns", "tool-campaigns-btn"],
+        "nav_ids": [],
         "dormant_keys": ["multi_campaign_switcher"],
         "requires": "llm_configured",
         "present_but_disabled": False,

@@ -62,7 +62,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
 | P1-8 | Keyword / ATS match score | S | eng | — |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
-| P1-10 | Multi-campaign base profiles | M | eng | — |
+| P1-10 | Multi-campaign base profiles | M | eng | DONE |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
@@ -515,21 +515,48 @@ parse/score (intake endpoint to be added — currently no direct-URL intake exis
 **As** a user targeting different tracks, **I want** separate campaigns each with its
 own base résumé **so that** e.g. "PM-track" and "Eng-track" run independently.
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2, P0-3 (Today filters by campaign)
+**Status: DONE** *(no schema change was needed — campaign scoping has been in the data
+model since Phase 4a, so no Alembic migration; single head unchanged).*
 **DoR:**
 - Confirmed `Campaign` is designed multi-ready and `ResumeVariant` is campaign-scoped
   with a root (base) variant — **verified: yes** (`campaign.py`, `resume_variant.py`).
 - The dormant `multi_campaign_switcher` nav slot identified.
 **DoD:**
-- [ ] Create a second campaign (name + criteria + its own base résumé); each campaign's
-      root variant is its base.
-- [ ] The dormant campaign switcher is un-locked and functional; Today/digest/Tracker
-      filter by campaign.
-- [ ] Services that assume "the single active campaign" (scheduler tick, digest assembly)
-      audited and made campaign-aware.
-- [ ] The fabrication guard's ground truth scopes to the campaign's own base profile
-      (via existing variant lineage), verified by test.
-- [ ] Two campaigns run side by side with different base résumés and separate
-      digests/pacing.
+- [x] Create a second campaign (name + criteria + its own base résumé); each campaign's
+      root variant is its base. *(Settings > Campaign "Start a search" now posts to the
+      new owner-gated `POST /api/applicant/campaigns` — the card previously posted to a
+      route that didn't exist — the engine seeds criteria from the name, and each
+      campaign card gained a "Base résumé" upload row over the existing per-campaign
+      onboarding-intake endpoint, so a second search gets its own base without
+      re-running the wizard.)*
+- [x] The dormant campaign switcher is un-locked and functional; Today/digest/Tracker
+      filter by campaign. *(`multi_campaign_switcher` registry entry flipped LIVE; the
+      shared switcher — `applicantCampaignSwitcher.js`, lifted from the daily-updates
+      panel's own picker — embeds in the Today/Tracker headers with 2+ searches and
+      filters client-side; the daily-updates panel keeps its per-campaign picker and
+      follows the shared selection. Items with no campaign id are never hidden by the
+      filter — a search filter must not vanish action-required work.)*
+- [x] Services that assume "the single active campaign" (scheduler tick, digest assembly)
+      audited and made campaign-aware. *(Audit result: the scheduler already ticks every
+      active campaign and the digest/pacing ledgers were already keyed per (campaign,
+      UTC day) — both pinned by test. Fixed: the setup-status suggested-attributes
+      reporter read only the FIRST campaign's proposals — it now fans out over all
+      campaigns; the apply-readiness reporter already scans all campaigns (any-ready
+      wins). Deliberately owner-level and documented as such: the P1-6 LLM spend ledger
+      (`usage_ledger.py`) — the guardrail is the OWNER's total spend and the shared LLM
+      singleton has no campaign context; per-campaign pacing lives in the loop's own
+      per-(campaign, day) ledgers.)*
+- [x] The fabrication guard's ground truth scopes to the campaign's own base profile
+      (via existing variant lineage), verified by test. *(`tests/unit/
+      test_multi_campaign_profiles.py`: a fact true in campaign A's attribute cloud +
+      base-résumé text is flagged/blocked under campaign B's ground truth, both at the
+      guard seam and through the stored-document review surface; root variants and
+      lineage stay campaign-scoped.)*
+- [x] Two campaigns run side by side with different base résumés and separate
+      digests/pacing. *(Same test file: two active campaigns with distinct base
+      résumés each get their own once-per-(campaign, day) digest delivery and spend
+      their own daily throughput budget — one exhausting its budget never throttles
+      the other.)*
 
 ### P1-11 — LinkedIn Easy Apply: detect & tag *(competitive: Easy Apply, step A)*
 **As** a user, **I want** Easy Apply-able roles flagged in my digest **so that** I know

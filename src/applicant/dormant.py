@@ -110,11 +110,14 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         requirement_ids=("FR-CRIT-4", "NFR-EXT-1"),
         wiring_notes=(
             "Schema + services are campaign-scoped and multi-campaign readiness is "
-            "verified (Phase 4a); MVP-1 runs a single campaign so the switcher UI "
-            "ships grayed. Stays dormant."
+            "verified (Phase 4a). Un-locked in P1-10: campaigns are created/cloned in "
+            "Settings (each with its own criteria + base résumé via the per-campaign "
+            "onboarding intake), and the front door filters Today/Tracker by the "
+            "selected campaign while the daily-updates panel keeps its own per-campaign "
+            "picker. Scheduler ticks + digests + pacing were already per-campaign."
         ),
         live_phase=4,
-        status=STATUS_DORMANT,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="update_button",
