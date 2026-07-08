@@ -140,6 +140,9 @@ _TIMEOUT_EXEMPT_PREFIXES = (
                                     # loop (incl. remote-LLM round trips); bounded by the
                                     # proxy's own 90s engine-client read budget
     "/api/applicant/research",  # manual deep-research trigger (engine-backed; can be multi-minute)
+    "/api/applicant/export",    # "Download my data" zip — serially fans out campaigns,
+                                # applications, document metadata and every rendered PDF;
+                                # a real history blows the 45s hard cap (P1-7)
     "/api/applicant/internal/research",  # engine deep-research callback (multi-minute; must not be killed)
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
@@ -1043,6 +1046,14 @@ app.include_router(setup_applicant_demo_routes())
 # banner when a load-bearing capability is degraded.
 from routes.applicant_health_routes import setup_applicant_health_routes
 app.include_router(setup_applicant_health_routes())
+
+# Owner data export (P1-7, issue #659) — owner-scoped proxy (/api/applicant/export)
+# that bundles the owner's applications (CSV + JSON), documents (metadata + any
+# compiled résumé PDFs), profile (attribute cloud), and recent activity into one
+# downloadable zip. Backs Settings -> Account's "Download my data". Auth-protected
+# (require_engine_owner), owner-scoped; adds no engine logic.
+from routes.applicant_export_routes import setup_applicant_export_routes
+app.include_router(setup_applicant_export_routes())
 
 # ========= ROUTES (kept in app.py) =========
 

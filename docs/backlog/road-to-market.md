@@ -31,8 +31,8 @@ résumé, key, and submissions. Don't conflate their ordering.
   end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
   than any speculative polish, and reorders everything behind it.
 - **Now (eng):** P1-13 DONE (flagged-facts review surface + one-tap add-to-profile landed
-  on the merged core fact-gate) · finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
-  + H3 (full-fidelity review). *(P1-1a is DONE: engine PR #644 + wizard double-check
+  on the merged core fact-gate) · P1-0 DONE (CI secret-scan step, PR #735) · H1
+  (receipts-not-narration) + H3 (full-fidelity review). *(P1-1a is DONE: engine PR #644 + wizard double-check
   surfacing — the parse-verify layer runs on every base-résumé ingest.)*
 - **Studies:** `docs/studies/` — parse-verify tier study **done & green** (free local
   floor suffices; reasoning must be off). Next study: tailoring/rewrite quality (P2-6).
@@ -51,15 +51,15 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
-| P1-0 | Secrets: revoke + CI scanning | S | both | IN PROGRESS |
+| P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | — |
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
 | P1-2 | Real-board proof runs | L | both | — |
-| P1-3 | Honest health panel | M | eng | — |
+| P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
 | P1-4 | Notifications out of the box | M | eng | — |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
-| P1-7 | Backup / restore / export | M | eng | — |
+| P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
 | P1-8 | Keyword / ATS match score | S | eng | — |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
@@ -473,12 +473,16 @@ that** an irreplaceable job search is never lost.
 **DoR:** Confirmed data locations (Postgres, workspace `data/`, config) and that
 `update.sh` already has a pre-migration backup step to share code with.
 **DoD:**
-- [ ] `scripts/backup.sh` produces one tarball (Postgres dump + workspace data + config);
+- [x] `scripts/backup.sh` produces one tarball (Postgres dump + workspace data + config);
       `restore.sh` documented; wired into `update.sh`'s pre-migration step.
-- [ ] Settings → Account "Download my data" exports a zip (applications CSV+JSON,
+- [x] Settings → Account "Download my data" exports a zip (applications CSV+JSON,
       documents, profile, activity) that opens in Excel and a text editor.
 - [ ] A scripted backup → destroy volumes → restore drill on the compose stack passes
-      clean (app returns whole).
+      clean (app returns whole). **NEEDS DEPLOY VERIFICATION** — `scripts/backup-restore-drill.sh`
+      is written and its control flow is covered hermetically
+      (`tests/unit/test_backup_restore_drill_script.py`, fake `docker` on `PATH`), but
+      actually running `--confirm-destroy` against a live compose stack (real
+      Postgres + volumes) has not been done — see PR for issue #659.
 
 ### P1-8 — Résumé↔JD keyword / ATS match score *(competitive: match transparency)*
 **As** a user, **I want** to see how well each tailored résumé covers the job's

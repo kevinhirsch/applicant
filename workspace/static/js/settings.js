@@ -2476,6 +2476,41 @@ function initAccount() {
     });
   }
 
+  // ── Download my data (P1-7, issue #659) ──
+  // Lifts the exact fetch+blob download pattern the contacts CSV/vCard export
+  // already uses (_downloadContacts below) rather than a fresh implementation.
+  const exportBtn = el('settings-export-btn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async () => {
+      const msgEl = el('settings-export-msg');
+      const orig = exportBtn.textContent;
+      exportBtn.textContent = 'Preparing…';
+      exportBtn.disabled = true;
+      if (msgEl) { msgEl.textContent = ''; msgEl.style.color = ''; }
+      try {
+        const res = await fetch('/api/applicant/export/data.zip', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('Export failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const stamp = new Date().toISOString().slice(0, 10);
+        a.download = `applicant-data-export-${stamp}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        if (msgEl) { msgEl.style.color = 'var(--green)'; msgEl.textContent = 'Downloaded'; }
+      } catch (e) {
+        if (uiModule && uiModule.showToast) uiModule.showToast('Could not download your data. Try again in a moment.');
+        if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Export failed'; }
+      } finally {
+        exportBtn.textContent = orig;
+        exportBtn.disabled = false;
+      }
+    });
+  }
+
   // ── Two-Factor Authentication ──
   const tfaContent = el('settings-2fa-content');
   if (tfaContent) {
