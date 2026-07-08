@@ -69,27 +69,12 @@ KNOWN_UNWIRED: dict[str, str] = {
     # ops/discovery surface (applicantDebug renders data.exploration_budget); the
     # research-scoped budget GET is the unconsumed twin.
     "GET /api/applicant/research/{campaign_id}/budget": "release-readiness §2d (FR-LEARN-6 read via ops/discovery)",
-    # dark-engine audit B2 items 8/9/60: the scheduler's ghosting-detection +
-    # follow-up-drafting sweep already surfaces BOTH as Portal-visible pending
-    # actions (the existing pending-actions substrate/JS renders them generically
-    # today — zero new UI needed for that half), so the CORE capability is already
-    # reachable. This GET is an ADDITIONAL queryable per-campaign read added for a
-    # future dedicated Tracker panel; that dedicated panel is a deferred follow-on
-    # (docs/design/audits/exhaustive2/08_engine_dark_matrix.md §B2) because
-    # applicantTracker.js/applicantPortal.js/documentLibrary.js are sibling-owned
-    # this round. Pull in once that panel is built.
-    "GET /api/applicant/followups/{campaign_id}": "dark-engine audit B2 items 8/9/60 (deferred Tracker panel)",
-    # dark-engine audit B2 item 7: the approve+schedule write is fully wired
-    # end to end (engine service -> engine router -> this proxy) and the owner
-    # can already resolve/dismiss the SAME ``followup_draft`` pending action
-    # generically via the existing Portal resolve path -- but a dedicated
-    # "approve" button/control for THIS write specifically is sibling-owned
-    # this round (applicantTracker.js/applicantPortal.js/documentLibrary.js
-    # are out of file-scope here). Pull in once that control lands (the
-    # deferred Tracker panel above, or a Portal row action).
-    "POST /api/applicant/followups/applications/{application_id}/approve": (
-        "dark-engine audit B2 item 7 (deferred Portal/Tracker approve control)"
-    ),
+    # dark-engine audit B2 items 7/8/9/60: the deferred Tracker panel over the
+    # followups attention feed LANDED with P1-12 (applicantTracker.js's
+    # "Follow-ups ready for your review" / "Gone quiet" panel reads the
+    # per-campaign GET and its "Approve & send" posts the approve write), so
+    # the two followups entries that used to sit here are gone — the contract
+    # re-asserts both paths as consumed.
 }
 
 

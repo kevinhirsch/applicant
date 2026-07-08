@@ -373,6 +373,10 @@ router it forwards to is named in [frontend.md](frontend.md)).
 | FR-OOBE-4 / FR-INSTALL-2 (in-UI Update button) | Activity/debug — Update button | `applicant_ops_routes.py` (Update trigger) + `applicantDebug.js` |
 | FR-MIND (what the assistant remembers, saved playbooks, curation approvals; learned-from-runs/feedback curation proposals) | Profile — memory panel + pending-actions portal | `applicant_mind_routes.py` (`/api/applicant/mind/{memory,skills,curation}`) + `applicantMind.js` / `applicantPortal.js` |
 | FR-CUA (desktop assist on the live session) — **ships dormant/grayed** | Live remote view / takeover (opt-in toggle, present-but-grayed) | `applicant_remote_routes.py` (`.../desktop/{health,enable,disable,action}`) + `applicantRemote.js` |
+| Ghosting flags + drafted follow-ups (post-submission sweep; review-then-approve send) | Tracker — "Follow-ups ready for your review" / "Gone quiet" panel (P1-12); items also persist as Portal pending actions | `applicant_followups_routes.py` (`/api/applicant/followups` ← engine `post_submission.py` attention/approve) + `applicantTracker.js` |
+| Learning/outcomes loop read-model (best sources, converting roles, decline themes) | Activity page — "What I'm learning" footer (P1-12); the fuller operator view stays in Debug — Insights | `applicant_activity_routes.py` (`/api/applicant/activity/learning` ← engine `admin.py` learning insights) + `applicantActivity.js` |
+| Weekly recap (trailing-7-day summary, audit Top-25 #18) | Daily-updates panel — "Your week so far" line (P1-12); also pushed weekly via the notification fan-out | `applicant_email_routes.py` (`/api/applicant/email/digest/{id}/weekly-recap` ← engine `digest.py`) + `emailLibrary/applicantDigest.js` |
+| Screening-answer library (campaign-scoped reuse, product-gaps #20) | Tracker — per-row "Screening answers" disclosure | `applicant_documents_routes.py` (`/screening-answer-library`) + `applicantTracker.js` |
 
 **Engine-internal, not a separate front-door surface (called out per the spec):**
 

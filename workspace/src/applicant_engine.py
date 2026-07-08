@@ -879,6 +879,12 @@ class ApplicantEngineClient:
     async def digest_email(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/digest/{campaign_id}/email")
 
+    async def digest_weekly_recap(self, campaign_id: str) -> Any:
+        """The engine's trailing-7-day recap (subject + first-person body +
+        the real counts behind it), read on demand (P1-12) — the SAME recap
+        the scheduler pushes weekly through the notification fan-out."""
+        return await self._request("GET", f"/api/digest/{campaign_id}/weekly-recap")
+
     async def deliver_digest(self, campaign_id: str) -> Any:
         return await self._request("POST", f"/api/digest/{campaign_id}/deliver")
 

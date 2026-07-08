@@ -42,6 +42,9 @@ Endpoints (all under one prefix, ``/api/applicant/activity``):
   (running/paused, intent, today's count, scheduler ticks).
 * ``GET /api/applicant/activity/intent`` — just the latest intent sentence.
 * ``GET /api/applicant/activity/runs``   — the chronological run history.
+* ``GET /api/applicant/activity/learning`` — the engine's plain-language learning
+  read-model (best sources / converting roles / decline themes) for the Activity
+  page's "What I'm learning" section (P1-12).
 """
 
 from __future__ import annotations
@@ -115,6 +118,19 @@ def _first_campaign(campaigns: list[dict]) -> Optional[tuple[str, str]]:
         if cid:
             return str(cid), _campaign_label(campaign)
     return None
+
+
+def _as_int(value: Any) -> int:
+    """Coerce an untyped engine value to an int, treating junk as 0.
+
+    The learning read is normalising an untyped admin payload; a malformed-but-200
+    engine response (e.g. ``total_matched: "n/a"``) must degrade soft like every
+    other failure here, not escape the docstring's promise via a ValueError 500.
+    """
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def setup_applicant_activity_routes() -> APIRouter:
@@ -262,5 +278,62 @@ def setup_applicant_activity_routes() -> APIRouter:
         out["engine_available"] = True
         out["has_activity"] = True
         return out
+
+    # -- learning adjustments (Activity page "What I'm learning" section) --
+
+    @router.get("/learning")
+    async def activity_learning(request: Request) -> dict:
+        """What the engine has learned so far, for the Activity page (P1-12).
+
+        Surfaces the engine's EXISTING plain-language learning read-model
+        (``LearningService.build_summary`` via ``GET /api/admin/learning/{id}``
+        — conversion totals, the source funnel ranked by how well it converts,
+        the roles that actually convert, and the words that come up most in the
+        owner's own decline feedback) in the owner's Activity feed, so the
+        learning/outcomes loop is visible where the owner already watches the
+        agent work — not only behind the admin-gated Debug modal. Read-only and
+        surfacing-only: no engine logic, no new engine state. Owner-gated like
+        every sibling read here (DISC-15); degrades soft the same way (an
+        unreachable engine returns ``engine_available: false``; no campaign yet
+        returns ``has_learning: false`` with an empty, well-formed body).
+        """
+        _require_owner(request)
+        empty = {"summary": {}, "sources": [], "converting_roles": [], "decline_reasons": []}
+        async with ApplicantEngineClient() as engine:
+            campaigns = await _owner_campaigns(engine)
+            if not isinstance(campaigns, list):
+                return {**campaigns, "has_learning": False, **empty}
+            first = _first_campaign(campaigns)
+            if first is None:
+                return {"engine_available": True, "has_learning": False, **empty}
+            cid, cname = first
+            try:
+                data = await engine.admin_learning(cid)
+            except EngineError as exc:
+                logger.debug("activity: learning fetch failed for %s: %s", cid, exc)
+                return {"engine_available": True, "has_learning": False, **empty}
+        out = data if isinstance(data, dict) else {}
+        summary = out.get("summary") if isinstance(out.get("summary"), dict) else {}
+        sources = out.get("sources") if isinstance(out.get("sources"), list) else []
+        roles = out.get("converting_roles") if isinstance(out.get("converting_roles"), list) else []
+        reasons = out.get("decline_reasons") if isinstance(out.get("decline_reasons"), list) else []
+        # Honest gating for the section itself: "has_learning" is true only when
+        # there is REAL recorded volume/feedback to narrate — never renders a
+        # learning card out of an all-zero model (H-series: the absence of data
+        # must never render as data).
+        has_volume = any(
+            _as_int(summary.get(k))
+            for k in ("total_matched", "total_approved", "total_submitted")
+        )
+        return {
+            "engine_available": True,
+            "has_learning": bool(has_volume or roles or reasons),
+            "campaign_id": cid,
+            "campaign_name": cname,
+            "summary": summary,
+            "sources": sources,
+            "converting_roles": roles,
+            "decline_reasons": reasons,
+        }
 
     return router
