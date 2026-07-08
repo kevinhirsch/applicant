@@ -71,6 +71,7 @@ function _render(host, status) {
     host.innerHTML = '';
     if (typeof document !== 'undefined' && document.body) {
       document.body.classList.remove('has-applicant-demo-banner');
+      document.documentElement.style.removeProperty('--applicant-demo-banner-h');
     }
     return;
   }
@@ -78,6 +79,10 @@ function _render(host, status) {
   host.hidden = false;
   if (typeof document !== 'undefined' && document.body) {
     document.body.classList.add('has-applicant-demo-banner');
+    // The strip is position:fixed (body is a flex row, so it can't sit in-flow);
+    // pad the body by the banner's real height so no chrome hides under it.
+    const h = host.offsetHeight || 34;
+    document.documentElement.style.setProperty('--applicant-demo-banner-h', `${h}px`);
   }
   const btn = host.querySelector('#applicant-demo-clear');
   if (btn) btn.addEventListener('click', clearDemoData, { once: true });

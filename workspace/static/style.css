@@ -38189,10 +38189,16 @@ body.theme-frosted .search-overlay {
   color: var(--fg, #222);
   background: color-mix(in srgb, var(--accent-warm, #d19a66) 22%, var(--panel, #fff));
   border-bottom: 1px solid color-mix(in srgb, var(--accent-warm, #d19a66) 55%, transparent);
-  position: sticky;
+  /* body is a flex ROW (sidebar | content), so an in-flow first child renders as a
+     left column — pin the strip to the viewport top instead and pad the body by the
+     banner's measured height (--applicant-demo-banner-h, set by the JS on render). */
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 4000;
 }
+body.has-applicant-demo-banner { padding-top: var(--applicant-demo-banner-h, 34px); }
 #applicant-demo-banner[hidden] { display: none; }
 #applicant-demo-banner .applicant-demo-banner__dot {
   flex: 0 0 auto;
