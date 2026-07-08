@@ -154,6 +154,8 @@ class JobPostingModel(Base):
     salary: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Easy-Apply channel tag (P1-11): detection-only flag set at discovery time.
+    easy_apply: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     viability_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     rationale: Mapped[dict] = mapped_column(JSONType, default=dict)
     description: Mapped[str] = mapped_column(Text, default="")

@@ -77,7 +77,7 @@ def test_get_email_empty_day(work_client):
     assert body["campaign_id"] == "camp-dig-3"
     assert body["row_count"] == 0
     assert body["subject"]
-    assert "<h1>Your daily digest</h1>" in body["html"]
+    assert "Your daily digest</h1>" in body["html"]  # branded heading (P1-4 polish)
 
 
 def test_get_digest_blocked_before_automated_work_gate(llm_client):

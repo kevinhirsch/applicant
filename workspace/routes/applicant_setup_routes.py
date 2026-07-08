@@ -145,6 +145,17 @@ class ChannelsIn(BaseModel):
     email_timeout_minutes: int | None = None
 
 
+class ChannelTestIn(BaseModel):
+    """Optional single-channel selector for the test ping (P1-4).
+
+    Mirrors the engine's own ``ChannelTestIn`` (setup.py): empty/absent keeps
+    the historical test-every-configured-channel behavior; naming one channel
+    (``discord`` / ``email`` / ``ntfy`` / ``in_app``) tests just that one.
+    """
+
+    channel: str = ""
+
+
 class QuietHoursIn(BaseModel):
     """Quiet-hours window for approvals/digests (FR-NOTIF-5).
 
@@ -482,12 +493,20 @@ def setup_applicant_setup_routes() -> APIRouter:
         return JSONResponse(content={"ok": True})
 
     @router.post("/channels/test")
-    async def test_channels(request: Request) -> JSONResponse:
-        """Send a test notification across configured channels."""
+    async def test_channels(
+        request: Request, body: ChannelTestIn | None = None
+    ) -> JSONResponse:
+        """Send a test notification — all configured channels, or just one.
+
+        P1-4: an optional ``{"channel": "discord"|"email"|"ntfy"|"in_app"}`` body
+        scopes the test to one channel so each channel row in Settings gets its
+        own honest Send-test button; no body keeps the historical fan-out shape.
+        """
         require_privilege(request, _CONFIG_PRIV)
+        channel = (body.channel if body is not None else "").strip()
         try:
             async with ApplicantEngineClient() as engine:
-                data = await engine.setup_test_channels()
+                data = await engine.setup_test_channels(channel)
         except EngineError as exc:
             logger.info("applicant test channels failed: %s", exc)
             return _engine_error_response(exc)

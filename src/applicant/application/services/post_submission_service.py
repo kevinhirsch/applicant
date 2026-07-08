@@ -1124,12 +1124,23 @@ class PostSubmissionService:
             signals = sorted({e.type for e in events if e.type in POSITIVE_SIGNAL_TYPES})
             snapshot = self._storage.submission_snapshots.get_for_application(app.id)
             submitted_at = snapshot.captured_at if snapshot is not None else None
+            # P1-11: carry the posting's Easy-Apply channel tag onto the row so
+            # the Tracker can chip it. Best-effort -- a missing/unlinked posting
+            # simply reads as untagged, never breaks the board.
+            easy_apply = False
+            if app.posting_id:
+                try:
+                    posting = self._storage.postings.get(app.posting_id)
+                    easy_apply = bool(getattr(posting, "easy_apply", False))
+                except Exception:
+                    easy_apply = False
             rows.append(
                 {
                     "application_id": str(app.id),
                     "status": app.status.value,
                     "role_name": app.role_name,
                     "job_title": app.job_title,
+                    "easy_apply": easy_apply,
                     "signals": signals,
                     "submitted_at": submitted_at.isoformat() if submitted_at else None,
                     "created_at": app.created_at.isoformat() if app.created_at else None,

@@ -1051,12 +1051,22 @@ function _scalar(v) {
 function _renderSnapshot(data) {
   if (!data || data.has_snapshot === false) return _snapshotEmptyHTML();
   const answers = (data.answers && typeof data.answers === 'object') ? data.answers : {};
+  // H3 (full-fidelity review): say plainly WHERE this payload was captured — at
+  // the review stop (what WILL be sent) or at submission (what WAS sent). The
+  // engine promotes the reviewed payload byte-identical, so both stages show the
+  // same content for one application.
+  const stageLine = data.stage === 'reviewed'
+    ? `<div style="font-size:11px;opacity:0.75;margin-bottom:6px;">Captured at the review stop — this is exactly what will be sent, word for word. Nothing goes out until you approve it.</div>`
+    : (data.stage === 'submitted'
+      ? `<div style="font-size:11px;opacity:0.75;margin-bottom:6px;">Recorded at submission — this is exactly what was sent.</div>`
+      : '');
   const versions = (data.material_versions && typeof data.material_versions === 'object') ? data.material_versions : {};
   const materials = Array.isArray(data.materials) ? data.materials : [];
   const posting = data.posting_url || '';
   const ts = data.timestamp || '';
 
   const sections = [];
+  if (stageLine) sections.push(stageLine);
 
   // Answers — the exact field values that will be submitted.
   const answerRows = _kvRows(answers);
@@ -1160,6 +1170,15 @@ export function closeRemoteSession() {
 export function authorizeConfirmMessage(ctx) { return _authorizeConfirmMessage(ctx); }
 export function submitSelfConfirmMessage(ctx) { return _submitSelfConfirmMessage(ctx); }
 
+// H3 (full-fidelity review): the Portal's final-approval card reuses this exact
+// fetch + renderer for its own "See exactly what will be sent" panel, so both
+// pre-submit surfaces show the SAME literal payload — one implementation, no
+// summarized sibling. `renderSubmissionSnapshot` includes the honest empty state.
+export function fetchSubmissionSnapshot(applicationId) {
+  return _fetchJSON(`${SNAPSHOT_API}/${encodeURIComponent(applicationId)}`);
+}
+export function renderSubmissionSnapshot(data) { return _renderSnapshot(data || {}); }
+
 const applicantRemoteModule = {
   openApplicantRemoteSession,
   closeRemoteSession,
@@ -1169,6 +1188,8 @@ const applicantRemoteModule = {
   fetchCaveat,
   authorizeConfirmMessage,
   submitSelfConfirmMessage,
+  fetchSubmissionSnapshot,
+  renderSubmissionSnapshot,
 };
 
 // The cross-lane portal seam: open the live session for a given application.

@@ -99,13 +99,17 @@ def read_switcher(t08ctx):
     t08ctx["switcher"] = t08ctx["dormant"].get("multi_campaign_switcher")
 
 
-@then("it reports a dormant status so no live switcher is implied")
-def switcher_dormant(t08ctx):
-    from applicant.dormant import STATUS_DORMANT
+@then("it reports a live status so the front door can light the switcher up")
+def switcher_live(t08ctx):
+    # P1-10 un-locked the switcher: create/clone campaigns in Settings with
+    # per-campaign base résumés, campaign filter on Today/Tracker, and the
+    # daily-updates panel's own per-campaign picker. Registered LIVE so the
+    # feature layer lights the section up (honesty: no dead/grayed UI implied).
+    from applicant.dormant import STATUS_LIVE
 
     entry = t08ctx["switcher"]
     assert entry is not None, "multi_campaign_switcher must be registered"
-    assert entry.status == STATUS_DORMANT
+    assert entry.status == STATUS_LIVE
 
 
 @given("the workspace Applicant section map")
@@ -125,9 +129,10 @@ def inspect_switcher_section(t08ctx):
 
 @then("a section grays itself off the multi-campaign switcher surface key")
 def switcher_section_present(t08ctx):
-    # Today no APPLICANT_SECTIONS entry references the switcher key — genuine red.
+    # The multi_campaign_switcher section gates off the registry key (P1-10): the
+    # feature layer lights the embedded switcher up once the surface reports live.
     assert t08ctx["switcher_referenced"], (
-        "no front-door section gates off multi_campaign_switcher yet"
+        "no front-door section gates off multi_campaign_switcher"
     )
 
 
