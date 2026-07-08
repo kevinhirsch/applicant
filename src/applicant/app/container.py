@@ -657,6 +657,9 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
         onboarding_gate=_onboarding_gate_cached,
         sandbox_backend=settings.sandbox_backend,
+        # P2-11: local-only private mode filters the effective ladder AND the
+        # LLM gate inside SetupService (single chokepoint for every consumer).
+        local_only=settings.llm_local_only,
     )
     setup_service.set_apply_readiness_reporter(_apply_readiness)
 

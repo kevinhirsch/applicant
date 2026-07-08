@@ -336,7 +336,7 @@ green WITH the learning hooks firing.
 
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
-| NFR-LOCAL-1 | 0 | "Fully-local operation" | Delivered — Phase 0; local-only path (Ollama LLM + local embeddings + shim orchestrator); integration test |
+| NFR-LOCAL-1 | 0 | "Fully-local operation" | Delivered (extended, P2-11) — Phase 0; local-only path (Ollama LLM + local embeddings + shim orchestrator); integration test. Now also a VERIFIED hard mode: `LLM_LOCAL_ONLY` filters non-private tiers at the single ladder chokepoint AND the LLM gate/status (no silent cloud fallback); `docs/private-mode.md` + `tests/unit/test_local_only_private_mode.py` |
 | NFR-TOKEN-1 | 0-3 | "Three-layer token frugality" | Delivered across Phases 0–3; zero-token discovery/scoring, deterministic pre-fill, LLM only for generation/ambiguity; token-budget assertions across adapters |
 | NFR-247-1 | 0 | "Mid-step crash resumption" | Delivered — Phase 0; durable orchestration; durability/resumption test |
 | NFR-CAUTION-1 | 2 | "Maximal pre-fill, stop at irreducible human steps" | Delivered — Phase 2; cautious-mode in core; unit+BDD |

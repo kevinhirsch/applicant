@@ -62,7 +62,10 @@ has copy-paste snippets for all three (Secure cookies follow
 `X-Forwarded-Proto` automatically) — but the baseline posture is private + HTTP.
 The app door itself is hardened either way: strong passwords enforced
 server-side wherever one is set, per-client login rate-limiting, and optional
-TOTP two-factor auth in Settings → Security.
+TOTP two-factor auth in Settings → Security. For the strongest privacy posture,
+`LLM_LOCAL_ONLY=true` verifiably keeps every model call on your own box/network
+— [private-mode.md](private-mode.md) is the honest contract (what it enforces
+and what still leaves the box by design).
 
 ## What ships (the feature set)
 

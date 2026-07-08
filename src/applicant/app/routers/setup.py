@@ -218,6 +218,10 @@ def _status_dict(svc) -> dict:
         "steps_complete": s.steps_complete,
         "gate_open": svc.is_setup_gate_open(),
         "automated_work_allowed": svc.is_automated_work_allowed(),
+        # P2-11: surfaced so the front door (and the operator) can see the
+        # local-only private mode is active — and understand why a cloud-only
+        # model config reads as not-configured while it is on.
+        "llm_local_only": bool(getattr(svc, "local_only", False)),
         # Engine-proposed attributes awaiting operator approval (#273). Always present
         # (empty by default) so the front-door "suggested attribute" card has a stable
         # data source it can reveal when suggestions exist.
