@@ -1183,11 +1183,24 @@ def setup_model_routes(model_discovery):
         probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
+        # P1-1 (onboarding TTFV): classify WHY a verify failed so the UI can show
+        # a specific recovery action instead of a bare "Offline". `bad_key` is an
+        # auth rejection (HTTP 401/403 — the server answered, the key is wrong);
+        # `no_models` is reachable-but-empty; anything else is `unreachable`.
+        if models:
+            reason = "ok"
+        elif ping.get("reachable"):
+            reason = "no_models"
+        elif ping.get("status_code") in (401, 403):
+            reason = "bad_key"
+        else:
+            reason = "unreachable"
         return {
             "base_url": base_url,
             "online": bool(models) or bool(ping.get("reachable")),
             "status": "online" if models else ("empty" if ping.get("reachable") else "offline"),
             "ping_error": ping.get("error") if ping else None,
+            "reason": reason,
             "models": models,
             "count": len(models),
         }

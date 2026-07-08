@@ -56,6 +56,11 @@ _YEAR_RANGE_RE = re.compile(
     r"(\d{4})\s*(?:-|–|—|to)\s*(\d{4}|" + _PRESENT_KEYWORDS + r")",
     re.IGNORECASE,
 )
+#: P1-1: a LONE graduation year on an education line ("B.A. Economics, UC
+#: Berkeley — 2013"). Real résumés frequently list only the completion year;
+#: without this the year leaked into the institution text ("UC Berkeley — 2013")
+#: and both year fields rendered empty in the review form.
+_SINGLE_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 #: Degree token. Every alternative is wrapped with letter-boundary lookaround
 #: (below) rather than plain ``\b`` so it also works around the trailing dots
 #: on abbreviations like "B.S." (``\b`` doesn't fire between two non-word
@@ -397,6 +402,13 @@ class ResumeParser:
                 # ("M.S. Computer Science\n2018 - 2020"); pull it from the next
                 # non-empty line so the entry doesn't drop its dates.
                 ym = self._look_ahead_year_range(body, idx)
+            # P1-1 (the "UC Berkeley — 2013" case): no RANGE anywhere, but the
+            # line carries a lone graduation year — capture it as the end year
+            # and strip it from the institution text below, so it renders in the
+            # review form's year field instead of polluting the school name.
+            single = None if ym else _SINGLE_YEAR_RE.search(line)
+            if single and single.group(0) in degree:
+                degree = degree[: degree.index(single.group(0))].strip(" \t,-|–—")
             # Institution: whatever's left on the line once the degree (and its
             # own year range, if any) are removed. This used to be run through
             # `_split_title_company` (built for 2-part "Title, Company" splits),
@@ -410,7 +422,9 @@ class ResumeParser:
             rest = line.replace(dm.group(0), "", 1).strip(" \t,-|")
             if ym and ym.group(0) in rest:
                 rest = rest.replace(ym.group(0), "", 1)
-            institution = rest.strip(" \t,-|")
+            if single and single.group(0) in rest:
+                rest = rest.replace(single.group(0), "", 1)
+            institution = rest.strip(" \t,-|–—")
             if not institution:
                 # Layout where degree / dates / institution each sit on their own
                 # line ("M.S. Computer Science\n2015 - 2017\nState University").
@@ -420,7 +434,7 @@ class ResumeParser:
                     degree=degree,
                     institution=institution,
                     start_year=ym.group(1) if ym else "",
-                    end_year=ym.group(2) if ym else "",
+                    end_year=ym.group(2) if ym else (single.group(1) if single else ""),
                 )
             )
         return entries

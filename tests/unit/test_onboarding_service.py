@@ -209,6 +209,37 @@ def test_resume_first_prefills_editable_intake_fields(svc_and_storage, tmp_path)
     assert "Python" in skills.get("technical_skills", "")
 
 
+def test_resume_first_prefill_carries_achievements_into_highlights(svc_and_storage, tmp_path):
+    """P1-1: the parsed achievement bullets prefill the work-history form's
+    ``highlights`` textarea ("Key responsibilities & achievements").
+
+    The parser extracts bullets per role (WorkHistoryEntry.achievements), but the
+    onboarding prefill previously dropped them — the review omitted the parsed
+    achievements and the user re-typed prose the parse already recovered.
+    """
+    svc, *_ = svc_and_storage
+    resume = (
+        "Jane Q Candidate\n"
+        "jane@example.com | +1 (415) 555-0199\n"
+        "\n"
+        "Experience:\n"
+        "Senior Engineer at Acme Corp    Jan 2020 - Present\n"
+        "Resolved over 200 customer escalations per quarter across enterprise accounts.\n"
+        "Automated the ticket-triage pipeline, cutting median response time by 40%.\n"
+    )
+    p = tmp_path / "resume.txt"
+    p.write_text(resume, encoding="utf-8")
+    svc.ingest_base_resume(CID, str(p))
+    wh_entries = svc.get_state(CID).intake[IntakeSection.WORK_HISTORY.value]["entries"]
+    highlights = wh_entries[0].get("highlights", "")
+    assert "Resolved over 200 customer escalations" in highlights
+    assert "Automated the ticket-triage pipeline" in highlights
+    # One bullet per line, in document order — ready to review/edit in the textarea.
+    lines = highlights.splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("Resolved over 200")
+
+
 def test_resume_first_prefill_does_not_clobber_typed_values(svc_and_storage, tmp_path):
     """Re-uploading never overwrites a value the user already typed."""
     svc, *_ = svc_and_storage

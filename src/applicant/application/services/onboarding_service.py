@@ -657,6 +657,10 @@ class OnboardingService:
             intake[IntakeSection.KEY_ATTRIBUTES.value] = existing
 
         # Every parsed role -> the work-history form's `entries` list.
+        # P1-1: carry the parsed achievement bullets into the form's `highlights`
+        # textarea too — the parser extracts them (WorkHistoryEntry.achievements)
+        # but the onboarding review previously dropped them here, so the user
+        # re-typed the very prose the parse already recovered.
         if parsed.work_history and _empty(IntakeSection.WORK_HISTORY.value):
             intake[IntakeSection.WORK_HISTORY.value] = {
                 "entries": [
@@ -666,6 +670,7 @@ class OnboardingService:
                         "location": w.location,
                         "start_date": w.start_date,
                         "end_date": w.end_date,
+                        "highlights": "\n".join(w.achievements),
                     }
                     for w in parsed.work_history
                 ]
