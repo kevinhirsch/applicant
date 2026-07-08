@@ -4,10 +4,16 @@ One shared assessment for every place a password is set — first-run admin
 setup, self-serve signup, admin create-user, and change-password — so the
 app door has a single, testable definition of "strong enough".
 
-Deliberately NIST-800-63B-flavored: a LENGTH floor plus denylists, and **no
-character-composition rules** — "correct horse battery staple" style
-passphrases are the easiest strong passwords to remember and must pass.
-What gets rejected instead:
+Deliberately passphrase-first, in the spirit of NIST SP 800-63B: a LENGTH
+floor plus denylists, and **no character-composition rules** — "correct
+horse battery staple" style passphrases are the easiest strong passwords to
+remember and must pass. The 12-character floor is a deliberate step below
+the 15 characters NIST's current revision recommends for single-factor
+passwords: this is a single-operator app whose baseline posture is a
+private LAN/VPN, logins are rate-limited, TOTP is available in Settings,
+and the UI hint steers toward multi-word passphrases that land well past 15
+anyway. Nothing caps length — operators who want a stricter floor just pick
+a longer password. What gets rejected:
 
 * fewer than :data:`MIN_PASSWORD_LENGTH` characters;
 * the username hiding inside the password;
