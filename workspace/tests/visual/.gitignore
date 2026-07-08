@@ -1,1 +1,4 @@
 .out/
+# Baselines are the harness's committed ground truth — exempted from the
+# workspace-wide *.png ignore (workspace/.gitignore).
+!baselines/**
