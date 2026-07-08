@@ -242,6 +242,10 @@ class ActionEventRepository(Protocol):
     def list_for_application(
         self, application_id: ApplicationId
     ) -> list[ActionEvent]: ...
+    #: Cascade helper: erase every action-trail row for a campaign (used by the
+    #: campaign-purge cascade so "Clear demo data" / a campaign delete leaves no
+    #: residual audit rows). Returns the count deleted.
+    def delete_for_campaign(self, campaign_id: CampaignId) -> int: ...
 
 
 class OnboardingProfileRepository(Protocol):

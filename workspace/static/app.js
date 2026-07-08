@@ -1488,6 +1488,14 @@ function initializeEventListeners() {
   // unconditionally so the update control is always reachable from the rail.
   import('./js/applicantUpdate.js').catch(() => null);
 
+  // Seeded-demo banner (P0-2): a persistent "Demo data" strip + one-click
+  // "Clear demo data", shown ONLY while the engine runs under DEMO_MODE with a
+  // synthetic dataset loaded. Self-boots (fetches /api/applicant/demo/status on
+  // DOM ready) and degrades to invisible when not in demo mode or the engine is
+  // unreachable — so it is inert in every production deploy. Imported
+  // unconditionally; it makes itself visible only when there is demo data.
+  import('./js/applicantDemoBanner.js').catch(() => null);
+
   // First-run setup wizard + home-base landing. The wizard self-skips if
   // setup/onboarding is already complete or the engine is unreachable; it returns
   // true only when it actually presented its blocking overlay. ORDERING: the
