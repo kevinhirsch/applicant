@@ -386,12 +386,18 @@ def live_obs_panels_present(p4ctx):
 @then("the genuinely dormant surfaces are present but grayed")
 def genuinely_dormant_grayed(p4ctx):
     html = p4ctx["html"]
-    # Not-yet-available surfaces stay present-but-grayed with the off-badge
-    # (resume aggressiveness and the multiple-job-searches switcher).
+    # Not-yet-available surfaces stay present-but-grayed with the off-badge.
+    # The multiple-job-searches switcher went LIVE in P1-10 (its panel now
+    # carries the on-badge, honestly matching the registry); the resume
+    # aggressiveness panel on this internal shell still ships grayed.
     assert "applicant-dormant" in html
-    assert html.count("admin-badge-off") >= 2
+    assert html.count("admin-badge-off") >= 1
     for token in ("Resume aggressiveness", "Multiple job searches"):
         assert token in html
+    # The switcher section is present and no longer grayed/disabled.
+    switcher_idx = html.index('id="campaign-switcher-section"')
+    switcher_tag = html[html.rfind("<section", 0, switcher_idx):switcher_idx]
+    assert "applicant-dormant" not in switcher_tag
 
 
 @given("a campaign with a logged application")

@@ -1351,93 +1351,107 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(features => {
       const sections = (features && features.sections) || {};
+      // P0-4 (padlocks → absence): resolve every nav id ONCE across sections
+      // before touching the DOM. Some ids are shared (memory/mind both gate
+      // the Profile launchers) and the old per-section loop let whichever
+      // section iterated LAST win — an id must show when ANY section that
+      // lists it is usable, so aggregate to the best state first
+      // (active > configured > locked > disabled).
+      const _STATE_RANK = { active: 3, configured: 2, locked: 1, disabled: 0 };
+      const navStates = new Map();
       Object.values(sections).forEach(section => {
-        const active = section.state === 'active';
         const reason = section.present_but_disabled
           ? `${section.title} is not available in this build`
           : (APPLICANT_REQUIREMENT_REASONS[section.requirement]
               || `${section.title} unlocks once the Applicant engine is configured`);
         (section.nav_ids || []).forEach(id => {
-          const e = el(id);
-          if (!e) return;
-          if (active) {
-            e.classList.remove('applicant-locked');
-            e.removeAttribute('aria-disabled');
-            if (e.dataset.applicantLockTitle) {
-              e.title = e.dataset.applicantLockTitle;
-              delete e.dataset.applicantLockTitle;
-            }
-            // Design-audit #43: drop the lock glyph badge once the section
-            // unlocks — it was only ever a promise that setup would open this.
-            const lockBadge = e.querySelector('.applicant-lock-badge');
-            if (lockBadge) lockBadge.remove();
-            // A control can flip active after having been locked on an earlier
-            // tick (e.g. memory/mind share nav_ids — one section activates while
-            // the other stays gated). If we leave the capture-phase guard in
-            // place it keeps swallowing clicks, so the control looks enabled but
-            // opens nothing. Tear it down so the launcher's own handler can run.
-            if (e._applicantGuard) {
-              e.removeEventListener('click', e._applicantGuard, true);
-              delete e._applicantGuard;
-            }
-          } else {
-            e.classList.add('applicant-locked');
-            e.setAttribute('aria-disabled', 'true');
-            if (!e.dataset.applicantLockTitle) {
-              e.dataset.applicantLockTitle = e.title || '';
-            }
-            e.title = reason;
-            // Design-audit #43: a truly unlockable item (finish setup and it
-            // opens) previously looked identical to a present-but-disabled one
-            // (nothing you can do unlocks it) — same dimmed chrome, same generic
-            // toast. Give the unlockable case a small lock glyph so it reads as
-            // "finish setup to open this" rather than permanently dead chrome.
-            // Icon-only rail buttons get a corner badge (mirrors the existing
-            // .rail-notes-badge corner-pill pattern); text list-items get an
-            // inline glyph next to the label.
-            if (!section.present_but_disabled && !e.querySelector('.applicant-lock-badge')) {
-              const badge = document.createElement('span');
-              badge.className = 'applicant-lock-badge';
-              badge.setAttribute('aria-hidden', 'true');
-              badge.textContent = '🔒';
-              badge.style.cssText = e.classList.contains('icon-rail-btn')
-                ? 'position:absolute;bottom:-1px;right:-1px;font-size:9px;line-height:1;opacity:0.85;pointer-events:none;'
-                : 'margin-left:4px;font-size:10px;opacity:0.7;vertical-align:middle;pointer-events:none;';
-              e.appendChild(badge);
-            }
-            // Capture-phase guard: stop the click before the element's own
-            // launcher handler (registered in bubble phase) can run. CSS
-            // pointer-events:none already blocks mouse clicks; this also covers
-            // keyboard activation and any programmatic dispatch. Surface honest
-            // feedback (a toast) instead of swallowing the click silently — a
-            // locked control that does nothing reads as broken. A genuinely
-            // unlockable item also routes the click to the setup wizard
-            // (design-audit #43); a present-but-disabled one has nothing to
-            // route to, so it only explains why.
-            if (!e._applicantGuard) {
-              const disabledInBuild = !!section.present_but_disabled;
-              e._applicantGuard = (ev) => {
-                ev.stopPropagation();
-                ev.preventDefault();
-                try { uiModule.showToast(reason); } catch (_) {}
-                // CC-S2-6 / ON-S3-19: a locked-feature click routes into the setup
-                // wizard ONLY while it hasn't been dismissed. Once the user has
-                // closed the blocking wizard for now, clicking a still-locked
-                // feature just explains why (the toast above) instead of
-                // re-mounting the overlay and stealing the click. Fails OPEN if the
-                // onboarding module hasn't exposed the check yet (prior behaviour).
-                const _onbDismissed = (() => {
-                  try { return typeof window.isApplicantOnboardingDismissed === 'function' && window.isApplicantOnboardingDismissed(); }
-                  catch (_) { return false; }
-                })();
-                if (!disabledInBuild && !_onbDismissed) {
-                  try { if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup(); } catch (_) {}
-                }
-              };
-              e.addEventListener('click', e._applicantGuard, true);
-            }
+          const prev = navStates.get(id);
+          const rank = _STATE_RANK[section.state] || 0;
+          if (!prev || rank > prev.rank) {
+            navStates.set(id, {
+              rank,
+              state: section.state,
+              reason,
+              disabledInBuild: !!section.present_but_disabled,
+            });
           }
         });
+      });
+      navStates.forEach((info, id) => {
+        const e = el(id);
+        if (!e) return;
+        const active = info.state === 'active';
+        // "configured" = the backing is real but the engine is momentarily
+        // unreachable — the section must NOT vanish (that would read as data
+        // loss), it just can't open right now. Present-but-dimmed + guarded.
+        const present = active || info.state === 'configured';
+        // P0-4: no lock glyphs anywhere — a padlock reads as broken/paywalled.
+        // Drop any badge a pre-P0-4 pass (or an older cached app.js) rendered.
+        const lockBadge = e.querySelector('.applicant-lock-badge');
+        if (lockBadge) lockBadge.remove();
+        e.classList.toggle('applicant-gated-hidden', !present);
+        e.classList.toggle('applicant-locked', present && !active);
+        if (active) {
+          e.removeAttribute('aria-disabled');
+          if (e.dataset.applicantLockTitle) {
+            e.title = e.dataset.applicantLockTitle;
+            delete e.dataset.applicantLockTitle;
+          }
+          // A control can flip active after having been gated on an earlier
+          // tick. If we leave the capture-phase guard in place it keeps
+          // swallowing clicks, so the control looks enabled but opens
+          // nothing. Tear it down so the launcher's own handler can run.
+          if (e._applicantGuard) {
+            e.removeEventListener('click', e._applicantGuard, true);
+            delete e._applicantGuard;
+          }
+          delete e.dataset.applicantGuardReason;
+          delete e.dataset.applicantGuardDisabledInBuild;
+        } else {
+          e.setAttribute('aria-disabled', 'true');
+          if (!e.dataset.applicantLockTitle) {
+            e.dataset.applicantLockTitle = e.title || '';
+          }
+          e.title = info.reason;
+          // Capture-phase guard: stop the click before the element's own
+          // launcher handler (registered in bubble phase) can run. A hidden
+          // element can still be activated programmatically (other surfaces
+          // forward clicks into these launchers — e.g. the Today gadgets),
+          // and the "configured" dimmed state is still clickable chrome.
+          // Surface honest feedback (a toast) instead of swallowing the
+          // click silently, and route a genuinely unlockable item into the
+          // setup wizard (design-audit #43); a present-but-disabled one has
+          // nothing to route to, so it only explains why.
+          // The guard's inputs refresh EVERY pass and the handler reads them
+          // at click time — a launcher that moves locked -> configured (or a
+          // changed reason) must never act on a stale closure (bots on #745).
+          e.dataset.applicantGuardReason = info.reason;
+          if (info.disabledInBuild) e.dataset.applicantGuardDisabledInBuild = '1';
+          else delete e.dataset.applicantGuardDisabledInBuild;
+          if (!e._applicantGuard) {
+            e._applicantGuard = (ev) => {
+              ev.stopPropagation();
+              ev.preventDefault();
+              const reason = e.dataset.applicantGuardReason || '';
+              const disabledInBuild = e.dataset.applicantGuardDisabledInBuild === '1';
+              try { uiModule.showToast(reason); } catch (_) {}
+              // CC-S2-6 / ON-S3-19: a locked-feature click routes into the setup
+              // wizard ONLY while it hasn't been dismissed. Once the user has
+              // closed the blocking wizard for now, clicking a still-locked
+              // feature just explains why (the toast above) instead of
+              // re-mounting the overlay and stealing the click. Fails OPEN if the
+              // onboarding module hasn't exposed the check yet (prior behaviour).
+              const _onbDismissed = (() => {
+                try { return typeof window.isApplicantOnboardingDismissed === 'function' && window.isApplicantOnboardingDismissed(); }
+                catch (_) { return false; }
+              })();
+              if (!disabledInBuild && !_onbDismissed) {
+                try { if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup(); } catch (_) {}
+              }
+            };
+            e.addEventListener('click', e._applicantGuard, true);
+          }
+        }
       });
     })
     .catch(() => {});

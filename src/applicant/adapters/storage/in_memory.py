@@ -774,6 +774,20 @@ def _capture_dict_undo(
         def _undo(*, _stale=stale):
             d.update(_stale)
         return _undo
+    elif name == "delete_for_application":
+        aid = args[0]
+        stale = {k: v for k, v in d.items() if getattr(v, "application_id", None) == aid}
+        def _undo(*, _stale=stale):
+            d.update(_stale)
+        return _undo
+    elif name == "delete_for_applications":
+        aids = args[0]
+        stale = {
+            k: v for k, v in d.items() if str(getattr(v, "application_id", None)) in aids
+        }
+        def _undo(*, _stale=stale):
+            d.update(_stale)
+        return _undo
     elif name.startswith("prune"):
         return None
     return None

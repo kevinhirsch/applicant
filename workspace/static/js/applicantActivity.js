@@ -498,6 +498,67 @@ function _runTime(run) {
   return run.created_at || run.finished_at || run.started_at || run.last_run_at || run.timestamp || run.ts || '';
 }
 
+// ── Per-run receipt (H1 — receipts, not narration) ───────────────────────────
+//
+// Every row in this feed is a projection of a RECORDED run row (the engine's
+// ``agent_runs`` table: a deterministic intent sentence plus a stats block of
+// counters persisted when the run actually happened) — never a model
+// describing what it thinks it did. This renders that recorded record as an
+// inline, expandable receipt under each row, so the sentence above it can be
+// checked against the exact numbers it was computed from. Pure HTML in/out
+// (sliced + executed headlessly by the test harness). Honesty rules: a
+// counter the record doesn't carry contributes NO line (a receipt never pads
+// itself with fabricated zeros), and a run with no recorded numbers at all
+// renders NO receipt rather than an empty shell that reads as one.
+
+// Plain-language labels for the machine `skip_reason` token a no-new-work run
+// records (the engine's own SKIP_REASON_SENTENCES carries the full sentence;
+// this is just the receipt's short form). Unknown tokens fall back to the raw
+// recorded value — showing the record beats hiding it.
+const _SKIP_REASON_LABELS = {
+  run_mode_stop: 'paused by your run schedule',
+  automated_work_gated: 'waiting on setup',
+};
+
+function _receiptHTML(run) {
+  if (!run || typeof run !== 'object') return '';
+  const stats = (run.stats && typeof run.stats === 'object') ? run.stats : {};
+  const rows = [];
+  const pushCount = (n, label) => {
+    const v = Number(n);
+    if (Number.isFinite(v) && v > 0) rows.push([label, String(v)]);
+  };
+  pushCount(stats.discovered, 'Roles found');
+  pushCount(stats.digest_rows, 'Shortlisted for you');
+  pushCount(stats.pipelines_started, 'Applications started');
+  pushCount(stats.handoffs, 'Handed to you');
+  pushCount(stats.completed, 'Submitted');
+  const budget = Number(stats.budget_remaining);
+  if (Number.isFinite(budget) && budget >= 0 && ('budget_remaining' in stats)) {
+    rows.push(['Left in today’s budget', String(budget)]);
+  }
+  pushCount(stats.llm_calls, 'Model calls');
+  const cost = Number(stats.cost_usd_estimate);
+  if (Number.isFinite(cost) && cost > 0) rows.push(['Estimated model cost', `~$${cost.toFixed(2)}`]);
+  if (stats.skip_reason) {
+    rows.push(['Why no new work started', _SKIP_REASON_LABELS[stats.skip_reason] || String(stats.skip_reason)]);
+  }
+  const when = _runTime(run);
+  if (rows.length && when) rows.push(['Recorded at', String(when)]);
+  if (!rows.length) return '';
+  const lines = rows.map(([k, v]) => `
+      <div style="display:flex;justify-content:space-between;gap:10px;font-size:10.5px;padding:2px 0;">
+        <span style="opacity:0.65;">${esc(k)}</span>
+        <span style="font-variant-numeric:tabular-nums;">${esc(v)}</span>
+      </div>`).join('');
+  return `
+    <details class="applicant-run-receipt" style="margin-top:4px;">
+      <summary style="cursor:pointer;font-size:10px;opacity:0.55;list-style-position:inside;"
+        title="This line is computed from a recorded run — these are the exact numbers it came from">Receipt</summary>
+      <div style="margin-top:3px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;">${lines}</div>
+    </details>`;
+}
+
 // Dark-engine audit #59: the engine's ``AgentRun``/intent-sentence history
 // (``core/entities/agent_run.py``, persisted with a timestamp per run) is
 // real history, not just "the latest line" -- but this page previously
@@ -522,10 +583,14 @@ function _renderRuns(host, items) {
     const summary = _statSummary(run.stats);
     const when = _relTime(_runTime(run));
     const meta = [summary, when].filter(Boolean).join(' · ');
+    // H1 (receipts, not narration): the recorded run record behind this row,
+    // expandable in place — see _receiptHTML's own header comment.
+    const receipt = _receiptHTML(run);
     return `
       <div class="memory-item og-card" style="display:block;padding:9px 10px;border-bottom:1px solid var(--border);">
         <div style="font-size:12px;font-weight:500;line-height:1.35;">${esc(intent)}</div>
         ${meta ? `<div class="memory-item-meta" style="font-size:10.5px;opacity:0.6;margin-top:3px;">${esc(meta)}</div>` : ''}
+        ${receipt}
       </div>`;
   });
   const heading = `

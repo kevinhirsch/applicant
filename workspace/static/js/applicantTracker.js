@@ -30,6 +30,9 @@ import {
   gatedHTML, wireRetry, pollVisible,
 } from './applicantCore.js';
 import { setHash } from './hashRouter.js';
+import {
+  getActiveCampaignId, filterByCampaign, mountCampaignSwitcher,
+} from './applicantCampaignSwitcher.js';
 
 const API = '/api/applicant/tracker';
 //: Product-gaps backlog #20 — the reusable screening-answer library lives on
@@ -122,6 +125,7 @@ function _ensureModalEl() {
           Tracker
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
+          <span id="applicant-tracker-campaign" style="display:flex;align-items:center;"></span>
           <button class="cal-btn" id="applicant-tracker-find-emails" title="Look for likely replies in your inbox">Find responses in your inbox</button>
           <button class="cal-btn" id="applicant-tracker-refresh" title="Refresh your tracker">Refresh</button>
           <button class="close-btn" id="applicant-tracker-close" title="Close">✖</button>
@@ -171,6 +175,14 @@ function _signalBadges(app) {
   }).join('');
 }
 
+// Easy-Apply channel chip (detection only — the engine tags the posting at
+// discovery time when the source board hosts its own quick-apply flow, e.g.
+// LinkedIn’s built-in apply). Purely informational on the tracker row.
+function _easyApplyChip(app) {
+  if (!app || !app.easy_apply) return '';
+  return `<span class="applicant-easy-apply-chip" title="This role’s board has a built-in quick-apply flow — usually fewer form steps" style="display:inline-block;padding:2px 8px;margin-right:4px;border-radius:10px;font-size:10px;font-weight:600;background:color-mix(in srgb, var(--color-accent,#00aaff) 16%, transparent);color:var(--color-accent,#0077cc);">Easy Apply</span>`;
+}
+
 function _optionsHTML(currentStatus) {
   // Rejected/ghosted/archived applications are already at (or past) that
   // outcome — offering to re-record the same terminal state again is noise.
@@ -204,7 +216,7 @@ function _renderRow(app) {
     <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 4px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label} ${campaign}</div>
-        <div style="margin-top:3px;">${_signalBadges(app)}</div>
+        <div style="margin-top:3px;">${_easyApplyChip(app)}${_signalBadges(app)}</div>
       </div>
       <select class="cal-btn" data-tracker-record="${id}" style="font-size:11px;" ${busy ? 'disabled' : ''} aria-label="Record what happened for ${label}">
         <option value="">Record what happened…</option>
@@ -705,9 +717,42 @@ async function _onDetectSubmission(btn) {
 
 // ── Data flow ────────────────────────────────────────────────────────────────
 
+// P1-10: the shared campaign switcher in the header — rendered only when the
+// owner has 2+ searches (the slot stays empty otherwise). Fire-and-forget so
+// a slow campaigns read never delays the board.
+async function _mountSwitcher() {
+  const slot = _modalEl && _modalEl.querySelector('#applicant-tracker-campaign');
+  if (!slot) return;
+  try { await mountCampaignSwitcher(slot); } catch { /* best-effort only */ }
+}
+
+// Re-filter the already-loaded board when the shared campaign selection
+// changes — same rows, new lens, no second fetch.
+window.addEventListener('applicant-campaign-change', () => {
+  if (!_modalEl || _modalEl.classList.contains('hidden')) return;
+  const host = _body();
+  if (host && _lastApplications.length) _renderFiltered(host);
+});
+
+// Renders the board through the shared campaign filter. When the filter
+// empties a non-empty board, say so honestly (the applications exist — they
+// belong to another search) instead of the brand-new-user empty state.
+function _renderFiltered(host) {
+  const rows = filterByCampaign(_lastApplications);
+  if (!rows.length && _lastApplications.length && getActiveCampaignId()) {
+    host.innerHTML = emptyHTML(
+      'Nothing in this search yet',
+      'This job search has no tracked applications so far — switch to “All searches” to see everything.',
+    );
+    return;
+  }
+  _renderBoard(host, rows);
+}
+
 async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
+  _mountSwitcher();
   const host = _body();
   if (host && showSpinner) host.innerHTML = loadingHTML('Loading your tracker…');
   try {
@@ -717,7 +762,7 @@ async function _load(showSpinner) {
     if (data && data.gated === true) { _renderGated(host, data); return; }
     if (data && data.engine_available === false) { _renderOffline(host); return; }
     if (!data || data.has_data === false) { _renderEmpty(host); return; }
-    _renderBoard(host, data.applications);
+    _renderFiltered(host);
   } catch (e) {
     if (host) {
       host.innerHTML = errorHTML(errText(e));

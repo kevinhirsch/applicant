@@ -112,6 +112,7 @@ def _posting_to_entity(row: m.JobPostingModel) -> JobPosting:
         salary=row.salary,
         description=row.description,
         source_key=row.source_key,
+        easy_apply=bool(row.easy_apply),
         viability_score=row.viability_score,
         rationale=dict(row.rationale or {}),
     )
@@ -390,6 +391,7 @@ class JobPostingRepo:
                 salary=posting.salary,
                 source_url=posting.source_url,
                 source_key=posting.source_key,
+                easy_apply=bool(posting.easy_apply),
                 description=posting.description,
                 viability_score=posting.viability_score,
                 rationale=posting.rationale,

@@ -568,9 +568,15 @@ export function mountApplicantRail() {
   const stop = () => { if (timer != null) { clearInterval(timer); timer = null; } };
   const onVis = () => { if (document.visibilityState === 'visible') { tick(); start(); } else stop(); };
   document.addEventListener('visibilitychange', onVis);
+  // Shared cross-surface signal (P0-3b): the Portal's _setBadge fires
+  // `applicant:pending-changed` whenever the authoritative pending count moves
+  // (a resolve/snooze in Today, or the top-bar bell). Re-read the ONE backing
+  // feed immediately so the rail's waiting area clears in lockstep with the
+  // bell + Portal instead of waiting out its own poll.
+  document.addEventListener('applicant:pending-changed', tick);
   tick();
   if (document.visibilityState === 'visible') start();
-  _pollStop = () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+  _pollStop = () => { stop(); document.removeEventListener('visibilitychange', onVis); document.removeEventListener('applicant:pending-changed', tick); };
 }
 
 function _boot() {
