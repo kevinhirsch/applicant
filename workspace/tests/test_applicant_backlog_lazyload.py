@@ -164,7 +164,14 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # (the home-base surfaces that must be live the moment the shell paints, not
     # lazy launcher-only overlays). It must run eagerly so the third pane is
     # there on first paint.
-    assert count == 51, f"expected 51 eager module <script> tags, got {count}"
+    # 52 after wiring applicantBell.js (P0-3b, the shell's top-bar notification
+    # bell -- the third notification surface) -- an always-present top-bar
+    # affordance that self-boots into #applicant-bell-wrap and polls the owner's
+    # live pending feed, in the SAME eager, self-booting category as
+    # applicantRail.js/applicantPortal.js (the home-base surfaces that must be
+    # live the moment the shell paints, not lazy launcher-only overlays). It must
+    # run eagerly so the bell is there on first paint.
+    assert count == 52, f"expected 52 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():

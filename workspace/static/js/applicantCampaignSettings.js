@@ -20,6 +20,10 @@
 //     builds this export; it was reachable only from an admin account before
 //     now, even though every action in it belongs to the one owner of this
 //     deployment.
+//   * Base résumé (P1-10 multi-campaign) — each search tailors from its OWN base
+//     résumé: an upload row per campaign card that posts to the SAME per-campaign
+//     onboarding-intake endpoint the setup wizard uses, so a second search gets
+//     its own base without re-running the wizard.
 //   * Danger zone — permanently delete the campaign (dark-engine audit item 17):
 //     the engine already purges every store on delete (résumés, PII, generated
 //     materials, application history, banked credentials); this just gives the
@@ -215,6 +219,17 @@ function _campaignCard(c) {
         <div class="cs-sources-banner"></div>
         <div class="cs-sources-list" style="font-size:0.85rem;opacity:0.7">Loading…</div>
       </div>
+      <div class="cs-base-resume" data-cs-resume-for="${id}" style="margin-top:10px">
+        <div class="admin-toggle-sub" style="margin:0 0 4px">Base résumé
+          <span style="opacity:0.6;font-weight:normal">(each search tailors from its own)</span></div>
+        <div class="cs-resume-status" style="font-size:0.85rem;opacity:0.7" role="status">Checking…</div>
+        <div class="settings-row" style="gap:8px;margin-top:4px">
+          <input type="file" class="settings-input cs-resume-file" accept=".pdf,.docx,.doc,.tex,.txt,.md"
+                 aria-label="Base résumé file for this search" style="max-width:280px">
+          <button type="button" class="cal-btn cs-resume-upload" data-cs-id="${id}"
+                  title="Upload the résumé this search should tailor from — it only applies to this search">Upload</button>
+        </div>
+      </div>
       <div class="cs-danger-zone" style="margin-top:14px;padding-top:10px;border-top:1px solid color-mix(in srgb, var(--color-danger, #e06c75) 30%, transparent)">
         <div class="admin-toggle-label" style="color:#e55">Danger zone</div>
         <div class="admin-toggle-sub" style="margin-bottom:8px">
@@ -281,6 +296,79 @@ async function _wireSources(host, campaignId) {
         _toast(`I couldn’t update that source: ${errText(e)}`);
       }
     });
+  });
+}
+
+// ── Per-campaign base résumé (P1-10 multi-campaign) ─────────────────────────
+// Each search tailors from its OWN base résumé: the status is read from — and
+// the upload posts to — the SAME per-campaign onboarding-intake endpoints the
+// setup wizard already uses (/api/applicant/setup/onboarding/{id}), never a
+// second ingest path. The engine's parse-verify + conflict reconciliation run
+// exactly as they do for the first campaign's wizard upload.
+const SETUP_BASE = '/api/applicant/setup/onboarding';
+
+async function _loadResumeStatus(campaignId) {
+  try {
+    const state = await _fetchJSON(`${SETUP_BASE}/${encodeURIComponent(campaignId)}`);
+    const intake = (state && state.intake) || {};
+    return !!(intake.base_resume && Object.keys(intake.base_resume).length);
+  } catch {
+    return null; // unknown (engine unreachable) — never claim either way
+  }
+}
+
+async function _wireBaseResume(host, campaignId) {
+  const scope = host.querySelector(`[data-cs-resume-for="${CSS.escape(campaignId)}"]`);
+  if (!scope) return;
+  const statusEl = scope.querySelector('.cs-resume-status');
+  const refresh = async () => {
+    const has = await _loadResumeStatus(campaignId);
+    if (!statusEl) return;
+    if (has === null) {
+      statusEl.textContent = 'I can’t check right now — the status will appear once I’m connected.';
+    } else if (has) {
+      statusEl.textContent = 'Uploaded — this search tailors documents from its own base résumé.';
+    } else {
+      statusEl.textContent = 'Not uploaded yet — I can’t tailor documents for this search until it has one.';
+    }
+  };
+  await refresh();
+  const btn = scope.querySelector('.cs-resume-upload');
+  const fileInput = scope.querySelector('.cs-resume-file');
+  btn?.addEventListener('click', async () => {
+    const file = fileInput?.files && fileInput.files[0];
+    if (!file) {
+      _toast('Choose a résumé file first');
+      return;
+    }
+    btn.disabled = true;
+    const origLabel = btn.textContent;
+    btn.textContent = 'Uploading…';
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const resp = await fetch(`${SETUP_BASE}/${encodeURIComponent(campaignId)}/base-resume`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      if (!resp.ok) {
+        let msg = `Upload failed (${resp.status})`;
+        try {
+          const err = await resp.json();
+          msg = (err && (err.detail?.message || err.detail || err.message)) || msg;
+        } catch { /* keep the status message */ }
+        throw new Error(typeof msg === 'string' ? msg : `Upload failed (${resp.status})`);
+      }
+      _toast('Base résumé uploaded for this search');
+      if (fileInput) fileInput.value = '';
+      await refresh();
+    } catch (e) {
+      _toast(`I couldn’t upload that résumé: ${errText(e)}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origLabel;
+    }
   });
 }
 
@@ -431,6 +519,7 @@ async function _wireCard(host, card) {
   });
   await _wireSources(host, id);
   await _wireGuardrails(host, id);
+  await _wireBaseResume(host, id);
 }
 
 // PATCH convenience (applicantCore only exports _post/_put).

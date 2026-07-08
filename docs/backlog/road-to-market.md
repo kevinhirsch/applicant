@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | — |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail shipped (see note) |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; window-manager retirement + #640 watcher in the concurrent retirement lane (see note) |
 | P0-4 | De-workspace the surface | M | eng | — |
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
@@ -62,11 +62,11 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
 | P1-8 | Keyword / ATS match score | S | eng | DONE |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
-| P1-10 | Multi-campaign base profiles | M | eng | — |
+| P1-10 | Multi-campaign base profiles | M | eng | DONE |
 | P1-11 | Easy Apply: detect & tag | S | eng | DONE — server-side detection at discovery + digest channel + tracker chip |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
 | P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | DONE — core+guard (PR #643) + FE flagged-facts surfacing |
-| H1 | Honesty: receipts, not narration | M | eng | — |
+| H1 | Honesty: receipts, not narration | M | eng | DONE — claim-path audit (docs/design/audits/h1-receipts-audit.md) machine-checked by no-narration pin tests; per-run receipts on Activity rows; Today's count links to its run trail |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
 | H4 | Honesty: visible provenance | M | eng | — |
@@ -208,37 +208,45 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
       card frame) when action-required items arrive and shrinks to an "all clear" line
       when empty; gadgets reflow below it; each gadget is pinnable (pins float to the top,
       persisted in localStorage) and the whole rail collapses to a slim badge strip.
-- [ ] Notifications reachable from THREE surfaces (**partial**): **rail waiting-on-you area** (new) +
-      **transient toasts** (reused `ui.js` `showToast` via `_toast`) are live; the
-      **existing sidebar count badge** on the Today/Portal nav entry is the third. A
-      dedicated *top-bar bell + dropdown* is **deferred** — the Portal already owns the
-      in-app inbox/notification-center, so the bell is a re-surfacing task best done
-      alongside the window-manager retirement below.
+- [x] Notifications reachable from THREE surfaces: **top-bar bell + dropdown** (new, P0-3b —
+      `static/js/applicantBell.js` + `#applicant-bell-wrap` in the chat top bar), the **rail
+      waiting-on-you area**, and **transient toasts** (reused `ui.js` `showToast` via `_toast`).
+      The bell is a NEW LENS over the SAME owner-scoped backing the rail/Portal read
+      (`GET /api/applicant/portal/pending`) — no new engine endpoint. It shows the pending count
+      and a dropdown of the same items; each opens Today via the existing `window.openApplicantToday`
+      launcher. Acting on an item clears it from bell, rail, AND portal at once: the Portal's
+      `_setBadge` dispatches `applicant:pending-changed`, which both the bell and the rail listen for
+      and re-read. (The old sidebar count badge remains as a bonus signal.)
 - [x] Each v1 gadget (8: waiting-on-you, pipeline, activity, cost & pace, next-interview,
       digest, momentum, health) renders live data from an existing owner-scoped proxy and
       expands to its full page in one click via the SAME `window` launcher that page
       already exports (`openApplicantTracker/Today/Results`, `applicantActivityModule`,
       the `#rail-email` seam) — no new engine endpoints, no floating window.
 - [ ] The window manager is retired from the default product surface; modal-stack tests
-      replaced by the shell/page view contract. **DEFERRED** — see note (large surgery
-      across applicantPortal/Today/app.js + dozens of pinning tests; out of a safe
-      green-increment).
-- [ ] The auto-land watcher added in PR #640 is removed. **DEFERRED** with the
-      window-manager retirement above.
-- [ ] The brand wordmark routes home to the shell. **DEFERRED** with the same lane.
+      replaced by the shell/page view contract. **In the concurrent window-retirement lane**
+      (owns the applicantPortal/Today window-stack plumbing, app.js modal-stack code, and the
+      #640 watcher). P0-3b deliberately did NOT touch that plumbing to avoid colliding with it.
+- [ ] The auto-land watcher added in PR #640 is removed. **In the concurrent
+      window-retirement lane** (same owner as the item above).
+- [x] The brand wordmark routes home to the shell (P0-1's Home behaviour): clicking the
+      "Applicant" wordmark (`sidebar-brand-btn`) is intercepted in `applicantChat.js`
+      (`_interceptNewChatClick`) to open Today (the Portal home base), never a new chat.
+      Pinned by `test_applicant_chat_unification.py`.
 
-**Status note (2026-07-08):** The headline new artifact — the right-hand **gadget rail**
-(`static/js/applicantRail.js` + `#applicant-gadget-rail` mount + rail CSS) — is shipped,
-reachable in the front-door, and covered by `tests/js/applicantRail.test.js` (5 pure-helper
-tests) and `tests/test_applicant_shell_gadget_rail.py` (17 composition/reuse tests). All 8
-v1 gadgets pull live data via existing proxies (lift-and-shift, no new endpoints), the rail
-pins/collapses with localStorage persistence, notifications reuse `showToast`, and the rail
-hides on mobile. **Deferred to a follow-up** (too broad for one safe increment, would break
-many modal-stack/one-window pinning tests): fully retiring the floating-window manager,
-removing the PR #640 auto-land watcher, the dedicated top-bar bell dropdown, and the
-wordmark-home rewire. The existing chat center + sidebar already provided two of the three
-panes; the Today/Portal surfaces still open as their current modals until the retirement lane
-lands.
+**Status note (updated 2026-07-08, P0-3b):** The gadget rail (P0-3) plus the **top-bar
+notification bell** (P0-3b — `static/js/applicantBell.js` + `#applicant-bell-wrap`) and the
+**wordmark→home** behaviour are shipped and reachable, closing the "notifications from three
+surfaces" and "wordmark routes home" DoD items. The bell is covered by
+`tests/js/applicantBell.test.js` (pure helpers) and `tests/test_applicant_topbar_bell.py`
+(composition/reuse/owner-only/cross-surface-signal). It reuses the SAME
+`GET /api/applicant/portal/pending` backing the rail + Portal read (no new endpoint), routes to
+Today via the existing launcher (no rebuilt resolve logic), and shares the
+`applicant:pending-changed` signal so a resolution clears all three surfaces at once.
+**Still open (row stays PARTIAL):** fully retiring the floating-window manager and removing the
+PR #640 auto-land watcher — these are owned by the **concurrent window-retirement lane**, which
+holds the window/modal-stack plumbing across applicantPortal/Today/app.js; P0-3b stayed out of
+that plumbing by design and opened pages only through the existing `window.openApplicant*`
+launchers. Once that lane lands, this row can flip to DONE.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
@@ -569,21 +577,48 @@ parse/score (intake endpoint to be added — currently no direct-URL intake exis
 **As** a user targeting different tracks, **I want** separate campaigns each with its
 own base résumé **so that** e.g. "PM-track" and "Eng-track" run independently.
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2, P0-3 (Today filters by campaign)
+**Status: DONE** *(no schema change was needed — campaign scoping has been in the data
+model since Phase 4a, so no Alembic migration; single head unchanged).*
 **DoR:**
 - Confirmed `Campaign` is designed multi-ready and `ResumeVariant` is campaign-scoped
   with a root (base) variant — **verified: yes** (`campaign.py`, `resume_variant.py`).
 - The dormant `multi_campaign_switcher` nav slot identified.
 **DoD:**
-- [ ] Create a second campaign (name + criteria + its own base résumé); each campaign's
-      root variant is its base.
-- [ ] The dormant campaign switcher is un-locked and functional; Today/digest/Tracker
-      filter by campaign.
-- [ ] Services that assume "the single active campaign" (scheduler tick, digest assembly)
-      audited and made campaign-aware.
-- [ ] The fabrication guard's ground truth scopes to the campaign's own base profile
-      (via existing variant lineage), verified by test.
-- [ ] Two campaigns run side by side with different base résumés and separate
-      digests/pacing.
+- [x] Create a second campaign (name + criteria + its own base résumé); each campaign's
+      root variant is its base. *(Settings > Campaign "Start a search" now posts to the
+      new owner-gated `POST /api/applicant/campaigns` — the card previously posted to a
+      route that didn't exist — the engine seeds criteria from the name, and each
+      campaign card gained a "Base résumé" upload row over the existing per-campaign
+      onboarding-intake endpoint, so a second search gets its own base without
+      re-running the wizard.)*
+- [x] The dormant campaign switcher is un-locked and functional; Today/digest/Tracker
+      filter by campaign. *(`multi_campaign_switcher` registry entry flipped LIVE; the
+      shared switcher — `applicantCampaignSwitcher.js`, lifted from the daily-updates
+      panel's own picker — embeds in the Today/Tracker headers with 2+ searches and
+      filters client-side; the daily-updates panel keeps its per-campaign picker and
+      follows the shared selection. Items with no campaign id are never hidden by the
+      filter — a search filter must not vanish action-required work.)*
+- [x] Services that assume "the single active campaign" (scheduler tick, digest assembly)
+      audited and made campaign-aware. *(Audit result: the scheduler already ticks every
+      active campaign and the digest/pacing ledgers were already keyed per (campaign,
+      UTC day) — both pinned by test. Fixed: the setup-status suggested-attributes
+      reporter read only the FIRST campaign's proposals — it now fans out over all
+      campaigns; the apply-readiness reporter already scans all campaigns (any-ready
+      wins). Deliberately owner-level and documented as such: the P1-6 LLM spend ledger
+      (`usage_ledger.py`) — the guardrail is the OWNER's total spend and the shared LLM
+      singleton has no campaign context; per-campaign pacing lives in the loop's own
+      per-(campaign, day) ledgers.)*
+- [x] The fabrication guard's ground truth scopes to the campaign's own base profile
+      (via existing variant lineage), verified by test. *(`tests/unit/
+      test_multi_campaign_profiles.py`: a fact true in campaign A's attribute cloud +
+      base-résumé text is flagged/blocked under campaign B's ground truth, both at the
+      guard seam and through the stored-document review surface; root variants and
+      lineage stay campaign-scoped.)*
+- [x] Two campaigns run side by side with different base résumés and separate
+      digests/pacing. *(Same test file: two active campaigns with distinct base
+      résumés each get their own once-per-(campaign, day) digest delivery and spend
+      their own daily throughput budget — one exhausting its budget never throttles
+      the other.)*
 
 ### P1-11 — LinkedIn Easy Apply: detect & tag *(competitive: Easy Apply, step A)*
 **As** a user, **I want** Easy Apply-able roles flagged in my digest **so that** I know
@@ -702,6 +737,14 @@ at trust instead of features.
 **DoD:** Every number/claim the owner reads (Today "what I did", Activity feed, Tracker
 counts, digest/recap) is a projection of **recorded actions**, never an LLM describing what
 it thinks it did. An audit confirms no claim-path narrates; a test pins it.
+**Status: DONE.** The audit record is `docs/design/audits/h1-receipts-audit.md` (every
+claim surface → its recorded source), kept honest by
+`tests/unit/test_h1_receipts_not_narration.py`: behavioral pins (intent sentence, daily
+status push, weekly recap = projections of persisted rows) plus a source scan proving no
+audited claim path can invoke a model (with a canary so the scan can't go vacuous). The
+claims now *link* to their receipts in the front-door: each Activity row exposes its
+recorded run record inline, and Today's "N applications" line opens the run trail it was
+counted from (`workspace/tests/test_applicant_h1_receipts.py`).
 
 ### H2 — No silent underdelivery *(kills: underdeliver)*
 **Effort:** M · **Owner:** eng · **Depends on:** P1-3 (health panel)

@@ -63,6 +63,12 @@ class FakeEngine:
             raise FakeEngine.raises["list_campaigns"]
         return FakeEngine.campaigns
 
+    async def create_campaign(self, name):
+        FakeEngine.calls.append(("create", name))
+        if "create" in FakeEngine.raises:
+            raise FakeEngine.raises["create"]
+        return {"id": "c-new", "name": name, "active": True}
+
     async def update_campaign(self, cid, body):
         FakeEngine.calls.append(("update", cid, body))
         if ("update", cid) in FakeEngine.raises:
@@ -131,9 +137,34 @@ def test_unauthenticated_is_rejected(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(authed=False))
     assert c.get("/api/applicant/campaigns").status_code == 401
+    assert c.post("/api/applicant/campaigns", json={"name": "x"}).status_code == 401
     assert c.patch("/api/applicant/campaigns/c1", json={"name": "x"}).status_code == 401
     assert c.get("/api/applicant/campaigns/c1/sources").status_code == 401
     assert c.get("/api/applicant/campaigns/c1/guardrails").status_code == 401
+
+
+# --- create (P1-10 multi-campaign) -------------------------------------------
+
+
+def test_create_proxies_to_engine(client):
+    """POST /api/applicant/campaigns creates a NEW campaign (the second, third,
+    ... parallel track — P1-10) via the engine, which seeds criteria from the
+    name. This is the route the Settings "Start a search" card posts to."""
+    r = client.post("/api/applicant/campaigns", json={"name": "PM-track"})
+    assert r.status_code == 201
+    assert r.json()["name"] == "PM-track"
+    assert ("create", "PM-track") in FakeEngine.calls
+
+
+def test_create_blank_name_is_400_not_proxied(client):
+    r = client.post("/api/applicant/campaigns", json={"name": "   "})
+    assert r.status_code == 400
+    assert all(not (isinstance(c, tuple) and c[0] == "create") for c in FakeEngine.calls)
+
+
+def test_create_engine_down_is_502(client):
+    FakeEngine.raises["create"] = EngineError("down", is_timeout=True)
+    assert client.post("/api/applicant/campaigns", json={"name": "x"}).status_code == 502
 
 
 # --- list config ------------------------------------------------------------
@@ -353,3 +384,24 @@ def test_engine_paths_hit_over_real_client(monkeypatch):
     assert r.json()["name"] == "Platform"
     assert ("GET", "/api/campaigns") in captured["paths"]
     assert ("PATCH", "/api/campaigns/c1") in captured["paths"]
+
+
+def test_engine_create_path_hit_over_real_client(monkeypatch):
+    """P1-10: the create proxy posts to the engine's exact ``POST /api/campaigns``."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.setdefault("paths", []).append((request.method, request.url.path))
+        if request.url.path == "/api/campaigns" and request.method == "POST":
+            return httpx.Response(200, json={"id": "c2", "name": "PM-track"})
+        return httpx.Response(404, json={"detail": "nope"})
+
+    def _factory(*a, **k):
+        return ApplicantEngineClient(base_url="http://api:8000", transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(mod, "ApplicantEngineClient", _factory)
+    c = TestClient(_make_app())
+    r = c.post("/api/applicant/campaigns", json={"name": "PM-track"})
+    assert r.status_code == 201
+    assert r.json()["id"] == "c2"
+    assert ("POST", "/api/campaigns") in captured["paths"]

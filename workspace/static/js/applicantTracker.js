@@ -29,6 +29,9 @@ import {
   esc, _fetchJSON, _post, _toast, errText, loadingHTML, emptyHTML, errorHTML,
   gatedHTML, wireRetry, pollVisible,
 } from './applicantCore.js';
+import {
+  getActiveCampaignId, filterByCampaign, mountCampaignSwitcher,
+} from './applicantCampaignSwitcher.js';
 
 const API = '/api/applicant/tracker';
 //: Product-gaps backlog #20 — the reusable screening-answer library lives on
@@ -121,6 +124,7 @@ function _ensureModalEl() {
           Tracker
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
+          <span id="applicant-tracker-campaign" style="display:flex;align-items:center;"></span>
           <button class="cal-btn" id="applicant-tracker-find-emails" title="Look for likely replies in your inbox">Find responses in your inbox</button>
           <button class="cal-btn" id="applicant-tracker-refresh" title="Refresh your tracker">Refresh</button>
           <button class="close-btn" id="applicant-tracker-close" title="Close">✖</button>
@@ -670,9 +674,42 @@ async function _onDetectSubmission(btn) {
 
 // ── Data flow ────────────────────────────────────────────────────────────────
 
+// P1-10: the shared campaign switcher in the header — rendered only when the
+// owner has 2+ searches (the slot stays empty otherwise). Fire-and-forget so
+// a slow campaigns read never delays the board.
+async function _mountSwitcher() {
+  const slot = _modalEl && _modalEl.querySelector('#applicant-tracker-campaign');
+  if (!slot) return;
+  try { await mountCampaignSwitcher(slot); } catch { /* best-effort only */ }
+}
+
+// Re-filter the already-loaded board when the shared campaign selection
+// changes — same rows, new lens, no second fetch.
+window.addEventListener('applicant-campaign-change', () => {
+  if (!_modalEl || _modalEl.classList.contains('hidden')) return;
+  const host = _body();
+  if (host && _lastApplications.length) _renderFiltered(host);
+});
+
+// Renders the board through the shared campaign filter. When the filter
+// empties a non-empty board, say so honestly (the applications exist — they
+// belong to another search) instead of the brand-new-user empty state.
+function _renderFiltered(host) {
+  const rows = filterByCampaign(_lastApplications);
+  if (!rows.length && _lastApplications.length && getActiveCampaignId()) {
+    host.innerHTML = emptyHTML(
+      'Nothing in this search yet',
+      'This job search has no tracked applications so far — switch to “All searches” to see everything.',
+    );
+    return;
+  }
+  _renderBoard(host, rows);
+}
+
 async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
+  _mountSwitcher();
   const host = _body();
   if (host && showSpinner) host.innerHTML = loadingHTML('Loading your tracker…');
   try {
@@ -682,7 +719,7 @@ async function _load(showSpinner) {
     if (data && data.gated === true) { _renderGated(host, data); return; }
     if (data && data.engine_available === false) { _renderOffline(host); return; }
     if (!data || data.has_data === false) { _renderEmpty(host); return; }
-    _renderBoard(host, data.applications);
+    _renderFiltered(host);
   } catch (e) {
     if (host) {
       host.innerHTML = errorHTML(errText(e));
