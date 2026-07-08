@@ -14,6 +14,7 @@ import pytest
 from applicant.evaluation.material_judge import _parse_judge_response
 from applicant.evaluation.material_runner import (
     EVAL_RUBRIC,
+    _render_markdown,
     build_llm,
     gate_report,
     load_golden_set,
@@ -114,6 +115,24 @@ def test_regression_gate_fails_when_dimension_drops_vs_baseline() -> None:
     # A baseline equal to the observed means => no regression.
     same = dict(report.dimension_means)
     assert gate_report(report, baseline={"dimension_means": same}).passed is True
+
+
+@pytest.mark.unit
+def test_markdown_report_escapes_pipes_in_dynamic_cells() -> None:
+    """Case ids are ``profile|posting`` — an unescaped pipe splits the table column."""
+    gs = load_golden_set()
+    report = run_golden_set(
+        gs, gen_llm=None, judge_llm=None, gen_model="x", judge_model="x", max_cases=1
+    )
+    md = _render_markdown(report, gate_report(report, min_score=0.0))
+    table = md.split("## Per-material results", 1)[1]
+    rows = [ln for ln in table.splitlines() if ln.startswith("| prof-")]
+    assert rows, "expected at least one per-material row"
+    for row in rows:
+        # 5 columns => exactly 6 unescaped pipes per row; the case id's own
+        # pipe must be escaped as \| so it does not add a column.
+        assert row.count("|") - row.count("\\|") == 6
+        assert "\\|" in row  # the profile|posting separator, escaped
 
 
 @pytest.mark.unit

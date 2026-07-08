@@ -631,6 +631,16 @@ def write_report(report: MaterialEvalReport, out_dir: str | Path, gate: GateOutc
     return json_path
 
 
+def _md_cell(value: object) -> str:
+    """Escape a dynamic value for a Markdown table cell.
+
+    Case ids are ``profile|posting``, and fabrication tokens / model output are
+    arbitrary text — an unescaped ``|`` splits the table column. Newlines are
+    flattened for the same reason.
+    """
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
 def _render_markdown(report: MaterialEvalReport, gate: GateOutcome) -> str:
     lines: list[str] = []
     lines.append("# Material eval report (P2-6)")
@@ -666,7 +676,7 @@ def _render_markdown(report: MaterialEvalReport, gate: GateOutcome) -> str:
     for dim, mean in report.dimension_means.items():
         delta = gate.dimension_deltas.get(dim)
         delta_s = f"{delta:+.2f}" if delta is not None else "—"
-        lines.append(f"| {dim} | {mean:.2f} | {delta_s} |")
+        lines.append(f"| {_md_cell(dim)} | {mean:.2f} | {delta_s} |")
     lines.append(f"| **overall** | **{report.overall_mean:.2f}** | |")
     lines.append("")
     if gate.failures:
@@ -682,7 +692,8 @@ def _render_markdown(report: MaterialEvalReport, gate: GateOutcome) -> str:
     for r in report.results:
         fab = ", ".join(r.deterministic_fabrications) if r.deterministic_fabrications else "none"
         lines.append(
-            f"| {r.case_id} | {r.material_type} | {r.overall_score:.2f} | {fab} | "
+            f"| {_md_cell(r.case_id)} | {_md_cell(r.material_type)} | "
+            f"{r.overall_score:.2f} | {_md_cell(fab)} | "
             f"{'yes' if r.degraded else 'no'} |"
         )
     lines.append("")
