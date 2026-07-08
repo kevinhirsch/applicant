@@ -57,7 +57,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | — |
 | P1-4 | Notifications out of the box | M | eng | — |
-| P1-5 | Rescue stranded hardening waves | M | eng | — |
+| P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | — |
 | P1-7 | Backup / restore / export | M | eng | — |
 | P1-8 | Keyword / ATS match score | S | eng | — |
@@ -399,13 +399,39 @@ are available for Phase 2.
 - Agreement to land as two PRs.
 - **Decision:** OK to archive/delete `claude/applicant-production-ready-7iep6h` after landing.
 **DoD:**
-- [ ] Wave 1 (observability alerting, learning biasing, truthfulness fail-closed) and
+- [x] Wave 1 (observability alerting, learning biasing, truthfulness fail-closed) and
       Wave 2 (universal-ATS, PII purge/retention, key rotation, chat-onboarding default)
       cherry-picked onto a main-based branch; conflicts resolved (re-implement where a
       pick fights too hard, using the commit as spec).
-- [ ] Both waves' tests green on `main` via two PRs.
-- [ ] PII-purge + key-rotation capabilities exist for Phase 2 to build on.
-- [ ] Old stranded branch archived/deleted (after owner confirmation).
+      *(Superseded: an audit found both waves' content already on `main`, landed via
+      separate PRs between the commit date and now — a cherry-pick conflicts because
+      `main` already carries equivalent, sometimes-more-evolved implementations. See the
+      status note below.)*
+- [x] Both waves' tests green on `main`. *(The wave test surfaces ship on `main` and pass
+      — e.g. the wave-1 metrics / scheduler-alerting / truth-fail-closed / learning-bias
+      suites, 60 tests, green. They arrived via the superseding PRs, not two fresh rescue
+      PRs, because the code was already present.)*
+- [x] PII-purge + key-rotation capabilities exist for Phase 2 to build on. *(Verified on
+      `main`: `erasure_service`, `retention_service`, `data_lifecycle_service`, the
+      `0007_pii_retention_timestamps` migration, and `pg_credential_store` key rotation.)*
+- [ ] Old stranded branch archived/deleted (after owner confirmation). *(Skipped —
+      requires owner confirmation per DoR; branch retained.)*
+
+**Status note (audit, P1-5).** Two distinct facts. (1) The stranded commit SHAs remain
+reachable only on `origin/claude/applicant-production-ready-7iep6h` — `43670ab` (wave 1:
+observability alerting #362, learning biasing #237/#238/#239, truthfulness fail-closed)
+and `cead689` (wave 2: universal-ATS #173/#177, PII purge/retention #363, key
+rotation #361, chat-onboarding default #406); those SHAs themselves never landed on
+`main`.
+(2) The *features* those commits carry are already on `main`, landed via separate PRs
+between the commit date and now — so a cherry-pick is unnecessary and conflicts with the
+equivalent, sometimes more-evolved, implementations: e.g. #238 is wired in
+`learning_advanced.py` by delegating to the Phase-1 `record_converting_role` rather than
+the commit's `_fold_centroid_vector` helper, and the truth-fail-closed steps on `main`
+are a superset (they pin the `strict` policy for the P1-13 balanced default).
+File-by-file and symbol-by-symbol checks confirm both waves' functionality is present on
+`main`; the rescue is therefore complete by supersession. The stranded branch is
+retained pending owner confirmation to archive/delete.
 
 ### P1-6 — Cost & pace guardrails
 **As** a user paying for LLM calls, **I want** to see and cap my spend and application
