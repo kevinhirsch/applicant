@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from applicant.application.services.prefill_service import FINAL_APPROVAL_TOPIC
+from applicant.core.state_machine import TERMINAL_STATES
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -48,6 +49,25 @@ _HANDOFF_STATES = frozenset(
         "EMERGENCY_DATA_HANDOFF",
     }
 )
+
+#: Public alias (P2-12 durability drill finding): the caller (``AgentLoop.
+#: _apply_outcome``) needs this SAME set to decide whether a hand-off must clear the
+#: workflow's durable checkpoint before the next re-drive — see the long comment on
+#: that branch for why. Reuses this module's existing set rather than a second
+#: hard-coded copy of the same five state names.
+PREFILL_HANDOFF_STATES = _HANDOFF_STATES
+
+#: P2-12 durability drill finding: a pre-fill that already landed in a §7 TERMINAL
+#: state (``FAILED`` — "any unrecoverable error", e.g. a crashed browser tab/context
+#: mid-walk, see #207/#336) must stop the pipeline HERE, exactly like a hand-off.
+#: Before this check existed, a terminally-FAILED pre-fill fell through to material
+#: generation + a final-approval request for an application that had already died —
+#: and if a human then approved it, ``submit`` raised ``IllegalStateTransition``
+#: (FAILED is not a legal ``AWAITING_FINAL_APPROVAL`` pre-state) every single retry,
+#: forever, with the sandbox slot never released (DUR-2 leak). Reuses the SAME
+#: ``TERMINAL_STATES`` the rest of the state machine already treats as terminal
+#: (``core/state_machine.py``) rather than inventing a parallel notion of "done".
+_TERMINAL_STATE_VALUES = frozenset(s.value for s in TERMINAL_STATES)
 
 
 @dataclass
@@ -120,6 +140,10 @@ def _is_handoff(state: str | None) -> bool:
     return state in _HANDOFF_STATES
 
 
+def _is_terminal(state: str | None) -> bool:
+    return state in _TERMINAL_STATE_VALUES
+
+
 def run_pipeline(
     orchestrator: Any,
     workflow_id: str,
@@ -132,7 +156,11 @@ def run_pipeline(
     Returns a dict summarizing each completed step. When the pre-fill step lands a
     ``BLOCKED_*`` / ``AWAITING_*`` / ``EMERGENCY_*`` hand-off state, the pipeline
     returns early (``status="handoff"``) so the run loop pivots to other work; the
-    workflow resumes from its last checkpoint once the user resolves the gate.
+    workflow resumes from its last checkpoint once the user resolves the gate. When
+    pre-fill instead lands a §7 TERMINAL state (``FAILED`` — an unrecoverable error,
+    e.g. a crashed browser mid-walk), the pipeline tears down and returns early
+    (``status="failed"``) rather than generating material / requesting approval for
+    an application that already died (P2-12 durability drill finding).
 
     ``side_effects`` (optional) records which step bodies actually executed this run
     so a resumption test can prove already-checkpointed steps were skipped.
@@ -154,6 +182,24 @@ def run_pipeline(
     if _is_handoff(prefill_result.get("state")):
         out["status"] = "handoff"
         out["handoff_state"] = prefill_result.get("state")
+        return out
+
+    # P2-12 durability drill finding: a TERMINAL pre-fill outcome (FAILED) stops the
+    # pipeline here too — material/approval/submit are meaningless (and unsafe: a
+    # later approve would raise IllegalStateTransition forever, see the module-level
+    # comment on ``_TERMINAL_STATE_VALUES``). Still tear down (as its own checkpointed,
+    # idempotent step) so the sandbox slot is released exactly like the ``done`` path.
+    if _is_terminal(prefill_result.get("state")):
+        out["status"] = "failed"
+        out["failure_state"] = prefill_result.get("state")
+
+        def _terminal_teardown() -> dict:
+            sink.append("teardown")
+            if ctx is not None and ctx.teardown is not None:
+                ctx.teardown()
+            return {"torn_down": True}
+
+        out["teardown"] = orchestrator.run_step(workflow_id, "teardown", _terminal_teardown)
         return out
 
     # 2. Generate + review material when the role warrants it (FR-RESUME-1/8). -

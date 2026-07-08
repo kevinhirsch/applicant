@@ -83,7 +83,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
 | P2-10 | ATS-parseability proof | M | eng | — |
 | P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
-| P2-12 | Durability drills | M | eng | — |
+| P2-12 | Durability drills | M | eng | DONE — 4 hermetic drills (`tests/unit/test_p2_12_durability_drills.py`); found + fixed 2 real durability bugs (docs/known-issues.md) |
 | P2-13 | Source reliability matrix | M | eng | — |
 | P2-14 | Easy Apply: assisted mode | M | both | — |
 | P3-1 | Install on tested targets | M–L | eng | — |
@@ -1155,6 +1155,69 @@ docs/private-mode.md.)*
 **Effort:** M · **Owner:** eng · **Depends on:** P1-2
 **DoD:** Kill engine mid-prefill, kill browser mid-run, hit a CAPTCHA wall, take a source
 offline — each drill passes (restart-survival) or files a bug.
+
+**Status: DONE.** All four drills implemented hermetically in
+`tests/unit/test_p2_12_durability_drills.py` (7 tests, `DATABASE_URL` unreachable —
+no real Postgres/DBOS/browser/network). Two of the four found real bugs, now fixed
+in the same change; the other two passed as designed:
+
+- [x] **Kill engine mid-prefill** — PASSED (restart-survival). A kill mid-body of the
+      durable "prefill" step (before it checkpoints) loses only that in-flight
+      attempt; a brand-new `CheckpointShimOrchestrator` over the same checkpoint
+      directory (simulating the next boot) re-runs pre-fill from scratch and the
+      workflow completes. Mirrors the existing kill-inside-"submit" case in
+      `tests/integration/test_durable_workflow.py` (proves the OTHER half: an
+      already-checkpointed step never re-runs).
+- [x] **Kill browser mid-run** — FILED A BUG, NOW FIXED. `PrefillService`'s own
+      crash boundary (#207/#336) already turns a real browser exception into a
+      structured `FAILED` result (drilled separately with an in-memory browser in
+      `tests/bdd/steps/test_enh_n4_browser_steps.py`). The drill found the durable
+      PIPELINE didn't treat that TERMINAL state as a stop condition: it fell through
+      to material generation + a final-approval request for an already-dead
+      application, and leaked the sandbox capacity slot forever (confirmed: a
+      second application could never be admitted to a 1-slot sandbox after one
+      browser crash). Fixed: `application_pipeline.run_pipeline` now stops
+      (`status="failed"`) on a `core.state_machine.TERMINAL_STATES` member;
+      `AgentLoop._apply_outcome` releases the slot + clears the checkpoint on that
+      outcome exactly like `done`. See `docs/known-issues.md` (K3, resolved).
+- [x] **Hit a CAPTCHA wall** (`BLOCKED_DETECTION`) — FILED A BUG, NOW FIXED. Once the
+      durable "prefill" step checkpointed ANY pre-fill hand-off (BLOCKED_DETECTION /
+      BLOCKED_MISSING_ATTR / BLOCKED_QUESTION / AWAITING_ACCOUNT_HUMAN_STEP /
+      EMERGENCY_DATA_HANDOFF), `run_step` never re-ran it — every later re-drive
+      replayed the stale cached hand-off forever, so an application could never
+      advance even after a human solved the CAPTCHA / supplied the missing
+      attribute (drilled: a `BLOCKED_MISSING_ATTR` app stayed stuck across 3 ticks).
+      Fixed: `AgentLoop._apply_outcome` now clears the checkpoint on a pure
+      pre-fill hand-off (never on `MATERIAL_REVIEW`, which is designed to stay
+      cached, #1) so the next drive re-enters `_prefill()` and picks the right
+      `resume_after_*` entry point (#4). Verified across both a normal per-tick
+      resume AND a simulated engine restart (fresh orchestrator + fresh
+      `AgentLoop`) while parked at the wall — resumability comes from the
+      PERSISTED `Application.status`, not the durable-orchestration checkpoint.
+      See `docs/known-issues.md` ("stale-checkpoint hand-off lockout", resolved).
+- [x] **Take a source offline** — PASSED (restart/tick-survival). One discovery
+      source erroring never loses another source's results (the well-behaved
+      aggregator contract, H2-honest per-source outcome persisted) — deep H2
+      vocabulary already covered by `tests/unit/test_h2_no_silent_underdelivery.py`.
+      Additionally drilled the coarser case (the adapter itself raises straight
+      through, e.g. the whole board unreachable): `AgentLoop`'s outer boundary
+      around discovery still lets the tick complete rather than stall the campaign.
+
+**Scheduler tick isolation** (CONC-2: a fresh per-tick `AgentLoop`/storage/session;
+one campaign's failure/skip never sinks another's) already has dedicated, passing
+coverage in `tests/unit/test_bugsweep_scheduler_isolation.py` and the
+`tests/unit/test_scheduler*.py` family — not re-duplicated by this story.
+
+**H-series honesty — named explicitly NOT drilled** (real infra this sandbox can't
+reach hermetically; each has its own coverage lane instead of a silent gap):
+a real Postgres kill / DBOS-backed workflow restart (`@pytest.mark.integration`,
+`tests/integration/test_dbos_orchestrator.py` + `test_durable_workflow.py`, not a
+per-PR gate); a real browser process actually dying (covered against an in-memory
+browser in the BDD browser-crash suite, not a live Playwright/patchright session);
+a real CAPTCHA/anti-bot challenge being solved (the opt-in solver port is
+unit-tested separately; this story drills the durable hand-off/resume path around
+that decision, not the solve itself); a real external job-board endpoint actually
+going offline over the network (drilled with a fake adapter, not a live outage).
 
 ### P2-13 — Source reliability matrix
 **Effort:** M · **Owner:** eng · **Depends on:** —

@@ -208,6 +208,12 @@ class TickResult:
     pipelines_started: list[str] = field(default_factory=list)
     handoffs: list[str] = field(default_factory=list)
     completed: list[str] = field(default_factory=list)
+    # P2-12 durability drill finding: application ids whose pipeline landed the
+    # TERMINAL ``status="failed"`` outcome this tick (a pre-fill that hit an
+    # unrecoverable error, e.g. a crashed browser mid-walk) — distinct from
+    # ``completed`` (a successful submit/teardown) so a failed run is never
+    # miscounted as a success.
+    failed: list[str] = field(default_factory=list)
     budget_remaining: int = 0
     budget_exhausted: bool = False
 
@@ -1313,6 +1319,21 @@ class AgentLoop:
             # DUR-2: a done workflow is complete — clear its checkpoint so it is not
             # re-driven on every restart (unbounded growth + duplicate outcomes).
             self._clear_checkpoint(app.id)
+        elif status == "failed":
+            # P2-12 durability drill finding: a pre-fill that landed a §7 TERMINAL
+            # state (FAILED) is ALSO done, just unsuccessfully — release the sandbox
+            # slot and clear the checkpoint exactly like ``done`` (otherwise the
+            # slot leaks forever, DUR-2, and every future tick would try to re-drive
+            # an application that can never legally advance past FAILED).
+            result.failed.append(str(app.id))
+            if self._capacity is not None:
+                self._capacity.release_sandbox(str(app.id))
+            self._clear_checkpoint(app.id)
+            log.info(
+                "pipeline_failed",
+                application_id=str(app.id),
+                state=str(outcome.get("failure_state")),
+            )
         elif status in ("handoff", "awaiting_final_approval"):
             handoff_state = outcome.get("handoff_state", status)
             result.handoffs.append(str(app.id))
@@ -1321,6 +1342,26 @@ class AgentLoop:
                 state = self._latest_state(app.id)
                 if state is not None:
                     self._capacity.yield_for_block(str(app.id), state)
+            # P2-12 durability drill finding: a PRE-FILL hand-off (BLOCKED_DETECTION —
+            # the CAPTCHA/anti-bot wall — BLOCKED_MISSING_ATTR, BLOCKED_QUESTION,
+            # AWAITING_ACCOUNT_HUMAN_STEP, EMERGENCY_DATA_HANDOFF) checkpoints ONLY the
+            # "prefill" step so far. ``run_step`` NEVER re-runs an already-checkpointed
+            # step, so — without this — the NEXT re-drive of this same workflow_id
+            # (``_resume_in_flight`` / ``redrive_recovered``) would replay the STALE
+            # cached hand-off dict forever and never call ``_prefill()`` again, which
+            # means the targeted ``resume_after_*`` entry point (#4, chosen by
+            # ``_run_prefill_step`` from the app's PERSISTED status) would never run —
+            # the application would be stuck at this hand-off permanently, even after
+            # the human resolves it. A drill proved this: a BLOCKED_MISSING_ATTR app
+            # never advanced across 3 ticks even after the blocking condition cleared.
+            # Clear the checkpoint so the next drive starts "prefill" clean — safe
+            # because a pure hand-off has nothing else durably recorded yet. NOT done
+            # for MATERIAL_REVIEW: that hand-off happens AFTER "material" is ALSO
+            # checkpointed and is designed to stay cached (its own re-check reads
+            # approval live via ``ctx.material_approved``, #1) — clearing there would
+            # wastefully re-run pre-fill AND regenerate material on every re-drive.
+            if status == "handoff" and handoff_state in application_pipeline.PREFILL_HANDOFF_STATES:
+                self._clear_checkpoint(app.id)
             log.info(
                 "pipeline_handoff",
                 application_id=str(app.id),
