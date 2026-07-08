@@ -426,29 +426,49 @@ async function _loadSnapshot() {
 }
 
 function _renderOffline(host) {
-  host.innerHTML = `
-    <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.75;">
-      My activity will appear here once I'm connected and running.
-    </div>`;
+  // P0-5: the offline note now rides the shared empty-state kit (icon +
+  // sentence) instead of a bespoke div, so it reads the same as every other
+  // section's soft state. 'neutral' — offline is calm, not celebratory.
+  host.innerHTML = emptyHTML(
+    'Not connected right now',
+    "My activity will appear here once I'm connected and running.",
+    '',
+    'neutral',
+  );
 }
 
 // A GATED response (engine up, setup incomplete) is NOT offline — show the
-// engine's own plain-language setup message so the owner knows what to finish.
+// engine's own plain-language setup message so the owner knows what to finish,
+// with the same one-tap "Finish setup" resume as Today's gated state (P0-5:
+// no dead-end panes).
 function _renderGated(host, data) {
   const msg = (data && data.message)
     || "Finish setup — connect a model and fill in your profile — and I can start working for you.";
-  host.innerHTML = `
-    <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.8;">${esc(msg)}</div>`;
+  host.innerHTML = gatedHTML(msg,
+    '<button type="button" class="cal-btn cal-btn-primary" id="applicant-activity-gated-setup">Finish setup</button>');
+  const btn = host.querySelector('#applicant-activity-gated-setup');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); return; }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up Applicant');
+    });
+  }
 }
 
 function _renderEmpty(host) {
   // A hopeful first-run heartbeat rather than a flat "nothing here" — the assistant
-  // is warming up, not idle.
+  // is warming up, not idle. The CTA routes to Today, where the daily plan
+  // (and anything that needs the owner) lives while the first runs spin up.
   host.innerHTML = emptyHTML(
     'Warming up',
     "No activity yet — I'm getting ready. As soon as I start "
       + 'working on your job search, everything I do shows up here.',
+    '<button type="button" class="cal-btn" id="applicant-activity-empty-today">See today’s plan</button>',
   );
+  const btn = host.querySelector('#applicant-activity-empty-today');
+  if (btn) btn.addEventListener('click', () => { _close(); setHash('today'); });
 }
 
 // Friendly one-line summary from a run's stats block, e.g.

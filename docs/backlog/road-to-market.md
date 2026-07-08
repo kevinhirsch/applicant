@@ -49,7 +49,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-2 | Seeded demo mode | M | eng | — |
 | P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; window-manager retirement + #640 watcher in the concurrent retirement lane (see note) |
 | P0-4 | De-workspace the surface | M | eng | DONE — speaker "Applicant", padlocks → absence, window titles fixed, no-model-name pin tests |
-| P0-5 | Empty states that sell | S–M | eng | — |
+| P0-5 | Empty states that sell | S–M | eng | DONE — shared kit gained the icon+sentence+CTA design; tracker/activity/results empty+gated states all route somewhere real (theme check via CI-run composition tests; live dark/light screenshot pass rides P0-6) |
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | PARTIAL — critical path trimmed + instrumented (verify reasons, get-a-key links, achievements prefill, single-year edu fix, Today essentials checklist, what-happens-next card, scripted 3-action walkthrough test); live 10-min stopwatch run on a deployed stack pending |
@@ -282,10 +282,19 @@ put there and when **so that** the product feels alive before it has data.
 - Approved one-line copy per section, in Applicant's first-person voice.
 - Shared empty-state component design agreed (icon + sentence + one real CTA).
 **DoD:**
-- [ ] With `DEMO_MODE` **off** and a fresh account, every nav section shows a designed
-      empty state — no blank panes anywhere.
-- [ ] Each empty state's CTA routes somewhere real (no dead buttons).
-- [ ] Empty states render correctly in both light and dark themes.
+- [x] With `DEMO_MODE` **off** and a fresh account, every nav section shows a designed
+      empty state — no blank panes anywhere. (Prior audit waves had already warmed most
+      copy; this story converted the last bespoke panes — Activity's offline/gated divs —
+      onto the shared `emptyHTML`/`gatedHTML` kit and gave the kit the agreed
+      icon + sentence + one-CTA design.)
+- [x] Each empty state's CTA routes somewhere real (no dead buttons): Tracker/Results
+      empty → Activity, Activity empty → Today, Tracker/Activity/Results gated →
+      "Finish setup" (`window.launchApplicantSetup`), Gallery → create a job search,
+      Documents → Import, Chat gated → connect a model.
+- [x] Empty states render correctly in both light and dark themes — copy colors are
+      CSS theme variables and the icon strokes `currentColor`
+      (pinned by `workspace/tests/js/applicantEmptyStates.test.js`); a live
+      dual-theme screenshot sweep lands with the P0-6 visual harness.
 
 ### P0-6 — Visual regression harness
 **As** the team, **I want** every surface screenshot-diffed on each PR **so that**

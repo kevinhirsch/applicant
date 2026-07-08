@@ -32,7 +32,7 @@
 
 import uiModule from './ui.js';
 import {
-  esc, _fetchJSON, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
+  esc, _fetchJSON, _toast, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
   wireRetry, pollVisible,
 } from './applicantCore.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
@@ -312,7 +312,20 @@ function _renderEmpty(host) {
     '<button type="button" class="cal-btn" id="applicant-results-empty-activity">See what I’m working on</button>',
   );
   const btn = host.querySelector('#applicant-results-empty-activity');
-  if (btn) btn.addEventListener('click', () => { _close(); setHash('activity'); });
+  if (btn) btn.addEventListener('click', () => {
+    _close();
+    // Open Activity via its own exported launcher — this modal is not
+    // registered with the hash router, so a bare setHash('activity') from
+    // here can change the URL without opening anything (Greptile on #747);
+    // the hash write stays as the fallback/URL-state keeper.
+    try {
+      if (window.applicantActivityModule && window.applicantActivityModule.openApplicantActivity) {
+        window.applicantActivityModule.openApplicantActivity();
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    setHash('activity');
+  });
 }
 
 // NOTE: the body text below keeps its straight apostrophe ("I'm") deliberately
@@ -322,15 +335,29 @@ function _renderOffline(host) {
   host.innerHTML = emptyHTML(
     'Not connected yet',
     'Your results will appear here once I\'m connected and running.',
+    '',
+    'neutral',
   );
 }
 
 // A GATED response (engine up, setup incomplete) is NOT offline — show the engine's
-// own plain-language setup message so the owner knows what to finish.
+// own plain-language setup message so the owner knows what to finish, with the
+// same one-tap "Finish setup" resume as Today's gated state (P0-5: no dead-end
+// panes).
 function _renderGated(host, data) {
   const msg = (data && data.message)
     || 'Finish setup and connect a model — your results will start appearing here.';
-  host.innerHTML = gatedHTML(msg);
+  host.innerHTML = gatedHTML(msg,
+    '<button type="button" class="cal-btn cal-btn-primary" id="applicant-results-gated-setup">Finish setup</button>');
+  const btn = host.querySelector('#applicant-results-gated-setup');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); return; }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up Applicant');
+    });
+  }
 }
 
 async function _load(showSpinner) {
