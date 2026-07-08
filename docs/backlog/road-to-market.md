@@ -52,7 +52,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P0-5 | Empty states that sell | S–M | eng | — |
 | P0-6 | Visual regression harness | M | eng | — |
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
-| P1-1 | Onboarding TTFV < 10 min | M | eng | — |
+| P1-1 | Onboarding TTFV < 10 min | M | eng | PARTIAL — critical path trimmed + instrumented (verify reasons, get-a-key links, achievements prefill, single-year edu fix, Today essentials checklist, what-happens-next card, scripted 3-action walkthrough test); live 10-min stopwatch run on a deployed stack pending |
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
 | P1-2 | Real-board proof runs | L | both | — |
 | P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
@@ -325,21 +325,39 @@ first digest in under 10 minutes **so that** I reach value before I give up.
 - Résumé-parse fixtures gathered (including the failing "UC Berkeley — 2013" single-year
   case and an achievements-bearing résumé).
 **DoD:**
-- [ ] Model-connect step offers presets + a **Verify** button that does a live
+- [x] Model-connect step offers presets + a **Verify** button that does a live
       round-trip and reports the failure *reason* (bad key / unreachable / no models)
-      with recovery copy.
-- [ ] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
+      with recovery copy. *(Presets + Test + local auto-scan already existed via the
+      shared endpoint manager; the Test round-trip now classifies the failure reason
+      server-side — 401/403 ⇒ bad key, reachable-but-empty ⇒ no models, else
+      unreachable — and `admin.js` renders a distinct recovery action per class, plus
+      per-provider "get a key" links incl. OpenRouter.)*
+- [x] Résumé import accepts PDF/docx/txt and shows a parsed preview **including
       achievements** (the onboarding review previously omitted parsed achievements).
-- [ ] The single-year education parse renders correctly; a bad parse has an explicit
+      *(The parser already extracted per-role achievement bullets; the onboarding
+      prefill now carries them into the work-history form's highlights field.)*
+- [x] The single-year education parse renders correctly; a bad parse has an explicit
       "edit" path so it never silently poisons applications. *(Deterministic layer
       hardened against the owner's real résumé — modern multi-column/sidebar PDF, split
       title|company lines, location/noise filtering, certifications section — PR #642.
-      The LLM verify layer on top is P1-1a.)*
-- [ ] Today shows an essentials checklist (model / profile / notifications) until the
-      apply-readiness gate opens, with one-tap wizard resume.
-- [ ] A "what happens next" card explains the first digest + approval flow.
+      The "UC Berkeley — 2013" lone-graduation-year case now lands the year in the
+      year field instead of polluting the institution; every prefetched education
+      entry stays editable in the review form. The LLM verify layer on top is P1-1a.)*
+- [x] Today shows an essentials checklist (model / profile / notifications) until the
+      apply-readiness gate opens, with one-tap wizard resume. *(Portal proxy derives
+      the checklist from the engine's setup status — omission-honest — and Today
+      renders it on both the gated state and the onboarding-incomplete card.)*
+- [x] A "what happens next" card explains the first digest + approval flow. *(On the
+      wizard finish screen: continuous search → first digest in Pending/channels →
+      approve, review, final OK before anything is sent.)*
 - [ ] A stopwatch test from fresh install to "digest scheduled + profile parsed + channel
       set" completes under 10 minutes; every failure state on that path has a recovery action.
+      *(Partially done: the scripted engine walkthrough — `tests/unit/
+      test_p1_1_ttfv_walkthrough.py` — pins the golden path at THREE user actions
+      (connect model → upload résumé → confirm criteria) and asserts every not-ready
+      stage reports an actionable missing list; the front-door failure states (verify
+      reasons, gated Today, wizard jump-backs) each carry a recovery action. The live
+      human stopwatch on a deployed stack with a real model remains to be run.)*
 
 ### P1-1a — LLM parse-verify layer over the deterministic résumé parse
 **As** a new user, **I want** an LLM to check and correct the parsed résumé — slotting
