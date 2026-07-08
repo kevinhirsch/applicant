@@ -197,8 +197,11 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
 - Mobile behaviour agreed (keep bottom-sheet for now; the rail collapses away on small
   viewports).
 **DoD:**
-- [ ] Login lands in the 3-pane shell: sidebar | chat (permanent center) | gadget rail —
-      no scrim, no dim, no close ×, no focus trap, no floating windows anywhere.
+- [ ] On desktop, login lands in the 3-pane shell: sidebar | chat (permanent center) |
+      gadget rail — no scrim, no dim, no close ×, no focus trap, no floating windows
+      anywhere.
+- [ ] On small viewports the rail collapses away; the mobile bottom-sheet fallback
+      remains acceptable.
 - [ ] Rail top is the notification area: it auto-expands when action-required items
       arrive and shrinks when handled; gadgets reflow below it; the rail is pinnable and
       collapses to a slim badge strip.
