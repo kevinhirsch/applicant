@@ -70,7 +70,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | DONE — reviewed-stage snapshot at the stop-boundary, promoted byte-identical on submit; literal-payload panel on every submit surface |
 | H4 | Honesty: visible provenance | M | eng | — |
-| H5 | Honesty: calibrated copy | S | eng | — |
+| H5 | Honesty: calibrated copy | S | eng | DONE — full copy sweep + overclaim-denylist pin tests (engine + front-door lanes); recap verbs & wizard render-promise calibrated |
 | PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
 | P2-1 | Terms of Use / ToS posture | M | you+eng | — |
 | P2-2 | Privacy policy + rights | M | eng/you | — |
@@ -822,9 +822,27 @@ hidden.
 
 ### H5 — Calibrated copy *(kills: overpromise at the words layer)*
 **Effort:** S · **Owner:** eng · **Depends on:** P1-3
+**Status: DONE — sweep run, findings fixed, denylist pinned in both test lanes.**
 **DoD:** Every promise in the UI is audited against actual capability state — if TeX isn't
 in the running image it does not claim "beautifully typeset PDFs"; if a source is down it
 doesn't imply full coverage. Trust breaks at the words layer, so this is load-bearing.
+- [x] Sweep run over every user-facing surface (front-door `applicant*.js` +
+      `entities.js` + `landing.html` + proxy-route strings; engine shell
+      `frontend/static/applicant`; every `src/applicant` string literal). The copy
+      base was already largely calibrated (disclaimers carry their negations; the
+      empty digest names what was searched; the missing-tools preview says the tools
+      are missing). Two live overclaims found and fixed: the Portal recap rendered
+      the `discovered` stat as "reviewed N postings" (discovery finds; review is the
+      human's step) and `pipelines_started` as "pre-filled N" (started ≠ finished) —
+      now "found N postings" / "started pre-filling N"; the wizard résumé tooltip
+      promised "I build a polished version" unconditionally — now conditioned on the
+      install's document tools, with the honest fallback named (the DoD's TeX example).
+- [x] Pinned so it can't regress: an overclaim-phrase denylist (guarantees, 100%-
+      certainty, absolute reliability, hiring-outcome promises, coverage/stealth/
+      beauty/automation overclaims) with a negation window that keeps honest
+      disclaimers passing, run as `tests/unit/test_h5_calibrated_copy.py` (engine
+      lane) + `workspace/tests/test_applicant_calibrated_copy.py` (front-door lane);
+      the absent-document-tools copy in both render paths is pinned to keep saying so.
 
 ### PAG-1 — Run the gate on the owner's real search
 **As** the owner, **I want** to run Applicant on my own real job search until I'd

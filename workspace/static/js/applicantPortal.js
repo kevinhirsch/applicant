@@ -812,9 +812,14 @@ function _recapTotals(items, since) {
 
 function _recapSentence(t, pending) {
   const parts = [];
-  if (t.discovered > 0) parts.push(`reviewed ${t.discovered} posting${t.discovered === 1 ? '' : 's'}`);
+  // H5 (calibrated copy): each verb matches what the recorded stat actually
+  // counts — `discovered` is postings FOUND by discovery (not "reviewed";
+  // review is the human's step in this product), and `pipelines_started` is
+  // pre-fills STARTED (a started pipeline may still be mid-flight or blocked,
+  // so "pre-filled N" would overclaim completion).
+  if (t.discovered > 0) parts.push(`found ${t.discovered} posting${t.discovered === 1 ? '' : 's'}`);
   if (t.shortlisted > 0) parts.push(`shortlisted ${t.shortlisted}`);
-  if (t.prefilled > 0) parts.push(`pre-filled ${t.prefilled}`);
+  if (t.prefilled > 0) parts.push(`started pre-filling ${t.prefilled}`);
   if (t.submitted > 0) parts.push(`submitted ${t.submitted}`);
   if (!parts.length) return '';
   const body = parts.length === 1
