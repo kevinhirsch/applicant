@@ -126,6 +126,7 @@ function _ensureModalEl() {
           <button class="close-btn" id="applicant-tracker-close" title="Close">✖</button>
         </div>
       </div>
+      <div id="applicant-tracker-savejob" style="flex-shrink:0;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-suggestions" style="display:none;flex-shrink:0;max-height:38vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-confirm" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-stuck" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
@@ -142,8 +143,99 @@ function _ensureModalEl() {
   const findBtn = modal.querySelector('#applicant-tracker-find-emails');
   findBtn.addEventListener('click', () => _onFindResponses(findBtn));
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+  _renderSaveJobPanel(modal.querySelector('#applicant-tracker-savejob'));
   _modalEl = modal;
   return modal;
+}
+
+// ── Save a job from any page (P1-9) ─────────────────────────────────────────
+// Paste-a-URL intake: the input forwards one posting link to the owner-gated
+// /save-job proxy, which drops it into the engine's normal dedup → parse →
+// score → pending-review pipeline tagged "added by you". The collapsed
+// disclosure carries the bookmarklet — a link the owner drags to their
+// bookmarks bar that opens ‹host›/capture?url=… in a small popup reusing the
+// session cookie (no browser extension needed).
+
+function _bookmarkletHref() {
+  const origin = (window.location && window.location.origin) || '';
+  return 'javascript:window.open('
+    + `'${origin}/capture?url='+encodeURIComponent(location.href),`
+    + "'applicant_capture','width=470,height=560');void 0";
+}
+
+function _renderSaveJobPanel(panel) {
+  if (!panel) return;
+  panel.innerHTML = `
+    <div style="padding:8px 10px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;">Add a job you found yourself</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <input type="url" class="cal-input" id="applicant-tracker-savejob-url"
+               placeholder="Paste a job posting link (https://…)"
+               style="font-size:11.5px;padding:5px 8px;flex:1;min-width:220px;"
+               aria-label="Job posting link to save" />
+        <button class="cal-btn" type="button" id="applicant-tracker-savejob-btn"
+                title="Track this job — I’ll read it, score it, and add it to your pending items">Save job</button>
+      </div>
+      <div id="applicant-tracker-savejob-result" style="font-size:11px;opacity:0.8;margin-top:4px;"></div>
+      <details style="margin-top:4px;">
+        <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">Save jobs straight from other sites (bookmarklet)</summary>
+        <div style="font-size:11px;opacity:0.75;margin:6px 0 2px;line-height:1.5;">
+          Drag this link to your bookmarks bar:
+          <a href="${esc(_bookmarkletHref())}" id="applicant-tracker-bookmarklet"
+             class="cal-btn" style="display:inline-block;margin:0 4px;text-decoration:none;font-size:11px;">Save to Applicant</a>
+          — then click it on any job posting to save that page here (you stay signed in through this browser).
+        </div>
+      </details>
+    </div>`;
+  const btn = panel.querySelector('#applicant-tracker-savejob-btn');
+  const input = panel.querySelector('#applicant-tracker-savejob-url');
+  btn.addEventListener('click', () => _saveJobByUrl(panel));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _saveJobByUrl(panel); } });
+  // Clicking the bookmarklet IN the app would just re-open the tracker page
+  // on itself — explain instead of navigating.
+  panel.querySelector('#applicant-tracker-bookmarklet').addEventListener('click', (e) => {
+    e.preventDefault();
+    _toast('Drag this link to your bookmarks bar, then click it while viewing a job posting.');
+  });
+}
+
+async function _saveJobByUrl(panel) {
+  const input = panel.querySelector('#applicant-tracker-savejob-url');
+  const btn = panel.querySelector('#applicant-tracker-savejob-btn');
+  const resultEl = panel.querySelector('#applicant-tracker-savejob-result');
+  const url = (input.value || '').trim();
+  if (!url) { resultEl.textContent = 'Paste a job posting link first.'; return; }
+  if (!/^https?:\/\//i.test(url)) {
+    resultEl.textContent = 'The link must start with http:// or https://.';
+    return;
+  }
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Saving…';
+  try {
+    const data = await _post(`${API}/save-job`, { url });
+    if (data && data.gated) {
+      resultEl.textContent = data.message || 'Finish setup first, then I can track jobs you add.';
+    } else if (data && data.engine_available === false) {
+      resultEl.textContent = 'I’m offline right now — try again in a moment.';
+    } else if (data && data.duplicate) {
+      resultEl.textContent = `${data.title ? data.title + ' — ' : ''}already tracked, no second copy was created.`;
+    } else if (data && data.saved) {
+      const scored = (data.viability_score != null) ? ` Scored ${data.viability_score}/100.` : '';
+      _toast('Saved — it will appear in your pending items to review.');
+      resultEl.textContent = `Saved${data.title ? ': ' + data.title : ''}.${scored}${data.note ? ' ' + data.note : ''}`;
+      input.value = '';
+    } else {
+      resultEl.textContent = (data && (data.note || data.message)) || 'Could not save that link.';
+    }
+  } catch (e) {
+    resultEl.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
 }
 
 function _close() {

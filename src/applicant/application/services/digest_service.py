@@ -324,9 +324,16 @@ class DigestService:
         self, campaign_id: CampaignId, criteria: SearchCriteria | None
     ) -> list[tuple]:
         """Fetch + score every posting in the campaign (the actual hot-path cost)."""
+        from applicant.core.entities.job_posting import USER_ADDED_SOURCE_KEY
+
         postings = self._storage.postings.list_for_campaign(campaign_id)
         pairs: list[tuple] = []
         for posting in postings:
+            # P1-9: a posting the USER captured directly (paste-a-URL / bookmarklet)
+            # is tagged "added by you" and is NEVER silently dropped below the
+            # viability threshold — the user asked for it explicitly, so the digest
+            # keeps it and says (honestly) how it scored instead.
+            user_added = (posting.source_key or "") == USER_ADDED_SOURCE_KEY
             row = {
                 "posting_id": posting.id,
                 "title": posting.title,
@@ -336,6 +343,7 @@ class DigestService:
                 "work_mode": posting.work_mode,
                 "salary": posting.salary,
                 "source": posting.source_key,
+                "added_by_you": user_added,
             }
             if self._scoring is not None:
                 # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
@@ -343,7 +351,15 @@ class DigestService:
                 score_fn = getattr(self._scoring, "score_for_digest", None) or self._scoring.score_posting
                 scoring = score_fn(posting, criteria)
                 if not self._scoring.is_viable(scoring):
-                    continue  # below threshold; excluded from the digest (FR-AGENT-3)
+                    if not user_added:
+                        continue  # below threshold; excluded from the digest (FR-AGENT-3)
+                    row["viability_score"] = round(scoring.score * 100)
+                    row["why_suggested"] = (
+                        f"{scoring.rationale} Kept in your digest because you added "
+                        "this role yourself, even though it scored below your threshold."
+                    )
+                    pairs.append((posting, row))
+                    continue
                 row["viability_score"] = round(scoring.score * 100)
                 row["why_suggested"] = scoring.rationale
             else:

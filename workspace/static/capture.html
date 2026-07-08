@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Applicant — Save this job</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #101014; --fg: #e8e8ec; --panel: #1a1a20; --border: rgba(255,255,255,0.12);
+    --accent: #2f6fed; --green: #50fa7b; --red: #e5484d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f6f8; --fg: #17171c; --panel: #ffffff; --border: rgba(0,0,0,0.12); }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    width: min(420px, calc(100vw - 32px)); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px; padding: 22px;
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .url {
+    font-size: 12px; opacity: 0.7; word-break: break-all; margin: 0 0 14px;
+    max-height: 60px; overflow: hidden;
+  }
+  .status { font-size: 13px; line-height: 1.5; min-height: 40px; }
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--red); }
+  .note { font-size: 12px; opacity: 0.75; margin-top: 8px; line-height: 1.5; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  button, a.btn {
+    font-size: 12.5px; padding: 7px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--fg);
+    text-decoration: none; display: inline-block;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .spinner { display: inline-block; opacity: 0.75; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Save this job</h1>
+    <p class="url" id="capture-url"></p>
+    <div class="status" id="capture-status"><span class="spinner">Saving…</span></div>
+    <div class="note" id="capture-note"></div>
+    <div class="row">
+      <a class="btn" href="/" id="capture-open-app">Open Applicant</a>
+      <button class="primary" id="capture-close">Close</button>
+    </div>
+  </div>
+<script nonce="{{CSP_NONCE}}">
+(function () {
+  var statusEl = document.getElementById('capture-status');
+  var noteEl = document.getElementById('capture-note');
+  var urlEl = document.getElementById('capture-url');
+  document.getElementById('capture-close').addEventListener('click', function () {
+    window.close();
+    // A tab the script didn't open can't be closed — fall back to the app.
+    setTimeout(function () { window.location.href = '/'; }, 250);
+  });
+
+  var params = new URLSearchParams(window.location.search);
+  var url = (params.get('url') || '').trim();
+  urlEl.textContent = url;
+
+  function show(cls, text, note) {
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+    statusEl.textContent = text;
+    noteEl.textContent = note || '';
+  }
+
+  if (!url) {
+    show('err', 'No job link was passed to this page.',
+      'Use the bookmarklet from a job posting page, or paste the link in the Tracker instead.');
+    return;
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    show('err', "That doesn't look like a web address I can open.",
+      'The link must start with http:// or https://.');
+    return;
+  }
+
+  fetch('/api/applicant/tracker/save-job', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ url: url }),
+  }).then(function (res) {
+    if (res.status === 401) {
+      show('err', 'You need to sign in first.', 'Sign in to Applicant, then use the bookmarklet again.');
+      return null;
+    }
+    return res.json().then(function (data) { return { res: res, data: data }; });
+  }).then(function (out) {
+    if (!out) return;
+    var res = out.res, data = out.data || {};
+    if (!res.ok) {
+      show('err', 'Could not save this job.', String((data && data.detail) || 'Something went wrong — try pasting the link in the Tracker.'));
+      return;
+    }
+    if (data.gated) {
+      show('err', 'Almost there — finish setup first.', String(data.message || ''));
+      return;
+    }
+    if (data.engine_available === false) {
+      show('err', 'The assistant is offline right now.', 'Try again in a moment, or paste the link in the Tracker later.');
+      return;
+    }
+    if (data.duplicate) {
+      show('ok', 'Already tracked — no second copy was created.',
+        String((data.title ? data.title + ' — ' : '') + (data.note || '')));
+      return;
+    }
+    if (data.saved) {
+      var scored = (data.viability_score != null) ? (' Scored ' + data.viability_score + '/100.') : '';
+      show('ok', 'Saved — it will appear in your pending items to review.' + scored,
+        String((data.title ? data.title + '. ' : '') + (data.note || '')));
+      return;
+    }
+    show('err', 'Could not save this job.', String(data.note || data.message || ''));
+  }).catch(function () {
+    show('err', 'Could not reach Applicant.', 'Check your connection and try again.');
+  });
+})();
+</script>
+</body>
+</html>

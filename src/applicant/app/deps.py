@@ -144,6 +144,14 @@ def get_discovery_service(container: Container = Depends(get_container)):
     return container.discovery_service
 
 
+def get_intake_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """Direct-URL intake (P1-9), per-request Session-bound like its siblings."""
+    return _resolved(services, container, "intake_service")
+
+
 def get_notification_service(container: Container = Depends(get_container)):
     """The shared notification service (container singleton).
 

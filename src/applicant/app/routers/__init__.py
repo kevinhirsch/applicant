@@ -30,6 +30,7 @@ from applicant.app.routers import (
     fonts,
     gallery,
     health,
+    intake,
     model_endpoints,
     notifications,
     onboarding,
@@ -56,6 +57,8 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(campaigns.router)
     app.include_router(criteria.router)
     app.include_router(discovery_sources.router)
+    # P1-9: direct-URL intake (save a job from any page) — same gates as discovery.
+    app.include_router(intake.router)
     app.include_router(agent_runs.router)
     app.include_router(agent_status.router)
     app.include_router(onboarding.router)

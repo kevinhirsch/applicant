@@ -61,7 +61,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
 | P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written, needs live-deploy verification (PR #659) |
 | P1-8 | Keyword / ATS match score | S | eng | — |
-| P1-9 | Save-a-job-from-any-page | S (+S) | eng | — |
+| P1-9 | Save-a-job-from-any-page | S (+S) | eng | DONE |
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
@@ -505,11 +505,20 @@ myself enter the same reviewed pipeline.
 **DoR:** Confirmed the discovery service can accept a single URL and run it through
 parse/score (intake endpoint to be added — currently no direct-URL intake exists).
 **DoD:**
-- [ ] "Add job by URL" input on Today/Tracker → new owner-gated engine intake endpoint →
+- [x] "Add job by URL" input on Today/Tracker → new owner-gated engine intake endpoint →
       existing discovery parse/score → appears in the digest tagged "added by you".
-- [ ] A bookmarklet opens `‹host›/capture?url=…` in a popup that reuses the session
-      cookie (no browser-extension packaging/store review for v1).
-- [ ] A pasted or bookmarked posting appears scored in Pending within ~1 minute.
+      *(Tracker's "Add a job you found yourself" panel → owner-gated
+      `POST /api/applicant/tracker/save-job` proxy → engine `POST /api/intake/{campaign}/url`
+      (`IntakeService`: dedup → parse via the live/fake URL fetcher → the existing
+      viability scoring) → digest rows carry `added_by_you`/`source: added-by-you`
+      and a user-added row is never silently dropped below the threshold.)*
+- [x] A bookmarklet opens `‹host›/capture?url=…` in a popup that reuses the session
+      cookie (no browser-extension packaging/store review for v1). *(Bookmarklet
+      install link in the Tracker panel; `/capture` serves `static/capture.html`,
+      auth-protected by the normal session middleware.)*
+- [x] A pasted or bookmarked posting appears scored in Pending within ~1 minute.
+      *(Immediate: intake scores synchronously and materializes the same
+      digest-approval pending action the digest deliver path creates.)*
 
 ### P1-10 — Multiple base profiles = light up multi-campaign *(competitive: parallel tracks)*
 **As** a user targeting different tracks, **I want** separate campaigns each with its
