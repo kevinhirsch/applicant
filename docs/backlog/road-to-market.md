@@ -30,10 +30,10 @@ résumé, key, and submissions. Don't conflate their ordering.
   (H1–H5) so the owner can *see* it's honest → **dogfood continuously** (don't wait for the
   end) → accumulate toward PAG-1's threshold N. Early dogfooding surfaces real bugs faster
   than any speculative polish, and reorders everything behind it.
-- **Now (eng):** P1-13 FE surfacing (flagged facts, one-tap add-to-profile — the core
-  fact-gate is merged) · finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
-  + H3 (full-fidelity review). *(P1-1a is DONE: engine PR #644 + wizard double-check
-  surfacing — the parse-verify layer runs on every base-résumé ingest.)*
+- **Now (eng):** finish P1-0 (CI secret-scanning) · H1 (receipts-not-narration)
+  + H3 (full-fidelity review) · P1-13 Q&A-growth (the last open DoD item). *(P1-1a is
+  DONE end-to-end; P1-13's flagged-facts review surfacing landed right behind it — the
+  truth gate now proposes, the human disposes, in one tap.)*
 - **Studies:** `docs/studies/` — parse-verify tier study **done & green** (free local
   floor suffices; reasoning must be off). Next study: tailoring/rewrite quality (P2-6).
 - **Now (you):** provision a fresh model key + drop your real résumé so the real instance
@@ -65,7 +65,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-10 | Multi-campaign base profiles | M | eng | — |
 | P1-11 | Easy Apply: detect & tag | S | eng | — |
 | P1-12 | Narrative FE homes for engine capabilities | M | eng | — |
-| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | PARTIAL — core+guard (PR #643) |
+| P1-13 | Truth policy: free rewrite over a fact-gate | M | eng | PARTIAL — core #643 + review surfacing; Q&A-growth remains |
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
@@ -499,7 +499,7 @@ from scratch. Closest comparable product rewrites freely — we match that freed
 keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
 **Effort:** M · **Owner:** eng · **Depends on:** the existing truthfulness rules
 (`core/rules/truthfulness.py`), attribute cloud / provenance plumbing.
-**Status: PARTIAL — core + guard seam landed (PR #643); FE surfacing + Q&A-growth remain.**
+**Status: PARTIAL — core (PR #643) + review surfacing landed; Q&A-growth remains.**
 **DoR:**
 - [x] Policy defined (above). Fact-class = employers, titles, credentials/certs,
       technologies/skills, dates, numbers. Prose-class = everything else.
@@ -509,10 +509,14 @@ keep the no-invented-facts line, which is also the P2-5 marketing claim.)*
       truth cloud are flagged; **strict** remains available. *(PR #643 —
       `TruthPolicy`/`policy_blocks` in core; `assert_no_fabrication` policy-aware across
       all three guard seams; wired via config → container.)*
-- [~] Flagged facts are **surfaced, not silently blocked** — the engine now **returns**
-      them (BALANCED never raises) and logs them; the review-UI surface with one-tap
-      "yes, that's true — add to my profile" / "remove" is the **remaining FE work**
-      (pairs with H4 visible-provenance).
+- [x] Flagged facts are **surfaced, not silently blocked** (pairs with H4): the review
+      session's `redline_state.flagged_facts` is DERIVED fresh on every open/turn against
+      the clean truth cloud (never stored — confirming a fact clears its flag on the next
+      look; an EMPTY profile derives no flags, since it can verify nothing); variants
+      record generation-time flags in `fit_scores`. The review panel renders both with
+      one-tap **"That's true — add to my profile"** (existing attributes ai-add lane,
+      confirm-gated, then a server-side recompute) and **"Remove it"** (a normal subtract
+      turn). Bounded render (8 + honest overflow note).
 - [ ] The "asks questions to learn" behaviour is reachable: the onboarding/profile
       Q&A-conflicts flow surfaces gaps the LLM wants clarified (ties to the
       confirm-conflict endpoint that already exists).

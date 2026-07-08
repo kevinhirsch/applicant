@@ -241,6 +241,13 @@ class MaterialService:
     #: JSON dict, no migration needed either) rather than ``provenance``.
     DEGRADED_FIT_SCORE_KEY = "degraded"
 
+    #: P1-13 (H4): facts the truth gate flagged at variant-generation time, kept in
+    #: the same free ``fit_scores`` dict so the review UI can surface them. For
+    #: documents the flags are DERIVED fresh on every review open/turn instead
+    #: (``_flagged_facts`` → ``redline_state``), so confirming a fact into the
+    #: profile clears its flag on the next look.
+    FLAGGED_FACTS_KEY = "flagged_facts"
+
     _DEGRADED_LABEL = (
         "The writing model was unavailable, so this draft used a basic template "
         "instead of being tailored by AI. Review it closely before approving."
@@ -855,7 +862,7 @@ class MaterialService:
         # raised earlier (LLM/parse error), ``_generate_text`` already fell back to the
         # provably-truthful deterministic reframe — which still passes through this same
         # gate — so no unverified body can ever reach ``resume_variants.add``.
-        self.assert_no_fabrication(base_source, report.text)
+        flagged = self.assert_no_fabrication(base_source, report.text)
         new_variant = ResumeVariant(
             id=ResumeVariantId(new_id()),
             campaign_id=campaign_id,
@@ -866,7 +873,12 @@ class MaterialService:
             # Dark-engine audit #40: flag a fallback-template draft so the review UI
             # can warn the user instead of presenting it as a real AI tailoring pass.
             # Stored in the existing ``fit_scores`` JSON dict (no migration needed).
-            fit_scores=({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
+            # P1-13 rides the same dict: facts the truth gate flagged at generation
+            # time, so the variant's review card can surface them (H4).
+            fit_scores={
+                **({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
+                **({self.FLAGGED_FACTS_KEY: flagged[:20]} if flagged else {}),
+            },
         )
         self._storage.resume_variants.add(new_variant)
         self._storage.commit()
@@ -1432,20 +1444,67 @@ class MaterialService:
         }
 
     # === interactive revision loop (FR-RESUME-8) ==========================
+    def _flagged_facts(self, doc, content: str) -> list[str]:
+        """Claims in ``content`` the truth gate cannot trace to the profile.
+
+        P1-13 surfacing (H4): checked against the CLEAN truth cloud (attributes +
+        base résumé — never the content itself), and DERIVED fresh on every call
+        rather than stored, so confirming a fact into the profile clears its flag
+        the next time the review is opened. Best-effort and bounded — surfacing
+        must never break the review loop.
+        """
+        if doc is None or not (content or "").strip():
+            return []
+        try:
+            source = self.true_attribute_text(doc.campaign_id)
+            if not source.strip():
+                # An EMPTY profile can verify nothing — flagging every entity in
+                # the draft would be noise, not honesty. No assessment, no flags.
+                return []
+            prose = doc.type in (DocumentType.COVER_LETTER, DocumentType.SCREENING_ANSWER)
+            return self.detect_fabrication(source, content, prose=prose)[:20]
+        except Exception:  # pragma: no cover - defensive: never break review
+            log.exception("flagged-fact derivation failed; surfacing nothing")
+            return []
+
     def open_revision(self, document_id: GeneratedDocumentId) -> RevisionSession:
         """Open (or resume) the DURABLE revision session for a document.
 
         Sessions persist to ``revision_sessions`` so the interactive loop is
         resumable across restarts (FR-RESUME-8): a reopened review picks up exactly
-        where it left off.
+        where it left off. Every open REFRESHES the flagged-facts surface in
+        ``redline_state`` (P1-13): the flags are derived, not stored, so a fact the
+        user just confirmed into the profile stops being flagged here.
         """
+        doc = self._storage.documents.get(document_id)
         existing = self._storage.revisions.get_for_material(document_id)
         if existing is not None:
-            return existing
+            state = dict(existing.redline_state or {})
+            current = str(state.get("content") or "") or str(
+                (doc.content if doc else "") or ""
+            )
+            flags = self._flagged_facts(doc, current)
+            if flags == state.get("flagged_facts", []):
+                return existing
+            if flags:
+                state["flagged_facts"] = flags
+            else:
+                state.pop("flagged_facts", None)
+            return self._save_session(
+                RevisionSession(
+                    id=existing.id,
+                    material_id=existing.material_id,
+                    status=existing.status,
+                    turns=existing.turns,
+                    redline_state=state,
+                )
+            )
+        flags = self._flagged_facts(doc, str((doc.content if doc else "") or ""))
         session = RevisionSession(
             id=RevisionSessionId(new_id()),
             material_id=document_id,
             status=RevisionStatus.OPEN,
+            redline_state=({"flagged_facts": flags} if flags else {}),
         )
         self._storage.revisions.add(session)
         self._storage.commit()
@@ -1525,12 +1584,18 @@ class MaterialService:
             self._fold_revision_feedback(doc, kind, instruction)
 
         turn = RevisionTurn(kind=kind, instruction=instruction, ai_response=ai_response)
+        # P1-13: refresh the flagged-facts surface against the post-turn content —
+        # a "remove that claim" turn clears its flag right here, no reopen needed.
+        flags = self._flagged_facts(doc, new_content)
         session = RevisionSession(
             id=session.id,
             material_id=session.material_id,
             status=session.status,
             turns=(*session.turns, turn),
-            redline_state={"content": new_content},
+            redline_state={
+                "content": new_content,
+                **({"flagged_facts": flags} if flags else {}),
+            },
         )
         return self._save_session(session)
 

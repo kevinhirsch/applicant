@@ -2860,6 +2860,104 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_syncRedlineToggle);
       else _syncRedlineToggle();
 
+      // Flagged facts (truth gate, H4): claims in this draft the engine could not
+      // trace to the profile. Surfaced, never silently blocked — each row offers
+      // one-tap "that's true — add it to my profile" (after which the engine stops
+      // flagging it) or "remove it" (a subtract turn through the normal redline
+      // loop). Documents carry LIVE flags on the session (recomputed every
+      // open/turn); résumé variants carry the flags recorded when the draft was
+      // generated (fit_scores), so those rows hide optimistically once handled.
+      const liveFlags = rl && Array.isArray(rl.flagged_facts) ? rl.flagged_facts : null;
+      const staticFlags = (!liveFlags && item.fit_scores && Array.isArray(item.fit_scores.flagged_facts))
+        ? item.fit_scores.flagged_facts : null;
+      const flaggedFacts = liveFlags || staticFlags || [];
+      if (flaggedFacts.length) {
+        const facts = document.createElement('div');
+        facts.className = 'doclib-applicant-flagged';
+        facts.style.cssText = 'font-size:12px;border:1px solid var(--color-warning,#e5a50a);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px;';
+        const head = document.createElement('div');
+        head.style.cssText = 'font-weight:600;';
+        head.textContent = flaggedFacts.length === 1
+          ? 'I couldn’t verify this detail against your profile:'
+          : `I couldn’t verify these ${flaggedFacts.length} details against your profile:`;
+        facts.appendChild(head);
+        const sub = document.createElement('div');
+        sub.style.cssText = 'opacity:0.7;';
+        sub.textContent = 'If one is true, add it to your profile so I can use it with confidence. If not, remove it before approving.';
+        facts.appendChild(sub);
+        flaggedFacts.slice(0, 8).forEach((factRaw) => {
+          const fact = String(factRaw || '').trim();
+          if (!fact) return;
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+          const label = document.createElement('span');
+          label.style.cssText = 'font-weight:600;';
+          label.textContent = fact;
+          row.appendChild(label);
+          const addBtn = document.createElement('button');
+          addBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+          addBtn.textContent = 'That’s true — add to my profile';
+          addBtn.title = 'Save this as part of your real history so future drafts can use it.';
+          addBtn.addEventListener('click', async () => {
+            addBtn.disabled = true;
+            addBtn.textContent = 'Adding…';
+            try {
+              const res = await fetch(`${API_BASE}/api/applicant/memory/attributes/ai-add`, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: fact, value: fact, confirm: true }),
+              });
+              if (!res.ok) throw new Error(await _applicantErrText(res));
+              if (uiModule) uiModule.showToast('Added to your profile');
+              if (liveFlags) {
+                // Documents: re-open the review so the engine recomputes the
+                // flags (the confirmed fact stops being flagged server-side).
+                const rr = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/review`, { method: 'POST', credentials: 'same-origin' });
+                if (rr.ok) { _renderApplicantReview(item, appId, panel, await rr.json(), card, results); return; }
+              }
+              row.remove();
+            } catch (err) {
+              addBtn.disabled = false;
+              addBtn.textContent = 'That’s true — add to my profile';
+              if (uiModule) uiModule.showError(err.message || String(err));
+            }
+          });
+          row.appendChild(addBtn);
+          const dropBtn = document.createElement('button');
+          dropBtn.className = 'doclib-card-text-btn';
+          dropBtn.textContent = 'Remove it';
+          dropBtn.title = 'Ask for this claim to be taken out of the draft.';
+          dropBtn.addEventListener('click', async () => {
+            dropBtn.disabled = true;
+            dropBtn.textContent = 'Removing…';
+            try {
+              const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/turn`, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind: 'subtract', instruction: fact }),
+              });
+              if (!res.ok) throw new Error(await _applicantErrText(res));
+              const next = await res.json();
+              if (uiModule) uiModule.showToast('Asked to remove it');
+              _renderApplicantReview(item, appId, panel, next, card, results);
+            } catch (err) {
+              dropBtn.disabled = false;
+              dropBtn.textContent = 'Remove it';
+              if (uiModule) uiModule.showError(err.message || String(err));
+            }
+          });
+          row.appendChild(dropBtn);
+          facts.appendChild(row);
+        });
+        if (flaggedFacts.length > 8) {
+          const more = document.createElement('div');
+          more.style.cssText = 'opacity:0.7;';
+          more.textContent = `…and ${flaggedFacts.length - 8} more — ask for changes below to address them.`;
+          facts.appendChild(more);
+        }
+        panel.appendChild(facts);
+      }
+
       // "Compare to original" (dark-engine audit item 22): the review session's
       // own redline_state only ever carries the latest content, never a real
       // additions/subtractions diff, so this is the one path that renders an
