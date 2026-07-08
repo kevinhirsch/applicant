@@ -398,8 +398,9 @@ are available for Phase 2.
 **Status note (audit, P1-5).** Two distinct facts. (1) The stranded commit SHAs remain
 reachable only on `origin/claude/applicant-production-ready-7iep6h` — `43670ab` (wave 1:
 observability alerting #362, learning biasing #237/#238/#239, truthfulness fail-closed)
-and `cead689` (wave 2: universal-ATS #173/#177, PII purge/retention #363, key rotation
-#361, chat-onboarding default #406); those SHAs themselves never landed on `main`.
+and `cead689` (wave 2: universal-ATS #173/#177, PII purge/retention #363, key
+rotation #361, chat-onboarding default #406); those SHAs themselves never landed on
+`main`.
 (2) The *features* those commits carry are already on `main`, landed via separate PRs
 between the commit date and now — so a cherry-pick is unnecessary and conflicts with the
 equivalent, sometimes more-evolved, implementations: e.g. #238 is wired in
