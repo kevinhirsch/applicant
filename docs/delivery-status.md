@@ -276,6 +276,14 @@ acceptance gate defined there govern launch. Landed so far:
   protected question back into the LLM path, and policy provenance markers say WHY at
   review. Claim 3 in `docs/proof/citable-invariants.md`;
   `tests/unit/test_sensitive_question_policy.py` (exploding-LLM harness).
+- **App-door hardening (P2-9).** One shared server-side strong-password policy
+  (`workspace/src/password_policy.py` — 12-char floor + worst-password/username/
+  trivial-pattern denylists, passphrase-friendly by design) at all four
+  password-setting routes; the existing login rate-limiting and TOTP 2FA flow pinned
+  (limiter before verification; Settings really calls the 2FA endpoints); HTTPS via
+  reverse proxy documented with copy-paste Caddy/Traefik/nginx snippets
+  (`docs/reverse-proxy-https.md`). Tests:
+  `workspace/tests/test_applicant_appdoor_hardening.py`.
 
 ## Boundaries that require a live deployment
 
