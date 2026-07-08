@@ -32,6 +32,9 @@ import {
   esc, _toast, _fetchJSON, _post,
   errText, loadingHTML, errorHTML, emptyHTML, gatedHTML, wireRetry,
 } from './applicantCore.js';
+import {
+  getActiveCampaignId, filterByCampaign, mountCampaignSwitcher,
+} from './applicantCampaignSwitcher.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 // The exact same owner-scoped proxy the Pending Portal reads from — Today is
@@ -48,7 +51,10 @@ let _modalA11yCleanup = null;
 let _loading = false;
 
 // The walkthrough deck: the pending items returned by the SAME `/pending`
-// fetch Portal uses, and the current position within it.
+// fetch Portal uses, and the current position within it. `_rawItems` keeps
+// the unfiltered fetch so the shared campaign switcher (P1-10) can re-filter
+// the deck client-side without a second data path.
+let _rawItems = [];
 let _items = [];
 let _idx = 0;
 let _state = 'loading'; // 'loading' | 'gated' | 'offline' | 'error' | 'ready'
@@ -138,6 +144,7 @@ function _ensureModalEl() {
           Today
         </h4>
         <div style="display:flex;gap:8px;align-items:center;">
+          <span id="applicant-today-campaign" style="display:flex;align-items:center;"></span>
           <span id="applicant-today-progress" style="font-size:11px;opacity:0.65;" aria-live="polite"></span>
           <button type="button" class="memory-toolbar-btn" id="applicant-today-refresh" aria-label="Refresh" title="Refresh today's items" style="width:26px;height:26px;padding:0;flex-shrink:0;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -160,6 +167,31 @@ function _ensureModalEl() {
   // too).
   modal.querySelector('#applicant-today-close').addEventListener('click', () => _requestClose());
   modal.querySelector('#applicant-today-refresh').addEventListener('click', () => _load(true));
+  // H1 (receipts, not narration): the "Today: N applications …" line is a
+  // projection of the engine's RECORDED runs (the same agent_runs rows the
+  // Activity page lists), so the claim links to its receipt — clicking it
+  // opens Activity, where each recorded run behind the count is inspectable.
+  // Wired once here; _loadGuardrails makes it focusable only while a line is
+  // actually shown.
+  const guardrails = modal.querySelector('#applicant-today-guardrails');
+  const openReceipts = () => {
+    try {
+      if (window.applicantActivityModule
+          && typeof window.applicantActivityModule.openApplicantActivity === 'function') {
+        _close();
+        window.applicantActivityModule.openApplicantActivity();
+        return;
+      }
+    } catch { /* fall through */ }
+    _toast('Open Activity to see the recorded runs behind these numbers');
+  };
+  guardrails.addEventListener('click', openReceipts);
+  guardrails.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !e.isComposing) {
+      e.preventDefault();
+      openReceipts();
+    }
+  });
   modal.addEventListener('click', (e) => { if (e.target === modal) _requestClose(); });
   _modalEl = modal;
   return modal;
@@ -788,27 +820,68 @@ async function _loadGuardrails() {
   // (stale numbers presented as live would be a silent lie).
   slot.textContent = '';
   slot.style.display = 'none';
+  // Hidden ⇒ not focusable/clickable as the receipt link either (H1 wiring
+  // in _ensureModalEl re-arms below when a real line renders).
+  slot.removeAttribute('role');
+  slot.removeAttribute('tabindex');
   try {
     const list = await _fetchJSON(CAMPAIGNS_API);
     const campaigns = (list && list.campaigns) || [];
     if (!campaigns.length || !campaigns[0] || !campaigns[0].id) return;
+    // P1-10: honour the shared campaign switcher's selection when it names a
+    // real campaign; otherwise keep the first-campaign fallback ("All
+    // searches" shows the first campaign's pace line, labelled per campaign
+    // by the engine's own payload).
+    const selected = getActiveCampaignId();
+    const chosen = campaigns.find((c) => String(c.id) === selected) || campaigns[0];
     const data = await _fetchJSON(
-      `${CAMPAIGNS_API}/${encodeURIComponent(campaigns[0].id)}/guardrails`,
+      `${CAMPAIGNS_API}/${encodeURIComponent(chosen.id)}/guardrails`,
     );
     const today = data && data.today;
     if (!today) return;
     slot.textContent = _formatGuardrailsLine(today);
+    // H1: the count links to its receipt — this line opens Activity, the
+    // recorded-run trail the number is computed from (see _ensureModalEl).
+    slot.title = 'Counted from my recorded runs — open Activity to see each one';
+    slot.setAttribute('role', 'button');
+    slot.setAttribute('tabindex', '0');
+    slot.setAttribute(
+      'aria-label',
+      `${slot.textContent}. Counted from my recorded runs — opens Activity.`,
+    );
+    slot.style.cursor = 'pointer';
     slot.style.display = '';
   } catch {
     // Best-effort only (see header comment) — the slot stays cleared/hidden.
   }
 }
 
+// P1-10: the shared campaign switcher, mounted into the header slot when the
+// owner has 2+ searches (empty otherwise — no dead dropdown). Best-effort and
+// fire-and-forget exactly like the guardrails line: never blocks the deck.
+async function _mountSwitcher() {
+  const slot = _modalEl && _modalEl.querySelector('#applicant-today-campaign');
+  if (!slot) return;
+  try { await mountCampaignSwitcher(slot); } catch { /* best-effort only */ }
+}
+
+// Re-filter the already-fetched deck when the shared campaign selection
+// changes (same data, new lens — no second fetch of the pending feed).
+window.addEventListener('applicant-campaign-change', () => {
+  if (!_modalEl || _modalEl.classList.contains('hidden')) return;
+  if (_state !== 'ready') return;
+  _items = filterByCampaign(_rawItems);
+  _idx = 0;
+  _renderCurrent();
+  _loadGuardrails();
+});
+
 async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
-  // Fire-and-forget: this must never block or break the pending-items deck.
+  // Fire-and-forget: these must never block or break the pending-items deck.
   _loadGuardrails();
+  _mountSwitcher();
   const host = _body();
   const slot = _progressSlot();
   if (slot) slot.textContent = '';
@@ -819,20 +892,21 @@ async function _load(showSpinner) {
     if (!host) return;
     if (data && data.gated === true) {
       _state = 'gated';
-      _items = []; _idx = 0;
+      _rawItems = []; _items = []; _idx = 0;
       _renderGated(host, data);
       _focusRenderedRegion(host);
       return;
     }
     if (data && data.engine_available === false) {
       _state = 'offline';
-      _items = []; _idx = 0;
+      _rawItems = []; _items = []; _idx = 0;
       _renderOffline(host);
       _focusRenderedRegion(host);
       return;
     }
     _state = 'ready';
-    _items = (data && data.items) || [];
+    _rawItems = (data && data.items) || [];
+    _items = filterByCampaign(_rawItems);
     _idx = 0;
     _renderCurrent();
   } catch (e) {

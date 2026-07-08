@@ -1428,6 +1428,19 @@ function _wire(panel) {
       try { localStorage.setItem(LAST_CAMPAIGN_KEY, id); } catch (_) {}
       _loadDigest(panel, id);
     });
+    // P1-10: follow the SHARED campaign switcher (applicantCampaignSwitcher.js
+    // on Today/Tracker) when it names a search this picker knows — the daily
+    // updates land on the same search the rest of the front door is looking
+    // at. '' ("All searches") is ignored: the digest is inherently
+    // per-campaign, so this panel keeps its own last-viewed search then.
+    window.addEventListener('applicant-campaign-change', (ev) => {
+      const id = ev && ev.detail ? String(ev.detail.id || '') : '';
+      if (!id || !document.contains(panel) || sel.value === id) return;
+      if (![...sel.options].some((o) => o.value === id)) return;
+      sel.value = id;
+      try { localStorage.setItem(LAST_CAMPAIGN_KEY, id); } catch (_) {}
+      _loadDigest(panel, id);
+    });
   }
   const refresh = panel.querySelector('#applicant-digest-refresh');
   if (refresh) refresh.addEventListener('click', () => _loadDigest(panel, _currentCampaign(panel)));
