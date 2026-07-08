@@ -52,6 +52,7 @@ from applicant.core.rules.ats_match_rate import (
     is_probable_wrong_ats,
 )
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
+from applicant.core.rules.underdelivery import prefill_shortfall
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
 
@@ -1629,11 +1630,22 @@ class PrefillService:
         app = app.with_status(ApplicationState.MATERIAL_REVIEW)
         app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
         result.state = app.status
+        # H2 (no silent underdelivery): a run that cleared the match-rate floor
+        # can still have left fields blank, failed some fills, or deferred
+        # screening questions. State that ON the final-approval item itself so
+        # an incomplete pre-fill never reads as "all filled, just submit".
+        shortfall = prefill_shortfall(
+            fields_detected=result.fields_detected,
+            fields_filled=result.fields_filled,
+            failed_fields=result.fields_failed,
+            deferred_questions=result.deferred_essay_questions,
+        )
         result.pending_action_id = self._emit_waiting(
             application=app,
             kind="final_approval",
             title="Final approval / submit",
             session_url=result.sandbox_session_url,
+            payload={"shortfall": shortfall} if shortfall else None,
         )
         self._persist(app)
         return result

@@ -120,6 +120,20 @@ function _yieldSummary(stats) {
   return bits.length ? bits.join(' · ') : 'No data yet';
 }
 
+// H2 (no silent underdelivery): the engine records each source's most recent
+// run outcome under `yield_stats.last_run` ({status: ok|empty|error|
+// rate_limited, found, at}). Say a shortfall per source, right on its row, so
+// a board that errored or returned nothing can't hide behind lifetime totals.
+// `ok` (or no record yet) → '' — no fabricated "all good" claim.
+function _lastRunNote(stats) {
+  const lr = stats && typeof stats === 'object' ? stats.last_run : null;
+  if (!lr || typeof lr !== 'object') return '';
+  if (lr.status === 'empty') return 'found nothing on the last check';
+  if (lr.status === 'error') return 'couldn’t be searched on the last check';
+  if (lr.status === 'rate_limited') return 'skipped on the last check to avoid over-asking';
+  return '';
+}
+
 // Known job-board brand names get their real capitalization; anything else
 // falls back to a plain title-cased guess so an unrecognized source key never
 // renders as a raw slug.
@@ -251,13 +265,18 @@ function _renderSources(host, campaignId, items) {
     .map((s) => {
       const key = esc(s.source_key);
       const on = s.enabled !== false;
+      const lastRun = _lastRunNote(s.yield_stats);
       return `
         <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px"
                title="On: I search ${esc(_sourceLabel(s.source_key))} for new roles. Off: I skip it — what I’ve already learned about it is kept in case you turn it back on.">
           <input type="checkbox" data-cs-source="${key}" ${on ? 'checked' : ''}>
           <span style="flex:1"><strong>${esc(_sourceLabel(s.source_key))}</strong>
             ${_liveBadge(s.live === true)}
-            <span style="opacity:0.6">— ${_yieldSummary(s.yield_stats)}</span></span>
+            <span style="opacity:0.6">— ${_yieldSummary(s.yield_stats)}</span>${
+              lastRun
+                ? ` <span class="cs-source-lastrun" style="color:var(--color-warning,#e0a96c)">· ${esc(lastRun)}</span>`
+                : ''
+            }</span>
         </label>`;
     })
     .join('');

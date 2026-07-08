@@ -513,7 +513,39 @@ class DigestService:
                 f"{EMPTY_DAY_NOTE} Searched: {searched}." if not rows else None
             ),
             "searched": searched,
+            # H2 (no silent underdelivery): per-source shortfall statements for
+            # enabled sources whose last discovery run underdelivered (returned
+            # nothing / failed / was rate-limit-skipped) — carried on EVERY
+            # digest, not just empty days, so three roles from one board can
+            # never quietly stand in for five boards' worth of coverage.
+            "source_shortfalls": self._source_shortfalls(campaign_id),
         }
+
+    def _source_shortfalls(self, campaign_id: CampaignId) -> list[dict]:
+        """Item-level statements for enabled sources that underdelivered (H2).
+
+        Reads the per-source ``last_run`` outcome ``DiscoveryService`` persists
+        into ``discovery_sources.yield_stats`` and maps it through the pure
+        ``core.rules.underdelivery`` vocabulary. Disabled sources are the
+        user's own choice, so they get no statement. Best-effort: a read
+        failure degrades to no *claim* (an empty list), never to a fabricated
+        "all sources delivered" line — the digest omits what it cannot verify.
+        """
+        from applicant.core.rules.underdelivery import discovery_shortfalls
+
+        outcomes: list[dict] = []
+        try:
+            for src in self._storage.discovery_sources.list_for_campaign(campaign_id):
+                if not src.enabled:
+                    continue
+                last_run = (src.yield_stats or {}).get("last_run")
+                if not isinstance(last_run, dict):
+                    continue
+                outcomes.append({"source_key": src.source_key, **last_run})
+        except Exception:  # pragma: no cover - defensive; never break the digest
+            log.warning("digest_source_shortfalls_failed", exc_info=True)
+            return []
+        return discovery_shortfalls(outcomes)
 
     def _searched_summary(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None
@@ -620,6 +652,20 @@ class DigestService:
                     f"by score — view the remaining {remaining} in the portal."
                     "</em></p>"
                 )
+        # H2 (no silent underdelivery): sources that underdelivered on the last
+        # check are stated in the email itself, even when other sources yielded
+        # rows — a digest that reads as a full sweep must actually be one.
+        shortfall_items = "".join(
+            f"<li style='margin:0 0 4px;'>{html.escape(str(s.get('message') or ''))}</li>"
+            for s in (payload.get("source_shortfalls") or [])
+            if isinstance(s, dict) and s.get("message")
+        )
+        if shortfall_items:
+            lines.append(
+                "<p style='font-size:13px;color:#8a6d3b;margin:12px 0 4px;'>"
+                "Where I came up short on the last check:</p>"
+                f"<ul style='font-size:13px;color:#8a6d3b;margin:0 0 8px;padding-left:18px;'>{shortfall_items}</ul>"
+            )
         return {
             "subject": _digest_subject(payload, top_row),
             "html": "\n".join(lines),

@@ -26,6 +26,9 @@ from applicant.core.rules.source_pacing import (
     DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
     SourcePacer,
 )
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 #: Cosine similarity above which two postings are treated as duplicates.
 _DEDUP_THRESHOLD = 0.97
@@ -141,6 +144,13 @@ class DiscoveryService:
             if order is not None
             else self._discovery.search(campaign_id, criteria)
         )
+        # H2 (no silent underdelivery): the aggregator reports what each queried
+        # source actually delivered (ok / empty / error / rate-limited). Persist
+        # it per source so the digest and the sources UI can state a shortfall
+        # at the item level. Signature-stable: an adapter/double without the
+        # attribute simply reports nothing (empty list), exactly as before.
+        outcomes = list(getattr(self._discovery, "last_source_outcomes", None) or [])
+        self._persist_source_outcomes(campaign_id, outcomes)
         # Load previously persisted postings for cross-run dedup (#196).
         existing = list(self._storage.postings.list_for_campaign(campaign_id))
         kept = self._dedup(raw, existing=existing)
@@ -159,6 +169,52 @@ class DiscoveryService:
         self._storage.commit()
         self._record_yield(campaign_id, kept)
         return kept
+
+    def _persist_source_outcomes(
+        self, campaign_id: CampaignId, outcomes: list[dict]
+    ) -> None:
+        """Record each source's last-run outcome on its registry row (H2).
+
+        Stored under ``yield_stats["last_run"]`` — the same JSON blob the
+        learned funnel accumulates in, so no schema change; the learning
+        read-modify-write (``LearningService.load_model``/``persist_model``)
+        round-trips unknown keys, so the two writers never clobber each other.
+        Best-effort: a failure here must never break the discovery run itself,
+        but it is logged loudly (an honesty feature that degrades silently
+        would defeat its own point).
+        """
+        if not outcomes:
+            return
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        try:
+            for outcome in outcomes:
+                key = str(outcome.get("source_key") or "")
+                if not key:
+                    continue
+                existing = self._storage.discovery_sources.get(campaign_id, key)
+                if existing is None:
+                    continue  # unknown key — never invent a registry row here.
+                stats = dict(existing.yield_stats or {})
+                stats["last_run"] = {
+                    "at": now,
+                    "status": str(outcome.get("status") or ""),
+                    "found": int(outcome.get("found") or 0),
+                    "error": outcome.get("error"),
+                }
+                self._storage.discovery_sources.upsert(
+                    DiscoverySource(
+                        id=existing.id,
+                        campaign_id=campaign_id,
+                        source_key=key,
+                        enabled=existing.enabled,
+                        yield_stats=stats,
+                    )
+                )
+            self._storage.commit()
+        except Exception:  # pragma: no cover - defensive: never break the run
+            log.warning("discovery_source_outcome_persist_failed", exc_info=True)
 
     def _bias_criteria_toward_converting(
         self, campaign_id: CampaignId, criteria: SearchCriteria

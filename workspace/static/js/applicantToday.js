@@ -501,6 +501,18 @@ function _renderConfirmChange(wrap, item) {
   rejectBtn.addEventListener('click', () => resolve(rejectBtn, false, 'Kept your current value'));
 }
 
+// H2 (no silent underdelivery): when pre-fill left anything unfilled, failed
+// to fill a field, or deferred a screening question, the engine attaches
+// `payload.shortfall` (with a ready-made plain-language `summary`) to the
+// final-approval item. Render it on the card itself so an incomplete pre-fill
+// never reads as "all filled, just submit". Absent shortfall → no line — an
+// honest absence, never a fabricated "everything filled" claim.
+function _finalShortfallHTML(item) {
+  const s = item && item.payload && item.payload.shortfall;
+  if (!s || !s.summary) return '';
+  return `<div class="applicant-final-shortfall" style="font-size:12px;color:var(--color-warning,#e0a96c);margin-bottom:8px;">${esc(String(s.summary))}</div>`;
+}
+
 function _renderFinal(wrap, item) {
   const hint = _meta(item.kind).hint || 'Choose how to submit — nothing is sent until you do.';
   const label = _roleCompany(item);
@@ -510,6 +522,7 @@ function _renderFinal(wrap, item) {
     <div style="font-size:12px;opacity:0.85;margin-bottom:4px;">
       <span style="color:var(--color-success,#4caf50);">Materials approved ✓</span>
     </div>
+    ${_finalShortfallHTML(item)}
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <div data-role="caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
