@@ -73,7 +73,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | H5 | Honesty: calibrated copy | S | eng | DONE — full copy sweep + overclaim-denylist pin tests (engine + front-door lanes); recap verbs & wizard render-promise calibrated |
 | PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
 | P2-1 | Terms of Use / ToS posture | M | you+eng | — |
-| P2-2 | Privacy policy + rights | M | eng/you | — |
+| P2-2 | Privacy policy + rights | M | eng/you | DONE (eng-side) — honest privacy policy published at `/privacy`, reachable pre-login/Settings/landing; export+delete verified end to end and documented; legal entity/governing law explicitly scoped out to P2-1 |
 | P2-3 | Security pass | M | eng | DONE — cross-account read isolation + .docx XXE guard + dep/secrets audit (docs/security-review.md) |
 | P2-4 | License compliance | S | eng+you | — |
 | P2-5 | Fabrication-guard evidence | S | eng | DONE — citable claim + red-team suite (docs/proof/citable-invariants.md) |
@@ -1007,9 +1007,36 @@ send"); legal entity identified for the terms to bind to.
 **Effort:** M · **Owner:** eng drafts / you approve · **Depends on:** P1-5 (purge/retention)
 **DoR:** Confirmed what data leaves the box (only to the chosen LLM provider) and the
 GDPR/CCPA export+delete mechanism (builds on P1-7 export + P1-5 purge).
+**Status: DONE (eng-side content + surfacing; legal entity naming scoped OUT).**
+A real, code-grounded privacy policy ships at `workspace/static/privacy.html`,
+served at `GET /privacy` (`workspace/app.py`, listed in `AUTH_EXEMPT_EXACT` so it's
+readable before signup, same treatment as `/login`). It documents, in plain
+language: local-first storage (workspace SQLite + engine Postgres, no
+Applicant-operated server), what's encrypted at rest (workspace `EncryptedText`/
+Fernet secrets, the engine's sealed credential vault), and every real egress point
+— the connected model endpoint (cloud vs. the opt-in `LLM_LOCAL_ONLY` mode,
+`docs/private-mode.md`), discovery's search-criteria-to-job-boards egress, ATS
+submission of approved materials, and opt-in Discord/email notification fan-out.
+It also gives an honest account of today's export/delete mechanics rather than
+overclaiming: **export** (P1-7, `Settings → Account → Download my data`,
+`GET /api/applicant/export/data.zip`) and **delete** (the campaign-level purge
+built for issue #363/NFR-PRIV-1 — `Campaign Settings → Danger Zone → Delete this
+search`, cascading across résumés/PII/applications/credentials with a
+residual-purge verification) both already work end to end; the policy names the
+real gap plainly — there is no single "delete my entire account" button — rather
+than implying one exists. Reachable from three surfaces: the login page footer
+(pre-auth), Settings → Account (post-auth, next to the export button), and the
+marketing landing page's existing `#privacy` section. Every claim is pinned
+against the real shipped source (button text, route registration, egress
+adapters) by `workspace/tests/test_applicant_privacy_policy.py`, so the page
+can't silently drift from the actual UI/behavior.
+**Scoped out (owner-blocked, tracked under P2-1):** the legal entity name,
+registered address, and governing-law jurisdiction the ToS will bind to — the
+policy has a plainly-labeled "Pending" section instead of an invented answer,
+per the DoR gap this story shares with P2-1.
 **DoD:**
-- [ ] Privacy policy published (local-first; data egress only to chosen provider).
-- [ ] Export + delete both work end to end and are documented.
+- [x] Privacy policy published (local-first; data egress only to chosen provider).
+- [x] Export + delete both work end to end and are documented.
 
 ### P2-3 — Security pass
 **Effort:** M · **Owner:** eng · **Depends on:** P1-5

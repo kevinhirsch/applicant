@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Applicant's privacy policy: what data this self-hosted job-application assistant stores, what leaves your box and when, and how to export or delete your data.">
+<title>Privacy Policy — Applicant</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2C16 7 11 9 11 14C11 16 9 16 9 13C7 16 6 19 6 21A10 10 0 0 0 26 21C26 14 19 13 18 4C17 7 15 8 16 11C17 7 16 4 16 2Z' fill='%23e06c75'/%3E%3Cpath d='M16 13C16 16 13 17 13 21A3.5 3.5 0 0 0 20 21C20 18 18 17 18 14C17 16 15 16 16 13Z' fill='%23e06c75' opacity='0.6'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #282c34;
+    --panel: #111;
+    --fg: #9cdef2;
+    --heading: #9cdef2;
+    --muted: #6b8a94;
+    --border: #355a66;
+    --accent: #e06c75;
+    --green: #50fa7b;
+    --gold: #f0ad4e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  a:hover { text-decoration: underline; }
+  header {
+    position: sticky; top: 0; z-index: 5;
+    background: rgba(17,17,17,0.92);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+  }
+  header .row {
+    max-width: 760px; margin: 0 auto; padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--heading); }
+  .brand svg { flex-shrink: 0; }
+  header nav a { color: var(--muted); font-size: 13px; font-weight: 500; margin-left: 18px; }
+  header nav a:hover { color: var(--fg); }
+  main { max-width: 760px; margin: 0 auto; padding: 36px 22px 80px; }
+  h1 { color: var(--heading); font-size: 26px; margin-bottom: 4px; }
+  .updated { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  h2 { color: var(--heading); font-size: 17px; margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--fg); font-size: 14px; margin-top: 22px; }
+  p, li { font-size: 14px; }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  code { background: #1e2228; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+  .callout {
+    border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    background: #1e2228; border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    font-size: 13.5px; color: var(--fg);
+  }
+  .callout.pending { border-left-color: var(--gold); }
+  .callout strong { color: var(--heading); }
+  footer {
+    max-width: 760px; margin: 0 auto; padding: 24px 22px 60px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px;
+  }
+  footer a { margin-right: 16px; }
+</style>
+</head>
+<body>
+
+  <header>
+    <div class="row">
+      <div class="brand">
+        <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2C16 7 11 9 11 14C11 16 9 16 9 13C7 16 6 19 6 21A10 10 0 0 0 26 21C26 14 19 13 18 4C17 7 15 8 16 11C17 7 16 4 16 2Z" fill="currentColor"/><path d="M16 13C16 16 13 17 13 21A3.5 3.5 0 0 0 20 21C20 18 18 17 18 14C17 16 15 16 16 13Z" fill="currentColor" opacity="0.6"/></svg>
+        Applicant
+      </div>
+      <nav>
+        <a href="/static/landing.html">About</a>
+        <a href="/login">Sign in</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated: 2026-07-08</p>
+
+    <p>Applicant is job-search software you run yourself — as a single self-hosted
+    deployment, not a service Applicant operates on your behalf. There is no
+    Applicant-run server that your résumé, applications, or messages pass through.
+    This page describes, honestly and specifically, what the software stores, what
+    leaves your deployment and when, and how you can export or delete your data.</p>
+
+    <div class="callout">
+      <strong>Who is responsible for your data.</strong> Because this is self-hosted
+      software, whoever deploys it — you, or whoever administers the instance you're
+      using — controls the database, the encryption keys, and the machine it runs on.
+      If you're using someone else's deployment, direct data requests to that
+      deployment's administrator; they hold the data, not Applicant.
+    </div>
+
+    <h2>Where your data lives</h2>
+    <p>A deployment is two databases, both local to wherever you (or your
+    administrator) chose to run them:</p>
+    <ul>
+      <li><strong>The workspace</strong> (this app you're using right now) keeps a
+      SQLite database — chats, memory, documents, notes, calendar, email accounts,
+      saved model endpoints, and similar workspace data.</li>
+      <li><strong>The engine</strong> (the job-search automation underneath) keeps a
+      Postgres database — your profile/résumé data, generated résumés and cover
+      letters, job postings it found, applications and their status, and the
+      screening answers you've approved.</li>
+    </ul>
+    <p>Neither database is reachable from outside the deployment's own network by
+    default, and nothing is synced to any Applicant-operated backend — there isn't
+    one.</p>
+
+    <h2>What's encrypted</h2>
+    <ul>
+      <li>Workspace secrets — email account passwords, saved signatures, webhook
+      tokens, and saved model-endpoint API keys — are encrypted at rest with a key
+      file that lives only on the machine running the workspace and is never
+      transmitted anywhere.</li>
+      <li>Engine credentials — passwords banked for filling out job applications —
+      are sealed at rest with authenticated encryption in a dedicated credential
+      store, and are never written to logs.</li>
+    </ul>
+
+    <h2>What leaves your deployment, and when</h2>
+    <p>Applicant's job is to interact with the outside world — that's the point of
+    the product. Here's exactly what goes out, and under what condition:</p>
+
+    <h3>The AI model you connect</h3>
+    <p>Chat, résumé tailoring, job scoring, and screening-answer drafting all run
+    through whichever model endpoint you connect in setup or Settings. If you point
+    Applicant at a model running on your own machine or local network, nothing
+    leaves your network for these steps. If you connect a remote/cloud provider,
+    the relevant content (chat messages, résumé/profile text, or job posting text,
+    depending on the feature) is sent to that provider — the same as using their
+    product directly. A strict "local-only" mode exists that refuses to use any
+    cloud model for these steps at all, so it can never happen silently even if a
+    cloud endpoint is also configured; it's opt-in because most people connect a
+    cloud model.</p>
+    <h3>Finding jobs</h3>
+    <p>Discovery sends your search criteria — titles, locations, and keywords you
+    configured — to job boards and search engines (through a bundled, self-hosted
+    search proxy) to find postings. This is search terms only, not your résumé or
+    profile.</p>
+    <h3>Applying to jobs</h3>
+    <p>Pre-fill automation visits the employer's own application site (their ATS)
+    and submits exactly the materials you reviewed and approved — that's the
+    product working as intended, the same as if you filled out the form yourself.</p>
+    <h3>Notifications you turn on</h3>
+    <p>Discord and email notifications are opt-in. If you configure them, the text
+    of a notification (e.g. "your digest is ready", "3 applications submitted
+    today") goes to that channel. Leave them unconfigured and everything stays in
+    the in-app notification center.</p>
+    <h3>Updating the software</h3>
+    <p>Checking for and installing updates reaches the usual code-hosting sources
+    (the same as any self-hosted app's update process) — no job-search data is
+    part of that traffic.</p>
+
+    <h2>What Applicant never does</h2>
+    <ul>
+      <li>No analytics, telemetry, or third-party tracking scripts — not in the
+      app, not on the marketing site.</li>
+      <li>No advertising, no selling or sharing data with data brokers, no use of
+      your résumé or job-search activity to train anything beyond your own
+      deployment's local memory.</li>
+      <li>No Applicant-operated server your data passes through, because there is
+      no such server.</li>
+    </ul>
+
+    <h2>Your rights: export and delete</h2>
+    <p>Applicant gives you direct, self-service tools for both — no request or
+    waiting period needed, because it's your own deployment.</p>
+
+    <h3>Export your data</h3>
+    <p>Go to <strong>Settings → Account → Your data → Download my data</strong>.
+    This produces a zip with your applications (CSV and JSON), your generated
+    documents (including rendered résumé PDFs where available), your profile, and
+    your recent activity — everything an interrupted job search would need to
+    survive a lost deployment.</p>
+
+    <h3>Delete your data</h3>
+    <ul>
+      <li><strong>A specific job search (recommended, and the most complete
+      option today):</strong> open the search's Settings and use
+      <strong>Danger Zone → Delete this search</strong>. This permanently purges
+      that search's résumés, applications, discovery sources, banked
+      credentials, and every parsed profile detail tied to it — and verifies
+      nothing was left behind before confirming the delete.</li>
+      <li><strong>Workspace data by category</strong> (chats, memory, skills,
+      notes, tasks, documents, gallery, calendar): an administrator can wipe any
+      of these from <strong>Settings → System → Danger Zone</strong>, one
+      category at a time.</li>
+    </ul>
+    <div class="callout">
+      <strong>Being honest about a gap:</strong> there is currently no single
+      "delete my entire account" button that removes everything at once across
+      both databases in one click. Deleting every job search plus wiping the
+      workspace categories above covers everything the product stores. A very
+      small number of internal audit-log entries not tied to any specific search
+      may not be swept by a per-search delete — these never include your résumé,
+      profile, or application content, only operational metadata. Because this
+      is self-hosted software, the most thorough option is always available to
+      you directly: stop the deployment and delete its database volumes.
+    </div>
+
+    <h2>How long data is kept</h2>
+    <p>By default, your data is kept until you delete it — there's no automatic
+    expiry. An administrator can optionally configure a retention window after
+    which parsed profile details and screening answers are pruned automatically,
+    even for searches you haven't deleted.</p>
+
+    <h2>Shared / multi-person deployments</h2>
+    <p>The workspace supports multiple sign-ins on one deployment, and each
+    account's chats, memory, documents, and similar workspace data are kept
+    separate. The job-search engine underneath, however, is built around a single
+    job search owner — so if an instance is shared, its job-search data (résumés,
+    applications, profile) is not partitioned per sign-in the way workspace data
+    is. If you're on a shared instance, ask its administrator how it's set up.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>This document ships as part of the product's source code, so any change to
+    it is a normal, reviewed code change like any other — there's no silent
+    editing. Re-check this page after updating your deployment.</p>
+
+    <h2>Legal entity and governing law</h2>
+    <div class="callout pending">
+      <strong>Pending.</strong> This policy does not yet name a legal entity,
+      registered address, or governing-law jurisdiction for Applicant's terms of
+      service — that decision hasn't been made yet and will be added here once it
+      is, alongside the project's Terms of Use. In the meantime, if you have a
+      question or a data request and you're running your own deployment, you are
+      the one with access to the data. For anything about the software itself,
+      use the project's public issue tracker (linked below).
+    </div>
+
+    <h2>Questions</h2>
+    <p>For a question about how the software itself behaves, open an issue on the
+    project's <a href="https://github.com/kevinhirsch/applicant" target="_blank" rel="noopener noreferrer">GitHub repository</a>.
+    For a question about data on a specific deployment, contact that
+    deployment's administrator.</p>
+  </main>
+
+  <footer>
+    <a href="/static/landing.html">About Applicant</a>
+    <a href="/login">Sign in</a>
+    <a href="https://github.com/kevinhirsch/applicant" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+  </footer>
+
+</body>
+</html>

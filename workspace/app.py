@@ -196,6 +196,7 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        "/privacy",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
 
@@ -1184,6 +1185,13 @@ async def serve_capture(request: Request):
 @app.get("/login")
 async def serve_login(request: Request):
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+
+@app.get("/privacy")
+async def serve_privacy(request: Request):
+    """Privacy policy (P2-2): a public, unauthenticated page so a prospective
+    or logged-out user can read it before signing up. Listed in
+    AUTH_EXEMPT_EXACT above alongside /login for the same reason."""
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/privacy.html"))
 
 @app.get("/api/version")
 async def get_version():
