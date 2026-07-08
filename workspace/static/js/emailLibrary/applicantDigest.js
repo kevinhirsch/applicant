@@ -624,7 +624,19 @@ export function buildDigestRow(row, ctx = {}) {
       title: 'Get a deep link to the posting, your prepared materials, and a checklist — you apply yourself',
       attrs: { type: 'button' },
     });
-    assist.addEventListener('click', () => showEasyApplyAssist(getCampaignId(), row));
+    // Disabled while the consent/brief fetches are in flight (mirrors
+    // _onAlignment's busy pattern) so a double-click can't stack two modals.
+    assist.addEventListener('click', async () => {
+      const original = assist.innerHTML;
+      assist.disabled = true;
+      assist.innerHTML = 'Opening…';
+      try {
+        await showEasyApplyAssist(getCampaignId(), row);
+      } finally {
+        assist.disabled = false;
+        assist.innerHTML = original;
+      }
+    });
     actions.appendChild(assist);
   }
 

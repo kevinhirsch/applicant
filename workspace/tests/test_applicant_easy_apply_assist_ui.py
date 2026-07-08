@@ -53,6 +53,22 @@ def test_digest_row_imports_and_calls_the_assist_entry_point():
     assert re.search(r"showEasyApplyAssist\(getCampaignId\(\),\s*row\)", src)
 
 
+def test_assist_button_is_disabled_while_the_fetch_is_in_flight():
+    """Mirrors _onAlignment's busy pattern (CodeRabbit, PR #769): disable +
+    label swap before the await, restore in finally -- a double-click can't
+    stack two modals."""
+    src = _digest_src()
+    m = re.search(
+        r"applicant-digest-easy-apply-assist[\s\S]*?actions\.appendChild\(assist\)", src
+    )
+    assert m, "assist button wiring not found"
+    body = m.group(0)
+    assert "assist.disabled = true" in body
+    assert re.search(r"await showEasyApplyAssist\(getCampaignId\(\),\s*row\)", body)
+    assert "finally" in body
+    assert "assist.disabled = false" in body
+
+
 # ── consent screen: a real stop-boundary, not decoration ───────────────────
 
 
@@ -101,6 +117,24 @@ def test_entry_point_checks_server_recorded_consent_not_a_local_flag():
     assert "localStorage" not in body
     assert "/api/applicant/easy-apply/consent" in body
     assert "consent.given" in body
+
+
+def test_stale_responses_never_clobber_a_newer_flow():
+    """Staleness guard (CodeRabbit, PR #769): each showEasyApplyAssist call
+    claims a module-level request token and every await bails when
+    superseded, so posting A's late response can't clobber posting B's
+    modal."""
+    src = _assist_src()
+    assert "let _activeRequestId = 0" in src
+    m = re.search(r"export async function showEasyApplyAssist[\s\S]*?(?=^export default)", src, re.M)
+    assert m
+    body = m.group(0)
+    assert "const requestId = ++_activeRequestId" in body
+    assert "requestId !== _activeRequestId" in body
+    # The brief loader threads the token through and re-checks after ITS await.
+    lm = re.search(r"async function _loadAndShowBrief[\s\S]*?" + _NEXT_FN, src, re.M)
+    assert lm, "_loadAndShowBrief definition not found"
+    assert "requestId !== _activeRequestId" in lm.group(0)
 
 
 # ── assisted-mode brief: opens elsewhere, never submits ─────────────────────

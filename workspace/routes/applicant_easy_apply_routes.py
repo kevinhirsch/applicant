@@ -41,7 +41,12 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
+from src.applicant_engine import (
+    ApplicantEngineClient,
+    EngineError,
+    shared_engine_http_client,
+    soft_degrade,
+)
 from src.auth_helpers import require_engine_owner
 
 logger = logging.getLogger(__name__)
@@ -62,7 +67,9 @@ def setup_applicant_easy_apply_routes() -> APIRouter:
     async def get_consent(request: Request) -> dict:
         """Whether the assisted-mode consent screen has been accepted yet."""
         _require_owner(request)
-        async with ApplicantEngineClient() as engine:
+        # Ride the shared app-lifetime pool (falls back to a private pool on a
+        # bare test app) -- same pattern as applicant_activity/health/portal.
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             try:
                 data = await engine.easy_apply_consent_status()
             except EngineError as exc:
@@ -74,7 +81,7 @@ def setup_applicant_easy_apply_routes() -> APIRouter:
     async def give_consent(request: Request) -> dict:
         """Record that the owner read and accepted the consent screen."""
         _require_owner(request)
-        async with ApplicantEngineClient() as engine:
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             try:
                 data = await engine.easy_apply_consent_give()
             except EngineError as exc:
@@ -93,7 +100,7 @@ def setup_applicant_easy_apply_routes() -> APIRouter:
         given) / 404 (posting missing/not Easy-Apply) pass straight through.
         """
         _require_owner(request)
-        async with ApplicantEngineClient() as engine:
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             try:
                 campaigns = await engine.list_campaigns()
             except EngineError as exc:

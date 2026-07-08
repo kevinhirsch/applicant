@@ -20,6 +20,12 @@ import { showToast } from '../ui.js';
 
 const API_BASE = window.location.origin;
 
+// Staleness guard: each showEasyApplyAssist call (and each consent-screen
+// accept click — a fresh user intent) claims a new token; every await checks
+// it afterwards and bails when superseded, so posting A's slow consent/brief
+// response can never clobber the modal the user just opened for posting B.
+let _activeRequestId = 0;
+
 function _esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -158,13 +164,15 @@ function _showBrief(brief) {
   if (docsBtn) docsBtn.addEventListener('click', _openDocuments);
 }
 
-async function _loadAndShowBrief(campaignId, postingId) {
+async function _loadAndShowBrief(campaignId, postingId, requestId) {
   try {
     const brief = await _fetchJSON(
       `${API_BASE}/api/applicant/easy-apply/${encodeURIComponent(campaignId)}/${encodeURIComponent(postingId)}`,
     );
+    if (requestId !== _activeRequestId) return; // superseded — a newer flow owns the modal now
     _showBrief(brief);
   } catch (e) {
+    if (requestId !== _activeRequestId) return;
     showToast(e.message || "Couldn't load that role's assisted-apply brief right now.");
   }
 }
@@ -177,17 +185,22 @@ export async function showEasyApplyAssist(campaignId, row) {
   const postingId = row && row.posting_id;
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   if (!postingId) { showToast("This role doesn't have assisted-apply details yet."); return; }
+  const requestId = ++_activeRequestId;
   let consent;
   try {
     consent = await _fetchJSON(`${API_BASE}/api/applicant/easy-apply/consent`);
   } catch (e) {
+    if (requestId !== _activeRequestId) return; // superseded mid-flight
     showToast(e.message || "Couldn't check assisted-apply settings right now.");
     return;
   }
+  if (requestId !== _activeRequestId) return; // superseded mid-flight
   if (consent && consent.given) {
-    await _loadAndShowBrief(campaignId, postingId);
+    await _loadAndShowBrief(campaignId, postingId, requestId);
   } else {
-    _showConsentScreen(() => _loadAndShowBrief(campaignId, postingId));
+    // The accept click is a fresh user intent, so it claims its own token —
+    // it must never be suppressed by a flow that started before it.
+    _showConsentScreen(() => _loadAndShowBrief(campaignId, postingId, ++_activeRequestId));
   }
 }
 

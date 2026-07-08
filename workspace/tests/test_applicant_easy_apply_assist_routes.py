@@ -101,6 +101,17 @@ def test_unauthenticated_consent_get_is_rejected(monkeypatch):
     assert r.status_code == 401
 
 
+def test_unauthenticated_consent_post_is_rejected(monkeypatch):
+    """The WRITE is gated too (DISC-15b: require_engine_owner on reads AND
+    writes) -- an unauthenticated caller can never record consent."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(authed=False))
+    r = c.post("/api/applicant/easy-apply/consent")
+    assert r.status_code == 401
+    # The engine write is never even attempted.
+    assert "consent_give" not in FakeEngine.calls
+
+
 def test_unauthenticated_assist_get_is_rejected(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(authed=False))
