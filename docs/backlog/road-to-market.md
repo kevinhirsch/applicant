@@ -54,7 +54,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | DONE — critical path trimmed + instrumented (verify reasons, get-a-key links, achievements prefill, single-year edu fix, Today essentials checklist, what-happens-next card, scripted 3-action walkthrough test); **live stopwatch run on a standing stack with a real model PASSES** — machine critical-path latency ~14–15s (gate opens), far under the 10-min bar (`docs/proof/p1-live-verification.md`) |
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
-| P1-2 | Real-board proof runs | L | both | — |
+| P1-2 | Real-board proof runs | L | both | PARTIAL — dry-run scope set by owner #719 (no submit, no trial accounts). LIVE: real browser stack detects real-board fields on 2 targets (Greenhouse/Figma 15 fields, Lever/Gopuff 81) with the stop boundary respected + a live model call through the engine adapter; evidence + reusable DOM fixtures + harness in `docs/proof/p1-2/`. Fixed a false-alarm in the live dry-run test (single-page-board `is_final_submit_page`). Procedure-only (deploy box / Integration Lane): live browser *navigation* (sandbox proxy blocks launched-browser TLS), Workday (egress-denied here), Camoufox stealth under real network, and the submit→confirmation→tracker leg (hermetic only, out of live scope by #719) |
 | P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
 | P1-4 | Notifications out of the box | M | eng | DONE — per-channel Send test (single-channel engine lane + honest failure), branded digest email, Today checklist "Set up" jump, failed-push in-app error notes; digest send-now already reachable via the rail |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
@@ -476,12 +476,45 @@ the draft twin, confidence must score every area; wizard surfacing landed right 
 - Greenhouse and Lever employer trial accounts created with self-owned test postings.
 - Decision recorded on Workday scope (see P4-DEC-2 / prove via takeover vs. defer).
 **DoD:**
-- [ ] Full loop runs against ≥2 targets: discovery (URL injection OK) → prefill → stop at
+- [~] Full loop runs against ≥2 targets: discovery (URL injection OK) → prefill → stop at
       review → human approve → final submit → confirmation detected → tracker updates.
-- [ ] Screen recording + engine run log + DOM snapshots saved to `docs/proof/` per target;
+      *(Scope narrowed by owner #719: dry-run only, no submit, no trial accounts. LIVE
+      proof — real browser stack detects real-board fields on 2 targets and stops at the
+      review boundary — done for Greenhouse (Figma, 15 fields) + Lever (Gopuff, 81
+      fields); see `docs/proof/p1-2/`. The human-approve → final-submit → confirmation →
+      tracker leg is proven hermetically (`test_prefill_service` / `test_loop_end_to_end`
+      / `test_final_say_invariant`, 62 passing) and is procedure-only live — it needs
+      self-owned test postings the owner declined.)*
+- [x] Screen recording + engine run log + DOM snapshots saved to `docs/proof/` per target;
       snapshots re-used as form-fill regression fixtures.
-- [ ] Every failure found is fixed or filed with a severity.
-- [ ] Stealth stack (camoufox headful in-container) exercised under real network; findings logged.
+      *(Per-target screenshots + a machine-readable run log (`evidence.json`, incl. state
+      trace and every detected field) + the captured real-board DOM snapshots under
+      `docs/proof/p1-2/dom/`, which the harness `dom` mode replays as regression fixtures.
+      No video screen recording was produced — screenshots + traces stand in.)*
+- [x] Every failure found is fixed or filed with a severity.
+      *(Fixed: the live dry-run test asserted `not is_final_submit_page()`, a false alarm
+      on single-page boards where fields + submit share one page — now keys the boundary
+      off `is_confirmation_page()`, severity medium. Filed: launched-browser egress blocked
+      by the sandbox proxy (env limitation); Workday egress-denied here — both in the proof
+      doc's Findings.)*
+- [~] Stealth stack (camoufox headful in-container) exercised under real network; findings logged.
+      *(Not run live: Camoufox binary not fetched and no live browser egress in this
+      sandbox. The Chromium path launched + rendered here; the coherent-fingerprint live
+      check + Camoufox parity are Integration-Lane tests (`test_real_browser.py`) for a
+      deploy box. Logged in `docs/proof/p1-2/` "procedure-only".)*
+
+**Status note (P1-2).** Marked **PARTIAL**, honestly. Owner decision #719 (dry-run only,
+no employer trial accounts) removes the live submit→confirmation→tracker leg from scope,
+so a literal "full loop incl. submit on ≥2 live targets" is not achievable as written; it
+is proven hermetically instead. What genuinely ran **live** in the build environment: the
+production browser stack (patchright + Chromium) detecting the real form fields of two live
+ATS postings (Greenhouse/Figma, Lever/Gopuff) with the pre-fill stop boundary respected
+(no confirmation page, nothing typed/submitted), plus one real model call through the
+engine's `OpenAICompatibleLLM` adapter. Evidence, the reusable DOM fixtures, and both proof
+harnesses (`scripts/proof/ats_dryrun_proof.py`, `scripts/proof/live_model_probe.py`) live in
+`docs/proof/p1-2/`. Remaining-for-DONE (needs a deploy box with direct egress): live browser
+*navigation* to a board (the sandbox proxy blocks launched-browser TLS), Workday via the
+takeover/CDP path, and the Camoufox stealth stack under real network.
 
 ### P1-3 — Honest health panel
 **As** a self-hoster, **I want** every silent capability degrade surfaced with a fix-it
