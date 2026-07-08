@@ -534,6 +534,80 @@ def test_flagged_facts_missing_document_raises_not_found(svc):
         svc.flagged_facts_for_document(GeneratedDocumentId(new_id()))
 
 
+# === visible provenance (H4) ==============================================
+def _seed_h4_profile(storage, cid):
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId
+
+    for name, value in (("Skills", "Python"), ("Employer", "Acme Corp")):
+        storage.attributes.add(
+            Attribute(id=AttributeId(new_id()), campaign_id=cid, name=name, value=value)
+        )
+    storage.commit()
+
+
+@pytest.mark.unit
+def test_line_provenance_traces_each_line_to_named_sources(svc, storage):
+    """H4: the review surface can trace each generated line to the owner's real
+    history — every fact-class token names WHICH profile attribute supports it,
+    and unsourced tokens come back flagged (empty sources), never hidden."""
+    cid = CampaignId(new_id())
+    _seed_h4_profile(storage, cid)
+    doc = _store_doc(
+        storage, cid, "I built Python systems at Acme.\nI ran Kubernetes at Stanford."
+    )
+    out = svc.line_provenance_for_document(doc.id)
+    assert out["document_id"] == str(doc.id)
+    assert out["campaign_id"] == str(cid)
+    assert out["type"] == "cover_letter"
+    assert out["checked"] is True
+    assert len(out["lines"]) == 2
+    first = {f["token"]: f["sources"] for f in out["lines"][0]["facts"]}
+    assert first["Python"] == ["your profile (Skills)"]
+    assert first["Acme"] == ["your profile (Employer)"]
+    second = {f["token"]: f["sources"] for f in out["lines"][1]["facts"]}
+    assert second["Kubernetes"] == []  # unsourced -> flagged, not hidden
+    assert second["Stanford"] == []
+    assert set(out["unsourced"]) == {"Kubernetes", "Stanford"}
+
+
+@pytest.mark.unit
+def test_line_provenance_agrees_with_flagged_facts(svc, storage):
+    """The provenance view's unsourced set is exactly the fabrication guard's
+    flagged set (same tokenizers/matchers), so the two review panels can never
+    disagree about what is or isn't traceable."""
+    cid = CampaignId(new_id())
+    _seed_h4_profile(storage, cid)
+    doc = _store_doc(
+        storage, cid, "I deployed Python on Kubernetes at Stanford in 2015."
+    )
+    prov = svc.line_provenance_for_document(doc.id)
+    flagged = svc.flagged_facts_for_document(doc.id)
+    assert set(prov["unsourced"]) == set(flagged["flagged"])
+
+
+@pytest.mark.unit
+def test_line_provenance_empty_document_says_unchecked_not_clean(svc, storage):
+    """H-series: a document with no reviewable text must return checked=False
+    with a reason — the absence of a check must never render as a clean check."""
+    cid = CampaignId(new_id())
+    doc = _store_doc(storage, cid, "")
+    out = svc.line_provenance_for_document(doc.id)
+    assert out["checked"] is False
+    assert out["reason"]
+    assert out["lines"] == []
+    assert out["unsourced"] == []
+
+
+@pytest.mark.unit
+def test_line_provenance_missing_document_raises_not_found(svc):
+    from applicant.core.errors import NotFound
+    from applicant.core.ids import GeneratedDocumentId
+
+    with pytest.raises(NotFound):
+        svc.line_provenance_for_document(GeneratedDocumentId(new_id()))
+
+
 # === non-AI-looking filters every pass (FR-RESUME-5) ======================
 @pytest.mark.unit
 def test_post_filter_strips_emdash_and_banned_and_scores_voice(svc):

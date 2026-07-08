@@ -60,6 +60,9 @@ class _FakeEngine:
     async def document_flagged_facts(self, document_id):
         return await self._dispatch("document_flagged_facts", document_id)
 
+    async def document_provenance(self, document_id):
+        return await self._dispatch("document_provenance", document_id)
+
     async def review_document(self, document_id):
         return await self._dispatch("review_document", document_id)
 
@@ -194,6 +197,54 @@ def test_flagged_facts_degrades_to_empty_on_engine_error(monkeypatch):
     resp = _make_client().get("/api/applicant/documents/doc-1/flagged-facts")
     assert resp.status_code == 200
     assert resp.json() == {"document_id": "doc-1", "flagged": []}
+
+
+def test_line_provenance_forwards_document_id_and_passes_through(monkeypatch):
+    """H4 visible provenance: the review surface reads the per-line trace — which
+    named source (profile attribute / base résumé / the posting) supports each
+    fact-class token, unsourced ones flagged. The proxy forwards the document id
+    and hands the engine JSON back unchanged."""
+    payload = {
+        "document_id": "doc-1",
+        "campaign_id": "camp-9",
+        "type": "cover_letter",
+        "checked": True,
+        "lines": [
+            {
+                "line": "I used Python at Acme.",
+                "facts": [
+                    {"token": "Python", "sources": ["your profile (Skills)"]},
+                    {"token": "Acme", "sources": []},
+                ],
+            }
+        ],
+        "unsourced": ["Acme"],
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/doc-1/provenance")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("document_provenance", ("doc-1",))
+
+
+def test_line_provenance_requires_auth(monkeypatch):
+    _patch_engine(monkeypatch, result={"document_id": "doc-1", "lines": []})
+    resp = _make_client(authed=False).get("/api/applicant/documents/doc-1/provenance")
+    assert resp.status_code in (401, 403)
+
+
+def test_line_provenance_degrades_to_honest_unchecked_on_engine_error(monkeypatch):
+    """H-series: when the provenance check can't run, the proxy must say so
+    (checked=False + reason) rather than returning an empty-but-clean-looking
+    payload — the absence of a check must never render as a check."""
+    _patch_engine(monkeypatch, error=EngineError("boom", status=None))
+    resp = _make_client().get("/api/applicant/documents/doc-1/provenance")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["document_id"] == "doc-1"
+    assert body["checked"] is False
+    assert body["reason"]
+    assert body["lines"] == [] and body["unsourced"] == []
 
 
 def test_application_documents_passes_degraded_flag_through(monkeypatch):

@@ -2076,6 +2076,106 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       slot.appendChild(wrap);
     }
 
+    // "Where this came from" (H4 — visible provenance). Extends the review's
+    // existing provenance surfaces ("What I drew on", the company-research
+    // panel, the flagged-facts double-check) down to the LINE level: for each
+    // line of the draft, which named source supports its specifics — a profile
+    // attribute (by name), the base résumé, or the posting being addressed —
+    // and which specifics trace to nothing (shown flagged, never hidden; they
+    // are the same tokens the double-check panel above acts on). Best-effort
+    // own fetch so a slow/failed lookup never blocks the redline below — but
+    // unlike the panels above, a FAILED check renders an honest "couldn't
+    // check" note rather than nothing: the absence of a check must never read
+    // as a clean check (H-series).
+    async function _loadApplicantLineProvenance(item, slot) {
+      slot.innerHTML = '';
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/provenance`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(String(res.status));
+        data = await res.json();
+      } catch {
+        data = { checked: false, reason: "I couldn't check where this draft's details came from just now." };
+      }
+      _renderApplicantLineProvenance(slot, data);
+    }
+
+    function _renderApplicantLineProvenance(slot, data) {
+      slot.innerHTML = '';
+      if (!data || data.checked === false) {
+        // The check did not run — say so plainly instead of rendering nothing
+        // (nothing would be indistinguishable from "all sourced").
+        const note = document.createElement('div');
+        note.className = 'doclib-applicant-provenance-unchecked';
+        note.style.cssText = 'font-size:11px;opacity:0.75;';
+        note.textContent = (data && data.reason) || "I couldn't check where this draft's details came from just now.";
+        slot.appendChild(note);
+        return;
+      }
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      // Only lines that carry checkable specifics are worth listing.
+      const traced = lines.filter(l => l && Array.isArray(l.facts) && l.facts.length);
+
+      const details = document.createElement('details');
+      details.className = 'memory-item doclib-applicant-provenance';
+      details.style.cssText = 'font-size:11px;border:1px solid var(--border);border-radius:6px;padding:6px 8px;opacity:0.9;';
+
+      const summary = document.createElement('summary');
+      summary.style.cssText = 'cursor:pointer;font-weight:600;opacity:0.8;';
+      const unsourcedCount = Array.isArray(data.unsourced) ? data.unsourced.length : 0;
+      summary.textContent = unsourcedCount
+        ? `Where this came from — ${unsourcedCount} detail${unsourcedCount === 1 ? '' : 's'} not in your profile yet`
+        : 'Where this came from — every specific traces to your own history';
+      summary.title = 'Line by line: which of your real details support what I wrote. Anything I could not trace to your profile, your résumé, or this posting is marked so you can double-check it above.';
+      details.appendChild(summary);
+
+      const body = document.createElement('div');
+      body.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow:auto;';
+      details.appendChild(body);
+
+      if (!traced.length) {
+        const none = document.createElement('div');
+        none.style.cssText = 'opacity:0.7;';
+        none.textContent = 'This draft has no specific facts (names, skills, dates, numbers) to trace — it is plain prose.';
+        body.appendChild(none);
+      }
+
+      traced.forEach(l => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;flex-direction:column;gap:2px;border-bottom:1px dashed var(--border);padding-bottom:4px;';
+
+        const lineEl = document.createElement('div');
+        lineEl.style.cssText = 'opacity:0.75;white-space:pre-wrap;';
+        const text = String(l.line || '');
+        lineEl.textContent = text.length > 160 ? text.slice(0, 160) + '…' : text;
+        row.appendChild(lineEl);
+
+        const chips = document.createElement('div');
+        chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
+        l.facts.forEach(f => {
+          if (!f || typeof f.token !== 'string' || !f.token.trim()) return;
+          const chip = document.createElement('span');
+          const sources = Array.isArray(f.sources) ? f.sources.filter(s => typeof s === 'string' && s.trim()) : [];
+          chip.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid ' +
+            (sources.length ? 'var(--border);' : 'var(--orange, #ffb86c);color:var(--orange, #ffb86c);');
+          // Model-derived token + source labels: textContent only (no markup sink).
+          chip.textContent = sources.length
+            ? `${f.token} — from ${sources[0]}`
+            : `${f.token} — not in your profile yet`;
+          chip.title = sources.length
+            ? `Supported by ${sources.join(', ')}.`
+            : 'I could not trace this to anything you told me — confirm or remove it in the double-check panel above.';
+          chips.appendChild(chip);
+        });
+        if (chips.children.length) {
+          row.appendChild(chips);
+          body.appendChild(row);
+        }
+      });
+
+      slot.appendChild(details);
+    }
+
     // Pull a readable message out of the proxy's error JSON ({error,message,...}).
     async function _applicantErrText(res) {
       try {
@@ -2997,6 +3097,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const flaggedSlot = document.createElement('div');
       panel.appendChild(flaggedSlot);
       _loadApplicantFlaggedFacts(item, appId, flaggedSlot, panel, card, results);
+
+      // "Where this came from" (H4): the per-line provenance trace — which of
+      // the owner's real details (profile attribute / base résumé / this
+      // posting) support each specific in the draft, unsourced ones marked.
+      // Best-effort own fetch; a failed check renders an honest "couldn't
+      // check" note (never nothing, never a fake clean check).
+      const provenanceSlot = document.createElement('div');
+      panel.appendChild(provenanceSlot);
+      _loadApplicantLineProvenance(item, provenanceSlot);
 
       // Redline: the engine returns a redline_state describing what changed
       // versus the base. The engine's side-by-side highlighted redline

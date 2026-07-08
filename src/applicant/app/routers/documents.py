@@ -582,6 +582,27 @@ def flagged_facts(document_id: str, material=Depends(get_material_service)) -> d
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.get("/{document_id}/provenance")
+def line_provenance(document_id: str, material=Depends(get_material_service)) -> dict:
+    """Per-line provenance for a generated document (H4 — visible provenance).
+
+    Traces every line of a stored draft back to the candidate's real history:
+    each fact-class token (skill / employer / credential / date / number) is
+    matched against the NAMED ground-truth components — each profile attribute,
+    the uploaded base résumé, the target posting's own context — so the review
+    UI can show where each line came from. Tokens tracing to nothing come back
+    as ``unsourced`` (flagged, never hidden), using the same fabrication-guard
+    matchers as ``/flagged-facts`` so the two views always agree. A document
+    with no reviewable text returns ``checked: false`` with a reason rather
+    than rendering the absence of a check as a clean check. Pure detection: no
+    write, no LLM call. 404 when the document does not exist.
+    """
+    try:
+        return material.line_provenance_for_document(GeneratedDocumentId(document_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.post("/{document_id}/review", status_code=201)
 def open_review(document_id: str, material=Depends(get_material_service)) -> dict:
     """Open the interactive review session for a document (FR-RESUME-8)."""

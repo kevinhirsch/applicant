@@ -69,7 +69,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | H1 | Honesty: receipts, not narration | M | eng | — |
 | H2 | Honesty: no silent underdelivery | M | eng | — |
 | H3 | Honesty: full-fidelity review | S | eng | — |
-| H4 | Honesty: visible provenance | M | eng | — |
+| H4 | Honesty: visible provenance | M | eng | DONE — per-line provenance trace in the review panel (engine `/provenance` read + "Where this came from") |
 | H5 | Honesty: calibrated copy | S | eng | — |
 | PAG-1 | Personal Acceptance Gate (founder dogfood) | L | both | — |
 | P2-1 | Terms of Use / ToS posture | M | you+eng | — |
@@ -704,9 +704,30 @@ review-before-submit boundary (ties to P2-8).
 
 ### H4 — Visible provenance *(kills: "it made something up in my name")*
 **Effort:** M · **Owner:** eng · **Depends on:** H3
+**Status: DONE — per-line provenance traced end to end (engine read → owner-gated proxy →
+"Where this came from" in the review panel).**
 **DoD:** The review screen traces each generated line to the owner's real history (the
 fabrication guard + `LearnedProvenance` made legible); anything unsourced is flagged, not
 hidden.
+- [x] Engine: `trace_line_provenance` (`core/rules/truthfulness.py`) reuses the fabrication
+      guard's own tokenizers/matchers to trace every fact-class token on every line to the
+      NAMED ground-truth component — each profile attribute by name, the base résumé, the
+      posting being addressed — so the provenance view can never disagree with the guard;
+      `MaterialService.line_provenance_for_document` → `GET /api/documents/{id}/provenance`
+      (a doc with no reviewable text returns `checked: false` + reason, never a fake clean
+      check).
+- [x] Front door: owner-gated proxy (`require_engine_owner` — provenance names the owner's
+      attributes/résumé) → `documentLibrary.js` "Where this came from" panel in the open
+      review, extending the existing provenance surfaces ("What I drew on" =
+      `LearnedProvenance`, the company-research panel, the P1-13 flagged-facts
+      double-check): per line, each specific is chipped with the source that supports it;
+      unsourced specifics are marked "not in your profile yet" (same caution tone,
+      actionable in the double-check panel above) — flagged, not hidden.
+- [x] Honesty: a failed/unavailable check renders an explicit "couldn't check" note (proxy
+      degrades to `checked: false` + reason), never nothing and never a clean check.
+- [x] Tests pin the chain: core-rule unit tests (incl. unsourced-set ≡ guard-flag-set
+      equality, strict + prose), MaterialService + router tests, proxy pass-through /
+      auth / honest-degrade tests, and source-composition tests on the review panel.
 
 ### H5 — Calibrated copy *(kills: overpromise at the words layer)*
 **Effort:** S · **Owner:** eng · **Depends on:** P1-3

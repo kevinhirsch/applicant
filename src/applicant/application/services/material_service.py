@@ -82,6 +82,7 @@ from applicant.core.rules.truthfulness import (
     normalize_emdashes,
     policy_blocks,
     strip_banned_phrases,
+    trace_line_provenance,
     unsupported_claims,
     unsupported_prose_claims,
     voice_alignment,
@@ -754,6 +755,86 @@ class MaterialService:
             "type": doc.type.value,
             "flagged": flagged,
         }
+
+    def _provenance_sources(
+        self, campaign_id: CampaignId, application_id
+    ) -> list[tuple[str, str]]:
+        """The candidate's ground truth as LABELLED components (H4).
+
+        The same material :meth:`true_attribute_text` flattens for the
+        fabrication guard, kept apart and named so the review surface can say
+        WHICH source supports each generated fact: every profile attribute by
+        name, the uploaded base résumé, and (when the document targets an
+        application) the posting's own company/role context. Labels are plain
+        language — they are shown verbatim at review time.
+        """
+        components: list[tuple[str, str]] = []
+        try:
+            attrs = self._storage.attributes.list_for_campaign(campaign_id)
+        except Exception:
+            self._note_silent_degradation("material_service.py")
+            attrs = []
+        for a in attrs:
+            name = str(getattr(a, "name", "") or "").strip()
+            val = getattr(a, "value", None)
+            if name and val:
+                components.append((f"your profile ({name})", str(val)))
+        resume_text = self._base_resume_text(campaign_id)
+        if resume_text:
+            components.append(("your base résumé", resume_text))
+        if application_id is not None:
+            ctx = self._posting_context(application_id)
+            if ctx:
+                components.append(("the job posting you're applying to", ctx))
+        return components
+
+    def line_provenance_for_document(self, document_id: GeneratedDocumentId) -> dict:
+        """Per-line provenance of a stored draft: what traces where (H4).
+
+        Visible provenance for the review screen: every non-empty line of the
+        document with its fact-class tokens, each traced to the named
+        ground-truth component(s) that support it (a profile attribute by name,
+        the base résumé, the target posting) — or to nothing, in which case it
+        is returned as unsourced so the UI flags it rather than hiding it.
+        Reuses the exact fabrication-guard tokenizers/matchers
+        (:func:`trace_line_provenance`), so this view can never disagree with
+        :meth:`flagged_facts_for_document`.
+
+        Pure detection: no raise besides 404, no write, no LLM call. Honesty
+        (H-series): a document with no reviewable text returns
+        ``checked: False`` with a reason — the absence of a check is said out
+        loud, never rendered as a clean check.
+        """
+        doc = self._storage.documents.get(document_id)
+        if doc is None:
+            raise NotFound(f"no such document {document_id}")
+        base = {
+            "document_id": str(doc.id),
+            "campaign_id": str(doc.campaign_id),
+            "type": doc.type.value,
+        }
+        content = doc.content or ""
+        if not content.strip():
+            return {
+                **base,
+                "checked": False,
+                "reason": "This document has no text content to trace.",
+                "lines": [],
+                "unsourced": [],
+            }
+        prose = doc.type in (DocumentType.COVER_LETTER, DocumentType.SCREENING_ANSWER)
+        sources = self._provenance_sources(doc.campaign_id, doc.application_id)
+        traced = trace_line_provenance(sources, content, prose=prose)
+        unsourced: list[str] = []
+        lines: list[dict] = []
+        for lp in traced:
+            facts = []
+            for f in lp.facts:
+                facts.append({"token": f.token, "sources": list(f.sources)})
+                if f.unsourced and f.token not in unsourced:
+                    unsourced.append(f.token)
+            lines.append({"line": lp.line, "facts": facts})
+        return {**base, "checked": True, "lines": lines, "unsourced": unsourced}
 
     # === fit scoring / selection (FR-RESUME-6/7) ==========================
     def score_fit(
