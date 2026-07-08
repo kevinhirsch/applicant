@@ -128,11 +128,13 @@ def test_honors_the_allowed_files_exclusion_list(tmp_path):
     assert findings == []
 
 
-def test_skips_lockfiles(tmp_path):
+def test_scans_lockfiles_too(tmp_path):
+    # A tokenized dependency URL is exactly the kind of credential that lands
+    # in machine-generated lockfiles — they must NOT be excluded from the scan.
     repo = _init_repo(tmp_path)
-    _write_and_track(repo, "uv.lock", _FAKE_SK_KEY + '\n')
+    _write_and_track(repo, "uv.lock", "https://user:ghp_" + "a" * 40 + "@github.example/pkg.git\n")
     findings = _run_scan_against(repo)
-    assert findings == []
+    assert any("uv.lock" in f for f in findings)
 
 
 def test_main_exits_nonzero_when_findings_present(tmp_path):

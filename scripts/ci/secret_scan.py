@@ -32,12 +32,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Paths this scan does not need to look inside: lockfiles (huge, machine-
-# generated, never hand-authored so unlikely to gain a credential this scan
-# would need to catch), and node_modules if ever vendored transiently.
+# Directories this scan does not need to look inside. Lockfiles are NOT
+# excluded: a tokenized dependency URL (https://user:ghp_...@host/...) lands in
+# exactly those machine-generated files, and the prefix-anchored patterns below
+# don't false-positive on package hashes.
 _EXCLUDED_DIR_PARTS = {"node_modules", ".git"}
-_EXCLUDED_SUFFIXES = {".lock"}
-_EXCLUDED_NAMES = {"uv.lock", "package-lock.json"}
+_EXCLUDED_SUFFIXES: set[str] = set()
+_EXCLUDED_NAMES: set[str] = set()
 
 # (label, compiled pattern). Each requires an actual key-shaped payload, not
 # just a provider prefix, so illustrative snippets and structural
