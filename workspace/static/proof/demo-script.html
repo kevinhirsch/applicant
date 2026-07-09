@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Demo video storyboard (recording pending)</title><style>
+  :root { color-scheme: light dark; }
+  body { margin:0; background:#f4f5f6; font-family: Arial, Helvetica, sans-serif; color:#111; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#0f1115; color:#e6e8eb; }
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 16px 60px; }
+  .banner {
+    font-size: 12.5px; line-height:1.6; background:#fff8e1; color:#6b5b12;
+    border:1px solid #f0e2a6; border-radius:8px; padding:12px 14px; margin-bottom:22px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .banner { background:#2a250f; color:#e8d68a; border-color:#4a3f1a; }
+  }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .sub { font-size: 13.5px; color:#666; margin: 0 0 24px; }
+  @media (prefers-color-scheme: dark) { .sub { color:#a7acb3; } }
+  .stage { margin: 28px 0 8px; }
+  .stage h2 { font-size: 16px; margin: 0 0 4px; }
+  .stage p { font-size: 13px; color:#555; line-height:1.6; margin: 0 0 10px; }
+  @media (prefers-color-scheme: dark) { .stage p { color:#b7bcc3; } }
+  .callout {
+    font-size: 12.5px; line-height:1.6; background:#eef4ff; color:#1a3f7a;
+    border:1px solid #cfe0fb; border-radius:8px; padding:10px 12px; margin: 10px 0 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .callout { background:#0f1f3a; color:#a9c6ff; border-color:#1e355c; }
+  }
+  .redline {
+    white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.65; background:#fff; border:1px solid #e2e4e8;
+    border-radius: 8px; padding: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .redline { background:#161a20; border-color:#2a2f38; }
+  }
+  .redline-add { background:#e6ffed; color:#045d1e; }
+  .redline-sub { background:#ffeef0; color:#9e1c23; text-decoration:line-through; }
+  .redline-eq { color:#444; }
+  @media (prefers-color-scheme: dark) {
+    .redline-add { background:#0d3320; color:#7ee2a0; }
+    .redline-sub { background:#3a1418; color:#ff9aa2; }
+    .redline-eq { color:#aab0b8; }
+  }
+  .turn { font-size: 12.5px; color:#555; border-left: 3px solid #cfd4db; padding: 4px 0 4px 10px; margin: 8px 0; }
+  @media (prefers-color-scheme: dark) { .turn { color:#b7bcc3; border-left-color:#3a4049; } }
+  .turn b { color:inherit; }
+  footer { margin-top: 34px; font-size: 11.5px; color:#8a8f98; }
+</style></head><body><div class="wrap"><div class="banner"><strong>Proof sample</strong> &mdash; the 2-minute demo video itself needs a live stack + owner recording (the one remaining piece of this story); this is the shot-by-shot script for it, verbatim from <code>docs/proof/demo-script.md</code>.</div><pre style="white-space:pre-wrap;font-size:12.5px;line-height:1.6;"># P4-3 — 2-minute demo video: shot-by-shot script
+
+**Status:** ready to record. Everything below is grounded in the real, already-shipped
+golden path (digest → review → approve) and the P0-2 `DEMO_MODE` seed — there is no
+open design question left, only the recording itself.
+
+**What this is not:** a video file. Recording it needs a live stack (`docker compose`
+or the local dev boot in the root `CLAUDE.md`) with the P0-2 demo seed loaded, screen
+capture software, and the owner&#x27;s voice reading the narration lines below. That
+capture is the one remaining piece of P4-3 this environment cannot produce — see
+`docs/proof/p4-3/README.md`.
+
+## Before recording
+
+`DEMO_MODE=1` must be set on the **engine (`api`)** service — it gates
+`/api/dev/seed` and the front-door demo-status proxy the &quot;Demo data&quot; banner reads;
+the workspace container itself carries no such flag, it only relays the engine&#x27;s
+`demo_active` status via `ENGINE_URL` (defaults to `http://api:8000` in compose).
+
+```bash
+# Bring up the stack (or local dev boot — see root CLAUDE.md &quot;Commands&quot; section)
+# with DEMO_MODE=1 set on the api service, then seed the demo dataset against the
+# running Postgres:
+DEMO_MODE=1 DATABASE_URL=postgresql+psycopg://applicant:applicant@localhost:5432/applicant \
+  uv run python scripts/seed_demo.py
+```
+This loads the demo campaign, 7 scored postings, applications spanning every
+front-door state, a résumé variant under an open redline session, and the
+&quot;Demo data&quot; banner + one-click &quot;Clear demo data&quot; affordance (`applicantDemoBanner.js`).
+Sign in, confirm the &quot;Demo data&quot; banner is visible top of screen, then record.
+
+## Shot list (target: ~2:00, narration in quotes is a suggestion, not a script to
+read verbatim)
+
+All screen names/labels/button text below are the literal shipped strings (file:line
+cited per row) — nothing paraphrased, so the recording can be checked against source.
+
+| # | Time | Screen | Action | Narration cue |
+|---|------|--------|--------|----------------|
+| 1 | 0:00–0:12 | Landing page (`workspace/static/landing.html`, `#trust`) | Scroll past the hero straight to &quot;What Applicant does, and what it promises&quot; | &quot;Applicant finds postings, tailors your résumé, pre-fills the application — and never submits anything without you.&quot; |
+| 2 | 0:12–0:22 | Sign in → **Today** (nav label `applicantNav.js:72`; this is the Pending-Actions **Portal** home base the rest of this doc calls &quot;Portal&quot; — same screen, `#portal` hash route) | Land on Today; point at the rail: waiting-on-you queue, pipeline counts, momentum/streak | &quot;This is Today — my one home base. Everything waiting on me shows up right here.&quot; |
+| 3 | 0:22–0:38 | Today rail → **Daily digest** gadget (`applicantRail.js:294`) | Click the gadget&#x27;s **&quot;Send it now&quot;** button (`applicantRail.js:310`) to trigger `POST /campaigns/{id}/digest/deliver` live, on camera; toast reads &quot;Sent — your digest is on its way.&quot; (`applicantRail.js:320`) | &quot;I don&#x27;t wait for the overnight run — I can send myself today&#x27;s digest right now.&quot; |
+| 4 | 0:38–0:55 | Portal digest card → **&quot;Review today&#x27;s roles&quot;** (`applicantPortal.js:1504`) | Open the digest; show the 7 scored roles, each with a score + a plain-language &quot;why suggested&quot; rationale (Acme Robotics 88, Wayne Logistics 83, Globex 81, …) — the exact rows `docs/proof/p4-3/digest-sample.html` renders | &quot;Every match is scored, with the reason stated in plain English — not a black box.&quot; |
+| 5 | 0:55–1:15 | **Documents** (Library) card for the Globex — Staff Software Engineer, Platform résumé → **&quot;Review and edit&quot;** (`documentLibrary.js:3016`) opens the redline panel (`_renderApplicantReview`, `documentLibrary.js:3076`) | Show the redline (additions in green, removals struck through — the same `docs/proof/p4-3/tailoring-diff.html` diff), then the free-text &quot;ask for a change&quot; box and turn history | &quot;Here&#x27;s the résumé Applicant tailored for this specific role, with every change tracked — add a line, cut a line, or just tell it what to change in plain English.&quot; |
+| 6 | 1:15–1:28 | Same panel | Click **&quot;Approve resume&quot;** (`documentLibrary.js:2940`) | &quot;Nothing goes out until I say so.&quot; |
+| 7 | 1:28–1:45 | Today/Portal → the `AWAITING_FINAL_APPROVAL` demo card | Open the pending final-approval item; show the live-takeover hand-off point (never actually clicking submit) | &quot;The one thing Applicant can never do on its own is hit final submit — that&#x27;s always a human action.&quot; |
+| 8 | 1:45–1:55 | **Tracker** (nav label `applicantNav.js:75`) | Show its buckets — Applied, Awaiting response, Not moving forward, Went quiet, Archived (`applicantTracker.js:68-72`) — with the two seeded rows: one plain &quot;Awaiting response&quot;, one carrying an interview-invited signal | &quot;And here&#x27;s the tracker — everything that&#x27;s already out the door, plus what came back.&quot; |
+| 9 | 1:55–2:00 | Today | Return to Today; end on the momentum/streak numbers | &quot;One dashboard, one daily loop, and you&#x27;re never out of the room.&quot; |
+
+Recording note: the demo dataset also seeds a visible **&quot;Demo data — N sample
+application(s) and related activity are loaded. Nothing here is real.&quot;** banner with a
+**&quot;Clear demo data&quot;** button (`applicantDemoBanner.js:40-48`) — leave it on screen for
+shot 2 so the recording is honest about being a seeded walkthrough, not live user data.
+
+## Why these beats and not others
+
+- **Digest → review → approve → tracker is the actual daily loop** (root `CLAUDE.md`:
+  &quot;Daily loop: digest → review (redline add/subtract/free-text, `documentLibrary.js`)
+  → approve/decline → final-submit (Portal / live takeover, `applicantRemote.js`)&quot;).
+  The script does not invent a path; it walks the one the product already ships.
+- **Every screen and label named above is real** — the &quot;Send it now&quot; button text is
+  the literal shipped string (`applicantRail.js`), the redline colors/turn history are
+  the literal shipped `documentLibrary.js` review panel, and the 7 scored postings +
+  their scores/rationales are the literal P0-2 seed data (see
+  `src/applicant/application/services/dev_seed.py`) — the same data
+  `docs/proof/p4-3/digest-sample.html` and `docs/proof/p4-3/tailoring-diff.html`
+  already render as static proof assets, so a viewer can sanity-check the video
+  against those files.
+- **The final-submit boundary gets its own beat (#7)** because it is Applicant&#x27;s
+  sharpest, least-common claim (see `docs/competitive-teardown.md`, P4-4): review-
+  before-submit as an architectural invariant, not a policy toggle — worth 13 seconds
+  of screen time on its own rather than folding it into another beat.
+- **No EEO/demographic or work-authorization screen is shown.** Those questions are
+  never AI-answered in either lane (`core/rules/sensitive_fields.py`) and are not a
+  visually interesting beat for a 2-minute cut; the script omits them rather than
+  force an awkward pause into the golden path.
+
+## After recording
+
+Attach the file (or a hosted link) here as `docs/proof/p4-3/demo-video.mp4` (or a
+link in this file), flip this line from &quot;ready to record&quot; to &quot;recorded&quot;, and drop
+the same file into `workspace/static/landing.html`&#x27;s hero `.shot` placeholder
+(replace the `.ph` placeholder markup with a real `&lt;video&gt;` element or a poster
+image + link — the placeholder&#x27;s HTML comment already flags this exact spot) —
+no other template change needed.
+</pre></div></body></html>
