@@ -283,7 +283,7 @@ picking future work, verify against the code, not the status column.
 retirement lane (not yet on main); P0-6 (visual-regression harness) is sequenced last and
 blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lands, then P0-6.
 
-**Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy), P2-4 (license/#722),
+**Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy),
 P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account for the
 live-automation half only — see below); live-deploy — P2-10 (ATS-parse),
 P2-12 (durability drills), P2-13's live board-coverage confirmation (the hermetic quality-matrix +

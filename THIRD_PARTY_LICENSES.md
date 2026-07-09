@@ -3,6 +3,16 @@
 Applicant vendors and depends on third-party software. This file records the
 notices and obligations that travel with that software.
 
+> **Repo license note (P2-4 / P3-3 / P4-DEC-1).** The repository as a whole
+> (engine + vendored front door) is licensed **MIT** — see [`LICENSE`](LICENSE)
+> at the repo root and [`docs/licensing.md`](docs/licensing.md) for the
+> recorded open-source / free-donate decision and the fork-license
+> compatibility check (root and `workspace/` are both MIT; MIT-over-MIT, no
+> license change or conflict). This ledger covers `frontend/static/` and the
+> engine's own stack libraries; the vendored front door under `workspace/`
+> keeps its own, more detailed ledger in `workspace/ACKNOWLEDGMENTS.md` and
+> `workspace/licenses/`.
+
 ## Vendored frontend — Applicant design system (MIT)
 
 The UI shell under `frontend/static/` is vendored from the owner's **MIT-licensed
