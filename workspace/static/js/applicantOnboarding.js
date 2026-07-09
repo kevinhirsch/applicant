@@ -1004,11 +1004,11 @@ async function _renderChannels() {
   const qhTz = qh.tz || _browserTz;
   _setBody(`
     <h2 class="ao-step-title">Notifications ${_tip('How I reach you — Discord and/or email — with your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
-    <p class="ao-step-desc">Add a Discord webhook and/or an email address so I can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
+    <p class="ao-step-desc">Add a Discord webhook and/or an email address so I can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later. Discord and phone push (ntfy) are <strong>recommended</strong>: they need no DNS setup and can't land in a spam folder. Email works too, but it's only as reliable as your own mail server's setup — see the deliverability tips below before you lean on it.</p>
     <div class="admin-card">
       <div class="settings-col">
         <div class="settings-row">
-          <label class="settings-label">Discord webhook
+          <label class="settings-label">Discord webhook <span class="ao-ch-recommended" style="font-size:10px;font-weight:600;color:#2f6fed;background:rgba(47,111,237,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Recommended</span>
             ${_tip('In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.')}
           </label>
           <input id="ao-ch-discord" class="settings-select" type="text" placeholder="https://discord.com/api/webhooks/…" value="${esc(cur.discord_webhook_url || '')}" />
@@ -1016,44 +1016,50 @@ async function _renderChannels() {
         </div>
         <div class="settings-row"><span id="ao-ch-test-discord-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div class="settings-row">
-          <label class="settings-label">Email / SMTP
-            ${_tip('An Apprise-style URL, e.g. mailto://user:pass@gmail.com. You can add several, comma-separated.')}
-          </label>
-          <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
-          <button type="button" class="cal-btn" id="ao-ch-test-email" title="Save your channels, then send a test email only">Send test</button>
-        </div>
-        <div class="settings-row"><span id="ao-ch-test-email-msg" style="font-size:11px;margin-left:auto;"></span></div>
-        <div class="settings-row">
-          <label class="settings-label">Phone push (ntfy)
+          <label class="settings-label">Phone push (ntfy) <span class="ao-ch-recommended" style="font-size:10px;font-weight:600;color:#2f6fed;background:rgba(47,111,237,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Recommended</span>
             ${_tip('A free ntfy topic URL for instant push to your phone, e.g. ntfy://ntfy.sh/your-secret-topic. Install the ntfy app, subscribe to the same topic, and urgent action alerts arrive as push notifications. Add several, comma-separated.')}
           </label>
           <input id="ao-ch-ntfy" class="settings-select" type="text" placeholder="${cur.ntfy_configured ? '•••• already saved — leave blank to keep' : 'ntfy://ntfy.sh/your-secret-topic'}" value="" />
           <button type="button" class="cal-btn" id="ao-ch-test-ntfy" title="Save your channels, then send a test push to your phone only">Send test</button>
         </div>
         <div class="settings-row"><span id="ao-ch-test-ntfy-msg" style="font-size:11px;margin-left:auto;"></span></div>
+        <div class="settings-row">
+          <label class="settings-label">Email / SMTP <span style="font-size:10px;font-weight:600;color:#8a6d3b;background:rgba(138,109,59,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Needs setup for reliable delivery</span>
+            ${_tip('An Apprise-style URL, e.g. mailto://user:pass@gmail.com. You can add several, comma-separated. Sending through your own SMTP host? Add SPF/DKIM/DMARC records for that domain or digests can land in spam — see the deliverability tips below.')}
+          </label>
+          <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
+          <button type="button" class="cal-btn" id="ao-ch-test-email" title="Save your channels, then send a test email only">Send test</button>
+        </div>
+        <div class="settings-row"><span id="ao-ch-test-email-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add any of these — or skip for now. In-app updates are always on with zero setup: everything I send shows up in your Pending portal either way.</div>
       </div>
     </div>
     <div class="admin-card ao-help">
       <h2>How to set these up</h2>
-      <p style="margin:4px 0 2px;"><strong>Discord webhook</strong></p>
+      <p style="margin:4px 0 2px;"><strong>Discord webhook</strong> (recommended)</p>
       <ol style="margin:0 0 8px 18px;padding:0;">
         <li>In your Discord server: <strong>Server Settings → Integrations → Webhooks</strong>.</li>
         <li><strong>New Webhook</strong>, choose the channel for your updates, then <strong>Copy Webhook URL</strong>.</li>
         <li>Paste it into the Discord webhook field above.</li>
+      </ol>
+      <p style="margin:4px 0 2px;"><strong>Phone push (ntfy)</strong> (recommended) — free instant push to your phone:</p>
+      <ol style="margin:0 0 8px 18px;padding:0;">
+        <li>Install the <strong>ntfy</strong> app (iOS / Android) or open <code>ntfy.sh</code>.</li>
+        <li>Pick a hard-to-guess topic name and subscribe to it in the app.</li>
+        <li>Paste <code>ntfy://ntfy.sh/your-topic</code> above (self-hosted: <code>ntfy://your-host/your-topic</code>).</li>
       </ol>
       <p style="margin:4px 0 2px;"><strong>Email / SMTP</strong> — an Apprise-style URL:</p>
       <ul style="margin:0 0 6px 18px;padding:0;">
         <li>Gmail: <code>mailto://you:APP_PASSWORD@gmail.com</code> — use a Google <em>App Password</em>, not your login password.</li>
         <li>Other SMTP: <code>mailtos://user:pass@smtp.yourhost.com:587</code></li>
         <li>Add several by separating them with commas.</li>
+        <li>Sending through your own domain? Publish SPF, DKIM, and DMARC DNS records for
+          that domain, or mail providers may quietly file your digest as spam — full
+          record examples and a pre-launch checklist are in
+          <code>docs/email-deliverability.md</code>.</li>
+        <li>Want a nicer From name or a Reply-To? Add <code>?from=Applicant&amp;reply=you@yourdomain.com</code>
+          to the URL above — Apprise supports both, no code change needed.</li>
       </ul>
-      <p style="margin:4px 0 2px;"><strong>Phone push (ntfy)</strong> — free instant push to your phone:</p>
-      <ol style="margin:0 0 8px 18px;padding:0;">
-        <li>Install the <strong>ntfy</strong> app (iOS / Android) or open <code>ntfy.sh</code>.</li>
-        <li>Pick a hard-to-guess topic name and subscribe to it in the app.</li>
-        <li>Paste <code>ntfy://ntfy.sh/your-topic</code> above (self-hosted: <code>ntfy://your-host/your-topic</code>).</li>
-      </ol>
       <p style="margin:0;opacity:0.6;">Full URL formats: github.com/caronc/apprise/wiki</p>
     </div>
     <div class="admin-card">

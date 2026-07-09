@@ -93,7 +93,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-5 | Release engineering | M | eng | — |
 | P3-6 | Workspace DB migrations | M | eng | — |
 | P3-7 | Platform matrix | S–M | eng+you | — |
-| P3-8 | Digest deliverability | S–M | eng | — |
+| P3-8 | Digest deliverability | S–M | eng | DONE — Discord/ntfy badged "Recommended" in Settings → Notifications (wizard + Settings share the renderer), email marked as needing SMTP setup; SPF/DKIM/DMARC guidance + a pre-launch checklist for the SMTP path (`docs/email-deliverability.md`); live inbox-placement testing documented as an operator procedure, not run (no mail egress from this dev container) |
 | P4-1 | Positioning statement | S | you+eng | — |
 | P4-2 | Landing page | M | eng | — |
 | P4-3 | Proof assets | M | eng+you | — |
@@ -1484,8 +1484,44 @@ post-launch schema change upgrades cleanly in a test.
 OR multi-arch built; Docker-on-WSL2 path tested.
 
 ### P3-8 — Digest deliverability *(operational)*
-**Effort:** S–M · **Owner:** eng · **DoD:** ntfy/Discord defaulted as the recommended
-channel; SPF/DKIM guidance shipped for the SMTP path.
+**Effort:** S–M · **Owner:** eng · **DoD:**
+- [x] ntfy/Discord defaulted as the recommended channel.
+      *(Settings → Notifications / the onboarding wizard's Notifications step
+      — one shared renderer, `applicantOnboarding.js`'s `_renderChannels` —
+      badges the Discord and phone-push (ntfy) rows "Recommended" and marks
+      the "How to set these up" entries for both the same way; the step
+      description leads with "Discord and phone push (ntfy) are recommended:
+      they need no DNS setup and can't land in a spam folder." Email keeps
+      full functionality (it is still the escalation ladder's required
+      15-minute backstop) but is visually and textually positioned as the
+      option that needs the most setup for the weakest delivery guarantee.)*
+- [x] SPF/DKIM guidance shipped for the SMTP path.
+      *(`docs/email-deliverability.md`: DNS record examples for SPF, DKIM,
+      AND DMARC (the DoD names SPF/DKIM; DMARC is included too since it's the
+      record that tells receivers what to do on an SPF/DKIM failure and is
+      part of the same 15-minute DNS setup) — plus From/Reply-To via
+      Apprise's existing `?from=`/`?reply=` URL params (no code change
+      needed, just documented), a spam-trigger copy review of the shipped
+      digest template, an honest bounce-handling limitation writeup, and a
+      pre-launch checklist. The Notifications panel's email field points at
+      the doc directly from its tooltip and its "How to set these up" card.)*
+
+**Status note (P3-8).** The plain-text multipart-alternative item sometimes
+bundled with "deliverability" work turned out to be **already shipped by the
+send library**: Apprise's SMTP plugin builds a `multipart/alternative` MIME
+message (HTML + an auto-derived plain-text part) any time it is asked to send
+HTML, which the digest email always is (`apprise_notifier.py`'s
+`_looks_like_html` -> `body_format=HTML`) — verified by reading
+`apprise/plugins/email/base.py`'s `notify_format == NotifyFormat.HTML`
+branch, not assumed. No `List-Unsubscribe` header and no bounce/DSN parsing
+exist — both are named as tracked, honest gaps in the doc rather than left
+unstated. **Live inbox-placement testing (the actual "does this land in the
+inbox, not spam" question) was NOT run**: this dev container has no egress to
+a real mail service, so that verification is a documented operator procedure
+(mail-tester.com / Google Postmaster Tools against a real SMTP relay + DNS
+records) rather than a result reported here — stated plainly in the doc
+itself, in keeping with this project's honesty invariants. Front-door pins:
+`workspace/tests/test_applicant_p3_8_deliverability.py`.
 
 ---
 
