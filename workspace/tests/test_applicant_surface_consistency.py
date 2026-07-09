@@ -54,14 +54,20 @@ def _fill(body):
     return val
 
 
-def _leaf(sel):
-    """The final compound of a selector — the element the rule actually paints.
-    ``.modal-content .grab-handle`` → ``.grab-handle`` (a child, not the window),
-    so ancestor-scoped child rules don't get mistaken for the surface itself."""
-    # drop leading comments, collapse combinators to spaces, take the last token
+def _leaves(sel):
+    """The painted leaf of EACH selector in a comma-separated list. A grouped
+    rule ``.modal-content, .grab-handle .x { … }`` shares one fill across every
+    selector, so we must inspect each one's final compound — ``.modal-content``
+    AND ``.x`` — not just the last token of the whole string (which would let an
+    earlier window/menu selector slip past the check)."""
+    out = []
     sel = re.sub(r"/\*.*?\*/", " ", sel, flags=re.DOTALL)
-    sel = re.sub(r"\s*[>+~]\s*", " ", sel).strip()
-    return sel.split()[-1] if sel.split() else sel
+    for one in sel.split(","):
+        one = re.sub(r"\s*[>+~]\s*", " ", one).strip()
+        toks = one.split()
+        if toks:
+            out.append(toks[-1])
+    return out
 
 
 def _is_form_control(leaf):
@@ -152,8 +158,9 @@ def test_every_window_body_uses_the_raised_surface_tier():
     for sel, body in _rules():
         if _theme_scoped(sel):
             continue
-        # only the window BODY itself — leaf compound ends in *modal-content
-        if not _leaf(sel).endswith("modal-content"):
+        # only the window BODY itself — any grouped selector whose leaf compound
+        # ends in *modal-content (the rule's fill covers every grouped selector)
+        if not any(leaf.endswith("modal-content") for leaf in _leaves(sel)):
             continue
         val = _fill(body)
         if val is None or _is_scrim_or_tint(val):
@@ -179,11 +186,15 @@ def test_floating_menus_use_the_overlay_tier():
     for sel, body in _rules():
         if _theme_scoped(sel):
             continue
-        leaf = _leaf(sel)
-        # the menu SURFACE itself (leaf is the menu), not a child/control/state
-        if not menu_sel.search(leaf) or _is_form_control(leaf):
-            continue
-        if re.search(r":hover|:focus|:active|divider|::", leaf):
+        # any grouped selector whose leaf is a menu SURFACE (not a child/control/
+        # state) — the rule's fill applies to every selector in the group
+        def _is_menu_surface(leaf):
+            return (
+                menu_sel.search(leaf)
+                and not _is_form_control(leaf)
+                and not re.search(r":hover|:focus|:active|divider|::", leaf)
+            )
+        if not any(_is_menu_surface(leaf) for leaf in _leaves(sel)):
             continue
         val = _fill(body)
         if val is None or _is_scrim_or_tint(val):
