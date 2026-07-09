@@ -91,7 +91,18 @@ def router_src() -> str:
 
 
 def _all_shipped_js() -> list[pathlib.Path]:
-    return sorted(_JS_DIR.glob("*.js"))
+    """Every shipped, surface-loadable JS file: the ``static/app.js`` entrypoint
+    (loaded LAST by ``index.html`` — the shell orchestrator, one level ABOVE
+    ``static/js/``) plus every module under ``static/js/`` at ANY depth
+    (``editor/``, ``research/``, ``compare/``, … are all shipped and reachable).
+    Scanning the full recursive surface — not just top-level ``static/js/*.js`` —
+    is what makes the retirement guards below actually cover the entrypoint and
+    any nested module an equivalent import could hide in."""
+    files = list(_JS_DIR.rglob("*.js"))
+    app_entry = _REPO / "static" / "app.js"
+    if app_entry.exists():
+        files.append(app_entry)
+    return sorted(files)
 
 
 def _wired_surface_js() -> list[pathlib.Path]:
@@ -214,17 +225,31 @@ def test_launchers_open_hash_routed_pages_not_windows() -> None:
 @pytest.mark.parametrize("fname", _RETIRED_FILES)
 def test_no_wired_module_imports_the_retired_kit(fname: str) -> None:
     """The floating-window kit is unwired from the surface: no shipped surface
-    module imports appkitWindow.js / windowResize.js (statically or
-    dynamically). The kit's own internal import of windowResize.js from
-    appkitWindow.js does not count — neither is loaded, because nothing imports
-    appkitWindow.js."""
-    needle = f"'./{fname}'"
+    module imports appkitWindow.js / windowResize.js — static (``from '…'``),
+    side-effect (``import '…';``), or dynamic (``import('…')``). Match is
+    quote-agnostic (``'…'`` OR ``"…"``) and relative-path-agnostic (``./``,
+    ``../js/``, ``./editor/…`` etc.), keyed on the module *filename*, so an
+    equivalent-but-differently-spelled reintroduction can't slip past. The kit's
+    own internal import of windowResize.js from appkitWindow.js does not count —
+    appkitWindow.js is itself retired (excluded from the surface set), and
+    neither is loaded because nothing imports appkitWindow.js. Comment lines are
+    skipped so prose that merely names the historical kit does not trip this."""
+    # `import` … any relative prefix … <fname> … in either quote style. Covers
+    # `import X from "./appkitWindow.js"`, `import './js/appkitWindow.js'`,
+    # and `import("../appkitWindow.js")`.
+    import_re = re.compile(
+        r"""import\b[^\n;]*?['"][^'"]*""" + re.escape(fname) + r"""['"]"""
+    )
     for path in _wired_surface_js():
-        src = path.read_text(encoding="utf-8")
-        assert f"from {needle}" not in src, f"{path.name} still imports the retired {fname}"
-        assert f"import({needle}" not in src, f"{path.name} still dynamically imports the retired {fname}"
-        # Side-effect import: `import './appkitWindow.js';` (no `from`/`(`).
-        assert f"import {needle}" not in src, f"{path.name} still side-effect imports the retired {fname}"
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith(("//", "*", "/*")):
+                continue  # comment prose naming the kit is not a wiring
+            m = import_re.search(line)
+            assert m is None, (
+                f"{path.name}:{lineno} still imports the retired {fname} "
+                f"(matched: {m.group(0)!r})"
+            )
 
 
 @pytest.mark.parametrize("fname", _RETIRED_FILES)
