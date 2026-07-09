@@ -113,6 +113,24 @@ test('realtimeLiveDetail is live ONLY when the socket is fully open', () => {
   }
 });
 
+test('_setState persists the current live flag on window (Greptile #804) so a late-registering Portal can reconcile a socket that opened before its listener existed', () => {
+  // The dispatched `applicant:realtime` event is one-shot per edge; persisting the
+  // level on `window.__applicantRealtimeLive` is what lets the Portal reconcile on
+  // boot instead of staying stuck polling until the next transition.
+  const idx = SRC.indexOf('_setState(state)');
+  assert.ok(idx !== -1, '_setState is present');
+  const body = SRC.slice(idx, idx + 1200);
+  assert.ok(
+    /window\.__applicantRealtimeLive\s*=\s*!!detail\.live/.test(body),
+    '_setState records the current live flag on window before dispatching the edge event',
+  );
+  // The persisted flag must be set BEFORE the edge event is dispatched.
+  assert.ok(
+    body.indexOf('window.__applicantRealtimeLive') < body.indexOf("new CustomEvent('applicant:realtime'"),
+    'the window flag is persisted before the one-shot event is dispatched',
+  );
+});
+
 test('notifRefresh drives the existing poll path via Portal refreshBadge', () => {
   const { notifRefresh } = load('notifRefresh');
   let calls = 0;

@@ -2754,6 +2754,15 @@ function _boot() {
   document.addEventListener('applicant:realtime', (e) => {
     _applyRealtimeLive(!!(e && e.detail && e.detail.live));
   });
+  // The `applicant:realtime` event is one-shot per state change, so if the socket
+  // already reached `open` before this listener existed (Portal dynamically
+  // imported / re-mounted after the WS opened), reconcile the current live flag
+  // now — otherwise the poll would keep running until the next transition.
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) {
+      _applyRealtimeLive(true);
+    }
+  } catch { /* no-op */ }
   // Note: the redundant boot-time "auto-land on Today" watcher added in PR #640
   // was retired with the 3-pane shell (P0-3). The gadget rail now surfaces the
   // Today state permanently as the third pane, so there is no need for a second

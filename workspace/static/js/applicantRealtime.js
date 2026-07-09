@@ -174,10 +174,18 @@ class ApplicantRealtime {
     // Tell the rest of the shell whether the push channel is live, so the Portal
     // can retire its badge poll while we're pushing and restore it on WS loss
     // (fallback). Never a silent dead UI.
+    const detail = realtimeLiveDetail(state);
+    // Persist the latest live flag so a listener that registers AFTER this edge
+    // fired (e.g. the Portal is dynamically imported / re-mounted on SPA nav once
+    // the socket is already `open`) can reconcile the current state on boot and
+    // isn't stuck polling until the next transition. Level, not just edge.
+    try {
+      if (typeof window !== 'undefined') { window.__applicantRealtimeLive = !!detail.live; }
+    } catch { /* no-op */ }
     try {
       if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
         document.dispatchEvent(
-          new CustomEvent('applicant:realtime', { detail: realtimeLiveDetail(state) }),
+          new CustomEvent('applicant:realtime', { detail }),
         );
       }
     } catch { /* no-op */ }

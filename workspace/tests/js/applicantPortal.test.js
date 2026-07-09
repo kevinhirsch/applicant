@@ -1045,3 +1045,21 @@ test('_applyRealtimeLive retires the badge poll while the WS is live and restore
   assert.equal(s.started, 1, 'polling restarts via pollVisible');
   assert.equal(s.refreshed, 2, 'a refresh fires immediately on falling back');
 });
+
+test('_boot reconciles an already-live socket (Greptile #804): the one-shot applicant:realtime edge can fire before this listener exists, so boot reads the persisted window flag and retires the poll', () => {
+  // The `applicant:realtime` event is one-shot per state change. If the socket
+  // reached `open` before the Portal registered its listener (dynamic import /
+  // SPA re-mount after the WS opened), the edge is missed. _boot must therefore
+  // reconcile the persisted `window.__applicantRealtimeLive` flag on boot.
+  const idx = SRC.indexOf("document.addEventListener('applicant:realtime'");
+  assert.ok(idx !== -1, 'the boot listener registration is present');
+  const after = SRC.slice(idx, idx + 600);
+  assert.ok(
+    /window\.__applicantRealtimeLive/.test(after),
+    'boot reads the persisted realtime-live flag right after registering the listener',
+  );
+  assert.ok(
+    /_applyRealtimeLive\(true\)/.test(after),
+    'a pre-existing live socket retires the poll on boot (not just on the next transition)',
+  );
+});
