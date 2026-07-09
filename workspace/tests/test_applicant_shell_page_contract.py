@@ -225,29 +225,35 @@ def test_launchers_open_hash_routed_pages_not_windows() -> None:
 @pytest.mark.parametrize("fname", _RETIRED_FILES)
 def test_no_wired_module_imports_the_retired_kit(fname: str) -> None:
     """The floating-window kit is unwired from the surface: no shipped surface
-    module imports appkitWindow.js / windowResize.js — static (``from '…'``),
-    side-effect (``import '…';``), or dynamic (``import('…')``). Match is
-    quote-agnostic (``'…'`` OR ``"…"``) and relative-path-agnostic (``./``,
-    ``../js/``, ``./editor/…`` etc.), keyed on the module *filename*, so an
-    equivalent-but-differently-spelled reintroduction can't slip past. The kit's
-    own internal import of windowResize.js from appkitWindow.js does not count —
-    appkitWindow.js is itself retired (excluded from the surface set), and
-    neither is loaded because nothing imports appkitWindow.js. Comment lines are
-    skipped so prose that merely names the historical kit does not trip this."""
-    # `import` … any relative prefix … <fname> … in either quote style. Covers
+    module imports OR re-exports appkitWindow.js / windowResize.js — static
+    (``from '…'``), side-effect (``import '…';``), dynamic (``import('…')``), or
+    re-export barrel (``export * from '…'`` / ``export { X } from '…'``, which is
+    also a module dependency that loads the kit). Match is quote-agnostic (``'…'``
+    OR ``"…"``) and relative-path-agnostic (``./``, ``../js/``, ``./editor/…``
+    etc.), keyed on the module *filename*, so an equivalent-but-differently-
+    spelled reintroduction can't slip past. The kit's own internal import of
+    windowResize.js from appkitWindow.js does not count — appkitWindow.js is
+    itself retired (excluded from the surface set), and neither is loaded because
+    nothing imports appkitWindow.js. Comment lines are skipped so prose that
+    merely names the historical kit does not trip this."""
+    # Either an `import …` (static / side-effect / dynamic) OR an
+    # `export … from …` re-export, ending in a quoted specifier whose path ends
+    # in <fname>, in either quote style and with any relative prefix. Covers
     # `import X from "./appkitWindow.js"`, `import './js/appkitWindow.js'`,
-    # and `import("../appkitWindow.js")`.
-    import_re = re.compile(
-        r"""import\b[^\n;]*?['"][^'"]*""" + re.escape(fname) + r"""['"]"""
+    # `import("../appkitWindow.js")`, and `export * from './appkitWindow.js'`.
+    dep_re = re.compile(
+        r"""(?:import\b[^\n;]*?|export\b[^\n;]*?\bfrom\s*)['"][^'"]*"""
+        + re.escape(fname)
+        + r"""['"]"""
     )
     for path in _wired_surface_js():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             stripped = line.lstrip()
             if stripped.startswith(("//", "*", "/*")):
                 continue  # comment prose naming the kit is not a wiring
-            m = import_re.search(line)
+            m = dep_re.search(line)
             assert m is None, (
-                f"{path.name}:{lineno} still imports the retired {fname} "
+                f"{path.name}:{lineno} still imports/re-exports the retired {fname} "
                 f"(matched: {m.group(0)!r})"
             )
 
