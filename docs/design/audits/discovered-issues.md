@@ -36,7 +36,8 @@ DISC-16. Per-lens backlog status lives in
 - **DISC-17 · low · Stale lifted-from path comment in workspace middleware.**
   `workspace/core/middleware.py`'s header comment reads `# src/middleware.py` — a leftover
   path from wherever the file was lifted, now wrong. Cosmetic; fix on next touch of that file.
-  Where: `workspace/core/middleware.py` (top-of-file comment). Status: open (surfaced fixing 03-perf).
+  Where: `workspace/core/middleware.py` (top-of-file comment). Status: fixed (PR pending) —
+  comment corrected to `# workspace/core/middleware.py`.
 
 
 - **DISC-14 · low · Notifier reads the clock independently in three places.**
@@ -44,7 +45,10 @@ DISC-16. Per-lens backlog status lives in
   takes its OWN later clock read for `due_at` — so a stale timestamp reused across them can make
   every rung's `due_at` look microseconds in the future and skip firing (a real footgun hit and
   fixed while doing lens 10 #9). Thread one `now` value through `notify()`→`_build_rungs()`→`_fire_due()`.
-  Where: `src/applicant/adapters/notification/apprise_notifier.py`. Status: open.
+  Where: `src/applicant/adapters/notification/apprise_notifier.py`. Status: fixed (PR pending) —
+  `notify()` now takes a single clock read and threads it through `_build_rungs(notification, now)`
+  and `_fire_due(delivery, now)`; regression test in
+  `tests/unit/test_notifier_disc14_single_clock_read.py`.
 
 - **DISC-16 · low · Reverse-direction `owner` kwargs are never populated.**
   `workspace/src/applicant_engine.py`'s `owner=` kwargs (engine→workspace calendar/email/research/

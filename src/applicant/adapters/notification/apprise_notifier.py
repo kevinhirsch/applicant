@@ -500,9 +500,15 @@ class AppriseNotifier:
     def _now_secs(self) -> float:
         return self._clock().timestamp()
 
-    def _build_rungs(self, notification: Notification) -> list[_Rung]:
-        """Plan the escalation hops for one notification (FR-NOTIF-2)."""
-        now = self._now_secs()
+    def _build_rungs(self, notification: Notification, now: float) -> list[_Rung]:
+        """Plan the escalation hops for one notification (FR-NOTIF-2).
+
+        ``now`` is a single clock read taken once by the caller (:meth:`notify`) and
+        threaded through unchanged (DISC-14): every ``due_at`` computed here is
+        relative to the SAME instant :meth:`_fire_due` later compares it against in
+        that same call, so a rung due "now" can never be judged microseconds in the
+        future — and skipped — just because the clock was re-read in between.
+        """
         rungs: list[_Rung] = []
 
         if notification.urgency is NotificationUrgency.IMMEDIATE:
@@ -863,13 +869,15 @@ class AppriseNotifier:
         delivery that is past the email-timeout cutoff, the key is no longer "active"
         and the next ``notify()`` for it starts a fresh ladder, exactly as before.
         """
-        # Prune BEFORE checking so a delivery that has already fully escalated and
-        # aged out is correctly treated as inactive (re-arm), not as still-live.
-        # (Uses its own fresh clock read — deliberately NOT reused below, since
-        # ``_build_rungs`` takes its own later clock read for ``due_at``; reusing a
-        # stale timestamp to fire against would skip rungs due "in the future" by a
-        # few microseconds.)
-        self._prune_sent(self._now_secs())
+        # DISC-14: a single clock read for the whole call, threaded through prune ->
+        # _build_rungs -> _fire_due. Previously each stage re-read the clock
+        # independently, so a rung's ``due_at`` (computed in ``_build_rungs`` from a
+        # LATER read) could land microseconds ahead of the ``ts`` ``_fire_due``
+        # compared it against moments later if the clock jittered the other way —
+        # a real footgun that could make a rung due "now" look like it was due in
+        # the future and get skipped. One read removes the race entirely.
+        now = self._now_secs()
+        self._prune_sent(now)
         key = notification.dedup_key
         if key:
             with self._sent_lock:
@@ -879,7 +887,7 @@ class AppriseNotifier:
         with self._sent_lock:
             self._counter += 1
             handle = f"notif-{self._counter}"
-        rungs = self._build_rungs(notification)
+        rungs = self._build_rungs(notification, now)
         delivery = _Delivery(handle=handle, notification=notification, rungs=rungs)
         store_key = key or handle
         with self._sent_lock:
@@ -892,13 +900,14 @@ class AppriseNotifier:
         # Fire any rung already due (NORMAL in-app + Discord-now; IMMEDIATE all).
         # _fire_due mutates only the local delivery object (not _sent) so it can run
         # outside the lock; the dispatch itself is deliberately lock-free (no IO under
-        # a lock). Fresh clock read (not the one used for the pre-check prune above) —
-        # ``_build_rungs`` computed ``due_at`` from its OWN later clock read.
-        self._fire_due(delivery, self._now_secs())
+        # a lock). Same ``now`` used to build the rungs above, so a rung due "now" is
+        # never judged against a later instant than the one its due_at was set from.
+        self._fire_due(delivery, now)
         # LEAK-NOTIF-1: opportunistically drop fully-fired, past-timeout deliveries
         # so apps that never call ``expire`` (abandon/complete off-path) do not leak
-        # ``_sent`` entries forever.
-        self._prune_sent(self._now_secs())
+        # ``_sent`` entries forever. Safe to reuse ``now`` here too (this is just a
+        # cheap in-call cleanup, not itself in the due_at-vs-ts comparison path).
+        self._prune_sent(now)
         return handle
 
     def send_email(
