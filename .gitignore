@@ -60,3 +60,7 @@ workspace/.local/
 # session storage). Created by ProfileStore at runtime.
 profiles/
 .applicant_profiles/
+
+# Generated docs site (P3-4) — regenerate with scripts/build_docs_site.py;
+# never commit the output, that's what "can't drift" means here.
+docs/site/
