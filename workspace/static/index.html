@@ -1642,6 +1642,15 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <span>Updates</span>
           </button>
+          <div class="settings-sidebar-divider"></div>
+          <!-- ── Help ── the P5-2 pre-written support surface (top-20 FAQ). Not
+               admin-only: every user hits "no jobs found" / "empty digest" /
+               "invalid key" questions, not just the operator. -->
+          <div class="settings-sidebar-label">Help</div>
+          <button type="button" class="settings-nav-item" data-settings-tab="help">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>Help &amp; FAQ</span>
+          </button>
           <div class="settings-sidebar-divider admin-only"></div>
           <div class="settings-sidebar-label admin-only">Admin</div>
           <button type="button" class="settings-nav-item admin-only" data-settings-tab="tools">
@@ -2174,6 +2183,104 @@
               <button type="button" class="admin-btn-add" id="settings-export-btn">Download my data</button>
             </div>
             <div class="admin-toggle-sub" style="margin-top:10px;">Want a search gone for good? Open that search's Settings &rarr; Danger Zone &rarr; Delete this search. See our <a href="/privacy" target="_blank" rel="noopener noreferrer" id="settings-privacy-link">Privacy Policy</a> for what's stored and what leaves your deployment.</div>
+          </div>
+        </div>
+
+        <!-- ═══ HELP TAB (P5-2, "Pre-written support surface") ═══
+             Top-20 predictable questions, reusing the native <details>/<summary>
+             accordion component already used elsewhere in the app
+             (applicantTracker.js history rows, the landing page's own #faq) and
+             already styled globally (style.css "RESEARCH DETAILS EXPANDABLE
+             SECTION") -- no new CSS, no new widget. Content is static (no
+             engine round-trip), so it degrades to nothing when the engine or a
+             model is down -- exactly the moment this surface is most needed.
+             Mirrored in docs/faq.md; keep both in sync when either changes. -->
+        <div data-settings-panel="help" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Frequently asked questions</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px" id="applicant-faq-intro">The 20 questions people actually hit day to day. Every answer here is grounded in what the product actually does, including the honest current gaps -- not a guess at what it should do.</div>
+            <div id="applicant-faq-list">
+              <details>
+                <summary>1. No jobs are showing up in Discovery -- is something broken?</summary>
+                <p>Usually not. Discovery deliberately refuses to run until you've told it what to look for -- with zero search criteria it would otherwise surface arbitrary postings on a neutral placeholder score. Set at least one target title, location, work mode, salary floor, or keyword in Settings &rarr; Job Search. Once criteria exist, check each source's own status there too: a source can say it found nothing on the last check, couldn't be searched, or was skipped to avoid over-asking, so one failing board never hides behind a healthy lifetime total.</p>
+              </details>
+              <details>
+                <summary>2. Today's digest is empty -- did it stop working?</summary>
+                <p>An empty digest states the fact and why, on purpose -- it never renders as silence. When nothing cleared the review bar that day you'll see an explicit empty-day note plus what was actually searched, and any per-source shortfalls from question 1. A blank digest with no such note at all is the actual bug to report (question 20).</p>
+              </details>
+              <details>
+                <summary>3. Settings says my model key is invalid, or the connection failed.</summary>
+                <p>The engine classifies the failure before showing it to you: a rejected key reads as "The server rejected the API key."; an unresolvable address reads as "Couldn't find that server address."; a reachable-but-refusing host reads as "Couldn't reach the server -- is it running and the address right?"; a hung request reads as "The server didn't respond in time." Re-enter the key/URL in Settings &rarr; Add Models and use "Test" before saving.</p>
+              </details>
+              <details>
+                <summary>4. A job posting hit a CAPTCHA (or another verification step) -- what happens?</summary>
+                <p>Applicant hands it to you every time, with no setting that turns this off. CAPTCHAs, email verification, and SMS verification are steps the engine will never attempt to solve or bypass -- the run pauses, you get a notification, and you take the live browser session over, clear the step, then click Continue. Closing that window doesn't end the session; it just stops you watching.</p>
+              </details>
+              <details>
+                <summary>5. Why didn't it just submit the application for me?</summary>
+                <p>Because it isn't allowed to, structurally. The engine pre-fills every field it can, then stops at the final submit unless you've explicitly authorized friction-free submission for that application. The engine cannot self-authorize a final submit -- review-before-submit is a rule the core enforces on every path, not a UI convention layered on top.</p>
+              </details>
+              <details>
+                <summary>6. It skipped the EEO / demographic questions on this application.</summary>
+                <p>That's correct behavior, not a miss. Race, gender, disability status, veteran status, and similar self-identification questions are never answered by AI or guessed, in chat or in pre-fill. They're filled only from an answer you've explicitly stored yourself; with no stored answer, the honest default is decline to self-identify.</p>
+              </details>
+              <details>
+                <summary>7. What about work-authorization questions specifically?</summary>
+                <p>Same never-guessed family, opposite default. EEO questions default to declining; work authorization is a routine, expected question, so it's answered from your own stored answer when you have one -- and left for you, not guessed, when you don't. Either way no AI model ever produces the answer itself.</p>
+              </details>
+              <details>
+                <summary>8. My local model is "weak" -- will it mangle my resume when it's parsed?</summary>
+                <p>A real resume run through the free local-floor model class produced a perfect corrected parse -- every field landed right, nothing invented -- once its reasoning mode was turned off. Any correction also has to trace back to your original resume text, and if the model's output comes back malformed or its own confidence is low, the system automatically retries one tier higher rather than accepting a shaky answer. If every attempt fails, you get the plain parse plus a visible "not verified" note -- never a silent, unlabeled guess.</p>
+              </details>
+              <details>
+                <summary>9. What's the "model ladder" / "Level 1, 2, 3" I keep seeing?</summary>
+                <p>The order the engine tries models in for a given task: it starts at Level 1 (your cheapest/local model) and climbs to stronger, more expensive models only when the cheaper one isn't confident enough or fails outright -- cheapest first, strongest last. Configure which endpoint sits at which level in Settings &rarr; AI Defaults.</p>
+              </details>
+              <details>
+                <summary>10. My resume shows a "not verified" note, or a value looks shuffled from my original.</summary>
+                <p>That note is the same honesty mechanism from question 8 telling the truth about itself -- an unverified parse says so. If a value was dropped or restored during the automated double-check, that's counted and shown too, so nothing about the correction happens invisibly. If you disagree with a field, correct it directly.</p>
+              </details>
+              <details>
+                <summary>11. How do I make sure absolutely nothing goes to a third-party AI provider?</summary>
+                <p>Set <code>LLM_LOCAL_ONLY=true</code> on the engine (see the private-mode doc for the full contract). No cloud-hosted model tier can be walked while this mode is on, and "configured" itself means "a model this mode allows" -- it never silently falls back to a cloud endpoint. What it does not cover, by design: discovery queries still reach job boards, the automation browser still visits the ATS site you're applying to, and any notification channel you've opted into still sends its text there.</p>
+              </details>
+              <details>
+                <summary>12. Is any of my data stored on Applicant's own servers?</summary>
+                <p>No -- there is no Applicant-operated server to store it on. Applicant is self-hosted: your resume, applications, and activity live in the Postgres/SQLite instance you deployed, on whatever infrastructure you chose.</p>
+              </details>
+              <details>
+                <summary>13. How do I back up everything, or move to a new machine?</summary>
+                <p><code>scripts/backup.sh --apply</code> produces one tarball with the database dump, the front-door's own data, the engine's durable state (including the vault key your sealed credentials need to stay decryptable), and your deploy config. Restore with <code>scripts/restore.sh --apply --from &lt;tarball&gt;</code>. Neither script touches anything without <code>--apply</code>.</p>
+              </details>
+              <details>
+                <summary>14. How do I get just my own resume/applications/history out (not a full server backup)?</summary>
+                <p>Settings &rarr; Account &rarr; "Download my data" -- a zip of your own applications, documents, profile, and recent activity, no shell access or admin role needed. Question 13's scripts are the separate operator-facing path for the whole deployment.</p>
+              </details>
+              <details>
+                <summary>15. Will it burn through my API budget, or apply to way too many jobs per day?</summary>
+                <p>Both are capped, not just estimated after the fact. Daily application throughput defaults to about 15/day and is hard-clamped so it can never exceed 30/day regardless of settings. Settings &rarr; Job Search also shows an always-labeled cost estimate (today / this month / projected) computed server-side from actual token usage -- always presented as an estimate, never an exact bill.</p>
+              </details>
+              <details>
+                <summary>16. I'm not getting Discord/ntfy/email notifications.</summary>
+                <p>First confirm a channel is actually configured in Settings &rarr; Integrations/Notifications -- skip that and everything correctly stays in-app only. When a channel is configured: normal notifications hold briefly in-app first, escalate to Discord after a short delay, and to email after longer still; urgent ones go out immediately on every channel, bypassing quiet hours. Two current rough edges: "Send a test" can report success even when the live send underneath failed, and ntfy pushes don't yet carry a priority flag, so an urgent alert and a routine one can look identical on your phone.</p>
+              </details>
+              <details>
+                <summary>17. Does it fully automate LinkedIn Easy Apply?</summary>
+                <p>Not yet -- assisted mode only. Applicant prepares a deep link, your tailored materials, and a checklist for LinkedIn's own Easy Apply flow, with your explicit consent before any of it is used. It isn't a full autopilot yet.</p>
+              </details>
+              <details>
+                <summary>18. What happens when I take over a live browser session mid-application?</summary>
+                <p>The assistant always stops before the steps only you should do (account creation, clearing a verification, the final submit -- see questions 4 and 5). Click "Take control" to drive the browser yourself; when done, click the matching "Continue" button and the assistant picks up exactly where you left off. Closing the window doesn't end the session -- it only stops you watching it.</p>
+              </details>
+              <details>
+                <summary>19. How do I know exactly what was submitted under my name?</summary>
+                <p>Every stop-boundary submission is recorded as an immutable snapshot at the moment it happened -- the exact materials and answers sent, not a reconstruction after the fact -- and the full ordered audit log is exportable from the Debug view. If a submission ever looks different from what you approved, the snapshot is the source of truth to check first.</p>
+              </details>
+              <details>
+                <summary>20. Something's broken and I want to report it -- what should I include?</summary>
+                <p>Don't paste raw logs, <code>.env</code> files, or Settings screenshots without checking them first -- several can contain your model API key or other secrets. If this checkout has the support tooling, run <code>bash scripts/diagnostic-bundle.sh</code> (redacts secrets automatically) and attach the result to a GitHub issue using the matching template. Either way, the single biggest thing that speeds up a fix is a clear repro: what you did, what you expected, and what you got instead.</p>
+              </details>
+            </div>
           </div>
         </div>
 

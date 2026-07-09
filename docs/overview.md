@@ -133,6 +133,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
 | [`docs/support.md`](support.md) | Getting support: the redacted diagnostic-bundle command, issue templates, community chat |
+| [`docs/faq.md`](faq.md) | Top-20 pre-written support FAQ (no jobs found, empty digest, invalid key, CAPTCHA, weak model, review-before-submit, EEO/work-auth, private mode, backup/restore, cost/pace, notifications, …); mirrored in-app at Settings → Help & FAQ |
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
 | [`docs/platform-matrix.md`](platform-matrix.md) | Supported CPU architecture (amd64-only, with the binary reasons), Docker-on-WSL2 setup + gotchas, other host-OS notes |
 | [`docs/install-targets.md`](install-targets.md) | One-command install/upgrade/uninstall lifecycle for Ubuntu/Debian, Proxmox, and NAS-class boxes, and what is verified vs. dispatch-ready-only |

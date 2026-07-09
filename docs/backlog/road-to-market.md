@@ -104,7 +104,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P4-DEC-2 | Takeover scope decision | — | you | — |
 | P4-7 | Name check | S | you | — |
 | P5-1 | Support machinery | M | eng | PARTIAL — issue templates + redacted diagnostic-bundle command shipped and reachable (Settings → System); community Discord/forum is a docs scaffold with an owner-action placeholder, not yet a real link |
-| P5-2 | Pre-written FAQs | M | eng | — |
+| P5-2 | Pre-written FAQs | M | eng | DONE — top-20 operational FAQ (`docs/faq.md`), mirrored reachably at Settings → Help & FAQ (`workspace/static/index.html`, native `<details>` accordion) |
 | P5-3 | Opt-in telemetry | S–M | eng | DONE — Settings → System → Error telemetry; default OFF, hard-off in local-only private mode, engine-side redaction chokepoint |
 | P5-4 | Launch sequence | M | you+eng | — |
 | P5-5 | Post-launch flywheel | ongoing | both | — |
@@ -1970,6 +1970,57 @@ this repo's to invent). What shipped:
 ### P5-2 — Pre-written support surface *(operational)*
 **Effort:** M · **Owner:** eng · **Depends on:** P5-1 · **DoD:** Top-20 predictable FAQs
 written before launch (no jobs found, empty digest, invalid key, CAPTCHA hit, weak model, …).
+**Status: DONE.**
+- [x] **The real top-20**, each grounded in the actual mechanism (not a guess): no jobs
+      found (`core/rules/discovery_gate.py` cold-start gate + per-source yield status),
+      empty digest (`digest_service.py`'s `EMPTY_DAY_NOTE` + source shortfalls, FR-DIG-6),
+      invalid/expired model key (`model_endpoint_service.py`'s `_humanize_ping_error`
+      classification — plus the one honest current gap it doesn't cover, named in the
+      answer), a CAPTCHA hit (`core/rules/prefill_boundary.py`'s irreducible-step
+      hand-off), a weak local model (the parse-verify tier study,
+      `docs/studies/2026-07-07-parse-verify-tier-study.md`, in plain language — no
+      jargon), review-before-submit ("why didn't it just apply"), EEO/work-auth never
+      AI-answered (`core/rules/sensitive_fields.py`, both defaults), private mode
+      (`docs/private-mode.md`), backup/restore (`docs/backup-restore.md`), cost/pace
+      guardrails (`core/entities/campaign.py`'s 30/day hard cap +
+      `cost_service.py`'s always-labeled estimates), notifications not arriving (the
+      escalation ladder plus the two known current rough edges: test-send can
+      false-positive, ntfy carries no priority flag) — plus 9 more (model ladder,
+      the "not verified" parse note, fully-private mode's actual scope, the owner data
+      export vs. operator backup distinction, LinkedIn assisted-mode-only, live-takeover
+      handback, the submission-snapshot paper trail, and how to report a bug).
+- [x] **Reachability, verified end to end**: `docs/faq.md` (the doc surface; added to
+      `docs/overview.md`'s doc index) → Settings → Help & FAQ tab
+      (`workspace/static/index.html`, `data-settings-tab="help"` /
+      `data-settings-panel="help"`, non-admin-gated so every user — not just the
+      operator — can reach it) → a native `<details>`/`<summary>` accordion, the SAME
+      component already used elsewhere in the app (`applicantTracker.js`'s history
+      rows, the landing page's own `#faq`) and already styled globally
+      (`style.css`'s "RESEARCH DETAILS EXPANDABLE SECTION") — no new widget, no new
+      CSS, no engine round-trip (renders even with the engine/model down, which is
+      when this surface matters most). This is deliberately a DIFFERENT, complementary
+      surface from `landing.html`'s pre-signup marketing `#faq` (7 questions, "what
+      Applicant promises") — the top-20 here is the post-install operational/
+      troubleshooting FAQ the DoD asked for.
+- [x] **Pinned**: `workspace/tests/test_applicant_p5_2_faq.py` — asserts the Help tab is
+      nav-reachable and not admin-gated, the panel carries ≥20 real `<details>` entries,
+      every DoD-named topic is covered by a grounded regex (not a vague mention), the
+      review-before-submit and EEO-never-guessed invariants are stated precisely, the
+      two current notification rough edges are named honestly (not glossed over), no
+      lorem/TODO placeholder text, no `FR-`/`NFR-` jargon in the rendered copy, no
+      upstream-fork codename (split-halves check, same precedent as
+      `test_applicant_p4_2_landing.py` — doesn't trip the repo-wide white-label grep),
+      and `docs/faq.md` carries the identical 20 questions in order and is listed in
+      `docs/overview.md`.
+- [ ] **Honest gap**: P5-1 ("Support machinery") is a sibling story, not yet merged as
+      of this PR (its branch is `claude/p5-1-support`, PR #783). `docs/faq.md`'s closing
+      question points at `docs/support.md` (the redacted diagnostic-bundle command +
+      issue templates) as the next step past this FAQ — that file will exist once P5-1
+      merges; until then the reference is forward-looking, stated as such in the doc's
+      own intro ("if P5-1 has landed by the time you're reading this"), not claimed as
+      already shipped. P3-4 ("Docs site") is also not yet built, so `docs/faq.md` is the
+      FAQ's canonical home today; once P3-4 exists it should source its FAQ page from
+      this same file rather than a third copy.
 
 ### P5-3 — Opt-in error telemetry
 **Effort:** S–M · **Owner:** eng · **DoD:** Crash reporting that respects the privacy
