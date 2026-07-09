@@ -74,7 +74,14 @@ DISC-16. Per-lens backlog status lives in
   front-door proxy/UI can't tell the user "this was already handled." Wire the signal
   through (response body or distinct status) → proxy → JS.
   Where: `app/routers/pending_actions.py` (~206-237) + workspace proxy + Portal JS.
-  Status: open (surfaced fixing 04-#27; the Portal #50 lane addresses the UX shell).
+  Status: **fixed (PR pending)** — the router keeps returning the original bare `204`
+  for a genuine open→resolved transition, but a repeat resolve now gets a `200` with
+  `{"status": "already_resolved"}`; the workspace proxy (`applicant_portal_routes.py::
+  resolve_action`) forwards it as an `already_resolved` flag; `applicantPortal.js::
+  _doResolve` now honors that real server signal via the SAME honest "already handled"
+  path the client-side guard (Portal #50) already used for a same-tab double-click —
+  closing the gap for a cross-tab/cross-device already-resolved case the client-only
+  guard couldn't see.
 
 - **DISC-7 · high · Follow-up can resend — "sent at most once" is violated.**
   In `send_scheduled_follow_ups`, if `notify_decision` sends the email but the subsequent
@@ -128,7 +135,13 @@ DISC-16. Per-lens backlog status lives in
   but `_onBulkDecline` has the same unfixed pattern — a failed bulk decline forces retyping
   the shared reason for the whole batch.
   Where: `workspace/static/js/emailLibrary/applicantDigest.js::_onBulkDecline`.
-  Status: open (surfaced fixing 04-#53).
+  Status: **fixed** (landed in a prior batch, commit `12922fb`, before this ledger entry
+  was flipped — a module-level `_lastBulkDeclineReason` mirrors the single-row
+  `_lastDeclineReasonByRow` pattern: preserved when at least one row in the batch fails,
+  prefilled into the next prompt's `defaultValue`, cleared only once the whole batch
+  clears cleanly. Covered by `workspace/tests/test_applicant_copy_digest_lens02.py`.
+  This ledger entry was stale — no code change was needed this batch, only this status
+  correction.).
 
 - **DISC-11 · low · Approval-start give-ups are invisible to the operator surface.**
   The new `ApprovalStartLedger` (04-#32) gives up on a repeatedly-failing pipeline start,

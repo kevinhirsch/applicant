@@ -1963,7 +1963,18 @@ async function _doResolve(id) {
   }
   _resolvingActionIds.add(id);
   try {
-    await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, {});
+    const data = await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, {});
+    // DISC-6: the client's own open-state guard above only catches what THIS
+    // tab already knows is gone. The engine now reports a genuine already-
+    // resolved no-op explicitly (e.g. cleared from another tab/device between
+    // this tab's last poll and this click) -- honor that real server signal
+    // the same honest way, instead of letting it fall through as a plain
+    // success toast for something that had nothing left to do.
+    if (data && data.already_resolved) {
+      const err = new Error('This was already handled');
+      err.alreadyHandled = true;
+      throw err;
+    }
   } finally {
     _resolvingActionIds.delete(id);
   }

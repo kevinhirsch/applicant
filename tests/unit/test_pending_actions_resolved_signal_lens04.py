@@ -10,6 +10,14 @@ strings (:data:`RESOLVE_RESOLVED` / :data:`RESOLVE_ALREADY_RESOLVED` /
 :data:`RESOLVE_NOT_FOUND`) while staying idempotent — the underlying action is
 never re-applied on a repeat call.
 
+DISC-6 (discovered-issues ledger): that service-level signal was computed but
+never left the service — ``app/routers/pending_actions.py`` returned a bare
+``204`` regardless of the outcome, so the front-door had no way to surface
+"this was already handled" to the user. The ``test_router_*`` cases below pin
+the router-level fix: a genuine resolve still returns the original bare
+``204``, but an already-resolved repeat now returns a distinguishable ``200``
+body instead of a silent second ``204``.
+
 Hermetic: real container services over the in-memory storage adapter (same
 harness as ``tests/unit/test_pending_actions_tasks.py``).
 """
@@ -89,3 +97,33 @@ def test_resolve_unknown_action_reports_not_found(client):
     svc = _svc(client)
     outcome = svc.resolve(PendingActionId(new_id()))
     assert outcome == RESOLVE_NOT_FOUND
+
+
+# --- DISC-6: the router surfaces the signal instead of a bare 204 ----------
+
+
+def test_router_first_resolve_still_returns_bare_204(client):
+    svc = _svc(client)
+    cid = CampaignId(new_id())
+    action = svc.materialize(cid, "agent_question", "Which city?")
+
+    res = client.post(f"/api/pending-actions/{action.id}/resolve")
+
+    assert res.status_code == 204
+    assert res.content == b""
+
+
+def test_router_second_resolve_surfaces_already_resolved_distinguishably(client):
+    """The core DISC-6 regression: a repeat resolve through the HTTP router
+    (not just the service) must come back looking different from the first,
+    real resolve — not another identical silent 204."""
+    svc = _svc(client)
+    cid = CampaignId(new_id())
+    action = svc.materialize(cid, "agent_question", "Which city?")
+
+    first = client.post(f"/api/pending-actions/{action.id}/resolve")
+    second = client.post(f"/api/pending-actions/{action.id}/resolve")
+
+    assert first.status_code == 204
+    assert second.status_code == 200
+    assert second.json() == {"action_id": str(action.id), "status": "already_resolved"}

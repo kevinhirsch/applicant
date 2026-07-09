@@ -140,5 +140,9 @@ def test_resolve_already_resolved_integral_change_does_not_reapply(client):
     assert len(calls) == 1
 
     second = client.post(f"/api/pending-actions/{action.id}/resolve", json={"apply": True})
-    assert second.status_code == 204
+    # DISC-6: a repeat resolve of an already-resolved action is now
+    # distinguishable from the fresh 204 above -- a 200 body carrying the
+    # already-resolved signal, not a silent repeat 204.
+    assert second.status_code == 200
+    assert second.json() == {"action_id": str(action.id), "status": "already_resolved"}
     assert len(calls) == 1  # unchanged: the side effect did NOT re-fire

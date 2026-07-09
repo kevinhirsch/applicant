@@ -668,19 +668,20 @@ test('_renderList (finding #49) captures drafts BEFORE rebuilding the DOM and re
 // ── #50: resolving an action that's already handled gets an honest state,
 // not a silent/confusing result (pairs with engine #27) ────────────────────
 
-function buildDoResolveHarness(openIds) {
+function buildDoResolveHarness(openIds, postResult) {
   const harness = `
     const API = '/api/applicant/portal';
     let _items = ${JSON.stringify((openIds || []).map((id) => ({ id })))};
     const _postCalls = [];
     let _postDelayed = false;
+    const _postResult = ${JSON.stringify(postResult || {})};
     const _pendingPostResolvers = [];
     async function _post(url, body) {
       _postCalls.push({ url, body });
       if (_postDelayed) {
         return new Promise((resolve) => { _pendingPostResolvers.push(resolve); });
       }
-      return {};
+      return _postResult;
     }
 
     ${extractFunction(SRC, '_isActionOpen')}
@@ -691,7 +692,7 @@ function buildDoResolveHarness(openIds) {
       doResolve: _doResolve,
       getPostCalls: () => _postCalls.slice(),
       setDelayed: (v) => { _postDelayed = v; },
-      resolveNextPost: () => { const fn = _pendingPostResolvers.shift(); if (fn) fn({}); },
+      resolveNextPost: () => { const fn = _pendingPostResolvers.shift(); if (fn) fn(_postResult); },
     };
   `;
   // eslint-disable-next-line no-new-func
@@ -716,6 +717,23 @@ test('_doResolve (finding #50, regression guard) still resolves normally over th
   const calls = h.getPostCalls();
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/api/applicant/portal/actions/a1/resolve');
+});
+
+test('_doResolve (DISC-6) surfaces the engine\'s already-resolved signal even when this tab\'s own open-state guard missed it', async () => {
+  // The client-side guard above only catches what THIS tab already knows is
+  // gone; a genuinely already-resolved action (cleared from another tab/
+  // device since the last poll) still looks "open" here, so the network call
+  // goes out -- and the engine/proxy now report that honestly instead of a
+  // bare success. That must be surfaced the same way as the client-side guard.
+  const h = buildDoResolveHarness(['a1'], { resolved: false, already_resolved: true, action_id: 'a1' });
+  await assert.rejects(
+    () => h.doResolve('a1'),
+    (err) => {
+      assert.equal(err.alreadyHandled, true, 'a server-reported already-resolved result must flag alreadyHandled too');
+      return true;
+    },
+  );
+  assert.equal(h.getPostCalls().length, 1, 'the network call must still be made -- only the client-side guard skips it, not this server-signal path');
 });
 
 test('_doResolve (finding #50) rejects a second concurrent resolve of the SAME action while the first is still in flight', async () => {
