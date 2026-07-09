@@ -95,7 +95,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-7 | Platform matrix | S–M | eng+you | — |
 | P3-8 | Digest deliverability | S–M | eng | — |
 | P4-1 | Positioning statement | S | you+eng | — |
-| P4-2 | Landing page | M | eng | — |
+| P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; real video/screenshots pending P4-3 |
 | P4-3 | Proof assets | M | eng+you | — |
 | P4-4 | Competitive teardown | M | eng | — |
 | P4-5 | Early-access cohort | M | you+eng | — |
@@ -1556,7 +1556,19 @@ channel; SPF/DKIM guidance shipped for the SMTP path.
 
 ### P4-2 — Landing page
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (hero data), P4-1
-**DoD:** `landing.html` rebuilt around the demo hero video, privacy stance, pricing, FAQ.
+**DoD:** `landing.html` rebuilt around the demo hero-video **placeholder** (real capture pending P4-3), privacy stance, pricing, FAQ.
+**Status: PARTIAL** — `#pricing` (no software fee, bring-your-own-model cost, the honest
+"no hosted tier today" gap stated plainly rather than promised around) and `#faq` (7
+questions grounded in the same rules `#trust` states — review-before-submit, EEO/work-auth
+never AI-answered, no Applicant-operated server, LinkedIn assisted-mode-only) shipped and
+nav-reachable; the pre-existing privacy stance (`#privacy`, from an earlier round) kept
+as-is. A new screenshot-strip section (`#proof`, between `#trust` and the joke
+testimonials) wires up the `.shotrow`/`.shot` CSS that existed unused since audit 09 #8.
+Honest gap: the DoD's "demo hero video" and the `#proof` screenshots are wired as
+clearly-labeled placeholder slots, not real captures — P4-3 (proof assets, a sibling
+story) supplies the actual recordings/screenshots; they drop into these same slots
+without a template change. P4-1's positioning line is quoted verbatim in this DoD and
+used as the throughline, though P4-1 itself is not formally closed.
 
 ### P4-3 — Proof assets
 **Effort:** M · **Owner:** eng (+ you voiceover) · **Depends on:** P0-2, P1-2, P1-4
