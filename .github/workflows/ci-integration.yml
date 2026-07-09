@@ -373,7 +373,16 @@ jobs:
       - name: install.sh --purge -y (containers, volumes, images and .env all gone)
         run: |
           bash scripts/install.sh --purge -y
-          ! docker volume ls --format '{{.Name}}' | grep -F "${COMPOSE_PROJECT_NAME}" | grep -q pgdata
+          # Assert the pgdata volume is GONE without negating the pipeline with
+          # `!`: GitHub's default shell is `bash -e -o pipefail`, and errexit
+          # does NOT fire on a `!`-inverted command, so `! ...pipeline` could
+          # let a failed purge (volume still present — the exact bug this guards)
+          # fall through and the step still report green. Use an explicit `if`
+          # that exits non-zero, mirroring the un-negated --uninstall assert above.
+          if docker volume ls --format '{{.Name}}' | grep -F "${COMPOSE_PROJECT_NAME}" | grep -q pgdata; then
+            echo "::error::pgdata volume still exists after --purge"
+            exit 1
+          fi
           test ! -f .env
 
       - name: Tear down (always — belt-and-suspenders if purge failed partway)
