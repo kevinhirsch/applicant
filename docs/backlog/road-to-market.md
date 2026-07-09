@@ -54,12 +54,12 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P1-0 | Secrets: revoke + CI scanning | S | both | DONE — keys revoked (owner) + CI secret-scan step (PR #735) |
 | P1-1 | Onboarding TTFV < 10 min | M | eng | DONE — critical path trimmed + instrumented (verify reasons, get-a-key links, achievements prefill, single-year edu fix, Today essentials checklist, what-happens-next card, scripted 3-action walkthrough test); **live stopwatch run on a standing stack with a real model PASSES** — machine critical-path latency ~14–15s (gate opens), far under the 10-min bar (`docs/proof/p1-live-verification.md`) |
 | P1-1a | LLM parse-verify layer (tier-laddered) | M | eng | DONE — engine PR #644 + wizard double-check surfacing |
-| P1-2 | Real-board proof runs | L | both | PARTIAL — dry-run scope set by owner #719 (no submit, no trial accounts). LIVE: real browser stack detects real-board fields on 2 targets (Greenhouse/Figma 15 fields, Lever/Gopuff 81) with the stop boundary respected + a live model call through the engine adapter; evidence + reusable DOM fixtures + harness in `docs/proof/p1-2/`. Fixed a false-alarm in the live dry-run test (single-page-board `is_final_submit_page`). Procedure-only (deploy box / Integration Lane): live browser *navigation* (sandbox proxy blocks launched-browser TLS), Workday (egress-denied here), Camoufox stealth under real network, and the submit→confirmation→tracker leg (hermetic only, out of live scope by #719) |
+| P1-2 | Real-board proof runs | L | both | PARTIAL — dry-run scope set by owner #719 (no submit, no trial accounts). LIVE: real browser stack detects real-board fields on 2 targets (Greenhouse/Figma 15 fields, Lever/Gopuff 81) with the stop boundary respected + a live model call through the engine adapter; evidence + reusable DOM fixtures + harness in `docs/proof/p1-2/`. Fixed a false-alarm in the live dry-run test (single-page-board `is_final_submit_page`). Procedure-only (deploy box / Integration Lane): live browser *navigation* (sandbox proxy blocks launched-browser TLS), Workday (egress-denied here), Camoufox stealth under real network, and the submit→confirmation→tracker leg (hermetic only, out of live scope by #719). **Dispatch-able now:** `ci-integration.yml` already accepts `ats_dry_run_url` for the navigation leg; the `claude/integration-lane-live-legs` PR adds a `camoufox fetch` step so the stealth-stack leg runs too. **Blocked, not yet observed:** the self-hosted runner (`ubnthost01-applicant`) is online but every run to date fails at container init before any test runs — see `docs/known-issues.md` K9. |
 | P1-3 | Honest health panel | M | eng | DONE — engine health endpoint + Settings panel (PR #733) |
 | P1-4 | Notifications out of the box | M | eng | DONE — per-channel Send test (single-channel engine lane + honest failure), branded digest email, Today checklist "Set up" jump, failed-push in-app error notes; digest send-now already reachable via the rail |
 | P1-5 | Rescue stranded hardening waves | M | eng | SUPERSEDED — audit found both waves already on `main` via separate PRs; branch archival pending owner |
 | P1-6 | Cost & pace guardrails | M | eng | DONE — engine PR (issue #658) |
-| P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written; **data-safety core proven live** (real `pg_dump --clean --if-exists` → destroy → `psql` restore → app returns whole, integrity identical — `docs/proof/p1-live-verification.md`); the `--confirm-destroy` run on a real docker-compose stack (named-volume wipe + engine-state/workspace-data tarballs + two-service heartbeat) still needs a docker host (PR #659) |
+| P1-7 | Backup / restore / export | M | eng | PARTIAL — backup.sh/restore.sh/export shipped; drill script written; **data-safety core proven live** (real `pg_dump --clean --if-exists` → destroy → `psql` restore → app returns whole, integrity identical — `docs/proof/p1-live-verification.md`); the `--confirm-destroy` run on a real docker-compose stack (named-volume wipe + engine-state/workspace-data tarballs + two-service heartbeat) still needs a docker host (PR #659). **Dispatch-able now:** the `claude/integration-lane-live-legs` PR adds a `destroy-drill` job to `ci-integration.yml`, dispatch-only and gated behind an exact `confirm_destroy: yes-i-mean-it` input, that runs the real drill against an isolated throwaway compose project (own `COMPOSE_PROJECT_NAME` + scratch `.env`) — never a deployed stack. **Blocked, not yet observed:** the self-hosted runner cannot currently reach the Docker socket at all (`docs/known-issues.md` K9), which will fail this job's own Docker-reachability gate identically until the runner host is fixed. |
 | P1-8 | Keyword / ATS match score | S | eng | DONE |
 | P1-9 | Save-a-job-from-any-page | S (+S) | eng | DONE |
 | P1-10 | Multi-campaign base profiles | M | eng | DONE |
@@ -81,13 +81,13 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-7 | Sensitive-question policy | M | eng | DONE — EEO + work-auth never AI-answered, both lanes (docs/proof/citable-invariants.md Claim 3) |
 | P2-8 | Final-say invariant test | S | eng | DONE — behavioral chain + AST writer-pin (docs/proof/citable-invariants.md) |
 | P2-9 | App-door hardening | M | eng | DONE — strong-password policy all 4 set-sites + rate-limit/TOTP pins + HTTPS guide (docs/reverse-proxy-https.md) |
-| P2-10 | ATS-parseability proof | M | eng | PARTIAL — harness built + wired for both render paths (docs/proof/ats-parseability.md); docx lane exercised in this session only via honest self-skip (soffice binary present but the `libreoffice-writer` package is missing, so real convert fails and the test self-skips rather than false-passing); TeX lane not installed in this container. Both lanes are `@pytest.mark.integration` and expected to run for real on the deploy image / self-hosted Integration Lane; neither has yet been observed green with a real dependency present |
+| P2-10 | ATS-parseability proof | M | eng | PARTIAL — harness built + wired for both render paths (docs/proof/ats-parseability.md); docx lane exercised in this session only via honest self-skip (soffice binary present but the `libreoffice-writer` package is missing, so real convert fails and the test self-skips rather than false-passing); TeX lane not installed in this container. Both lanes are `@pytest.mark.integration` and expected to run for real on the deploy image / self-hosted Integration Lane; neither has yet been observed green with a real dependency present. **Dispatch-able now:** the `claude/integration-lane-live-legs` PR adds a LibreOffice (`soffice`) verify step alongside the existing TeX verify step, and a log-summary step that greps the `test_ats_parseability_proof` lines specifically. **Blocked, not yet observed:** the self-hosted runner cannot currently start the lane's Postgres service container at all (`docs/known-issues.md` K9), so neither render path has run on it yet. |
 | P2-11 | Local-only private mode | M | eng | DONE — LLM_LOCAL_ONLY hard mode, single-chokepoint filter + honest gate (docs/private-mode.md) |
 | P2-12 | Durability drills | M | eng | DONE — 4 hermetic drills (`tests/unit/test_p2_12_durability_drills.py`); found + fixed 2 real durability bugs (docs/known-issues.md) |
-| P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains |
+| P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains. **Dispatch-able now:** the `claude/integration-lane-live-legs` PR sets `DISCOVERY_LIVE_TEST=1` always-on in `ci-integration.yml` (non-destructive, so no separate confirm gate), which enables `tests/integration/test_discovery_live.py` against the real jobspy boards on every dispatch/weekly run. **Blocked, not yet observed:** the self-hosted runner's Postgres service container fails to start (`docs/known-issues.md` K9), so this hasn't executed live yet either. |
 | P2-14 | Easy Apply: assisted mode | M | both | PARTIAL — product surface DONE (consent screen recorded server-side + assisted-mode brief: deep link + prepared materials + checklist, reachable from the digest's Easy Apply chip); live-account automation (walk the modal, real proof run) explicitly DEFERRED — no owner-supplied LinkedIn account yet (issue #723) |
 | P3-1 | Install on tested targets | M–L | eng | — |
-| P3-2 | Requirements & model matrix | S–M | eng | — |
+| P3-2 | Requirements & model matrix | S–M | eng | DONE — published host-requirements + model-matrix table (`docs/requirements-and-model-matrix.md`), grounded in the compose stack, `proxmox-deploy.sh` defaults, the tier-ladder port, the parse-verify tier study, and the P2-6 eval harness; unproven functions labelled expected-untested with the P2-6 harness as the verification pointer |
 | P3-3 | Business model + licensing | M | you+eng | — |
 | P3-4 | Docs site | M | eng | — |
 | P3-5 | Release engineering | M | eng | — |
@@ -95,9 +95,9 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-7 | Platform matrix | S–M | eng+you | — |
 | P3-8 | Digest deliverability | S–M | eng | DONE — Discord/ntfy badged "Recommended" in Settings → Notifications (wizard + Settings share the renderer), email marked as needing SMTP setup; SPF/DKIM/DMARC guidance + a pre-launch checklist for the SMTP path (`docs/email-deliverability.md`); live inbox-placement testing documented as an operator procedure, not run (no mail egress from this dev container) |
 | P4-1 | Positioning statement | S | you+eng | — |
-| P4-2 | Landing page | M | eng | — |
+| P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; real video/screenshots pending P4-3 |
 | P4-3 | Proof assets | M | eng+you | — |
-| P4-4 | Competitive teardown | M | eng | — |
+| P4-4 | Competitive teardown | M | eng | DONE — `docs/competitive-teardown.md` |
 | P4-5 | Early-access cohort | M | you+eng | — |
 | P4-6 | Pricing validation | S | you | — |
 | P4-DEC-1 | Source-available decision | — | you | — |
@@ -516,6 +516,17 @@ harnesses (`scripts/proof/ats_dryrun_proof.py`, `scripts/proof/live_model_probe.
 *navigation* to a board (the sandbox proxy blocks launched-browser TLS), Workday via the
 takeover/CDP path, and the Camoufox stealth stack under real network.
 
+**Update (self-hosted Integration Lane).** `ci-integration.yml` already supports dispatching
+the navigation leg (`ats_dry_run_url`); the `claude/integration-lane-live-legs` PR adds a
+`camoufox fetch` step so the stealth-stack leg is exercised in the same run. Attempting to
+dispatch this session found the self-hosted runner (`ubnthost01-applicant`) online and
+picking up jobs, but both of its last two scheduled runs failed within seconds at
+"Initialize containers" — `permission denied` on `/var/run/docker.sock` — before checkout
+even ran, so neither leg has actually executed live yet (`docs/known-issues.md` K9; the
+runner host needs its runner user added to the `docker` group). This session's own
+GitHub-API credentials also lack `actions:write`, so no fresh dispatch could be triggered
+to confirm a fix — the next session with dispatch access should re-run once K9 is resolved.
+
 ### P1-3 — Honest health panel
 **As** a self-hoster, **I want** every silent capability degrade surfaced with a fix-it
 link **so that** I'm never confused by silent stubs.
@@ -674,6 +685,18 @@ that** an irreplaceable job search is never lost.
       the two-service heartbeat — none runnable without a docker daemon. Full evidence +
       honest what-was/wasn't-exercised in `docs/proof/p1-live-verification.md`; see PR for
       issue #659.
+
+      **Update (self-hosted Integration Lane).** The `claude/integration-lane-live-legs` PR
+      adds a dispatch-only `destroy-drill` job to `ci-integration.yml`: gated behind an
+      exact `confirm_destroy: yes-i-mean-it` input (never fires on the weekly schedule),
+      it runs the real `scripts/backup-restore-drill.sh --confirm-destroy` against
+      `docker/docker-compose.prod.yml` but under a dedicated `COMPOSE_PROJECT_NAME` and a
+      throwaway `.env` (own random password, own port) so it can only ever create/destroy
+      its OWN named volumes, never a deployed stack's. Not yet run: the self-hosted
+      runner currently can't reach the Docker socket at all (`permission denied` —
+      `docs/known-issues.md` K9), which this job's own Docker-reachability gate will also
+      hit until the runner host is fixed; this session's GitHub-API access also lacks
+      `actions:write`; so this leg is added but unobserved, not proven.
 
 ### P1-8 — Résumé↔JD keyword / ATS match score *(competitive: match transparency)*
 **As** a user, **I want** to see how well each tailored résumé covers the job's
@@ -1267,6 +1290,13 @@ self-hosted Integration Lane (which pre-bakes and verifies TeX) — running them
 there with the real dependency present, and committing that captured-green output
 back into `docs/proof/ats-parseability.md`, is the remaining work before this
 flips to DONE.
+
+**Update.** The `claude/integration-lane-live-legs` PR adds a LibreOffice verify step next
+to the existing TeX one so both are checked before the suite runs, plus a log-summary step
+that isolates the `test_ats_parseability_proof` result lines. Not yet run: the self-hosted
+runner is currently failing before any test executes (Docker-socket permission denied,
+`docs/known-issues.md` K9) and this session's GitHub-API access has no `actions:write` to
+dispatch a fresh run — captured-green output for this doc is still outstanding.
 **DoD:** Generated PDFs run through an open-source ATS parser; fields extract cleanly;
 result is a citable "ATS-safe" claim.
 - [x] Harness renders both shipped paths to a REAL PDF and round-trips the PDF
@@ -1408,6 +1438,13 @@ surfaced in UI (ties to P1-3); expectations documented.
       2–3 regions — deferred to the live-deploy pass per
       `docs/delivery-status.md`'s Phase-2 remaining list; not claimed done here.
 
+      **Update.** The `claude/integration-lane-live-legs` PR sets `DISCOVERY_LIVE_TEST=1`
+      always-on in `ci-integration.yml`'s job env (read-only network calls, so no separate
+      confirm gate needed), which is exactly this checkbox's test. Not yet run: the
+      self-hosted runner's Postgres service container currently fails to initialize before
+      any test executes (`docs/known-issues.md` K9), and this session had no
+      `actions:write` GitHub-API access to dispatch a fresh run and observe it.
+
 ### P2-14 — LinkedIn Easy Apply: assisted mode *(launch feature; parallel track)*
 **Effort:** M · **Owner:** both (you: real aged LinkedIn account; eng: build)
 **Depends on:** P1-11, screening-answer library, stealth persistent profile
@@ -1456,8 +1493,30 @@ live LinkedIn automation.**
 NAS-class box; clean upgrade (`update.sh`) and uninstall paths tested.
 
 ### P3-2 — Requirements & model matrix
-**Effort:** S–M · **Owner:** eng · **DoD:** Published table — models good-enough per
+**Effort:** S–M · **Owner:** eng · **Status: DONE.**
+**DoD:** Published table — models good-enough per
 tier, supported APIs, RAM/VRAM minimums, cost-per-application.
+**Status note.** `docs/requirements-and-model-matrix.md` (linked from
+`docs/overview.md`'s doc index) publishes: host RAM/vCPU/disk minimum vs.
+recommended (the latter is the literal `scripts/proxmox-deploy.sh` default,
+not a guess), a per-service footprint table for the production compose stack
+(image-size drivers: the ~700MB texlive layer, Camoufox + real Chrome +
+patchright Chromium), the local-model VRAM sizing formula from the
+workspace's own Cookbook hardware-fit tool (`workspace/services/hwfit/`), the
+two supported wire protocols (Ollama-native and the OpenAI-compatible
+catch-all covering OpenAI/OpenRouter/vLLM/llama.cpp/SGLang/etc. — any tier of
+the ladder, FR-LLM-3), and a model matrix keyed by product function
+(parse-verify, materials generation, judging, digest scoring, chat, the
+experimental planner, embeddings, protected questions) citing real evidence
+where it exists (the parse-verify tier study; the P2-6 eval harness's live
+gpt-4o-mini-class run, gate PASS, 4.60/5) and labelling the rest
+expected-untested with the P2-6 harness as the closing pointer. Cost-per-
+application is documented as the existing live P1-6 estimator (not a fixed
+number) plus an explicitly-labelled illustrative range. Fixed a stale
+hardware-spec mismatch found along the way: `docs/overview.md` quoted
+"2 vCPU/4GB" / "2 cores/4GB/16GB disk" for the Proxmox default, which no
+longer matched `scripts/proxmox-deploy.sh` (now 4 cores/8GB/40GB) — corrected
+in both places.
 
 ### P3-3 — Business model + licensing *(owner decision)*
 **Effort:** M · **Owner:** you decide / eng builds · **Depends on:** P2-4, P4-DEC-1
@@ -1533,7 +1592,19 @@ itself, in keeping with this project's honesty invariants. Front-door pins:
 
 ### P4-2 — Landing page
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (hero data), P4-1
-**DoD:** `landing.html` rebuilt around the demo hero video, privacy stance, pricing, FAQ.
+**DoD:** `landing.html` rebuilt around the demo hero-video **placeholder** (real capture pending P4-3), privacy stance, pricing, FAQ.
+**Status: PARTIAL** — `#pricing` (no software fee, bring-your-own-model cost, the honest
+"no hosted tier today" gap stated plainly rather than promised around) and `#faq` (7
+questions grounded in the same rules `#trust` states — review-before-submit, EEO/work-auth
+never AI-answered, no Applicant-operated server, LinkedIn assisted-mode-only) shipped and
+nav-reachable; the pre-existing privacy stance (`#privacy`, from an earlier round) kept
+as-is. A new screenshot-strip section (`#proof`, between `#trust` and the joke
+testimonials) wires up the `.shotrow`/`.shot` CSS that existed unused since audit 09 #8.
+Honest gap: the DoD's "demo hero video" and the `#proof` screenshots are wired as
+clearly-labeled placeholder slots, not real captures — P4-3 (proof assets, a sibling
+story) supplies the actual recordings/screenshots; they drop into these same slots
+without a template change. P4-1's positioning line is quoted verbatim in this DoD and
+used as the throughline, though P4-1 itself is not formally closed.
 
 ### P4-3 — Proof assets
 **Effort:** M · **Owner:** eng (+ you voiceover) · **Depends on:** P0-2, P1-2, P1-4
@@ -1544,6 +1615,20 @@ a before/after tailoring diff.
 **Effort:** M · **Owner:** eng · **DoD:** Feature grid + failure modes + pricing for
 AIHawk, LazyApply, Simplify, and the tracker/AIApply classes; verifies the current
 comp set (confirm Sonara status) and sharpens P4-1.
+**Status: DONE** — `docs/competitive-teardown.md`. Live-researched (verified against
+vendor primary sources where reachable; third-party review-blog claims explicitly
+labeled reported-unverified per the H-series honesty bar). Comp-set re-verified:
+**AIHawk is archived** (owner archived the repo 2026-05-17, confirmed on the GitHub
+page) and is now a historical/OSS reference rather than a maintained rival; **Sonara
+confirmed still live** but with an unstable history (2024 shutdown → BOLD acquisition
+→ relaunch → reported outage reports as recently as April 2026) that itself sharpens
+the self-hosted/no-vendor-mortality argument for P4-1. Added Teal/Huntr/JobRight.ai as
+the tracker-class representatives alongside AIApply. Key output for P4-1: Applicant's
+sharpest, cheapest-to-defend claims are review-before-submit as architecture (no
+competitor researched enforces this in logic) and the protected-question honesty
+policy (no competitor discloses one at all) — plus an honest gap list (no free tier,
+narrower ATS/board coverage claims, no full LinkedIn Easy Apply autopilot yet — that's
+P5-6, thinner distribution/social proof pre-launch) so P4-2 doesn't over-claim.
 
 ### P4-5 — Early-access cohort
 **Effort:** M · **Owner:** you recruit / eng instrument · **DoD:** 10–20 users with a

@@ -1,18 +1,34 @@
 name: Integration Lane (NFR-OPS-1)
 
 # Staged integration lane: runs the @pytest.mark.integration suite with real
-# dependencies (Postgres, TeX, browser) and optionally a live ATS dry-run.
-# Never performs a real final submit — the engine's review-before-submit gate
-# stops all pre-fill runs at the review boundary.
+# dependencies (Postgres, TeX, LibreOffice, a real browser stack) and
+# optionally a live ATS dry-run, live discovery-board coverage, and the P1-7
+# backup/restore/destroy drill. Never performs a real final submit — the
+# engine's review-before-submit gate stops all pre-fill runs at the review
+# boundary, and the destroy drill only ever touches its own throwaway
+# docker-compose project, never a deployed stack.
 #
 # Triggers:
-#   - Manually (workflow_dispatch) with an optional ATS dry-run URL.
-#   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green.
+#   - Manually (workflow_dispatch) with an optional ATS dry-run URL, an
+#     optional live-discovery toggle (default on), and an optional,
+#     separately-gated confirm_destroy phrase for the P1-7 drill.
+#   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green (the
+#     destroy drill NEVER runs on the schedule — dispatch-only, see below —
+#     and live discovery is dispatch-only too, so a job-board outage can
+#     never flake the unattended weekly run).
 on:
   workflow_dispatch:
     inputs:
       ats_dry_run_url:
         description: "Live ATS URL to dry-run pre-fill against (stops at review boundary; leave blank to skip)"
+        required: false
+        default: ""
+      live_discovery:
+        description: "P2-13 live board coverage: run tests/integration/test_discovery_live.py against the real job boards (read-only). Set to false to skip."
+        required: false
+        default: "true"
+      confirm_destroy:
+        description: "P1-7 destroy drill (backup -> wipe named volumes -> restore) against an ISOLATED throwaway compose stack. Type exactly: yes-i-mean-it to run it. Leave blank to skip — never runs on the weekly schedule."
         required: false
         default: ""
   schedule:
@@ -25,14 +41,18 @@ concurrency:
 jobs:
   integration:
     # Runs on the self-hosted runner. The `self-hosted` label matches yours
-    # regardless of OS/arch. This lane needs heavy system deps (TeX, Xvfb, a
-    # browser) and Docker service containers — because the runner has NO
-    # passwordless sudo, those system deps must be PRE-BAKED on the runner host
-    # (this is also the speedup: no per-run apt installs). The steps below verify
-    # them and fail fast with guidance if any is missing, rather than installing.
-    # Host prerequisites: Docker reachable without sudo (for the postgres service
-    # container); TeX (lualatex or xelatex + moderncv/fontspec/fontawesome5);
-    # Xvfb (`xvfb-run`); fonts (open-sans, font-awesome).
+    # regardless of OS/arch. This lane needs heavy system deps (TeX,
+    # LibreOffice, Xvfb, a browser) and Docker service containers — because
+    # the runner has NO passwordless sudo, those system deps must be
+    # PRE-BAKED on the runner host (this is also the speedup: no per-run apt
+    # installs). The steps below verify them and fail fast with guidance if
+    # any is missing, rather than installing.
+    # Host prerequisites: Docker reachable without sudo (for the postgres
+    # service container); TeX (lualatex or xelatex + moderncv/fontspec/
+    # fontawesome5); LibreOffice with the Writer component (`soffice`,
+    # `libreoffice-writer` — same package `docker/Dockerfile` bakes into the
+    # deploy image, P2-10's docx render path); Xvfb (`xvfb-run`); fonts
+    # (open-sans, font-awesome).
     #
     # HOSTED FALLBACK: to run this lane on GitHub-hosted instead (which permits
     # the `sudo apt-get` installs), comment the `self-hosted` line, uncomment
@@ -58,6 +78,17 @@ jobs:
     env:
       DATABASE_URL: "postgresql+psycopg://applicant:applicant@localhost:5432/applicant"
       APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
+      # P2-13 remainder: live board coverage confirmation. Non-destructive
+      # (read-only searches against real job boards) but dependent on
+      # third-party board availability, so it runs on DISPATCH only (default
+      # on, opt out with live_discovery=false) and never on the weekly
+      # schedule — an upstream board outage must not flake the unattended
+      # weekly run. Evaluated in the expression engine, not the shell.
+      DISCOVERY_LIVE_TEST: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.live_discovery != 'false') && '1' || '' }}
+      # Optional: a real SearXNG instance to include in the live discovery
+      # check. Blank is fine — the jobspy boards still run live without it;
+      # set the SEARXNG_URL repo secret to also exercise the searxng client.
+      SEARXNG_URL: ${{ secrets.SEARXNG_URL || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -70,10 +101,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Sync dependencies (incl. browser extra for patchright)
+      - name: Sync dependencies (incl. browser extra for patchright + camoufox)
         run: uv sync --extra browser
 
-      # --- TeX (FR-RESUME-3/4 real-render path) ----------------------------
+      # --- TeX (FR-RESUME-3/4 real-render path; P2-10 LaTeX lane) ----------
       # No sudo on the self-hosted runner, so TeX must be PRE-BAKED on the host
       # (texlive-latex-extra/-luatex/-xetex/-fonts-* + moderncv/fontspec/
       # fontawesome5 + fonts-open-sans/-font-awesome). Verify, don't install.
@@ -85,12 +116,33 @@ jobs:
           fi
           lualatex --version || xelatex --version
 
-      # --- Browser binary (FR-PREFILL / FR-STEALTH) -------------------------
-      # patchright installs the browser into uv's cache (user-space, no sudo) and
-      # persists between runs on the self-hosted host. Xvfb must be pre-baked
+      # --- LibreOffice (P2-10 docx-fallback render path) --------------------
+      # Same reasoning as TeX: no sudo in CI, so the FULL LibreOffice Writer
+      # component must be PRE-BAKED on the host (`apt-get install
+      # libreoffice-writer`, the same package docker/Dockerfile installs in
+      # the deploy image). `soffice` alone (libreoffice-core) is not enough —
+      # DocxTailor's real convert needs the Writer component, and a bare
+      # `soffice --version` can succeed even when it's missing, so this only
+      # verifies the binary is reachable; the parseability proof test itself
+      # (tests/integration/test_ats_parseability_proof.py) is what proves the
+      # Writer component actually converts (it self-skips honestly rather
+      # than false-passing when the real convert fails).
+      - name: Verify LibreOffice (soffice) is installed on the runner
+        run: |
+          if ! command -v soffice >/dev/null; then
+            echo "::error::soffice not found on the runner. Pre-bake LibreOffice on the self-hosted host (no sudo in CI): apt-get install libreoffice-writer"
+            exit 1
+          fi
+          soffice --version
+
+      # --- Browser binaries (FR-PREFILL / FR-STEALTH) -----------------------
+      # patchright/camoufox install into uv's cache (user-space, no sudo) and
+      # persist between runs on the self-hosted host. Xvfb must be pre-baked
       # (needs sudo to apt-install), so verify it rather than install.
       - name: Install Chromium via patchright
         run: uv run patchright install chromium
+      - name: Fetch Camoufox (default stealth engine; P1-2 stealth-stack leg)
+        run: uv run camoufox fetch
       - name: Verify Xvfb is installed on the runner
         run: |
           if ! command -v xvfb-run >/dev/null; then
@@ -122,8 +174,8 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          # LatexTailor writes to a tmp dir; integration tests that parameterize
-          # output_dir=tmp_path produce PDFs under pytest's tmp root.
+          # LatexTailor/DocxTailor write to a tmp dir; integration tests that
+          # parameterize output_dir=tmp_path produce PDFs under pytest's tmp root.
           find /tmp -name '*.pdf' -newer pyproject.toml 2>/dev/null \
             | head -20 | xargs -I{} cp {} artifacts/ 2>/dev/null || true
           echo "PDFs collected: $(ls artifacts/*.pdf 2>/dev/null | wc -l)"
@@ -153,3 +205,104 @@ jobs:
           else
             echo "No ATS dry-run URL provided — live ATS test skipped."
           fi
+
+      # --- P2-10 / P2-13 result summary --------------------------------------
+      - name: Real-render + live-discovery result summary
+        if: always()
+        run: |
+          echo "--- ATS-parseability proof (P2-10: TeX + LibreOffice real render) ---"
+          grep -i "parseability" reports/integration.log || echo "no test_ats_parseability_proof lines found"
+          echo "--- Live discovery-board coverage (P2-13) ---"
+          grep -i "discovery_live" reports/integration.log || echo "no test_discovery_live lines found"
+          echo "--- Camoufox stealth stack (P1-2) ---"
+          grep -i "camoufox" reports/integration.log || echo "no camoufox test lines found"
+
+  # --- P1-7 remainder: the --confirm-destroy restore drill ------------------
+  destroy-drill:
+    # Dispatch-only (never on the weekly schedule) AND only when the operator
+    # types the exact confirm_destroy phrase — the job-level `if` below does
+    # both comparisons in the Actions expression engine (no shell, no
+    # injection surface), a double gate on top of the drill script's own
+    # --confirm-destroy flag; on any other input the whole job shows as
+    # skipped. Runs the REAL scripts/backup-restore-drill.sh against
+    # docker/docker-compose.prod.yml, but in COMPLETE isolation from any real
+    # deployed stack on this host:
+    #   - `COMPOSE_PROJECT_NAME` below is unique to this RUN (run id + attempt
+    #     — GitHub-generated integers, not user input). `docker compose`
+    #     derives every container, network, and NAMED VOLUME (pgdata,
+    #     engine-state, workspace-data, ...) from the project name, so this
+    #     run can never see or wipe a real deployment's volumes — or another
+    #     concurrent drill's — even though it reuses the same compose file.
+    #   - A throwaway `.env` (own random POSTGRES_PASSWORD, own per-run
+    #     APP_PORT) is pointed to via `APPLICANT_ENV_FILE` — the drill script
+    #     and the `backup.sh`/`restore.sh` it calls all honor that override
+    #     (see their headers), so the real deploy `.env` is never read or
+    #     written.
+    #   - The job-level `concurrency` group serializes drills across runs
+    #     (queue, never cancel — a cancel mid-drill would skip teardown and
+    #     leave orphaned volumes), which also removes any residual host-port
+    #     collision window.
+    # The drill is torn down (`down -v`) at the end regardless of outcome so
+    # no throwaway container/volume lingers on the shared runner host. (The
+    # teardown uses the same per-run COMPOSE_PROJECT_NAME env, so it removes
+    # exactly this run's throwaway stack and nothing else.)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'yes-i-mean-it'
+    runs-on: self-hosted
+    concurrency:
+      group: applicant-destroy-drill
+      cancel-in-progress: false
+    env:
+      COMPOSE_PROJECT_NAME: applicant-ci-destroy-drill-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Docker is reachable without sudo
+        run: docker version
+
+      - name: Build an isolated throwaway .env (own port + password, never the real deploy .env)
+        run: |
+          # Per-run scratch dir + host port so two drills can never collide on
+          # the shared runner host (GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT are the
+          # runner-provided default env vars — no workflow-input templating).
+          drill_dir="${RUNNER_TEMP}/applicant-destroy-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${drill_dir}"
+          # The drill's heartbeat curls localhost:APP_PORT, so a published host
+          # port is required; derive one per run inside a 18000-18999 window.
+          app_port="$((18000 + GITHUB_RUN_ID % 1000))"
+          {
+            echo "APP_PORT=${app_port}"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "APPLICANT_INTERNAL_TOKEN=$(openssl rand -hex 16)"
+          } > "${drill_dir}/.env"
+          echo "APPLICANT_ENV_FILE=${drill_dir}/.env" >> "$GITHUB_ENV"
+          echo "APPLICANT_BACKUP_DIR=${drill_dir}/backups" >> "$GITHUB_ENV"
+
+      # The drill script is written for an ALREADY-LIVE stack ("NEEDS A LIVE
+      # COMPOSE STACK", see its header) — its step 1 is backup.sh --apply,
+      # which hard-fails without a running postgres (`exec pg_dump`), captures
+      # workspace data via `exec` on a running applicant-ui, and captures
+      # engine state via `run --rm --no-deps api` (needs the api IMAGE built,
+      # not the service running). So stand the throwaway stack up first, and
+      # seed the schema so the backup being drilled contains a real database,
+      # not an empty one.
+      - name: Stand up the throwaway stack (postgres + applicant-ui up, api image built)
+        run: |
+          # Load the throwaway .env into this shell so docker compose
+          # interpolates OUR values (POSTGRES_PASSWORD, APP_PORT) — same
+          # loading the drill/backup scripts perform via APPLICANT_ENV_FILE.
+          set -a
+          # shellcheck disable=SC1090
+          . "${APPLICANT_ENV_FILE}"
+          set +a
+          docker compose -f docker/docker-compose.prod.yml up -d --build --wait postgres applicant-ui
+          docker compose -f docker/docker-compose.prod.yml build api
+          docker compose -f docker/docker-compose.prod.yml run --rm api uv run alembic upgrade head
+
+      - name: Run the backup -> destroy volumes -> restore drill (--confirm-destroy)
+        run: scripts/backup-restore-drill.sh --confirm-destroy
+
+      - name: Tear down the throwaway drill stack (always — leaves nothing behind)
+        if: always()
+        run: docker compose -f docker/docker-compose.prod.yml down -v --remove-orphans || true
