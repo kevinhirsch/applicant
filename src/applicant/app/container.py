@@ -1319,6 +1319,7 @@ def build_container(settings: Settings | None = None) -> Container:
     material_service._research_enabled = settings.material_research_enabled
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
+    from applicant.adapters.storage.ledger_persistence import ConfigLedgerStore
     from applicant.application.services.agent_loop import (
         AgentLoop,
         DigestLedger,
@@ -1331,7 +1332,26 @@ def build_container(settings: Settings | None = None) -> Container:
     # AgentLoop every tick (per-tick Session isolation), so the resume backoff + the
     # failure cap must live OUTSIDE the loop instance or they reset every tick and
     # never take effect. Injected into both the shared loop and each per-tick loop.
-    resume_ledger = ResumeLedger()
+    #
+    # DISC-2: process-lived made it tick-safe, but a genuine process restart (an
+    # update.sh deploy / OOM / crash) still wiped the backoff window, so every parked
+    # application looked immediately "due" on the next boot and the loop could
+    # re-attempt everything at once — a retry storm. Give it a restart-durable snapshot
+    # store over the SAME app_config table the ladder/wizard state uses (no new table
+    # or migration). On the real-DB lane the store opens a FRESH session per write via
+    # ``session_factory`` (scheduler-thread-safe — it must NOT touch the boot Session,
+    # CONC-2), exactly like AuditLogService's per-event writes; with no DB it round-
+    # trips through the in-memory config store (nothing survives a restart there
+    # anyway). ``restore()`` reloads the snapshot at boot — call it BEFORE any loop
+    # binds the ledger's dicts (below) so the reloaded state is what the loops see.
+    resume_ledger = ResumeLedger(
+        persister=ConfigLedgerStore(
+            "agent.resume_ledger",
+            session_factory=session_factory,
+            memory_store=config_store if session_factory is None else None,
+        )
+    )
+    resume_ledger.restore()
     # ONE digest ledger for the whole process (same reasoning: the per-tick rebuild
     # would reset the "already delivered today" guard, re-sending the digest every
     # tick). Injected into both the shared loop and each per-tick loop.
