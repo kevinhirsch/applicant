@@ -290,9 +290,30 @@
   .pill-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
   .pill { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--panel); }
 
+  /* FAQ — plain <details>/<summary> accordion inside the existing .feature card,
+     so the "no new bespoke styling" rule (see .privacy section precedent) only
+     needs to stretch as far as making the native disclosure widget legible. */
+  .feature.faq-item { padding: 0; overflow: hidden; }
+  .feature.faq-item summary {
+    padding: 22px; cursor: pointer; list-style: none; font-weight: 700;
+    color: var(--heading); font-size: 15px;
+  }
+  .feature.faq-item summary::-webkit-details-marker { display: none; }
+  .feature.faq-item summary::before { content: '+ '; color: var(--accent); }
+  .feature.faq-item[open] summary::before { content: '\2212 '; }
+  .feature.faq-item p { padding: 0 22px 20px; margin: 0; color: var(--muted); font-size: 14px; }
+
+  /* Pricing / proof strip: reuse .shot (already defined above) for a labeled
+     placeholder tile — no bespoke visuals, just the existing screenshot-strip
+     component wired up. */
+  .shot .slot-label { font-size: 11px; opacity: 0.85; max-width: 220px; }
+
   footer { border-top: 1px solid var(--border); padding: 30px 0; color: var(--muted); font-size: 13px; scroll-snap-align: end; }
   footer .wrap { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 
+  @media (max-width: 1140px) {
+    .nav-links a.opt { display: none; }
+  }
   @media (max-width: 820px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
     .shotrow { grid-template-columns: 1fr; }
@@ -318,8 +339,10 @@
         <a href="#features">Features</a>
         <a href="#privacy">Self-hosted</a>
         <a href="#trust">What it does</a>
-        <a href="#testimonials">Testimonials</a>
-        <a href="#how">How it started</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a class="opt" href="#testimonials">Testimonials</a>
+        <a class="opt" href="#how">How it started</a>
         <a href="#start">Get started</a>
         <a class="btn" href="https://github.com/kevinhirsch/applicant" target="_blank" rel="noopener noreferrer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
@@ -354,6 +377,20 @@
         <a class="btn" href="https://github.com/kevinhirsch/applicant" target="_blank" rel="noopener noreferrer">View on GitHub</a>
       </div>
 
+      <!-- Hero demo-video slot. Deliberately NOT a native video element with a
+           src pointing nowhere — the last round of copy work (activation-
+           funnel audit 09 #6) removed exactly that anti-pattern (dead media
+           tags pointing at files that were never shipped, so the panels
+           silently never played). This is a clearly-labeled placeholder for
+           the recorded walkthrough; the real capture is a separate proof-asset
+           pass and drops in here without a template change. -->
+      <div class="shot" style="max-width:640px;aspect-ratio:16/9;margin:34px auto 0;">
+        <div class="frame-dots"><i></i><i></i><i></i></div>
+        <div class="ph">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M10 8.5v7l6-3.5z" fill="currentColor" stroke="none"/></svg>
+          <span class="slot-label">Recorded walkthrough &mdash; discover, tailor, pre-fill, review &mdash; from the product's own seeded demo data. Placeholder until the capture is attached.</span>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -397,6 +434,37 @@
           <h3>You stay in control</h3>
           <p>Every application is filed for your review before anything ships. Hit a step only a human can clear? Take the
             browser session over live, then hand control back.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROOF STRIP — screenshot slots for the daily loop. Activation-funnel
+       audit 09 #8: the .shotrow/.shot scaffolding below existed in CSS but was
+       never wired into any markup, so no pre-login visitor ever saw the daily
+       payoff. Wired here as clearly-labeled placeholders (not invented
+       screenshots) — the real captures are a separate proof-asset pass and
+       drop straight into these same .shot tiles. -->
+  <section id="proof" style="padding-top:20px;">
+    <div class="wrap">
+      <div class="center">
+        <div class="eyebrow">What the daily loop looks like</div>
+        <h2 class="h">Not a mockup &mdash; the actual screens</h2>
+        <p class="sub center" style="margin:0 auto;">Real captures from a seeded demo, dropping into these
+          slots as they're recorded.</p>
+      </div>
+      <div class="shotrow">
+        <div class="shot">
+          <div class="frame-dots"><i></i><i></i><i></i></div>
+          <div class="ph"><span class="slot-label">Daily digest &mdash; what was found overnight and what's waiting on your review</span></div>
+        </div>
+        <div class="shot">
+          <div class="frame-dots"><i></i><i></i><i></i></div>
+          <div class="ph"><span class="slot-label">Redline resume review &mdash; add, cut, rewrite before anything ships</span></div>
+        </div>
+        <div class="shot">
+          <div class="frame-dots"><i></i><i></i><i></i></div>
+          <div class="ph"><span class="slot-label">Live takeover &mdash; a CAPTCHA handed back to you</span></div>
         </div>
       </div>
     </div>
@@ -579,6 +647,39 @@
     </div>
   </section>
 
+  <!-- PRICING — the software itself has no fee; running cost is whatever
+       compute/model you point it at. No hosted tier exists today (that's a
+       real, deliberate gap, stated plainly rather than promised around). -->
+  <section id="pricing">
+    <div class="wrap">
+      <div class="center">
+        <div class="eyebrow">No seat license, no sales call</div>
+        <h2 class="h">Free to run. You bring the compute.</h2>
+        <p class="sub center" style="margin:0 auto;">Applicant is code you run yourself &mdash; there's no
+          subscription for the software. The only real cost is whatever model you choose to point it at.</p>
+      </div>
+      <div class="grid">
+        <div class="feature">
+          <span class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+          <h3>$0 for the software</h3>
+          <p>Clone the repo and run it. No license fee, no per-seat cost, no trial that expires.</p>
+        </div>
+        <div class="feature">
+          <span class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+          <h3>Your model, your cost</h3>
+          <p>Point it at a local model on your own hardware and the running cost is your own compute &mdash;
+            or bring a hosted provider's API key and that provider bills you directly, not us.</p>
+        </div>
+        <div class="feature">
+          <span class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg></span>
+          <h3>No hosted tier today</h3>
+          <p>There's no Applicant-run cloud version right now. If you'd rather not stand up the stack
+            yourself, this isn't the product for you yet.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- The one-shot prompt it started from (gag) -->
   <section style="padding-top:0;">
     <div class="wrap" style="text-align:center;">
@@ -640,6 +741,57 @@
         share what I built for myself with others. Doesn't work for you? Well&hellip; it runs
         great on my hardware.
       </p>
+    </div>
+  </section>
+
+  <!-- FAQ — plain answers, grounded in the same rules the #trust section
+       states and the codebase actually enforces (review-before-submit,
+       protected questions never AI-answered, no Applicant-operated server). -->
+  <section id="faq">
+    <div class="wrap">
+      <div class="center">
+        <div class="eyebrow">Before you ask</div>
+        <h2 class="h">Questions people actually ask</h2>
+        <p class="sub center" style="margin:0 auto;">Straight answers, not a pitch.</p>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr;max-width:760px;margin-left:auto;margin-right:auto;">
+        <details class="feature faq-item">
+          <summary>Does it submit applications without asking me?</summary>
+          <p>No. Every application is filed for your review first &mdash; the agent cannot self-authorize
+            a final submit. You approve or decline each one before anything goes out.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>What happens with EEO / demographic and work-authorization questions?</summary>
+          <p>Those are never answered by AI, in chat or in pre-fill. They're filled from your own stored
+            words, or left as an honest decline-to-answer &mdash; never guessed on your behalf.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>What if a posting throws up a CAPTCHA or a step only a human can clear?</summary>
+          <p>Applicant hands it to you: take the browser session over live, clear the step, then hand
+            control back.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>Which models does it work with?</summary>
+          <p>Bring your own &mdash; a local model on your own hardware, or your own API key to a hosted
+            provider. Either way, the model choice and its cost are yours, not ours.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>Is my resume and application history stored on your servers?</summary>
+          <p>No &mdash; there is no Applicant-operated server. Your data lives in your own SQLite/Postgres,
+            on whatever infrastructure you deploy it to.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>Does it work with LinkedIn Easy Apply?</summary>
+          <p>Assisted mode only today: Applicant prepares a deep link, your tailored materials, and a
+            checklist for LinkedIn's own Easy Apply flow, with your explicit consent before any of it is
+            used. It isn't a full autopilot yet.</p>
+        </details>
+        <details class="feature faq-item">
+          <summary>Do I need to be a developer to run it?</summary>
+          <p>There's a one-line install script (<code>scripts/install.sh --apply</code>) that stands up
+            the whole stack. You'll still want basic comfort with a terminal and Docker.</p>
+        </details>
+      </div>
     </div>
   </section>
 
