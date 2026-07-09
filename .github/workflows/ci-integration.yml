@@ -219,18 +219,36 @@ jobs:
 
       - name: Integration test suite
         run: |
-          # Wrap in Xvfb so browser tests can open a display. Use an EXPLICIT
-          # --server-num=99 (NOT --auto-servernum): the step env pins
-          # DISPLAY=:99 and pytest-xdist worker subprocesses that spawn Chromium
-          # inherit that value. --auto-servernum picks a random display number
-          # and only exports the matching DISPLAY to its DIRECT child, so the
-          # inherited :99 would point at no X server ("Missing X server or
-          # $DISPLAY" -> patchright TargetClosedError). Pinning Xvfb to :99 makes
-          # the running server and the exported DISPLAY agree for every worker.
-          xvfb-run --server-num=99 uv run pytest -v -m integration \
+          # Browser tests (FR-PREFILL / FR-STEALTH) need a real X display, and
+          # every pytest-xdist worker + the Chromium it spawns must inherit a
+          # DISPLAY that points at a LIVE server. The runner is PERSISTENT, so a
+          # stale /tmp/.X99-lock left by a prior run makes `xvfb-run
+          # --server-num=99` silently fail to bring Xvfb up while pytest still
+          # runs with DISPLAY=:99 pointing at a dead display ("Missing X server
+          # or $DISPLAY" -> patchright TargetClosedError). So manage Xvfb
+          # EXPLICITLY: clear any stale lock/socket, start it on :99, wait for
+          # the socket to exist, run the suite (capturing pytest's real exit
+          # code past the `tee`), then tear Xvfb down.
+          mkdir -p reports
+          export DISPLAY=:99
+          rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb-99.log 2>&1 &
+          XVFB_PID=$!
+          for _ in $(seq 1 40); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.25; done
+          if [ ! -S /tmp/.X11-unix/X99 ]; then
+            echo "::error::Xvfb failed to start on :99 (see log below)"; cat /tmp/xvfb-99.log 2>/dev/null || true
+            kill "$XVFB_PID" 2>/dev/null || true
+            exit 1
+          fi
+          set +e
+          uv run pytest -v -m integration \
             --tb=short \
             --junitxml=reports/integration-results.xml \
             2>&1 | tee reports/integration.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          kill "$XVFB_PID" 2>/dev/null || true
+          exit "$rc"
         env:
           APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
           DISPLAY: ":99"
