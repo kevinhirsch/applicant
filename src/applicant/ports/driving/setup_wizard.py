@@ -75,6 +75,14 @@ class TierSettings:
     edit/reorder without re-typing it: the UI sends back the ref it received from
     ``get_tiers`` and leaves ``api_key`` blank, and ``set_tiers`` re-seals the
     existing secret at the tier's new position (see SetupService.set_tiers).
+
+    ``connection_id`` binds this tier to a *saved model connection* (a
+    model-endpoint record) BY REFERENCE (DISC-4): the UI sends only the
+    connection's id — never its key — and ``build_ladder`` resolves that
+    connection's sealed key server-side at use time. Rotating the connection's
+    key updates every tier bound to it; the plaintext never reaches the browser.
+    Precedence when several are present: a freshly typed ``api_key`` wins, then
+    ``connection_id`` (by-ref), then ``api_key_ref`` (this tier's own sealed key).
     """
 
     provider: str
@@ -83,6 +91,7 @@ class TierSettings:
     api_key: str = ""
     api_key_ref: str = ""
     context_window: int = 8192
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)

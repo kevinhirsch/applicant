@@ -117,6 +117,85 @@ def test_set_tiers_preserves_key_by_ref_on_edit(credential_store):
     assert ladder.at(0).api_key == "sk-keep"  # key survived the edit
 
 
+# === DISC-4: bind a tier to a saved connection's key BY REFERENCE ============
+def _connection_svc(store, credentials):
+    from applicant.application.services.model_endpoint_service import ModelEndpointService
+
+    return ModelEndpointService(config_store=store, credentials=credentials)
+
+
+def _add_connection(store, credentials, *, base_url, api_key, name="conn"):
+    ep_svc = _connection_svc(store, credentials)
+    rec = ep_svc.add_endpoint(base_url=base_url, api_key=api_key, name=name, probe=False)
+    return rec["id"]
+
+
+def test_tier_binds_to_saved_connection_key_by_reference(credential_store):
+    """A tier carrying only ``connection_id`` resolves that saved connection's
+    sealed key at build time — the key is never copied into the tier record."""
+    store = InMemoryAppConfigStore()
+    conn_id = _add_connection(
+        store, credential_store, base_url="https://conn.test/v1", api_key="sk-conn"
+    )
+    svc = _svc(store, credential_store)
+    svc.set_tiers([
+        TierSettings(provider="openai", base_url="https://conn.test/v1", model="m1", connection_id=conn_id),
+    ])
+    # The persisted tier record carries the reference, never a key/marker of its own.
+    got = svc.get_tiers()[0]
+    assert got.get("connection_id") == conn_id
+    assert "api_key" not in got
+    assert "api_key_ref" not in got  # not re-sealed as the tier's own key
+    assert all("sk-conn" not in str(v) for v in got.values())  # plaintext never persisted
+    # build_ladder resolves the CONNECTION's key by reference at use time.
+    ladder = svc.build_ladder()
+    assert ladder.at(0).api_key == "sk-conn"
+
+
+def test_bound_tier_tracks_a_rotated_connection_key(credential_store):
+    """Because the bind is by reference (not a copy), rotating the connection's
+    key flows to every tier bound to it with no ladder re-save."""
+    store = InMemoryAppConfigStore()
+    conn_id = _add_connection(
+        store, credential_store, base_url="https://conn.test/v1", api_key="sk-old"
+    )
+    svc = _svc(store, credential_store)
+    svc.set_tiers([
+        TierSettings(provider="openai", base_url="https://conn.test/v1", model="m1", connection_id=conn_id),
+    ])
+    assert svc.build_ladder().at(0).api_key == "sk-old"
+    # Rotate the connection's key (re-add same base URL updates in place).
+    _add_connection(store, credential_store, base_url="https://conn.test/v1", api_key="sk-new")
+    assert svc.build_ladder().at(0).api_key == "sk-new"
+
+
+def test_bind_to_unknown_connection_is_rejected(credential_store):
+    store = InMemoryAppConfigStore()
+    svc = _svc(store, credential_store)
+    with pytest.raises(ValueError):
+        svc.set_tiers([
+            TierSettings(provider="openai", base_url="https://x.test/v1", model="m", connection_id="does-not-exist"),
+        ])
+
+
+def test_typed_key_wins_over_connection_binding(credential_store):
+    """A freshly typed key overrides the connection binding (user override)."""
+    store = InMemoryAppConfigStore()
+    conn_id = _add_connection(
+        store, credential_store, base_url="https://conn.test/v1", api_key="sk-conn"
+    )
+    svc = _svc(store, credential_store)
+    svc.set_tiers([
+        TierSettings(
+            provider="openai", base_url="https://conn.test/v1", model="m1",
+            api_key="sk-typed", connection_id=conn_id,
+        ),
+    ])
+    got = svc.get_tiers()[0]
+    assert "connection_id" not in got  # typed key wins; tier owns its own sealed key
+    assert svc.build_ladder().at(0).api_key == "sk-typed"
+
+
 def test_set_tiers_preserves_keys_across_reorder(credential_store):
     """Reordering two keyed tiers keeps EACH tier's own key (two-phase re-seal)."""
     svc = _svc(credentials=credential_store)

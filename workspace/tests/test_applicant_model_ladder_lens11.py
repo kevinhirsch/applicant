@@ -100,17 +100,24 @@ def test_picking_a_connection_fills_provider_and_address_without_retyping():
     )
 
 
-def test_connection_with_saved_key_gets_an_honest_note_instead_of_a_silent_gap():
+def test_connection_with_saved_key_is_reused_by_reference_without_re_entry():
+    """DISC-4: picking a saved connection with a key now REUSES that key by
+    reference — no re-entry. The key still never reaches the browser (it stays
+    sealed and is resolved server-side at use time), so the note must say the
+    key is reused-by-reference rather than asking the user to re-type it."""
     js = _read(LADDER_JS)
     body = _fn_body(js, r"function _tierRowHTML\(t, i\)")
     assert "_connectionHasKey" in body, (
         "expected the tier row to know whether the picked connection has a saved key"
     )
-    # The key itself is never sent to the browser (security boundary already used
-    # by the saved-connections list), so the UI must say so rather than silently
-    # leaving the key field blank with no explanation.
-    assert "copy automatically" in js and "stays sealed" in js, (
-        "expected an explicit note that a saved connection's key can't be auto-copied into the tier"
+    # The key is never sent to the browser; the honest note says it stays sealed
+    # and is applied by reference (no one-time re-entry any more).
+    assert "stays sealed" in js and "by reference" in js, (
+        "expected an explicit note that the connection's key stays sealed and is applied by reference"
+    )
+    # The old 'enter it once here' re-entry prompt must be gone (DISC-4 removes it).
+    assert "copy automatically" not in js and "enter it once here" not in js, (
+        "the by-ref bind should reuse the connection's key with no re-entry prompt"
     )
 
 
@@ -129,6 +136,43 @@ def test_per_tier_test_button_exists_and_calls_the_existing_probe_route():
     assert "new FormData()" in wire_body, (
         "the test route takes Form fields (base_url/api_key), matching the "
         "existing saved-connections + admin.js pattern, not a JSON body"
+    )
+
+
+# ── DISC-4: reuse a saved connection's key at a tier BY REFERENCE ───────────
+
+
+def test_picking_a_connection_binds_its_key_by_reference():
+    """The change handler must set `connection_id` from the chosen connection so
+    the tier binds to that connection's key by reference (no re-typing)."""
+    js = _read(LADDER_JS)
+    wire_body = _fn_body(js, r"function _wireTierEditing\(\)")
+    assert "t.connection_id = epId" in wire_body, (
+        "picking a connection must bind the tier to it by reference (connection_id)"
+    )
+
+
+def test_save_sends_connection_id_not_a_key_for_a_bound_tier():
+    """On Save, a by-ref-bound tier sends only `connection_id` (a reference),
+    never the key — and a freshly typed key still takes precedence over it."""
+    js = _read(LADDER_JS)
+    save_body = _fn_body(js, r"async function _save\(\)")
+    assert "tier.connection_id = t.connection_id" in save_body, (
+        "a bound tier must send its connection_id reference to the engine"
+    )
+    # Precedence: a typed api_key is checked before the connection binding.
+    idx_key = save_body.index("tier.api_key = t.api_key")
+    idx_conn = save_body.index("tier.connection_id = t.connection_id")
+    assert idx_key < idx_conn, "a freshly typed key must win over the connection binding"
+
+
+def test_bound_connection_id_is_read_back_from_the_engine_on_load():
+    """A tier persisted with a by-ref binding returns `connection_id`; the loader
+    must keep it so the picker re-selects the bound connection after reload."""
+    js = _read(LADDER_JS)
+    load_body = _fn_body(js, r"async function _load\(\)")
+    assert "t.connection_id" in load_body and "connection_id: connectionId" in load_body, (
+        "the loader must carry the persisted connection_id binding back into the tier state"
     )
 
 

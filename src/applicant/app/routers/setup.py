@@ -43,6 +43,11 @@ class TierIn(BaseModel):
     # blank api_key) to keep an already-sealed key across an edit/reorder (FR-LLM-3).
     api_key_ref: str = ""
     context_window: int = 8192
+    # DISC-4: bind this tier to a saved model-connection's key BY REFERENCE. The
+    # browser sends only the connection's id (never the key); the engine resolves
+    # that connection's sealed key server-side at use time. Lets a saved connection
+    # be reused at a tier with no re-entry, and the plaintext never reaches the client.
+    connection_id: str = ""
 
 
 class LadderIn(BaseModel):
@@ -393,6 +398,7 @@ def set_tiers(body: LadderIn, svc=Depends(get_setup_service)) -> None:
                     api_key=t.api_key,
                     api_key_ref=t.api_key_ref,
                     context_window=t.context_window,
+                    connection_id=t.connection_id,
                 )
                 for t in body.tiers
             ]
