@@ -397,9 +397,25 @@ def _resolve_calls():
 def test_resolve_action_ok(client):
     r = client.post("/api/applicant/portal/actions/a1/resolve")
     assert r.status_code == 200
-    assert r.json() == {"resolved": True, "action_id": "a1"}
+    assert r.json() == {"resolved": True, "already_resolved": False, "action_id": "a1"}
     # Plain resolve (no JSON body) → forwarded with no body.
     assert any(c[1] == "a1" and c[2] is None for c in _resolve_calls())
+
+
+def test_resolve_action_surfaces_already_resolved(client, monkeypatch):
+    # DISC-6: the engine now returns a distinguishable body (rather than an
+    # empty 204) when the action was already resolved -- the proxy must
+    # forward that as an explicit ``already_resolved`` flag instead of
+    # collapsing it back into the same "resolved": True shape as a fresh
+    # resolve, which is exactly the silent no-op the ledger item calls out.
+    async def _already_resolved(self, aid, body=None):
+        FakeEngine.calls.append(("resolve_pending_action", aid, body))
+        return {"action_id": aid, "status": "already_resolved"}
+
+    monkeypatch.setattr(FakeEngine, "resolve_pending_action", _already_resolved)
+    r = client.post("/api/applicant/portal/actions/a1/resolve")
+    assert r.status_code == 200
+    assert r.json() == {"resolved": False, "already_resolved": True, "action_id": "a1"}
 
 
 def test_resolve_action_forwards_apply_body(client):

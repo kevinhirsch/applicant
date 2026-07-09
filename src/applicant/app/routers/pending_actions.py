@@ -9,7 +9,8 @@ Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from applicant.app.deps import (
@@ -18,7 +19,10 @@ from applicant.app.deps import (
     get_pending_actions_service,
     require_llm_configured,
 )
-from applicant.application.services.pending_actions_service import KIND_INTEGRAL_CHANGE
+from applicant.application.services.pending_actions_service import (
+    KIND_INTEGRAL_CHANGE,
+    RESOLVE_ALREADY_RESOLVED,
+)
 from applicant.core.ids import PendingActionId
 
 router = APIRouter(
@@ -203,13 +207,13 @@ def snooze(
     }
 
 
-@router.post("/{action_id}/resolve", status_code=204)
+@router.post("/{action_id}/resolve")
 def resolve(
     action_id: str,
     body: ResolveIn | None = None,
     pending_actions=Depends(get_pending_actions_service),
     attribute_cloud=Depends(get_attribute_cloud_service),
-) -> None:
+) -> Response:
     """Resolve a pending action once the user has acted (FR-UI-3).
 
     For a held integral change (``integral_change``), ``apply=true`` commits the
@@ -217,6 +221,15 @@ def resolve(
     is the explicit confirmation FR-FB-3 requires) before clearing the item;
     ``apply=false`` / absent rejects it and just clears the item. All other kinds
     ignore the body and resolve as before.
+
+    DISC-6: a genuine open→resolved transition still returns a bare ``204`` (as
+    before, so existing callers are unaffected), but an already-resolved action
+    (two tabs, a retried request, a stale client re-sending the same id) now
+    gets a distinguishable ``200`` body instead of looking identical to a fresh
+    resolve — the service (lens 04 #27) already computes this outcome, it just
+    wasn't surfaced past this router. Wired through to the workspace proxy and
+    Portal JS so the user sees an honest "already handled" instead of a silent
+    no-op.
     """
     aid = PendingActionId(action_id)
     action = pending_actions.get(aid)
@@ -234,4 +247,10 @@ def resolve(
             attribute_cloud.upsert(
                 action.campaign_id, name, str(value), is_integral=True, confirm=True
             )
-    pending_actions.resolve(aid)
+    outcome = pending_actions.resolve(aid)
+    if outcome == RESOLVE_ALREADY_RESOLVED:
+        return JSONResponse(
+            status_code=200,
+            content={"action_id": action_id, "status": "already_resolved"},
+        )
+    return Response(status_code=204)

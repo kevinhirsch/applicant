@@ -458,6 +458,13 @@ def setup_applicant_portal_routes() -> APIRouter:
 
         An optional JSON body (e.g. ``{"apply": true}``) is forwarded so a held
         integral change can be confirmed/applied before the item clears (FR-FB-3).
+
+        DISC-6: the engine now distinguishes a genuine open->resolved transition
+        (empty 204 body) from an already-resolved no-op (a JSON body carrying
+        ``{"status": "already_resolved"}``) -- forward that distinction as
+        ``already_resolved`` so the Portal can show an honest "already handled"
+        message instead of a silent success toast for something that had
+        nothing left to do.
         """
         _require_user(request)
         try:
@@ -469,10 +476,15 @@ def setup_applicant_portal_routes() -> APIRouter:
             body = None
         async with ApplicantEngineClient() as engine:
             try:
-                await engine.resolve_pending_action(action_id, body)
+                result = await engine.resolve_pending_action(action_id, body)
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return {"resolved": True, "action_id": action_id}
+        already_resolved = isinstance(result, dict) and result.get("status") == "already_resolved"
+        return {
+            "resolved": not already_resolved,
+            "already_resolved": already_resolved,
+            "action_id": action_id,
+        }
 
     # -- bulk resolve ("approve all N") -----------------------------------
 
