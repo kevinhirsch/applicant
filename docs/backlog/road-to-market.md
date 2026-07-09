@@ -1497,7 +1497,7 @@ channel; SPF/DKIM guidance shipped for the SMTP path.
 
 ### P4-2 — Landing page
 **Effort:** M · **Owner:** eng · **Depends on:** P0-2 (hero data), P4-1
-**DoD:** `landing.html` rebuilt around the demo hero video, privacy stance, pricing, FAQ.
+**DoD:** `landing.html` rebuilt around the demo hero-video **placeholder** (real capture pending P4-3), privacy stance, pricing, FAQ.
 **Status: PARTIAL** — `#pricing` (no software fee, bring-your-own-model cost, the honest
 "no hosted tier today" gap stated plainly rather than promised around) and `#faq` (7
 questions grounded in the same rules `#trust` states — review-before-submit, EEO/work-auth
