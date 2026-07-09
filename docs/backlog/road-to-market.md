@@ -1537,7 +1537,7 @@ table (`docs/requirements-and-model-matrix.md`), and the actual service list
 out of `docker/docker-compose.prod.yml`; FAQ reuses the shipped landing
 page's `#faq` accordion verbatim (P4-2); Troubleshooting pulls the live OPEN
 table from `docs/known-issues.md` plus the runtime-dependency gotchas out of
-this file's own "Runtime dependencies" section; Security & Privacy links the
+`CLAUDE.md`'s "Runtime dependencies" section; Security & Privacy links the
 in-app `/privacy` policy and surfaces the `docs/security-review.md` findings
 table, `docs/private-mode.md`'s claim, and the `docs/reverse-proxy-https.md`
 TLS checklist. The page shell reuses the shipped `/privacy` page's own dark
@@ -1551,7 +1551,7 @@ runtime-gotchas prose (reused for Troubleshooting) cites spec IDs that are
 fine internally but not user-facing.
 **Pinning tests:** `workspace/tests/test_applicant_docs_site.py` — generator
 runs clean and produces exactly the expected 5-page set, output is
-byte-deterministic across two independent runs (date-stamp excluded), and a
+byte-deterministic across two independent runs (no timestamp in the output), and a
 section-presence contract per page (a real FAQ question, a real known-issue
 ID, real compose service names, the lxml/XXE finding, `LLM_LOCAL_ONLY`) that
 would fail red if the extraction broke against the live source docs.

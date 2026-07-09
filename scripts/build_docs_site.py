@@ -33,7 +33,6 @@ copy to go stale, only a script that reads the live source on every run.
 from __future__ import annotations
 
 import argparse
-import datetime
 import html
 import re
 import sys
@@ -160,14 +159,36 @@ def read(relpath: str) -> str:
 # Binding principle #3 (white-label): zero FR-/NFR- spec jargon in any
 # user-facing string. Several internal docs (CLAUDE.md in particular) cite
 # spec IDs like "(FR-RESUME-3/4)" for engineers; this docs site is public, so
-# strip any such parenthetical before it reaches a rendered page.
+# strip them before they reach a rendered page. Two passes:
+#   1. the common form is a whole parenthetical, "(FR-RESUME-3/4)" or
+#      "(FR-PREFILL, FR-STEALTH)" — drop the parenthetical (and its leading
+#      space) entirely so the surrounding prose reads cleanly;
+#   2. then a token sweep for any remaining BARE spec id ("FR-RESUME-3" with
+#      no wrapping parens), which the paren pass leaves untouched but which is
+#      just as much a white-label violation — collapse the stray whitespace it
+#      leaves behind so we don't emit double spaces.
 _SPEC_ID_PAREN = re.compile(
     r"\s*\([A-Za-z0-9/,\- ]*\b(?:FR|NFR)-[A-Za-z0-9/-]+[A-Za-z0-9/,\- ]*\)"
 )
+_SPEC_ID_TOKEN = re.compile(r"\b(?:FR|NFR)-[A-Za-z0-9/-]+")
 
 
 def strip_spec_jargon(text: str) -> str:
-    return _SPEC_ID_PAREN.sub("", text)
+    text = _SPEC_ID_PAREN.sub("", text)
+    text = _SPEC_ID_TOKEN.sub("", text)
+    # Tidy up the artifacts a bare-token removal can leave (" ,"/doubled
+    # interior spaces). Do this PER LINE and preserve each line's LEADING
+    # indentation — md_block_to_html detects list-item continuation lines via
+    # `line.startswith("  ")`, so collapsing leading whitespace would corrupt
+    # the rendering.
+    tidied = []
+    for line in text.split("\n"):
+        indent = line[: len(line) - len(line.lstrip(" \t"))]
+        rest = line[len(indent):]
+        rest = re.sub(r" +([,.;:])", r"\1", rest)
+        rest = re.sub(r"[ \t]{2,}", " ", rest)
+        tidied.append(indent + rest)
+    return "\n".join(tidied)
 
 
 # --------------------------------------------------------------------------
@@ -186,10 +207,24 @@ def get_faq_items() -> list[tuple[str, str]]:
     section_match = re.search(
         r'<section id="faq">(.*?)</section>', landing, re.DOTALL
     )
-    faq_section = section_match.group(1) if section_match else landing
+    if section_match is None:
+        # Fail CLOSED. Falling back to the whole page would silently scrape
+        # unrelated <summary>/<p> pairs (e.g. a CSS comment or an unrelated
+        # <details>), shipping junk as "the FAQ". If the landing page's #faq
+        # section moved/renamed, that's a real breakage the generator must
+        # surface, not paper over.
+        raise RuntimeError(
+            'workspace/static/landing.html has no <section id="faq"> — the FAQ '
+            "source moved or was renamed; update get_faq_items()."
+        )
     pairs = re.findall(
-        r"<summary>(.*?)</summary>\s*<p>(.*?)</p>", faq_section, re.DOTALL
+        r"<summary>(.*?)</summary>\s*<p>(.*?)</p>", section_match.group(1), re.DOTALL
     )
+    if not pairs:
+        raise RuntimeError(
+            'workspace/static/landing.html #faq matched no <summary>/<p> pairs '
+            "— the accordion markup changed; update get_faq_items()."
+        )
     return [(q.strip(), a.strip()) for q, a in pairs]
 
 
@@ -255,12 +290,65 @@ def get_private_mode_summary() -> str:
     return md_block_to_html(first_para)
 
 
+def get_install_oneliner() -> str:
+    """The advertised curl-pipe-bash one-liner, pulled from install.sh's own
+    header comment so the docs command can't drift from what the script
+    documents. Fail closed if the shape changes."""
+    text = read("scripts/install.sh")
+    m = re.search(
+        r"bash -c \"\$\(curl -fsSL https://\S+/scripts/install\.sh\)\" -- --apply",
+        text,
+    )
+    if not m:
+        raise RuntimeError(
+            "scripts/install.sh no longer advertises the curl|bash one-liner in the "
+            "expected shape — update get_install_oneliner()."
+        )
+    return m.group(0)
+
+
+def get_proxmox_oneliner() -> str:
+    text = read("scripts/proxmox-deploy.sh")
+    m = re.search(
+        r"bash -c \"\$\(curl -fsSL https://\S+/scripts/proxmox-deploy\.sh\)\"",
+        text,
+    )
+    if not m:
+        raise RuntimeError(
+            "scripts/proxmox-deploy.sh no longer advertises its curl|bash one-liner "
+            "in the expected shape — update get_proxmox_oneliner()."
+        )
+    return m.group(0)
+
+
+def get_install_modes() -> list[tuple[str, str]]:
+    """The install.sh mode flags + descriptions, parsed from the script's own
+    `Usage:` help block so the docs stay in lockstep with the real flags."""
+    text = read("scripts/install.sh")
+    usage = re.search(r"^Usage: install\.sh.*?^EOF", text, re.DOTALL | re.MULTILINE)
+    block = usage.group(0) if usage else text
+    modes = []
+    for line in block.split("\n"):
+        m = re.match(r"^\s{2}(--[a-z]+(?:, -[a-z])?)\s{2,}(.+)$", line)
+        if m:
+            modes.append((m.group(1).strip(), m.group(2).strip()))
+    if not modes:
+        raise RuntimeError(
+            "scripts/install.sh Usage block parsed no `--flag  description` lines "
+            "— update get_install_modes()."
+        )
+    return modes
+
+
 def get_compose_services() -> list[str]:
     """The real service list straight out of the production compose file —
     if a service is added/removed there, this list changes with it."""
     text = read("docker/docker-compose.prod.yml")
+    # Bound the services block by the NEXT top-level key (or EOF), not a
+    # hard-coded `volumes:` — a `networks:`/`configs:` block appearing before
+    # `volumes:` would otherwise be swallowed and leak non-service names.
     services_block = re.search(
-        r"^services:\n(.*?)^volumes:", text, re.DOTALL | re.MULTILINE
+        r"^services:\n(.*?)(?=^[A-Za-z][\w-]*:|\Z)", text, re.DOTALL | re.MULTILINE
     )
     block = services_block.group(1) if services_block else text
     return re.findall(r"^  ([a-zA-Z][a-zA-Z0-9_-]*):\s*$", block, re.MULTILINE)
@@ -371,7 +459,6 @@ BRAND_SVG = (
 
 
 def page_shell(active_file: str, title: str, description: str, body: str) -> str:
-    today = datetime.date.today().isoformat()
     nav_links = []
     for fname, label in NAV_PAGES:
         cls = ' class="active"' if fname == active_file else ""
@@ -399,8 +486,9 @@ def page_shell(active_file: str, title: str, description: str, body: str) -> str
 {body}
   </main>
   <footer>
-    <span>Generated from the repo on {today} — regenerate with
-    <code>python scripts/build_docs_site.py</code>, never hand-edited.</span><br><br>
+    <span>Generated straight from the repo by
+    <code>python scripts/build_docs_site.py</code> — never hand-edited, so it can't
+    drift from the source.</span><br><br>
     <a href="{GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
     <a href="{GITHUB_REPO_URL}/blob/main/docs/overview.md" target="_blank" rel="noopener noreferrer">docs/overview.md</a>
   </footer>
@@ -453,27 +541,34 @@ def build_quickstart() -> str:
         services_html += f"<li><code>{esc(svc)}</code> — {blurb}</li>"
     services_html += "</ul>"
 
+    install_oneliner = get_install_oneliner()
+    proxmox_oneliner = get_proxmox_oneliner()
+    modes_html = "<ul>"
+    for flag, desc in get_install_modes():
+        modes_html += f"<li><code>{esc(flag)}</code> — {esc(desc)}</li>"
+    modes_html += "</ul>"
+
     body = f"""
     <h1>Quickstart</h1>
-    <p class="updated">Generated from <code>scripts/install.sh</code>,
-    <code>scripts/proxmox-deploy.sh</code>, and <code>docker/docker-compose.prod.yml</code>.</p>
+    <p class="updated">The commands and mode list below are extracted from
+    <code>scripts/install.sh</code> / <code>scripts/proxmox-deploy.sh</code>, and the
+    service list from <code>docker/docker-compose.prod.yml</code> — so they can't drift
+    from the real scripts.</p>
 
     <h2>One-liner install</h2>
     <p>A single script provisions the whole Docker Compose stack with sane, editable
     defaults — no CLI knowledge required beyond running it:</p>
-    <pre><code>bash -c "$(curl -fsSL {GITHUB_REPO_URL}/raw/main/scripts/install.sh)" -- --apply</code></pre>
+    <pre><code>{esc(install_oneliner)}</code></pre>
     <p>Or, from an existing checkout:</p>
     <pre><code>bash scripts/install.sh --apply</code></pre>
-    <p>Modes: <code>--apply</code> builds and starts the stack, migrates, then
-    health-checks until green (default with no flag is a <strong>safe dry run</strong> —
-    it only prints the steps). <code>--doctor</code> runs a read-only health self-check.
-    <code>--uninstall</code> stops the containers and keeps your data; <code>--purge</code>
-    additionally removes data volumes and built images.</p>
+    <p>Modes (the default with no flag is a <strong>safe dry run</strong> — it prints the
+    steps it would run and changes nothing):</p>
+    {modes_html}
 
     <h2>Fresh Proxmox VM</h2>
     <p>If you're starting from a bare Proxmox host, this provisions a VM (Ubuntu Server
     24.04 LTS by default) and then runs the installer inside it:</p>
-    <pre><code>bash scripts/proxmox-deploy.sh</code></pre>
+    <pre><code>{esc(proxmox_oneliner)}</code></pre>
 
     <h2>Host requirements</h2>
     {req_table}
@@ -508,7 +603,7 @@ def build_faq() -> str:
     <p class="updated">Reused verbatim from the shipped landing page's
     <code>#faq</code> section — the same answers, not a second copy that can drift
     from what users are actually shown.</p>
-    {faq_html if faq_html else '<p><em>No FAQ entries found — check workspace/static/landing.html #faq.</em></p>'}
+    {faq_html}
 """
     return page_shell("faq.html", "FAQ", "Frequently asked questions about Applicant.", body)
 
@@ -582,8 +677,8 @@ def build_security_privacy() -> str:
     <div class="callout">
       <strong>The full privacy policy</strong> — what's stored, what's encrypted, what
       leaves your deployment and when, and how to export or delete your data — lives in
-      the app itself at <code>/privacy</code> on your running instance
-      (also linked from the app's landing page and Settings). This page summarizes the
+      the app itself at <a href="/privacy"><code>/privacy</code></a> on your running
+      instance (also linked from the app's landing page and Settings). This page summarizes the
       engineering side: the security review and the network-hardening options.
     </div>
 
@@ -620,6 +715,12 @@ PAGES = {
 
 def build(out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Clear out any stale generated pages first so a removed/renamed PAGES
+    # entry can't leave an orphaned .html behind. Only *.html is swept —
+    # anything else a user put in the dir (a .nojekyll, a CNAME, an image)
+    # is left untouched.
+    for stale in out_dir.glob("*.html"):
+        stale.unlink()
     written = []
     for fname, builder in PAGES.items():
         content = builder()
