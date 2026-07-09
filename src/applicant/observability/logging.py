@@ -102,6 +102,14 @@ def _redact_text(text: str) -> str:
     return redacted
 
 
+def redact_text(text: str) -> str:
+    """Public entry point for the same free-text secret redaction the logging
+    pipeline uses (NFR-PRIV-1). Reused by ``observability.telemetry`` (P5-3, opt-in
+    crash reporting) so a crash message gets IDENTICAL scrubbing to a log line —
+    one pattern list, not a second copy that could silently drift out of sync."""
+    return _redact_text(text)
+
+
 def _redact_value(value: Any) -> Any:
     """Recursively redact secret-looking keys AND secret-looking values.
 

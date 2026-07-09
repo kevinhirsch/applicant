@@ -2488,6 +2488,13 @@
                actionable fix copy per degraded item. -->
           <div id="ao-settings-health"></div>
 
+          <!-- ═══ OPT-IN ERROR TELEMETRY (P5-3) ═══
+               applicantTelemetrySettings.js mounts here when the System tab
+               opens: an off-by-default crash-report toggle + operator-supplied
+               destination, forced off whenever the engine's local-only
+               private mode is active. -->
+          <div id="ao-settings-telemetry"></div>
+
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>
@@ -2638,6 +2645,7 @@
 <script type="module" src="/static/js/applicantCampaignSettings.js"></script>  <!-- #301: campaign config + discovery-source toggles (Settings → Campaign) -->
 <script type="module" src="/static/js/applicantAutomationSettings.js"></script>  <!-- automation preferences panel (Settings → Automation Preferences) — mounts via window.mountApplicantAutomationSettings -->
 <script type="module" src="/static/js/applicantHealth.js"></script>  <!-- P1-3 (#655): honest health panel (Settings → System) — mounts via window.mountApplicantHealthPanel; also exports renderApplicantPortalHealthBanner for the Today/Portal banner -->
+<script type="module" src="/static/js/applicantTelemetrySettings.js"></script>  <!-- P5-3: opt-in error telemetry (Settings → System) — off by default, hard-off in local-only private mode — mounts via window.mountApplicantTelemetrySettings -->
 <script type="module" src="/static/js/applicantRail.js"></script>  <!-- P0-3: the right-hand gadget rail (3-pane shell) — self-boots into #applicant-gadget-rail; a new LENS over existing proxies (portal/tracker/activity/guardrails/results/health/digest), no new engine endpoints -->
 <script type="module" src="/static/js/applicantBell.js"></script>  <!-- P0-3 (P0-3b): the top-bar notification BELL — the third notification surface; self-boots into #applicant-bell-wrap; reuses GET /api/applicant/portal/pending (same backing as the rail + Portal), no new engine endpoint -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded

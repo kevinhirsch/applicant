@@ -457,6 +457,18 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
+    # -- Settings > System: opt-in error telemetry (P5-3) -------------------
+
+    async def setup_get_telemetry(self) -> Any:
+        """The stored opt-in telemetry preference PLUS the server-computed
+        ``effective`` bit (False whenever local-only private mode is on,
+        regardless of the stored opt-in)."""
+        return await self._request("GET", "/api/setup/telemetry")
+
+    async def setup_configure_telemetry(self, body: dict) -> Any:
+        """Save the opt-in telemetry preference (enabled/endpoint). 204 -> None."""
+        return await self._request("POST", "/api/setup/telemetry", json=body)
+
     async def setup_get_gaps(self, campaign_id: str) -> Any:
         """A completeness checklist for one campaign (dark-engine audit item 51):
         which core profile attributes (name/email/phone/title) and search criteria

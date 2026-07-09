@@ -70,6 +70,8 @@ from applicant.application.services.setup_service import (
     TTLCachedGate,
 )
 from applicant.application.workflows import application_pipeline
+from applicant.observability.telemetry import TelemetryReporter
+from applicant.version import __version__
 
 
 @dataclass
@@ -187,6 +189,11 @@ class Container:
     # is configured (in-memory storage is thread-safe enough for the no-DB lane and is
     # shared). Each call returns a dict including ``_session`` to close in ``finally``.
     request_services_factory: Any = None
+    # P5-3: opt-in error-telemetry reporter (see observability/telemetry.py). Built
+    # unconditionally — it is always a real ``TelemetryReporter`` whose ``capture``
+    # is a safe no-op until the operator opts in AND is not in local-only mode; the
+    # global exception handler calls it, never gated by a caller-supplied flag.
+    telemetry: Any = None
 
     _frozen: bool = field(default=False, init=False, repr=False)
 
@@ -660,6 +667,12 @@ def build_container(settings: Settings | None = None) -> Container:
         # P2-11: local-only private mode filters the effective ladder AND the
         # LLM gate inside SetupService (single chokepoint for every consumer).
         local_only=settings.llm_local_only,
+        # P5-3: env-sourced telemetry DEFAULTS only; Settings > System can
+        # override at runtime (persisted like every other Settings knob), and
+        # the real send-or-not decision is recomputed fresh by
+        # ``telemetry_status`` on every call, folding in ``local_only`` too.
+        telemetry_enabled_default=settings.telemetry_enabled,
+        telemetry_endpoint_default=settings.telemetry_endpoint,
     )
     setup_service.set_apply_readiness_reporter(_apply_readiness)
 
@@ -1918,6 +1931,14 @@ def build_container(settings: Settings | None = None) -> Container:
     # Same live heartbeat for the proactive status update ("right now I'm running a cycle").
     status_update_service._scheduler = scheduler
 
+    # P5-3: opt-in error telemetry. ``status_fn`` reads ``setup_service.telemetry_status()``
+    # fresh on every capture -- never a snapshot taken at boot -- so a runtime Settings
+    # toggle (or local-only mode flipping) is honored immediately, with no restart.
+    telemetry = TelemetryReporter(
+        status_fn=setup_service.telemetry_status,
+        app_version=__version__,
+    )
+
     return Container(
         settings=settings,
         engine=engine,
@@ -1977,4 +1998,5 @@ def build_container(settings: Settings | None = None) -> Container:
         curation_service=curation_service,
         curation_ledger=curation_ledger,
         request_services_factory=request_services_factory,
+        telemetry=telemetry,
     )
