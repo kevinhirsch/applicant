@@ -113,6 +113,18 @@ def _wired_surface_js() -> list[pathlib.Path]:
     return [p for p in _all_shipped_js() if p.name not in retired]
 
 
+def _strip_js_comments(src: str) -> str:
+    """Remove ``/* … */`` block comments and ``// …`` line comments so the
+    import/re-export scan below can run over the WHOLE file (imports may span
+    physical lines) without tripping on prose that merely names the kit. This
+    is a coarse strip (it does not model comment-like sequences inside string
+    literals), which is fine here — the scan only looks for import/export
+    statements, and over-stripping a comment never hides a real dependency."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.DOTALL)
+    src = re.sub(r"(?m)//.*$", "", src)
+    return src
+
+
 # ── 1. Login lands in the 3-pane shell ─────────────────────────────────────
 
 def test_shell_has_three_static_panes_in_order(index_src: str) -> None:
@@ -234,28 +246,29 @@ def test_no_wired_module_imports_the_retired_kit(fname: str) -> None:
     spelled reintroduction can't slip past. The kit's own internal import of
     windowResize.js from appkitWindow.js does not count — appkitWindow.js is
     itself retired (excluded from the surface set), and neither is loaded because
-    nothing imports appkitWindow.js. Comment lines are skipped so prose that
+    nothing imports appkitWindow.js. Comments are stripped first so prose that
     merely names the historical kit does not trip this."""
     # Either an `import …` (static / side-effect / dynamic) OR an
     # `export … from …` re-export, ending in a quoted specifier whose path ends
-    # in <fname>, in either quote style and with any relative prefix. Covers
-    # `import X from "./appkitWindow.js"`, `import './js/appkitWindow.js'`,
-    # `import("../appkitWindow.js")`, and `export * from './appkitWindow.js'`.
+    # in <fname>, in either quote style and with any relative prefix. `[^;]`
+    # (not `[^\n;]`) lets the statement span physical lines, so a MULTILINE
+    # `import { AppkitWindow }\n  from "./appkitWindow.js";` still matches;
+    # non-greedy + the `;`/quote boundaries keep it from spilling across
+    # statements. Covers `import X from "./appkitWindow.js"`,
+    # `import './js/appkitWindow.js'`, `import("../appkitWindow.js")`, and
+    # `export * from './appkitWindow.js'`.
     dep_re = re.compile(
-        r"""(?:import\b[^\n;]*?|export\b[^\n;]*?\bfrom\s*)['"][^'"]*"""
+        r"""(?:import\b[^;]*?|export\b[^;]*?\bfrom\s*)['"][^'"]*"""
         + re.escape(fname)
         + r"""['"]"""
     )
     for path in _wired_surface_js():
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.lstrip()
-            if stripped.startswith(("//", "*", "/*")):
-                continue  # comment prose naming the kit is not a wiring
-            m = dep_re.search(line)
-            assert m is None, (
-                f"{path.name}:{lineno} still imports/re-exports the retired {fname} "
-                f"(matched: {m.group(0)!r})"
-            )
+        src = _strip_js_comments(path.read_text(encoding="utf-8"))
+        m = dep_re.search(src)
+        assert m is None, (
+            f"{path.name} still imports/re-exports the retired {fname} "
+            f"(matched: {m.group(0)!r})"
+        )
 
 
 @pytest.mark.parametrize("fname", _RETIRED_FILES)
