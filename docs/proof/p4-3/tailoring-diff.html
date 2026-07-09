@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Before / after: tailoring diff (demo)</title><style>
+  :root { color-scheme: light dark; }
+  body { margin:0; background:#f4f5f6; font-family: Arial, Helvetica, sans-serif; color:#111; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#0f1115; color:#e6e8eb; }
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 16px 60px; }
+  .banner {
+    font-size: 12.5px; line-height:1.6; background:#fff8e1; color:#6b5b12;
+    border:1px solid #f0e2a6; border-radius:8px; padding:12px 14px; margin-bottom:22px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .banner { background:#2a250f; color:#e8d68a; border-color:#4a3f1a; }
+  }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .sub { font-size: 13.5px; color:#666; margin: 0 0 24px; }
+  @media (prefers-color-scheme: dark) { .sub { color:#a7acb3; } }
+  .stage { margin: 28px 0 8px; }
+  .stage h2 { font-size: 16px; margin: 0 0 4px; }
+  .stage p { font-size: 13px; color:#555; line-height:1.6; margin: 0 0 10px; }
+  @media (prefers-color-scheme: dark) { .stage p { color:#b7bcc3; } }
+  .callout {
+    font-size: 12.5px; line-height:1.6; background:#eef4ff; color:#1a3f7a;
+    border:1px solid #cfe0fb; border-radius:8px; padding:10px 12px; margin: 10px 0 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .callout { background:#0f1f3a; color:#a9c6ff; border-color:#1e355c; }
+  }
+  .redline {
+    white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.65; background:#fff; border:1px solid #e2e4e8;
+    border-radius: 8px; padding: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .redline { background:#161a20; border-color:#2a2f38; }
+  }
+  .redline-add { background:#e6ffed; color:#045d1e; }
+  .redline-sub { background:#ffeef0; color:#9e1c23; text-decoration:line-through; }
+  .redline-eq { color:#444; }
+  @media (prefers-color-scheme: dark) {
+    .redline-add { background:#0d3320; color:#7ee2a0; }
+    .redline-sub { background:#3a1418; color:#ff9aa2; }
+    .redline-eq { color:#aab0b8; }
+  }
+  .turn { font-size: 12.5px; color:#555; border-left: 3px solid #cfd4db; padding: 4px 0 4px 10px; margin: 8px 0; }
+  @media (prefers-color-scheme: dark) { .turn { color:#b7bcc3; border-left-color:#3a4049; } }
+  .turn b { color:inherit; }
+  footer { margin-top: 34px; font-size: 11.5px; color:#8a8f98; }
+</style></head><body><div class="wrap">
+<h1>Before / after: tailoring a real demo résumé</h1>
+<p class="sub">Real demo-seed content (P0-2 <code>DEMO_MODE</code>) run through Applicant's own
+tailoring-diff engine (<code>LatexTailor.render_redline</code>, the exact per-line
+<code>difflib</code> diff the redline review screen renders) &mdash; not a mockup. Target posting:
+<strong>Staff Software Engineer, Platform</strong> at <strong>Globex</strong>
+(New York, NY, $210,000 - $250,000).</p>
+
+<div class="stage">
+  <h2>Stage 1 &mdash; base résumé &rarr; AI-tailored draft</h2>
+  <p>What you uploaded (plain, untargeted notes) versus the résumé Applicant generated for this
+  specific posting. Every line changed because the base text was unstructured prose, not a
+  formatted résumé &mdash; tailoring here means restructuring around the role, not tweaking words.</p>
+  <div class="redline"><del class="redline-sub">Senior backend engineer, 8+ years. Python, Postgres, distributed systems, Kubernetes. Led platform reliability work reducing p99 latency 40%; owned a 1B-events/day ingestion pipeline.</del>
+<ins class="redline-add">SUMMARY</ins>
+<ins class="redline-add">Senior backend engineer with 8+ years building distributed services on Python and Postgres. Led platform reliability work reducing p99 latency 40%.</ins>
+<ins class="redline-add"></ins>
+<ins class="redline-add">EXPERIENCE</ins>
+<ins class="redline-add">- Platform Engineer, Contoso: owned the ingestion pipeline (1B events/day).</ins>
+<ins class="redline-add">- Backend Engineer, Umbrella: shipped the billing service rewrite.</ins></div>
+</div>
+
+<div class="stage">
+  <h2>Stage 2 &mdash; your redline pass on the tailored draft</h2>
+  <p>The résumé variant's own fit-score flagged a coverage gap before you ever opened the redline
+  screen: 82% JD coverage, missing terms <strong>Kubernetes, gRPC</strong>.
+  The add/subtract turn below is the review session closing exactly that gap.</p>
+  <div class="callout">Fit-score gap &rarr; redline fix: "Kubernetes" was flagged missing at
+  82% coverage; the "add" turn below adds a Kubernetes bullet back in.</div>
+  <div class="redline"><span class="redline-eq">SUMMARY</span>
+<span class="redline-eq">Senior backend engineer with 8+ years building distributed services on Python and Postgres. Led platform reliability work reducing p99 latency 40%.</span>
+<span class="redline-eq"></span>
+<span class="redline-eq">EXPERIENCE</span>
+<span class="redline-eq">- Platform Engineer, Contoso: owned the ingestion pipeline (1B events/day).</span>
+<span class="redline-eq">- Backend Engineer, Umbrella: shipped the billing service rewrite.</span>
+<del class="redline-sub">- Maintained the internal engineering wiki.</del>
+<ins class="redline-add">- Led migration of 40 services to Kubernetes with zero downtime.</ins></div>
+  <div class="turn"><b>Also requested in this session (free-text turn, not a line edit):</b><br>
+  &ldquo;Make the summary a touch more concise.&rdquo; &rarr;
+  Tightened the summary to two sentences.</div>
+</div>
+
+<footer>Generated by <code>scripts/proof/gen_p4_3_proof_assets.py</code> from the P0-2 demo seed
+(<code>applicant.application.services.dev_seed</code>) — real seeded strings throughout, no
+placeholder text.</footer>
+</div></body></html>

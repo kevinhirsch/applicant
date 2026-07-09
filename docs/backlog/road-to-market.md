@@ -95,8 +95,8 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-7 | Platform matrix | S–M | eng+you | PARTIAL — amd64-only constraint documented with binary-level evidence + Docker-on-WSL2 setup/gotchas written (`docs/platform-matrix.md`, linked from `docs/overview.md`'s doc index and cross-linked from P3-2's doc); `install.sh` preflight now warns on a non-amd64 host. Gap: WSL2 path is procedure-only — not observed on a physical WSL2 box (no WSL host in this build environment) |
 | P3-8 | Digest deliverability | S–M | eng | DONE — Discord/ntfy badged "Recommended" in Settings → Notifications (wizard + Settings share the renderer), email marked as needing SMTP setup; SPF/DKIM/DMARC guidance + a pre-launch checklist for the SMTP path (`docs/email-deliverability.md`); live inbox-placement testing documented as an operator procedure, not run (no mail egress from this dev container) |
 | P4-1 | Positioning statement | S | you+eng | — |
-| P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; real video/screenshots pending P4-3 |
-| P4-3 | Proof assets | M | eng+you | — |
+| P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; P4-3 wired in a real digest sample + tailoring diff (two of three proof-strip tiles); the hero video and the takeover screenshot are still placeholders |
+| P4-3 | Proof assets | M | eng+you | PARTIAL — before/after tailoring diff + shareable digest sample shipped and wired into P4-2's landing page; the 2-min demo video is storyboarded, real capture is the owner+live-stack remainder |
 | P4-4 | Competitive teardown | M | eng | DONE — `docs/competitive-teardown.md` |
 | P4-5 | Early-access cohort | M | you+eng | — |
 | P4-6 | Pricing validation | S | you | — |
@@ -1791,11 +1791,49 @@ clearly-labeled placeholder slots, not real captures — P4-3 (proof assets, a s
 story) supplies the actual recordings/screenshots; they drop into these same slots
 without a template change. P4-1's positioning line is quoted verbatim in this DoD and
 used as the throughline, though P4-1 itself is not formally closed.
+**Update (P4-3):** two of the three `#proof` tiles and the hero slot now link to
+REAL generated proof assets instead of sitting inert — the digest-email sample and
+the before/after tailoring diff (both rendered from the P0-2 seed through the
+product's own templates, see P4-3 below), plus the hero slot linking to the demo
+video's shot-by-shot script. This is not the screenshot/video capture itself
+(still pending, same live-stack + owner remainder), but it means a landing-page
+visitor sees genuine product output today rather than only placeholder text.
 
 ### P4-3 — Proof assets
 **Effort:** M · **Owner:** eng (+ you voiceover) · **Depends on:** P0-2, P1-2, P1-4
 **DoD:** 2-minute demo video from seeded data; the digest email as a shareable sample;
 a before/after tailoring diff.
+**Status: PARTIAL** — the two assets producible without a live-recorded video are
+real generated artifacts (not mockups), built by `scripts/proof/gen_p4_3_proof_assets.py`
+from the P0-2 `DEMO_MODE` seed through the product's own rendering code (no
+hand-rolled markup): **the digest email sample** is `DigestService.render_email`
+(the unmodified P1-4 branded template) fed the seven real seeded, scored postings;
+**the before/after tailoring diff** is `LatexTailor.render_redline` (the same
+per-line `difflib` diff + `redline-add`/`redline-sub`/`redline-eq` classes the
+redline review screen renders) run in two real stages — base résumé → AI-tailored
+draft, then tailored draft → the seed's own redline-session add/subtract turns,
+explicitly cross-referenced against the résumé variant's own fit-score
+`missing_terms` gap. Both ship at `docs/proof/p4-3/*.html` (doc-reviewable,
+mirrors the P1-2 proof-run directory convention) and `workspace/static/proof/*.html`
+(the reachable, front-door-served copies — no new route, just the existing
+`/static` mount). **Wired into P4-2**: the landing page's `#proof` strip's
+"Daily digest" and "Redline resume review" `.shot` tiles now link straight to
+these two real samples instead of sitting as bare placeholders; the hero
+demo-video slot links to the storyboard script below. The `#proof` strip's third
+tile (live takeover) and the hero video itself remain placeholders — no
+screenshot/video asset exists for either. Pinned by
+`workspace/tests/test_applicant_p4_3_proof_assets.py` (files exist in both
+locations and stay identical, real demo content with no lorem-ipsum/codenames,
+and the landing-page links are actually present).
+Honest gap — **the 2-minute demo video capture itself.** Fully storyboarded
+(`docs/proof/demo-script.md`): a shot-by-shot script grounded in the real golden
+path (digest → redline review → approve → tracker) naming the exact shipped
+screens/button text (`applicantRail.js`'s "Send it now", `documentLibrary.js`'s
+"Review and edit" / "Approve resume", the "Tracker" nav item and its buckets) and
+the P0-2 seed data each shot shows — cross-checkable against the two rendered
+proof assets above. Recording it needs a live stack + the owner's voiceover,
+which this environment cannot produce; `docs/proof/p4-3/README.md` states this
+plainly rather than around it.
 
 ### P4-4 — Competitive teardown
 **Effort:** M · **Owner:** eng · **DoD:** Feature grid + failure modes + pricing for
