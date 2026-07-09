@@ -209,10 +209,14 @@ given deployment; treat the range above as a sanity check, not a claim.
 - The default deploy path (`scripts/proxmox-deploy.sh`, `docker/Dockerfile`)
   targets **amd64** (the Google Chrome `.deb`, Camoufox's fetched binary, and
   patchright's Chromium build are all fetched for the build host's
-  architecture). Multi-arch is not yet built or verified — tracked as
-  **P3-7 (Platform matrix)**, not this story; don't infer arm64 support from
-  anything in this doc.
-- Docker-on-WSL2 is the other P3-7 open item — also not verified here.
+  architecture). Multi-arch is not built — this is now a documented,
+  evidence-based constraint, not an open question: see
+  [`docs/platform-matrix.md`](platform-matrix.md) (P3-7) for the exact
+  binary-by-binary reasons and arm64/Apple-Silicon guidance. Don't infer
+  arm64 support from anything in this doc.
+- Docker-on-WSL2 setup + gotchas are also documented in
+  [`docs/platform-matrix.md`](platform-matrix.md) §2 (procedure-only — not
+  observed on a physical WSL2 box).
 
 ---
 

@@ -92,7 +92,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-4 | Docs site | M | eng | — |
 | P3-5 | Release engineering | M | eng | — |
 | P3-6 | Workspace DB migrations | M | eng | — |
-| P3-7 | Platform matrix | S–M | eng+you | — |
+| P3-7 | Platform matrix | S–M | eng+you | PARTIAL — amd64-only constraint documented with binary-level evidence + Docker-on-WSL2 setup/gotchas written (`docs/platform-matrix.md`, linked from `docs/overview.md`'s doc index and cross-linked from P3-2's doc); `install.sh` preflight now warns on a non-amd64 host. Gap: WSL2 path is procedure-only — not observed on a physical WSL2 box (no WSL host in this build environment) |
 | P3-8 | Digest deliverability | S–M | eng | — |
 | P4-1 | Positioning statement | S | you+eng | — |
 | P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; real video/screenshots pending P4-3 |
@@ -1541,6 +1541,54 @@ post-launch schema change upgrades cleanly in a test.
 ### P3-7 — Platform matrix *(operational)*
 **Effort:** S–M · **Owner:** eng + you decide · **DoD:** amd64-only constraint documented
 OR multi-arch built; Docker-on-WSL2 path tested.
+**Status: PARTIAL.**
+
+`docs/platform-matrix.md` (linked from `docs/overview.md`'s doc index and
+cross-linked from P3-2's `docs/requirements-and-model-matrix.md` §5) ships:
+
+- **The amd64-only constraint, documented with binary-level evidence** (the
+  DoD's first branch), not asserted in the abstract: `docker/Dockerfile`
+  downloads real Google Chrome from a URL that hard-codes
+  `google-chrome-stable_current_amd64.deb` (no official arm64 Linux Chrome
+  package exists to substitute), fetches a Camoufox binary whose arm64 build
+  has never been exercised by this repo's CI or deploy path (CI validates
+  `docker compose config` only; it does not build images), and installs
+  patchright's driver-matched Chromium the same untested way. TeX/LibreOffice
+  are called out as NOT the blocker (both ship native arm64 Debian packages).
+  `scripts/proxmox-deploy.sh` independently hard-codes an amd64 Ubuntu cloud
+  image, so the whole default deploy path is consistently amd64-only.
+  Multi-arch (`buildx --platform`) was deliberately **not** wired up: doing so
+  would either break outright (Chrome) or silently ship an unverified
+  binary (Camoufox/patchright on arm64) on the untested arch — exactly the
+  silent-degrade this codebase otherwise guards against everywhere else.
+  `scripts/install.sh`'s preflight now also warns at install time on a
+  non-amd64 host, pointing at the doc, rather than leaving the first signal
+  to be a confusing failure deep in the Chrome apt-install layer.
+- **Docker-on-WSL2 setup path + known gotchas** — install steps (WSL2 +
+  Ubuntu, Docker Desktop WSL2 integration or Docker Engine inside the
+  distro, `.wslconfig` memory ceiling matching P3-2's recommended 8 GB/4
+  vCPU, cloning inside the Linux filesystem rather than `/mnt/c` for I/O,
+  `bash scripts/install.sh --apply`, `localhost` port relay to Windows) plus
+  the concrete gotchas found while writing the procedure (`.wslconfig` OOM
+  risk, Docker Desktop's per-distro integration toggle, antivirus scanning
+  the WSL2 virtual disk, ARM-based Windows hosts inheriting the same
+  emulation caveat as Apple Silicon, and that `takeover-desktop`/the Proxmox
+  Windows sandbox are unrelated to this path).
+- A lightweight content-contract test
+  (`tests/unit/test_p3_7_platform_matrix.py`) pinning that the doc exists,
+  states the amd64/arm64/WSL2 claims, cites the exact Dockerfile line
+  driving the constraint (so the doc can't silently drift from the code),
+  is linked from the doc index and cross-linked from P3-2's doc, and that
+  `install.sh` carries the matching preflight warning.
+
+**Honest gap (why PARTIAL, not DONE).** The DoD's "Docker-on-WSL2 path
+tested" is **procedure-only** here, labelled the same way as P1-2/P3-1's
+host-gated items: this build environment has no WSL host to actually run
+the documented steps against, so "tested" means "the concrete steps +
+gotchas are written down," not "observed passing on a real Windows/WSL2
+box." That live pass is the one thing left for a fully DONE close — flip
+this note (and the doc's §2 label) once someone runs it on physical
+hardware and records the result.
 
 ### P3-8 — Digest deliverability *(operational)*
 **Effort:** S–M · **Owner:** eng · **DoD:** ntfy/Discord defaulted as the recommended

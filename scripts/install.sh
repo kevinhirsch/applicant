@@ -643,6 +643,21 @@ preflight_packages() {
   ctx="tty=${tty_yn} user=$(id -un) root=${root_yn} arch=$(uname -m)"
   ui_step "environment: ${ctx}"
 
+  # The engine image bakes in amd64-only binaries (Google Chrome's .deb has no
+  # arm64 build, and the fetched Camoufox binary is not verified on arm64 here
+  # either) — see docs/platform-matrix.md. Warn rather than fail: `docker build`
+  # itself will surface the real error later, but a warning here is the first
+  # honest signal on an arm64 host instead of a confusing failure deep in the
+  # Chrome apt-install layer.
+  case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *)
+      ui_warn "Host arch '$(uname -m)' is not x86_64/amd64 — the production image"
+      ui_warn "(real Google Chrome + Camoufox) is amd64-only today. See"
+      ui_warn "docs/platform-matrix.md before continuing on this host."
+      ;;
+  esac
+
   return "${hard_missing}"
 }
 
