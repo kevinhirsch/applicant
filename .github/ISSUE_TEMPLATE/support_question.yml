@@ -1,0 +1,33 @@
+name: Support question
+description: You're stuck on setup, configuration, or day-to-day use and want help.
+title: "[Support]: "
+labels: ["support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure if this is a bug or just a "how do I..." question? This template
+        is fine for either — we'll re-label it if it turns out to be a bug.
+
+        **Never paste secrets** — API keys, passwords, tokens, or your database
+        connection string. The redacted diagnostic bundle below scrubs those
+        automatically; a plain copy-paste of your `.env` or logs will not.
+
+        For fast back-and-forth, the community Discord/forum (see the links
+        alongside this template) is often quicker than an issue thread.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do, and where are you stuck?
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic-bundle
+    attributes:
+      label: Diagnostic bundle (optional, but usually the fastest way to help)
+      description: |
+        Run `scripts/diagnostic-bundle.sh` (or copy the command from Settings →
+        System) and attach the resulting archive, or paste its `MANIFEST.txt`.
+        Secrets are redacted by the script before anything is written.
+    validations:
+      required: false

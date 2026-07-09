@@ -132,6 +132,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/voice-and-truthfulness.md`](voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
+| [`docs/support.md`](support.md) | Getting support: the redacted diagnostic-bundle command, issue templates, community chat |
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 
