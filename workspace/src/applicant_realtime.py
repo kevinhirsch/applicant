@@ -148,7 +148,10 @@ class RealtimeBridgeSession:
         self._connector = connector
         self.channels: dict[str, list[dict[str, Any]]] = {}
         self.subscribers: set[asyncio.Queue] = set()
-        self.tabs: set[str] = set()
+        # tab id -> live connection count (a tab may hold >1 socket briefly during
+        # a same-tab reconnect; refcount so a stale socket's teardown doesn't send
+        # a false presence/leave for a tab whose replacement socket is still open).
+        self.tabs: dict[str, int] = {}
         self._bridge: Optional[BridgeConn] = None
         self._bridge_task: Optional[asyncio.Task] = None
         self._closed = False
@@ -260,12 +263,23 @@ class RealtimeBridgeSession:
         await self._safe_send(frame)
 
     async def add_tab(self, tab: str) -> None:
-        self.tabs.add(tab)
-        await self._safe_send({"chan": "presence", "type": "join", "seq": 0, "data": {"tab": tab}})
+        n = self.tabs.get(tab, 0)
+        self.tabs[tab] = n + 1
+        # Only the first socket for a tab announces a join; subsequent sockets
+        # (a same-tab reconnect that races the old socket's teardown) just bump
+        # the refcount so we don't emit a redundant join.
+        if n == 0:
+            await self._safe_send({"chan": "presence", "type": "join", "seq": 0, "data": {"tab": tab}})
 
     async def remove_tab(self, tab: str) -> None:
-        self.tabs.discard(tab)
-        await self._safe_send({"chan": "presence", "type": "leave", "seq": 0, "data": {"tab": tab}})
+        n = self.tabs.get(tab, 0)
+        if n <= 1:
+            # Last (or only) socket for this tab is gone — drop it and announce leave.
+            self.tabs.pop(tab, None)
+            await self._safe_send({"chan": "presence", "type": "leave", "seq": 0, "data": {"tab": tab}})
+        else:
+            # A replacement socket for the same tab is still open; just decrement.
+            self.tabs[tab] = n - 1
 
     async def shutdown(self) -> None:
         self._closed = True

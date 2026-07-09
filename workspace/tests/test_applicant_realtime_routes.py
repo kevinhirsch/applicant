@@ -227,3 +227,49 @@ def test_reconnect_replays_the_buffer_then_goes_live():
                 assert first is not None, "no replayed presence state on reconnect"
                 # then it also goes live up to the current count (anchor + t1b = 2)
                 _read_presence_count(t2, 2)
+
+
+# --- same-tab reconnect refcount (Greptile P1 regression) --------------------
+
+
+class _RecordingBridge:
+    """Captures every frame the session forwards upstream."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, frame):
+        self.sent.append(frame)
+
+
+def _presence_types(bridge):
+    return [f["type"] for f in bridge.sent if f.get("chan") == "presence"]
+
+
+async def test_same_tab_reconnect_refcounts_and_suppresses_false_leave():
+    """A same-tab reconnect that races the stale socket's teardown must NOT emit
+    a spurious presence/leave: the tab is refcounted, so only the last socket for
+    a tab announces leave, and only the first announces join."""
+    from src.applicant_realtime import RealtimeBridgeSession
+
+    session = RealtimeBridgeSession("owner", FakeConnector())
+    bridge = _RecordingBridge()
+    session._bridge = bridge
+
+    # Two sockets for the SAME tab open (a reconnect overlapping the old one).
+    await session.add_tab("t1")   # 0 -> 1: join
+    await session.add_tab("t1")   # 1 -> 2: refcount bump, no second join
+    assert _presence_types(bridge) == ["join"]
+    assert session.tabs["t1"] == 2
+
+    # The stale socket's teardown fires — the replacement is still open, so
+    # NO leave is sent and the tab is still present.
+    await session.remove_tab("t1")  # 2 -> 1: no leave
+    assert _presence_types(bridge) == ["join"]
+    assert session.tabs["t1"] == 1
+
+    # The last socket for the tab closes — now leave is announced and the tab
+    # is dropped from the registry.
+    await session.remove_tab("t1")  # 1 -> 0: leave
+    assert _presence_types(bridge) == ["join", "leave"]
+    assert "t1" not in session.tabs
