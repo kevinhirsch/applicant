@@ -99,7 +99,12 @@ _MASK_WHOLE: tuple[re.Pattern[str], ...] = (
     # silently miss every *_PASSWORD/*_TOKEN/*_SECRET-shaped assignment embedded
     # in a free-text log line (only bare "password=..." would be caught) --
     # this was caught by the end-to-end fake-docker log-scrubbing test.
-    re.compile(r"(?i)(?:password|passwd|pwd|secret|token|api_key|apikey|private_key)\s*[=:]\s*\S{4,}"),
+    #
+    # The optional quotes (`"?`) around the key-end and the value-start also
+    # catch JSON-style pairs like `"password": "hunter2"` -- an ATS/HTTP error
+    # body echoed into a log -- where a closing key-quote and opening
+    # value-quote sit between the key and the delimiter / before the value.
+    re.compile(r'(?i)(?:password|passwd|pwd|secret|token|api_key|apikey|private_key)"?\s*[=:]\s*"?\S{4,}'),
 )
 
 #: Patterns where GROUP 1 (a harmless, useful prefix) is kept and everything

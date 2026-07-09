@@ -96,6 +96,21 @@ def test_redacts_a_jwt_anywhere_in_text():
     assert _FAKE_JWT not in out
 
 
+def test_redacts_json_quoted_secret_pairs():
+    # An ATS/HTTP error body echoed into a log line -- JSON-style quoted pairs,
+    # where a closing key-quote and opening value-quote sit around the
+    # delimiter. A key-name denylist keyed on `KEY=VALUE` alone would miss
+    # these entirely (CodeRabbit finding on PR #783).
+    for line, secret in (
+        (f'{{"password": "{_FAKE_PASSWORD}"}}\n', _FAKE_PASSWORD),
+        (f'{{"api_key":"{_FAKE_TOKEN}"}}\n', _FAKE_TOKEN),
+        (f'  "secret" : "{_FAKE_TOKEN}"\n', _FAKE_TOKEN),
+        (f'engine responded 401: {{"token": "{_FAKE_PASSWORD}"}}\n', _FAKE_PASSWORD),
+    ):
+        out = d.redact_text(line)
+        assert secret not in out, f"leaked from {line!r}: {out!r}"
+
+
 def test_redacts_url_userinfo_credentials_but_keeps_the_scheme_and_host():
     line = f"smtps://mailuser:{_FAKE_PASSWORD}@smtp.example.com:465\n"
     out = d.redact_text(line)

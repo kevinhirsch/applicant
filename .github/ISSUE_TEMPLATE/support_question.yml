@@ -13,8 +13,9 @@ body:
         connection string. The redacted diagnostic bundle below scrubs those
         automatically; a plain copy-paste of your `.env` or logs will not.
 
-        For fast back-and-forth, the community Discord/forum (see the links
-        alongside this template) is often quicker than an issue thread.
+        The fastest path today is this issue thread plus the diagnostic bundle
+        below. A community chat (Discord/forum) will be linked here once it's set
+        up — until then the link alongside this template is a placeholder.
   - type: textarea
     id: question
     attributes:

@@ -82,6 +82,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Redaction rests ENTIRELY on python3 (scripts/lib/diagnostic_redact.py). Fail
+# early and clearly rather than risk emitting an un-redacted artifact or dying
+# with a late "command not found" mid-collection. Placed after arg-parsing so
+# --help still works on a box without python3.
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required (the diagnostic bundle's secret redaction depends on it)" >&2
+  exit 1
+}
+
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
@@ -121,10 +130,16 @@ HAVE_DOCKER=0
 AVAILABLE_SERVICES=""
 if command -v docker >/dev/null 2>&1 && [[ -f "${COMPOSE_FILE}" ]]; then
   HAVE_DOCKER=1
-  if docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps \
-      > "${BUNDLE_DIR}/compose-ps.txt" 2>&1; then
-    _note "compose-ps.txt: collected"
+  # `ps` output can carry secrets (service env vars, ports, labels), so it goes
+  # through REDACT_CMD like every other artifact -- never written raw. `set -o
+  # pipefail` (top of file) makes the pipeline's status reflect a docker
+  # failure, so the success/SKIPPED branch below is preserved; a partial file
+  # from a failed run is removed (mirrors the per-service logs branch).
+  if docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps 2>&1 \
+      | "${REDACT_CMD[@]}" > "${BUNDLE_DIR}/compose-ps.txt"; then
+    _note "compose-ps.txt: collected (secret-scrubbed)"
   else
+    rm -f "${BUNDLE_DIR}/compose-ps.txt"
     _note "compose-ps.txt: SKIPPED -- \`docker compose ps\` failed (stack not running?)"
   fi
   AVAILABLE_SERVICES="$(docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" config --services 2>/dev/null || true)"
@@ -171,6 +186,22 @@ if command -v curl >/dev/null 2>&1; then
 else
   _note "health.txt: SKIPPED -- curl not on PATH"
 fi
+
+# -- defensive redaction backstop --------------------------------------------------
+# Every artifact above is already piped through REDACT_CMD at its source, but a
+# diagnostic bundle is safety-critical: one un-redacted file leaks a live
+# credential. This final pass re-runs the redactor over EVERY file in the bundle
+# in place (idempotent -- an already-redacted file is unchanged) so that no
+# artifact, including this run's MANIFEST/version files or any future artifact a
+# later change adds, can ever reach the tarball without passing through the
+# redactor.
+while IFS= read -r -d '' _f; do
+  if "${REDACT_CMD[@]}" < "${_f}" > "${_f}.redacted"; then
+    mv "${_f}.redacted" "${_f}"
+  else
+    rm -f "${_f}.redacted"
+  fi
+done < <(find "${BUNDLE_DIR}" -type f -print0)
 
 # -- package -----------------------------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"

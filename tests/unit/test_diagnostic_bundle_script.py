@@ -41,9 +41,10 @@ def _fake_docker(bin_dir: Path) -> None:
     fake = bin_dir / "docker"
     # A minimal fake `docker`/`docker compose` that strips the -f/--env-file
     # flags this script always passes, then answers version/ps/config/logs.
-    # The fake log line deliberately embeds a secret exactly like a REAL
-    # `docker compose logs` line would (e.g. a connection-string message) —
-    # proving the script's own redaction catches it, not just the .env file.
+    # Both the fake `ps` and `logs` output deliberately embed a secret exactly
+    # like a REAL `docker compose` invocation could (a service env var surfaced
+    # in `ps`, a connection-string message in `logs`) — proving the script's
+    # own redaction catches every collected artifact, not just the .env file.
     body = f"""#!/usr/bin/env bash
 if [[ "$1" == "version" ]]; then echo "99.0.0-fake"; exit 0; fi
 if [[ "$1" == "compose" ]]; then
@@ -58,7 +59,11 @@ if [[ "$1" == "compose" ]]; then
   done
   set -- "${{args[@]}}"
   if [[ "$1" == "version" ]]; then echo "fake compose 2.99"; exit 0; fi
-  if [[ "$1" == "ps" ]]; then echo "NAME  STATUS"; echo "api   running"; exit 0; fi
+  if [[ "$1" == "ps" ]]; then
+    echo "NAME  STATUS   CONFIG"
+    echo "api   running  POSTGRES_PASSWORD={_FAKE_PASSWORD}"
+    exit 0
+  fi
   if [[ "$1" == "config" && "$2" == "--services" ]]; then
     printf 'applicant-ui\\napi\\npostgres\\n'
     exit 0
@@ -81,6 +86,14 @@ def _run(tmp_path: Path, *args: str, bin_dir: Path | None = None):
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["APPLICANT_ENV_FILE"] = str(tmp_path / "live.env")
     env["APPLICANT_DIAG_DIR"] = str(tmp_path / "out")
+    # Point at a scratch compose file so no test implicitly depends on the real
+    # docker/docker-compose.prod.yml existing (hermeticity). Its content is
+    # irrelevant — the fake `docker` stub ignores the `-f` path — but the file
+    # must EXIST, because the script guards its compose steps on `[[ -f ]]`.
+    compose = tmp_path / "compose.yml"
+    if not compose.exists():
+        compose.write_text("services: {}\n", encoding="utf-8")
+    env.setdefault("APPLICANT_DIAG_COMPOSE_FILE", str(compose))
     return subprocess.run(["bash", str(_SCRIPT), *args], capture_output=True, text=True, env=env)
 
 
@@ -163,6 +176,14 @@ def test_end_to_end_bundle_never_leaks_a_known_secret(tmp_path):
     assert any(n.endswith("compose-ps.txt") for n in names)
     assert any("logs" in n and n.endswith("api.log") for n in names)
     assert any(n.endswith("MANIFEST.txt") for n in names)
+
+    # Targeted regression for the compose-ps redaction hole (CodeRabbit finding
+    # on PR #783): the `ps` output carried a secret and it must NOT survive into
+    # compose-ps.txt — the whole point of piping it through the redactor.
+    compose_ps = next(p for p in collected_files if p.name == "compose-ps.txt")
+    ps_text = compose_ps.read_text(encoding="utf-8")
+    assert _FAKE_PASSWORD not in ps_text
+    assert "***REDACTED***" in ps_text
 
 
 def test_help_flag_exits_zero_without_touching_anything(tmp_path):
