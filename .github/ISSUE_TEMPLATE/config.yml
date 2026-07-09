@@ -1,0 +1,13 @@
+# Issue template chooser config (P5-1, "Support machinery").
+blank_issues_enabled: false
+contact_links:
+  - name: Diagnostic bundle & self-serve docs
+    url: https://github.com/kevinhirsch/applicant/blob/main/docs/support.md
+    about: Before opening an issue, check docs/support.md for the redacted diagnostic-bundle command and common fixes.
+  # OWNER ACTION REQUIRED: replace this placeholder with the real, owner-created
+  # community Discord/forum invite before this is published anywhere users can
+  # see it. See docs/support.md for the same flagged placeholder + context — do
+  # NOT invent or reuse an unrelated real invite link here.
+  - name: "Community chat (placeholder — owner: replace with the real invite link)"
+    url: https://example.invalid/applicant-community-placeholder
+    about: Real-time help and discussion. This link is a placeholder until the owner stands up the actual space.

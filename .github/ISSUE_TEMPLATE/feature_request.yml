@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something Applicant doesn't do yet.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. Please don't include secrets (API keys, passwords,
+        tokens) anywhere in this form or any attached screenshots/logs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What are you trying to do today that's awkward, slow, or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: A rough idea is fine — doesn't need to be a full spec.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you've tried
+      description: Anything you're doing today to get by without this.
+    validations:
+      required: false

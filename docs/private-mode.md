@@ -30,6 +30,13 @@ does not cover, and how to verify both.
   refused. See `src/applicant/core/rules/private_endpoints.py`.
 - **Embeddings are always on-box** (mode or no mode): the engine uses its
   local embedding adapter and the in-stack vector store.
+- **Crash telemetry is force-disabled.** P5-3's opt-in error-telemetry
+  toggle (Settings → System) is hard-overridden the same way: even with the
+  operator's opt-in saved and a destination configured,
+  `SetupService.telemetry_status()` reports `effective: false` while this
+  mode is on, so `TelemetryReporter` never sends a report. See
+  `docs/backlog/road-to-market.md` P5-3 and
+  `src/applicant/observability/telemetry.py`.
 
 ## What still leaves the box (by design)
 

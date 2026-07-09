@@ -95,6 +95,18 @@
   --color-save-green: var(--color-success);
   --color-link-hover: #66c7ff;
   --color-subheader: #6b8a94;
+  /* X-4 (accessibility pass): the daily loop's redline review (documentLibrary.js
+     `.doclib-applicant-redline` fallback +/- list) renders these AS TEXT over
+     the card surface (`.memory-item`'s `color-mix(var(--fg) 3%, transparent)`
+     composited over `--bg`) — a context where the shared --color-success /
+     --color-danger tokens do NOT both clear WCAG AA 4.5:1 in both themes
+     (danger measures ~2.4:1 in dark; success ~2.4:1 in light — see the
+     contrast-gate tests below). Rather than retune --color-success/-danger
+     themselves (64 CSS + ~25 JS call sites across the whole vendored app, well
+     beyond this pass's scope), give the redline its own AA-safe pair, tuned
+     per theme against that specific composited surface. */
+  --redline-add: #4caf50;   /* dark theme: matches --color-success (already AA) */
+  --redline-del: #f08080;   /* dark theme: lighter than --color-danger (fails AA here) */
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
@@ -196,6 +208,13 @@
   --fg: #2b2b2b;
   --panel: #fff;
   --border: #bbb;
+  /* X-4: the redline pair's light-theme half (see the :root definition above
+     for why these are separate tokens from --color-success/-danger).
+     --redline-del keeps --color-danger's value (#c0392b already clears AA
+     against the light composited card surface); --redline-add needs a darker
+     green than --color-success to clear AA on light. */
+  --redline-add: #166534;
+  --redline-del: #c0392b;
   --hl-bg: #f9f9f9;
   --hl-fg: #2b2b2b;
   --hl-keyword: #7928a1;
@@ -223,6 +242,31 @@ body {
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
   overflow: hidden;
+}
+
+/* X-4 (accessibility pass): skip-to-content link. Off-screen until it
+   receives keyboard focus (Tab from a fresh page load lands here first),
+   then pops into a real on-screen control above every other layer so it's
+   never hidden behind the glass chrome. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100000;
+  background: var(--sys-blue, #0a84ff);
+  /* Black (not white) on --sys-blue: 5.76:1, clears the 4.5:1 AA text floor
+     at this element's actual (non-"large text") font size — white-on-blue
+     only clears the 3:1 large-text floor (see the primary-CTA contrast gate
+     below, which is deliberately large text). */
+  color: #000;
+  padding: 10px 16px;
+  border-radius: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 0;
 }
 
 /* Self-hosted Fira Code font */
@@ -8153,7 +8197,12 @@ textarea.memory-add-input {
   justify-content: center;
 }
 
-.memory-item:hover .memory-menu-btn {
+.memory-item:hover .memory-menu-btn,
+/* X-4 (accessibility pass): hover-only reveal made this control invisible to
+   keyboard focus — a Tab stop landing on it inside a still-opacity:0 wrapper
+   (design-audit exhaustive2 lens 05, #25). :focus-within keeps it visible
+   while any of its own children (or the row itself) hold focus. */
+.memory-item:focus-within .memory-menu-btn {
   opacity: 1;
 }
 
@@ -8201,7 +8250,8 @@ textarea.memory-add-input {
   transition: opacity 0.15s;
 }
 
-.memory-item:hover .memory-item-actions {
+.memory-item:hover .memory-item-actions,
+.memory-item:focus-within .memory-item-actions {
   opacity: 1;
 }
 
@@ -8212,7 +8262,8 @@ textarea.memory-add-input {
   position: relative;
   top: -1px;
 }
-.memory-item.skill-row:hover .memory-item-actions {
+.memory-item.skill-row:hover .memory-item-actions,
+.memory-item.skill-row:focus-within .memory-item-actions {
   opacity: 1;
 }
 

@@ -608,6 +608,36 @@ def configure_sandbox_connection(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+class TelemetryIn(BaseModel):
+    """Settings > System > Error telemetry body (P5-3). Both fields optional /
+    ``None`` = leave the persisted value untouched (same partial-update
+    convention as ``QuietHoursIn``/``AutomationPrefsIn``)."""
+
+    enabled: bool | None = None
+    #: Operator-supplied sink URL. SSRF-guarded like every other operator URL
+    #: in this router; there is no bundled/default collector.
+    endpoint: str | None = None
+
+
+@router.get("/telemetry")
+def get_telemetry(svc=Depends(get_setup_service)) -> dict:
+    """Opt-in error telemetry status (P5-3): the stored preference PLUS the
+    server-computed ``effective`` bit, which is False whenever local-only
+    private mode is on regardless of the stored ``enabled`` value — so the
+    Settings UI can show "on, but inert while private mode is active" rather
+    than silently disagreeing with what the engine will actually do."""
+    return svc.telemetry_status()
+
+
+@router.post("/telemetry", status_code=status.HTTP_204_NO_CONTENT)
+def configure_telemetry(body: TelemetryIn, svc=Depends(get_setup_service)) -> None:
+    """Save the opt-in error-telemetry preference (P5-3). Never itself sends a
+    report — enabling here only changes what ``telemetry_status`` will report
+    the NEXT time a crash is captured; local-only mode still hard-disables
+    sending regardless of what is saved."""
+    svc.configure_telemetry(enabled=body.enabled, endpoint=body.endpoint)
+
+
 @router.get("/automation")
 def get_automation_prefs(
     svc=Depends(get_setup_service), container=Depends(get_container)

@@ -7,6 +7,7 @@ hexagon.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import traceback
 
@@ -88,6 +89,14 @@ def register_exception_handlers(app: FastAPI) -> None:
         traceback server-side so the cause is always diagnosable. Returns a
         generic 500 to the client — never a raw traceback or internal detail
         (security: no information leakage to untrusted callers).
+
+        Also offers the crash to the P5-3 opt-in telemetry reporter — a
+        no-op unless the operator turned it on AND local-only private mode is
+        off (``TelemetryReporter.capture`` re-checks both fresh every call, so
+        this call site never decides that itself). Run off the event loop
+        thread (``asyncio.to_thread``, bounded by the reporter's own short
+        send timeout) and wrapped so a telemetry hiccup can never turn one
+        error into two or leave the response hanging.
         """
         request_id = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
         log.error(
@@ -98,6 +107,13 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc_type=type(exc).__name__,
             detail=traceback.format_exc(),
         )
+        container = getattr(request.app.state, "container", None)
+        telemetry = getattr(container, "telemetry", None)
+        if telemetry is not None:
+            try:
+                await asyncio.to_thread(telemetry.capture, exc, component="http", request=request)
+            except Exception:  # pragma: no cover - defensive, must never break the 500 response
+                log.debug("telemetry_capture_dispatch_failed", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"detail": "An unexpected error occurred. Please try again later."},

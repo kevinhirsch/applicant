@@ -599,6 +599,20 @@ class Settings(BaseSettings):
     # never goes to a third-party LLM API".
     llm_local_only: bool = Field(default=False, alias="LLM_LOCAL_ONLY")
 
+    # --- Opt-in error telemetry (P5-3) ---------------------------------------
+    # OFF by default (opt-in, not opt-out) and HARD-disabled whenever
+    # ``llm_local_only`` is on, regardless of this flag — enforced in
+    # ``SetupService.telemetry_status``, the one place every consumer (the
+    # global exception handler via ``observability.telemetry.TelemetryReporter``)
+    # reads before sending anything. These are only the env-sourced DEFAULTS;
+    # an operator can override both at runtime in Settings > System (persisted
+    # like every other Settings > Automation knob), which takes effect with no
+    # restart. There is no Applicant-operated collection endpoint and no
+    # hardcoded third-party default — ``telemetry_endpoint`` must be an
+    # operator-supplied sink (self-hosted or otherwise) or nothing is ever sent.
+    telemetry_enabled: bool = Field(default=False, alias="TELEMETRY_ENABLED")
+    telemetry_endpoint: str = Field(default="", alias="TELEMETRY_ENDPOINT")
+
     # --- Pre-submit safety (G07) --------------------------------------------
     # Scam/ghost-job detection: maximum allowed age (in days) for a listing.
     # Postings older than this are blocked before the pipeline starts.

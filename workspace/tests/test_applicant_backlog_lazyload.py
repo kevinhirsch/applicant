@@ -171,7 +171,11 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # applicantRail.js/applicantPortal.js (the home-base surfaces that must be
     # live the moment the shell paints, not lazy launcher-only overlays). It must
     # run eagerly so the bell is there on first paint.
-    assert count == 52, f"expected 52 eager module <script> tags, got {count}"
+    # 53 after wiring applicantTelemetrySettings.js (P5-3, opt-in error
+    # telemetry) -- a Settings-tab panel in the SAME eager category as
+    # applicantAutomationSettings.js/applicantHealth.js (settings.js reads its
+    # window.mountApplicantTelemetrySettings global on System-tab open).
+    assert count == 53, f"expected 53 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():
