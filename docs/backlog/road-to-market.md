@@ -87,7 +87,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains |
 | P2-14 | Easy Apply: assisted mode | M | both | PARTIAL — product surface DONE (consent screen recorded server-side + assisted-mode brief: deep link + prepared materials + checklist, reachable from the digest's Easy Apply chip); live-account automation (walk the modal, real proof run) explicitly DEFERRED — no owner-supplied LinkedIn account yet (issue #723) |
 | P3-1 | Install on tested targets | M–L | eng | — |
-| P3-2 | Requirements & model matrix | S–M | eng | — |
+| P3-2 | Requirements & model matrix | S–M | eng | DONE — published host-requirements + model-matrix table (`docs/requirements-and-model-matrix.md`), grounded in the compose stack, `proxmox-deploy.sh` defaults, the tier-ladder port, the parse-verify tier study, and the P2-6 eval harness; unproven functions labelled expected-untested with the P2-6 harness as the verification pointer |
 | P3-3 | Business model + licensing | M | you+eng | — |
 | P3-4 | Docs site | M | eng | — |
 | P3-5 | Release engineering | M | eng | — |
@@ -1456,8 +1456,30 @@ live LinkedIn automation.**
 NAS-class box; clean upgrade (`update.sh`) and uninstall paths tested.
 
 ### P3-2 — Requirements & model matrix
-**Effort:** S–M · **Owner:** eng · **DoD:** Published table — models good-enough per
+**Effort:** S–M · **Owner:** eng · **Status: DONE.**
+**DoD:** Published table — models good-enough per
 tier, supported APIs, RAM/VRAM minimums, cost-per-application.
+**Status note.** `docs/requirements-and-model-matrix.md` (linked from
+`docs/overview.md`'s doc index) publishes: host RAM/vCPU/disk minimum vs.
+recommended (the latter is the literal `scripts/proxmox-deploy.sh` default,
+not a guess), a per-service footprint table for the production compose stack
+(image-size drivers: the ~700MB texlive layer, Camoufox + real Chrome +
+patchright Chromium), the local-model VRAM sizing formula from the
+workspace's own Cookbook hardware-fit tool (`workspace/services/hwfit/`), the
+two supported wire protocols (Ollama-native and the OpenAI-compatible
+catch-all covering OpenAI/OpenRouter/vLLM/llama.cpp/SGLang/etc. — any tier of
+the ladder, FR-LLM-3), and a model matrix keyed by product function
+(parse-verify, materials generation, judging, digest scoring, chat, the
+experimental planner, embeddings, protected questions) citing real evidence
+where it exists (the parse-verify tier study; the P2-6 eval harness's live
+gpt-4o-mini-class run, gate PASS, 4.60/5) and labelling the rest
+expected-untested with the P2-6 harness as the closing pointer. Cost-per-
+application is documented as the existing live P1-6 estimator (not a fixed
+number) plus an explicitly-labelled illustrative range. Fixed a stale
+hardware-spec mismatch found along the way: `docs/overview.md` quoted
+"2 vCPU/4GB" / "2 cores/4GB/16GB disk" for the Proxmox default, which no
+longer matched `scripts/proxmox-deploy.sh` (now 4 cores/8GB/40GB) — corrected
+in both places.
 
 ### P3-3 — Business model + licensing *(owner decision)*
 **Effort:** M · **Owner:** you decide / eng builds · **Depends on:** P2-4, P4-DEC-1

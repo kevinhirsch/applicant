@@ -132,6 +132,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/voice-and-truthfulness.md`](voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
+| [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 
 ---
@@ -164,8 +165,11 @@ NFR-ZEROCLI-1).
 
 ## Prerequisites
 
-- A Linux host (VM, Proxmox LXC, or bare metal) or any Docker host; ~2 vCPU / 4 GB
-  RAM is plenty to start.
+- A Linux host (VM, Proxmox LXC, or bare metal) or any Docker host; 4 vCPU / 8 GB
+  RAM / 40 GB disk (the Proxmox deployer's own default, sized for the full
+  stack build) is the grounded recommendation — see
+  [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md)
+  for the minimum floor and per-service footprint.
 - **Docker + Docker Compose v2** — the only hard requirement.
 - An LLM endpoint — either a cloud OpenAI-compatible API key (e.g. OpenRouter) **or**
   a local/network [Ollama](https://ollama.com) (fully local, no cloud key). You set
@@ -187,7 +191,7 @@ Docker, deploy the stack, run migrations:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
 ```
 
-Pick **default** (2 cores / 4 GB / 16 GB disk, DHCP, auto-picked storage) or
+Pick **default** (4 cores / 8 GB / 40 GB disk, DHCP, auto-picked storage) or
 **advanced** (choose VMID, resources, disk storage, bridge). It prints the VM's root
 password and, once the first-boot build finishes (a few minutes),
 `http://<vm-ip>:${APP_PORT}` — open that **front-door UI** and complete the in-browser
