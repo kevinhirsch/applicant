@@ -9,10 +9,13 @@ name: Integration Lane (NFR-OPS-1)
 # docker-compose project, never a deployed stack.
 #
 # Triggers:
-#   - Manually (workflow_dispatch) with an optional ATS dry-run URL and an
-#     optional, separately-gated confirm_destroy phrase for the P1-7 drill.
+#   - Manually (workflow_dispatch) with an optional ATS dry-run URL, an
+#     optional live-discovery toggle (default on), and an optional,
+#     separately-gated confirm_destroy phrase for the P1-7 drill.
 #   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green (the
-#     destroy drill NEVER runs on the schedule — dispatch-only, see below).
+#     destroy drill NEVER runs on the schedule — dispatch-only, see below —
+#     and live discovery is dispatch-only too, so a job-board outage can
+#     never flake the unattended weekly run).
 on:
   workflow_dispatch:
     inputs:
@@ -20,6 +23,10 @@ on:
         description: "Live ATS URL to dry-run pre-fill against (stops at review boundary; leave blank to skip)"
         required: false
         default: ""
+      live_discovery:
+        description: "P2-13 live board coverage: run tests/integration/test_discovery_live.py against the real job boards (read-only). Set to false to skip."
+        required: false
+        default: "true"
       confirm_destroy:
         description: "P1-7 destroy drill (backup -> wipe named volumes -> restore) against an ISOLATED throwaway compose stack. Type exactly: yes-i-mean-it to run it. Leave blank to skip — never runs on the weekly schedule."
         required: false
@@ -72,10 +79,12 @@ jobs:
       DATABASE_URL: "postgresql+psycopg://applicant:applicant@localhost:5432/applicant"
       APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
       # P2-13 remainder: live board coverage confirmation. Non-destructive
-      # (read-only searches against real job boards), so it is always-on for
-      # this lane rather than gated behind its own confirm input — unlike the
-      # P1-7 drill below, there is nothing here that can damage anything.
-      DISCOVERY_LIVE_TEST: "1"
+      # (read-only searches against real job boards) but dependent on
+      # third-party board availability, so it runs on DISPATCH only (default
+      # on, opt out with live_discovery=false) and never on the weekly
+      # schedule — an upstream board outage must not flake the unattended
+      # weekly run. Evaluated in the expression engine, not the shell.
+      DISCOVERY_LIVE_TEST: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.live_discovery != 'false') && '1' || '' }}
       # Optional: a real SearXNG instance to include in the live discovery
       # check. Blank is fine — the jobspy boards still run live without it;
       # set the SEARXNG_URL repo secret to also exercise the searxng client.
@@ -211,62 +220,89 @@ jobs:
   # --- P1-7 remainder: the --confirm-destroy restore drill ------------------
   destroy-drill:
     # Dispatch-only (never on the weekly schedule) AND only when the operator
-    # types the exact confirm_destroy phrase — a double gate on top of the
-    # drill script's own --confirm-destroy flag. Runs the REAL
-    # scripts/backup-restore-drill.sh against docker/docker-compose.prod.yml,
-    # but in COMPLETE isolation from any real deployed stack on this host:
-    #   - `COMPOSE_PROJECT_NAME` below is unique to this job. `docker compose`
+    # types the exact confirm_destroy phrase — the job-level `if` below does
+    # both comparisons in the Actions expression engine (no shell, no
+    # injection surface), a double gate on top of the drill script's own
+    # --confirm-destroy flag; on any other input the whole job shows as
+    # skipped. Runs the REAL scripts/backup-restore-drill.sh against
+    # docker/docker-compose.prod.yml, but in COMPLETE isolation from any real
+    # deployed stack on this host:
+    #   - `COMPOSE_PROJECT_NAME` below is unique to this RUN (run id + attempt
+    #     — GitHub-generated integers, not user input). `docker compose`
     #     derives every container, network, and NAMED VOLUME (pgdata,
     #     engine-state, workspace-data, ...) from the project name, so this
-    #     run can never see or wipe a real deployment's volumes even though it
-    #     reuses the same compose file.
-    #   - A throwaway `.env` (own random POSTGRES_PASSWORD, own APP_PORT) is
-    #     pointed to via `APPLICANT_ENV_FILE` — the drill script and the
-    #     `backup.sh`/`restore.sh` it calls all honor that override (see their
-    #     headers), so the real deploy `.env` is never read or written.
+    #     run can never see or wipe a real deployment's volumes — or another
+    #     concurrent drill's — even though it reuses the same compose file.
+    #   - A throwaway `.env` (own random POSTGRES_PASSWORD, own per-run
+    #     APP_PORT) is pointed to via `APPLICANT_ENV_FILE` — the drill script
+    #     and the `backup.sh`/`restore.sh` it calls all honor that override
+    #     (see their headers), so the real deploy `.env` is never read or
+    #     written.
+    #   - The job-level `concurrency` group serializes drills across runs
+    #     (queue, never cancel — a cancel mid-drill would skip teardown and
+    #     leave orphaned volumes), which also removes any residual host-port
+    #     collision window.
     # The drill is torn down (`down -v`) at the end regardless of outcome so
-    # no throwaway container/volume lingers on the shared runner host.
-    if: github.event_name == 'workflow_dispatch'
+    # no throwaway container/volume lingers on the shared runner host. (The
+    # teardown uses the same per-run COMPOSE_PROJECT_NAME env, so it removes
+    # exactly this run's throwaway stack and nothing else.)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'yes-i-mean-it'
     runs-on: self-hosted
+    concurrency:
+      group: applicant-destroy-drill
+      cancel-in-progress: false
     env:
-      CONFIRM_DESTROY: ${{ github.event.inputs.confirm_destroy }}
-      COMPOSE_PROJECT_NAME: applicant-ci-destroy-drill
+      COMPOSE_PROJECT_NAME: applicant-ci-destroy-drill-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Gate on the exact confirm_destroy phrase
-        id: gate
-        run: |
-          if [ "${CONFIRM_DESTROY}" = "yes-i-mean-it" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "confirm_destroy not set to the exact phrase — skipping the destroy drill (this is the default; nothing destructive runs)."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Verify Docker is reachable without sudo
-        if: steps.gate.outputs.run == 'true'
         run: docker version
 
       - name: Build an isolated throwaway .env (own port + password, never the real deploy .env)
-        if: steps.gate.outputs.run == 'true'
         run: |
-          drill_dir="${RUNNER_TEMP}/applicant-destroy-drill"
+          # Per-run scratch dir + host port so two drills can never collide on
+          # the shared runner host (GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT are the
+          # runner-provided default env vars — no workflow-input templating).
+          drill_dir="${RUNNER_TEMP}/applicant-destroy-drill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${drill_dir}"
+          # The drill's heartbeat curls localhost:APP_PORT, so a published host
+          # port is required; derive one per run inside a 18000-18999 window.
+          app_port="$((18000 + GITHUB_RUN_ID % 1000))"
           {
-            echo "APP_PORT=18080"
+            echo "APP_PORT=${app_port}"
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
             echo "APPLICANT_INTERNAL_TOKEN=$(openssl rand -hex 16)"
           } > "${drill_dir}/.env"
           echo "APPLICANT_ENV_FILE=${drill_dir}/.env" >> "$GITHUB_ENV"
           echo "APPLICANT_BACKUP_DIR=${drill_dir}/backups" >> "$GITHUB_ENV"
 
+      # The drill script is written for an ALREADY-LIVE stack ("NEEDS A LIVE
+      # COMPOSE STACK", see its header) — its step 1 is backup.sh --apply,
+      # which hard-fails without a running postgres (`exec pg_dump`), captures
+      # workspace data via `exec` on a running applicant-ui, and captures
+      # engine state via `run --rm --no-deps api` (needs the api IMAGE built,
+      # not the service running). So stand the throwaway stack up first, and
+      # seed the schema so the backup being drilled contains a real database,
+      # not an empty one.
+      - name: Stand up the throwaway stack (postgres + applicant-ui up, api image built)
+        run: |
+          # Load the throwaway .env into this shell so docker compose
+          # interpolates OUR values (POSTGRES_PASSWORD, APP_PORT) — same
+          # loading the drill/backup scripts perform via APPLICANT_ENV_FILE.
+          set -a
+          # shellcheck disable=SC1090
+          . "${APPLICANT_ENV_FILE}"
+          set +a
+          docker compose -f docker/docker-compose.prod.yml up -d --build --wait postgres applicant-ui
+          docker compose -f docker/docker-compose.prod.yml build api
+          docker compose -f docker/docker-compose.prod.yml run --rm api uv run alembic upgrade head
+
       - name: Run the backup -> destroy volumes -> restore drill (--confirm-destroy)
-        if: steps.gate.outputs.run == 'true'
         run: scripts/backup-restore-drill.sh --confirm-destroy
 
       - name: Tear down the throwaway drill stack (always — leaves nothing behind)
-        if: always() && steps.gate.outputs.run == 'true'
-        run: docker compose -f docker/docker-compose.prod.yml down -v || true
+        if: always()
+        run: docker compose -f docker/docker-compose.prod.yml down -v --remove-orphans || true
