@@ -5,6 +5,7 @@ workflow machinery, so a future edit that breaks any of it fails the default
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 import sys
@@ -89,6 +90,38 @@ def test_release_workflow_is_gated_on_tags_and_manual_dispatch(release_workflow)
     tag_patterns = triggers["push"]["tags"]
     assert any("[0-9]" in p for p in tag_patterns), tag_patterns
     assert "workflow_dispatch" in triggers
+
+
+def test_release_tag_globs_are_actions_globs_not_regex(release_workflow):
+    # Regression guard for the Greptile P1 on PR #782: GitHub Actions `on.push.
+    # tags` uses GLOB filters, not regex — a regex-shaped `v[0-9]+.[0-9]+.[0-9]+`
+    # treats `+` literally and would NEVER match a real tag like `v0.1.0`, so
+    # the whole workflow would silently never fire. Two things must hold:
+    #   1. no regex quantifier (`+`) leaks into the glob patterns, and
+    #   2. the real documented tags actually match at least one pattern while
+    #      obvious non-release refs do not.
+    # fnmatch is a faithful stand-in for Actions glob semantics here: `*` = any
+    # run of chars, `[0-9]` = a single-digit class, `.`/`-` literal.
+    triggers = release_workflow.get("on", release_workflow.get(True))
+    tag_patterns = triggers["push"]["tags"]
+
+    for pat in tag_patterns:
+        assert "+" not in pat, (
+            f"{pat!r} uses a regex '+' quantifier — Actions tag filters are globs, "
+            "not regex, so this would never match a real tag"
+        )
+
+    def _matches_any(ref: str) -> bool:
+        return any(fnmatch.fnmatch(ref, pat) for pat in tag_patterns)
+
+    # Real release tags this repo documents MUST get through the glob.
+    for tag in ("v0.1.0", "v1.4.0", "v1.5.0-beta.1", "v1.5.0-rc.2", "v10.20.30"):
+        assert _matches_any(tag), f"documented release tag {tag!r} must match {tag_patterns}"
+
+    # Non-release refs / obviously malformed tags MUST NOT match (a branch name,
+    # a two-part version, a bare word).
+    for ref in ("main", "release", "v1.2", "1.4.0"):
+        assert not _matches_any(ref), f"{ref!r} should not match the release tag glob {tag_patterns}"
 
 
 def test_release_workflow_is_never_a_per_pr_gate(release_workflow):

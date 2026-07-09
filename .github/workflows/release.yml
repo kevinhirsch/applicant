@@ -22,12 +22,22 @@ name: Release
 on:
   push:
     tags:
-      # Stable: vMAJOR.MINOR.PATCH (e.g. v1.4.0). Beta/pre-release: the same
-      # shape with a `-` suffix (e.g. v1.5.0-beta.1, v1.5.0-rc.2) — see the
-      # channel-resolution step below, which is the single place that decides
-      # stable vs beta from the tag text.
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      # IMPORTANT: these are GitHub Actions GLOB filters, NOT regex — `+`/`{}`
+      # etc. are LITERAL here, so a regex-shaped filter (`v[0-9]+...`) would
+      # never match a real tag like `v0.1.0` and the workflow would silently
+      # never run. `*` matches any run of characters and `[0-9]` is a real
+      # single-digit class, so `v[0-9]*.[0-9]*.[0-9]*` matches `v1.4.0`, the
+      # trailing `*` also lets a pre-release suffix through (`v1.5.0-beta.1`),
+      # and the explicit second pattern documents that intent. This glob is
+      # deliberately LOOSE — the STRICT semver validation is the regex in the
+      # "Resolve the release tag, version, and channel" job step below (and the
+      # VERSION-matches-tag check), which fails loudly on anything malformed.
+      # The channel-resolution step is the single place that decides stable vs
+      # beta from the tag text (no `-` suffix => stable; any `-suffix` => beta).
+      #   Stable:       v1.4.0
+      #   Pre-release:  v1.5.0-beta.1, v1.5.0-rc.2
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*-*"
   workflow_dispatch:
     inputs:
       tag:
