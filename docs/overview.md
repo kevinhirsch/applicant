@@ -134,6 +134,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
 | [`docs/support.md`](support.md) | Getting support: the redacted diagnostic-bundle command, issue templates, community chat |
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
+| [`docs/platform-matrix.md`](platform-matrix.md) | Supported CPU architecture (amd64-only, with the binary reasons), Docker-on-WSL2 setup + gotchas, other host-OS notes |
 | [`docs/install-targets.md`](install-targets.md) | One-command install/upgrade/uninstall lifecycle for Ubuntu/Debian, Proxmox, and NAS-class boxes, and what is verified vs. dispatch-ready-only |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 | [`docs/known-issues.md`](known-issues.md) | Living bug log — open defects, product decisions pending, deploy-gated findings |
