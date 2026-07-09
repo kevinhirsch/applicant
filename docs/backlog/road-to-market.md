@@ -90,7 +90,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-2 | Requirements & model matrix | S–M | eng | DONE — published host-requirements + model-matrix table (`docs/requirements-and-model-matrix.md`), grounded in the compose stack, `proxmox-deploy.sh` defaults, the tier-ladder port, the parse-verify tier study, and the P2-6 eval harness; unproven functions labelled expected-untested with the P2-6 harness as the verification pointer |
 | P3-3 | Business model + licensing | M | you+eng | — |
 | P3-4 | Docs site | M | eng | — |
-| P3-5 | Release engineering | M | eng | — |
+| P3-5 | Release engineering | M | eng | PARTIAL — `VERSION` + `pyproject.toml` + `src/applicant/version.py` kept in lockstep by `scripts/ci/check_release_version.py` (hermetic-tested); `CHANGELOG.md` (Keep a Changelog); `.github/workflows/release.yml` builds/tags/signs (cosign keyless) both shipped images on a version tag with stable/beta channel tags; version now reachable in the front-door (Settings → System "Engine health" shows "Engine vX.Y.Z"); `docs/release-process.md` documents cutting a release + channel semantics. **Gap:** the release workflow has never been run against real GHCR/cosign credentials from this environment — no image has actually been pushed or signed yet; see `docs/release-process.md` §6 for the one-time setup + first-run verification a maintainer with real access must do. |
 | P3-6 | Workspace DB migrations | M | eng | — |
 | P3-7 | Platform matrix | S–M | eng+you | — |
 | P3-8 | Digest deliverability | S–M | eng | — |
@@ -1532,6 +1532,48 @@ security/privacy pages; generated from the repo so it can't drift.
 ### P3-5 — Release engineering
 **Effort:** M · **Owner:** eng · **DoD:** Versioned releases, changelog, signed images on
 GHCR, stable/beta channels.
+**Status: PARTIAL** — full process documented in `docs/release-process.md`; what shipped:
+
+- **Versioned releases.** `VERSION` (repo root) is the single source of truth; `pyproject.toml`'s
+  `[project].version` and `src/applicant/version.py`'s `__version__` must match it exactly.
+  `scripts/ci/check_release_version.py` enforces the three agree, that `VERSION` is valid semver,
+  and that `CHANGELOG.md` has an entry for it — wrapped as a hermetic pytest module
+  (`tests/unit/test_release_engineering.py`), so drift fails the default test suite, not just an
+  optional CI step.
+- **Changelog.** `CHANGELOG.md`, Keep a Changelog format, `## [Unreleased]` at the top; cutting a
+  release renames it to a dated `## [X.Y.Z]` heading. The cut-a-release steps are spelled out in
+  `docs/release-process.md` §4.
+- **Signed images on GHCR.** `.github/workflows/release.yml` triggers on a version tag
+  (`vMAJOR.MINOR.PATCH[-prerelease]`) or manual dispatch, builds BOTH shipped images (the engine
+  from `docker/Dockerfile`, the front-door from `workspace/Dockerfile` — the same two images
+  `docker/docker-compose.prod.yml` already builds locally), pushes them to GHCR, and signs each
+  pushed digest with `cosign` in **keyless** mode (Sigstore OIDC — no key material to manage). It
+  also verifies the tag being released matches the committed `VERSION` file before publishing
+  anything. CI (`.github/workflows/ci.yml`) still never builds images, per its own long-standing
+  comment — this is the one and only workflow that does, and only on an explicit tag/dispatch.
+- **Stable/beta channels.** The tag text alone decides the channel: no `-suffix` → `stable`
+  (also moves `:latest`); any `-suffix` (`-beta.N`, `-rc.N`, …) → `beta` (never touches `:latest`).
+  `scripts/update.sh` gained an `APPLICANT_CHANNEL` (`stable`/`beta`, default `stable`) knob that
+  picks which branch it syncs from (`main`/`beta`), plus the ability to pin `APPLICANT_BRANCH`
+  directly to an exact release tag (fetched/reset as a tag, not a branch) for testing one specific
+  build — see `docs/release-process.md` §5 for the full mapping, since `update.sh` builds images
+  from a synced source checkout rather than pulling the GHCR images directly (a larger deploy-model
+  change, out of scope for this story).
+- **Reachability.** The running engine's version is no longer only visible in a container log or
+  an internal-only `/healthz` field: `GET /api/health/capabilities` now carries `version`, proxied
+  verbatim by `workspace/routes/applicant_health_routes.py`, and the Settings → System "Engine
+  health" panel (`workspace/static/js/applicantHealth.js`) now renders "Engine vX.Y.Z" above the
+  capability list.
+
+**Honest gap (why this is PARTIAL, not DONE):** the release workflow was authored and hermetically
+tested (YAML parses, gating/permissions/cosign/channel logic all pinned by
+`tests/unit/test_release_engineering.py`) from an environment with **no real GHCR push access, no
+Sigstore/cosign OIDC context, and no ability to execute a live GitHub Actions run**. It has **never
+actually pushed or signed a real image**. Before this can be called fully DONE, a maintainer with
+real repo access must: (1) confirm GHCR/Actions package-publish permissions per
+`docs/release-process.md` §6, (2) push a real (or throwaway pre-release) tag, (3) confirm the run
+goes green, and (4) `cosign verify` the resulting image. Flip this to DONE only after that first
+real, verified run.
 
 ### P3-6 — Workspace DB migration strategy *(operational gap — decide before first schema change)*
 **Effort:** M · **Owner:** eng · **DoD:** A mechanism exists for evolving the workspace

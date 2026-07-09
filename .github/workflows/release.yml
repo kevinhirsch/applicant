@@ -1,0 +1,176 @@
+name: Release
+
+# Versioned release engineering (P3-5, road-to-market backlog). On a version
+# tag, builds BOTH shipped images (the engine `api` image from docker/Dockerfile
+# and the front-door `applicant-ui` image from workspace/Dockerfile — the same
+# two images docker/docker-compose.prod.yml builds locally), pushes them to
+# GHCR, signs each pushed digest with cosign in KEYLESS mode (Sigstore OIDC —
+# no key material to manage/rotate), and tags them into a `stable` or `beta`
+# channel based on the tag shape. See docs/release-process.md for: the
+# semver/tag convention, the one-time GHCR + cosign setup a maintainer must do
+# before this can push for real, how to cut a release, and — IMPORTANT — the
+# current HONEST gap: this workflow is syntactically valid and gated correctly
+# but has not yet been exercised end-to-end against real GHCR credentials (no
+# such credentials exist in the environment this workflow was authored in). Do
+# not treat a green run of THIS FILE's linting/parsing as proof it has ever
+# actually pushed or signed a real image — that first real run is a task for
+# whoever holds the repo's GHCR/Sigstore access.
+#
+# CI (.github/workflows/ci.yml) does NOT build images (see that file's own
+# comment) — this is the ONLY workflow in the repo that does, and it only runs
+# on an explicit version tag or a manual dispatch, never on every PR/push.
+on:
+  push:
+    tags:
+      # Stable: vMAJOR.MINOR.PATCH (e.g. v1.4.0). Beta/pre-release: the same
+      # shape with a `-` suffix (e.g. v1.5.0-beta.1, v1.5.0-rc.2) — see the
+      # channel-resolution step below, which is the single place that decides
+      # stable vs beta from the tag text.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re-)build/sign/publish, e.g. v1.2.0 or v1.3.0-beta.1"
+        required: true
+
+permissions:
+  contents: read
+  packages: write # push to GHCR
+  id-token: write # cosign keyless signing (Sigstore OIDC token)
+
+concurrency:
+  # Never cancel an in-flight publish/sign — a cancelled push mid-upload can
+  # leave a half-pushed manifest in the registry.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # --- Resolve tag -> version + channel --------------------------------
+      # The tag text is the single source of truth for which channel an image
+      # lands in: no `-` suffix => stable; any `-suffix` (beta, rc, whatever)
+      # => beta. See docs/release-process.md for the full convention.
+      - name: Resolve the release tag, version, and channel
+        id: meta
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+            echo "::error::'${TAG}' is not a valid release tag (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease)"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          if [[ "${TAG}" == *-* ]]; then
+            CHANNEL="beta"
+          else
+            CHANNEL="stable"
+          fi
+          echo "tag=${TAG}" >>"$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >>"$GITHUB_OUTPUT"
+          echo "channel=${CHANNEL}" >>"$GITHUB_OUTPUT"
+          echo "Resolved ${TAG} -> version=${VERSION} channel=${CHANNEL}"
+
+      # A release is only cut from a commit where VERSION/pyproject.toml/
+      # src/applicant/version.py already agree with the tag (the same check
+      # scripts/ci/check_release_version.py runs in the hermetic test suite) —
+      # this is the release-time half of that same invariant, checked against
+      # the tag itself rather than just internal self-consistency.
+      - name: VERSION file matches the tag being released
+        run: |
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${FILE_VERSION}" != "${{ steps.meta.outputs.version }}" ]]; then
+            echo "::error::VERSION file (${FILE_VERSION}) does not match tag ${{ steps.meta.outputs.tag }} (${{ steps.meta.outputs.version }}) — bump VERSION + pyproject.toml + src/applicant/version.py together, land that on main, THEN tag."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Compute image names + tag lists
+        id: tags
+        run: |
+          OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          API_IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/applicant-api"
+          UI_IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/applicant-ui"
+          VERSION="${{ steps.meta.outputs.version }}"
+          CHANNEL="${{ steps.meta.outputs.channel }}"
+          # Every image gets: the exact version tag (immutable, for pinning)
+          # and the moving channel tag (stable/beta). Stable releases ALSO
+          # move :latest — beta never does, so an operator who never opts
+          # into beta can never land on a beta image by pulling :latest.
+          api_tags="${API_IMAGE}:${VERSION},${API_IMAGE}:${CHANNEL}"
+          ui_tags="${UI_IMAGE}:${VERSION},${UI_IMAGE}:${CHANNEL}"
+          if [[ "${CHANNEL}" == "stable" ]]; then
+            api_tags="${api_tags},${API_IMAGE}:latest"
+            ui_tags="${ui_tags},${UI_IMAGE}:latest"
+          fi
+          echo "api_image=${API_IMAGE}" >>"$GITHUB_OUTPUT"
+          echo "ui_image=${UI_IMAGE}" >>"$GITHUB_OUTPUT"
+          echo "api_tags=${api_tags}" >>"$GITHUB_OUTPUT"
+          echo "ui_tags=${ui_tags}" >>"$GITHUB_OUTPUT"
+
+      # Mirrors docker/docker-compose.prod.yml's own `api` build (context ..,
+      # dockerfile docker/Dockerfile) — the SAME image definition, just pushed
+      # to GHCR instead of only ever built+kept local by `compose up --build`.
+      - name: Build + push the engine (api) image
+        id: build_api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.api_tags }}
+
+      # Mirrors docker/docker-compose.prod.yml's own `applicant-ui` build
+      # (context ../workspace, dockerfile Dockerfile).
+      - name: Build + push the front-door (ui) image
+        id: build_ui
+        uses: docker/build-push-action@v6
+        with:
+          context: ./workspace
+          file: workspace/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.ui_tags }}
+
+      # Keyless signing: no private key stored anywhere — cosign requests a
+      # short-lived certificate from Sigstore's public Fulcio CA using this
+      # job's own GitHub Actions OIDC token (id-token: write above), and
+      # records the signature + certificate in the public Rekor transparency
+      # log. Verify a pulled image with:
+      #   cosign verify --certificate-identity-regexp 'https://github.com/<owner>/<repo>/.*' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     ghcr.io/<owner>/applicant-api:<version>
+      - name: Sign the published images (cosign keyless/OIDC)
+        run: |
+          cosign sign --yes "${{ steps.tags.outputs.api_image }}@${{ steps.build_api.outputs.digest }}"
+          cosign sign --yes "${{ steps.tags.outputs.ui_image }}@${{ steps.build_ui.outputs.digest }}"
+
+      - name: Release summary
+        run: |
+          {
+            echo "### Released ${{ steps.meta.outputs.tag }} (${{ steps.meta.outputs.channel }} channel)"
+            echo "- \`${{ steps.tags.outputs.api_image }}:${{ steps.meta.outputs.version }}\` (+ \`:${{ steps.meta.outputs.channel }}\`)"
+            echo "- \`${{ steps.tags.outputs.ui_image }}:${{ steps.meta.outputs.version }}\` (+ \`:${{ steps.meta.outputs.channel }}\`)"
+            echo "- signed keyless via cosign (Sigstore OIDC); verify with the command in this workflow's own comment."
+          } >>"$GITHUB_STEP_SUMMARY"

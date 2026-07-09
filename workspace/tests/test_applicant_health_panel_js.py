@@ -271,6 +271,28 @@ def test_panel_body_html_composes_summary_and_every_row(node_available):
     assert "fix it" in out["body"]
 
 
+def test_panel_body_shows_engine_version_when_present(node_available):
+    # P3-5 (release engineering): the panel surfaces the running engine's real
+    # version — proxied verbatim from the engine, never invented.
+    script = f"""
+    {_ESC_STUB}
+    {_panel_fns_source()}
+    const withVersion = {{ all_real: true, degraded: [], version: '1.2.3', capabilities: [
+      {{ name: 'orchestrator', label: 'Durable orchestrator', status: 'real', detail: 'shim', load_bearing: false, fix: '' }},
+    ] }};
+    const withoutVersion = {{ all_real: true, degraded: [], capabilities: [
+      {{ name: 'orchestrator', label: 'Durable orchestrator', status: 'real', detail: 'shim', load_bearing: false, fix: '' }},
+    ] }};
+    console.log(JSON.stringify({{
+      withVersion: _panelBodyHTML(withVersion),
+      withoutVersion: _panelBodyHTML(withoutVersion),
+    }}));
+    """
+    out = _run_node(script)
+    assert "Engine v1.2.3" in out["withVersion"]
+    assert "Engine v" not in out["withoutVersion"]
+
+
 def test_degraded_names_maps_to_labels_and_falls_back_to_raw_name(node_available):
     script = f"""
     {_ESC_STUB}

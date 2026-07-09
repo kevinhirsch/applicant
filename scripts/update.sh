@@ -236,7 +236,24 @@ fi
 # rebuild just reproduces the old image. Fetch + hard-reset to the tracked branch
 # (the deploy tree is not edited by hand). .env / .backups are untracked/ignored
 # and survive the reset.
-APPLICANT_BRANCH="${APPLICANT_BRANCH:-main}"
+#
+# Release channel (P3-5, docs/release-process.md): APPLICANT_CHANNEL selects
+# WHICH MOVING BRANCH this sync tracks — `stable` (default) -> `main` (the
+# branch every stable vX.Y.Z tag is cut from); `beta` -> a `beta` branch, if
+# one is maintained. Set APPLICANT_BRANCH directly to override either default,
+# INCLUDING pinning an exact released tag (e.g. APPLICANT_BRANCH=v1.4.0 or
+# v1.5.0-beta.1) instead of following a moving branch — handled below, since a
+# tag has no `origin/<tag>` remote-tracking ref to reset onto.
+APPLICANT_CHANNEL="${APPLICANT_CHANNEL:-stable}"
+case "${APPLICANT_CHANNEL}" in
+  beta) _channel_default_branch="beta" ;;
+  *)    _channel_default_branch="main" ;;
+esac
+APPLICANT_BRANCH="${APPLICANT_BRANCH:-${_channel_default_branch}}"
+# A ref shaped like a release tag (vMAJOR.MINOR.PATCH[-prerelease]) is synced
+# as a TAG, not a branch — this is the one case reset target isn't `origin/<ref>`.
+_is_release_tag=0
+[[ "${APPLICANT_BRANCH}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]] && _is_release_tag=1
 # What the sync changed drives the smart-skip below. Defaults are CONSERVATIVE:
 # rebuild BOTH images, back up, and migrate unless we can positively PROVE an input
 # is unchanged — so an aggressive skip can never miss a real change.
@@ -246,9 +263,15 @@ OLD_REV=""; NEW_REV=""
 # unit test can never hard-reset the working tree to origin/main).
 if [[ "${APPLICANT_SELFTEST:-0}" != "1" && -d "${REPO_ROOT}/.git" ]]; then
   OLD_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
-  log "0/5 Syncing source to origin/${APPLICANT_BRANCH}"
-  run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
-  run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
+  if [[ "${_is_release_tag}" -eq 1 ]]; then
+    log "0/5 Syncing source to release tag ${APPLICANT_BRANCH} (channel=${APPLICANT_CHANNEL})"
+    run git -C "${REPO_ROOT}" fetch origin "refs/tags/${APPLICANT_BRANCH}:refs/tags/${APPLICANT_BRANCH}"
+    run git -C "${REPO_ROOT}" reset --hard "${APPLICANT_BRANCH}"
+  else
+    log "0/5 Syncing source to origin/${APPLICANT_BRANCH} (channel=${APPLICANT_CHANNEL})"
+    run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
+    run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
+  fi
   NEW_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 else
   log "0/5 No git checkout at ${REPO_ROOT}; skipping source sync."

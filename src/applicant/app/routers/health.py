@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends
 from applicant.app.capability_report import api_capability_report
 from applicant.app.container import Container
 from applicant.app.deps import get_container
+from applicant.version import __version__
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 
@@ -35,6 +36,13 @@ def capabilities(container: Container = Depends(get_container)) -> dict:
     (``applicant.observability.capabilities.capability_status``) — this adds
     no new probing, only the operator-facing shape (`` api_capability_report``
     layers in labels/fix-copy/load_bearing over the shared #188 report).
+
+    Also carries the running engine's ``version`` (P3-5, release engineering)
+    — the same :data:`applicant.version.__version__` the FastAPI app itself
+    advertises — so the front-door health panel can surface a real running
+    version instead of the engine being the only place it's ever visible
+    (reachability principle: a fact that only ever reaches a container log or
+    an internal-only ``/healthz`` isn't "done").
     """
     report = api_capability_report(
         browser_real=getattr(container.settings, "browser_real", False),
@@ -42,5 +50,6 @@ def capabilities(container: Container = Depends(get_container)) -> dict:
     )
     return {
         "generated_at": datetime.now(UTC).isoformat(),
+        "version": __version__,
         **report,
     }

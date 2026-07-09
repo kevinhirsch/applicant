@@ -112,6 +112,10 @@ def setup_applicant_health_routes() -> APIRouter:
         return {
             "engine_available": True,
             "generated_at": payload.get("generated_at") or "",
+            # Running engine version (P3-5, release engineering) — proxied
+            # verbatim, never invented, so the panel can show a real version
+            # instead of the engine being the only reachable place it shows up.
+            "version": str(payload.get("version") or ""),
             "capabilities": _clean_capabilities(payload.get("capabilities")),
             "degraded": _clean_names(payload.get("degraded")),
             "load_bearing_degraded": _clean_names(payload.get("load_bearing_degraded")),

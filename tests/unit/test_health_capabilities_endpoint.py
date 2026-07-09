@@ -111,6 +111,18 @@ class TestHealthCapabilitiesEndpoint:
         assert isinstance(body["load_bearing_degraded"], list)
         assert isinstance(body["all_real"], bool)
 
+    def test_response_carries_the_running_engine_version(self):
+        # P3-5 (release engineering): the same applicant.version.__version__
+        # the FastAPI app advertises, so it's reachable through the front-door
+        # health panel proxy — not just an internal-only /healthz field.
+        from applicant.version import __version__
+
+        app = create_app()
+        with TestClient(app) as c:
+            res = c.get("/api/health/capabilities")
+        body = res.json()
+        assert body["version"] == __version__
+
     def test_hermetic_boot_reports_postgres_degraded_honestly(self):
         # The hermetic test lane has no Postgres — the endpoint must say so
         # rather than rendering a false-green check (H-series honesty).
