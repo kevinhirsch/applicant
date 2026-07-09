@@ -103,7 +103,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P4-DEC-1 | Source-available decision | — | you | — |
 | P4-DEC-2 | Takeover scope decision | — | you | — |
 | P4-7 | Name check | S | you | — |
-| P5-1 | Support machinery | M | eng | — |
+| P5-1 | Support machinery | M | eng | PARTIAL — issue templates + redacted diagnostic-bundle command shipped and reachable (Settings → System); community Discord/forum is a docs scaffold with an owner-action placeholder, not yet a real link |
 | P5-2 | Pre-written FAQs | M | eng | — |
 | P5-3 | Opt-in telemetry | S–M | eng | — |
 | P5-4 | Launch sequence | M | you+eng | — |
@@ -1753,6 +1753,38 @@ self-hosted-store collision check for "Applicant" complete; go/no-go on the name
 ### P5-1 — Support machinery
 **Effort:** M · **Owner:** eng · **DoD:** Issue templates + a redacted diagnostic-bundle
 command + a small Discord/forum.
+**Status: PARTIAL** — two of three shipped and reachable; the community channel is a
+docs scaffold with an explicit owner-action placeholder (a real Discord/forum is not
+this repo's to invent). What shipped:
+- [x] **Issue templates** (`.github/ISSUE_TEMPLATE/`): bug report, feature request, and
+      support-question YAML forms, each pointing at the diagnostic bundle and saying
+      plainly "never paste secrets." `config.yml` disables blank issues and links
+      `docs/support.md` + the (placeholder) community chat.
+- [x] **Redacted diagnostic-bundle command** — `scripts/diagnostic-bundle.sh` collects
+      version info, `docker compose ps` status, a sanitized copy of the deploy `.env`,
+      per-service logs, and a health check into one `.tar.gz`. Redaction is enforced in
+      `scripts/lib/diagnostic_redact.py` itself (a secret-bearing-key denylist +
+      value-pattern scrubbing for provider API keys/GitHub-Gitlab-Slack-npm tokens/JWTs/
+      PEM blocks/URL userinfo credentials) — no caller flag can skip it. Proven by
+      `tests/unit/test_diagnostic_redact.py` (12 cases) and
+      `tests/unit/test_diagnostic_bundle_script.py`, which runs the FULL script
+      end-to-end against a fake `docker` with known secrets seeded into both the `.env`
+      and the fake compose logs, then asserts none of them survive anywhere in the
+      produced archive. **Reachable**: Settings → System (the honest health panel,
+      `workspace/static/js/applicantHealth.js`) surfaces the exact command with a
+      one-click copy button — a copyable command rather than a live download, because
+      the command needs `docker compose`/host access the `api`/`applicant-ui`
+      containers themselves don't have (mirrors the existing one-click-update sidecar's
+      own reasoning for why some host-level actions stay CLI/sidecar-driven rather than
+      in-process). `docs/support.md` documents the full CLI path either way.
+- [ ] **Small Discord/forum** *(owner action)* — this repo ships the scaffold only:
+      `docs/support.md` §3 + the issue-template `config.yml` contact link both point at
+      `https://example.invalid/applicant-community-placeholder` (an RFC 2606
+      guaranteed-non-resolving placeholder), clearly flagged as owner action in both
+      places. **The actual community space (a real Discord server or forum) has to be
+      created and moderated by the project owner** — this repo does not invent or ship
+      a real invite on the owner's behalf. Swap the placeholder URL in both files once
+      it exists.
 
 ### P5-2 — Pre-written support surface *(operational)*
 **Effort:** M · **Owner:** eng · **Depends on:** P5-1 · **DoD:** Top-20 predictable FAQs
