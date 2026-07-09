@@ -244,6 +244,17 @@ function mountRelocatedSetupStep(tab) {
         healthHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load engine health.</p>';
       });
     }
+    // P5-3: opt-in error telemetry — off by default, hard-off in local-only
+    // private mode, no bundled destination. Same lazy-mount convention as
+    // the health panel above.
+    const telemetryHost = document.getElementById('ao-settings-telemetry');
+    const mountTelemetry = window.mountApplicantTelemetrySettings;
+    if (telemetryHost && typeof mountTelemetry === 'function') {
+      Promise.resolve(mountTelemetry(telemetryHost)).catch(e => {
+        console.error('Failed to mount telemetry settings:', e);
+        telemetryHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load telemetry settings.</p>';
+      });
+    }
   }
   const cfg = RELOCATED_SETUP_STEPS[tab];
   if (!cfg) return;

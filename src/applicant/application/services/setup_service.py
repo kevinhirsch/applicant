@@ -139,6 +139,10 @@ def validate_hhmm(value: str, *, field: str = "time") -> str:
 _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
 _CHANNELS_KEY = "notify.channels"
+#: P5-3 opt-in error-telemetry preference: ``{"enabled": bool, "endpoint": str}``.
+#: Same override-record shape/convention as ``_CHANNELS_KEY`` -- only keys the
+#: operator actually saved are present; a write with ``None`` leaves a key alone.
+_TELEMETRY_KEY = "telemetry.prefs"
 _SANDBOX_CONN_KEY = "sandbox.proxmox_windows"
 #: Settings > Automation overrides (dark-engine audit items 82/84/85, plus
 #: 86/90): the browser-fingerprint timezone/locale, whether the engine may
@@ -307,6 +311,8 @@ class SetupService:
         channels_gate: Callable[[], bool] | None = None,
         sandbox_backend: str = "local",
         local_only: bool = False,
+        telemetry_enabled_default: bool = False,
+        telemetry_endpoint_default: str = "",
     ) -> None:
         self._store = config_store or InMemoryAppConfigStore()
         self._credentials = credentials
@@ -317,6 +323,13 @@ class SetupService:
         # service both read, so status can never claim a model the ladder
         # would refuse (H2). Stored config is never rewritten by the mode.
         self._local_only = local_only
+        # P5-3 opt-in error telemetry: env-sourced DEFAULTS only. The actual
+        # effective decision (below, ``telemetry_status``) ALSO folds in
+        # ``self._local_only`` fresh on every call — the same mode that refuses
+        # a non-private LLM tier hard-disables telemetry too, regardless of
+        # what is stored here (see ``docs/private-mode.md``).
+        self._telemetry_enabled_default = telemetry_enabled_default
+        self._telemetry_endpoint_default = telemetry_endpoint_default
         self._fonts_ready = False
         self._onboarding_complete = False
         # Real gates: onboarding completion (FR-ONBOARD-2) + channels (FR-OOBE-3).
@@ -562,6 +575,66 @@ class SetupService:
             discord=bool(discord_webhook_url),
             email=bool(apprise_urls),
             ntfy=bool(ntfy_url),
+        )
+
+    # --- opt-in error telemetry (P5-3) -------------------------------------
+    def get_telemetry_prefs(self) -> dict[str, Any]:
+        """Return the persisted telemetry preference, merged onto the
+        env-sourced defaults (same "always reflects the real effective value"
+        contract as ``get_automation_prefs``). Never includes anything beyond
+        ``enabled``/``endpoint`` — there is no other telemetry knob."""
+        rec = self._store.get(_TELEMETRY_KEY) or {}
+        return {
+            "enabled": bool(rec.get("enabled", self._telemetry_enabled_default)),
+            "endpoint": str(rec.get("endpoint", self._telemetry_endpoint_default) or ""),
+        }
+
+    def telemetry_status(self) -> dict[str, Any]:
+        """The one read every consumer (the Settings UI AND
+        ``TelemetryReporter``) uses. ``effective`` is the SERVER-COMPUTED,
+        never-caller-supplied decision: the stored opt-in AND a configured
+        endpoint AND NOT local-only mode, recomputed fresh on every call so a
+        stale read can never authorize a send local-only mode would refuse.
+        """
+        prefs = self.get_telemetry_prefs()
+        endpoint = prefs["endpoint"]
+        enabled = prefs["enabled"]
+        return {
+            "enabled": enabled,
+            "endpoint": endpoint,
+            "endpoint_configured": bool(endpoint),
+            "local_only": self._local_only,
+            "effective": bool(enabled and endpoint and not self._local_only),
+        }
+
+    def configure_telemetry(
+        self, *, enabled: bool | None = None, endpoint: str | None = None
+    ) -> None:
+        """Persist the opt-in telemetry preference (P5-3).
+
+        ``None`` = leave that key alone (same partial-update convention as
+        every other Settings toggle in this module). The destination is
+        OPERATOR-supplied -- SSRF-guarded like every other operator URL
+        (``validate_operator_url``) -- there is no bundled/default collector.
+        Saving here does NOT itself send anything and does NOT bypass the
+        local-only hard-off: that is enforced at read time in
+        ``telemetry_status``/``TelemetryReporter``, not here, so a stored
+        ``enabled=True`` while local-only mode is on is honestly recorded but
+        never acted on until the mode is turned off (mirrors how a stored
+        cloud-only LLM tier is never rewritten by the mode either).
+        """
+        if endpoint:
+            validate_operator_url(endpoint, field="telemetry endpoint")
+        rec = dict(self._store.get(_TELEMETRY_KEY) or {})
+        if enabled is not None:
+            rec["enabled"] = bool(enabled)
+        if endpoint is not None:
+            rec["endpoint"] = endpoint
+        self._store.set(_TELEMETRY_KEY, rec)
+        log.info(
+            "telemetry_configured",
+            enabled=rec.get("enabled", self._telemetry_enabled_default),
+            endpoint_configured=bool(rec.get("endpoint")),
         )
 
     # --- quiet hours (FR-NOTIF-5) -----------------------------------------

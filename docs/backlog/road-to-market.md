@@ -105,7 +105,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P4-7 | Name check | S | you | — |
 | P5-1 | Support machinery | M | eng | PARTIAL — issue templates + redacted diagnostic-bundle command shipped and reachable (Settings → System); community Discord/forum is a docs scaffold with an owner-action placeholder, not yet a real link |
 | P5-2 | Pre-written FAQs | M | eng | — |
-| P5-3 | Opt-in telemetry | S–M | eng | — |
+| P5-3 | Opt-in telemetry | S–M | eng | DONE — Settings → System → Error telemetry; default OFF, hard-off in local-only private mode, engine-side redaction chokepoint |
 | P5-4 | Launch sequence | M | you+eng | — |
 | P5-5 | Post-launch flywheel | ongoing | both | — |
 | P5-6 | Easy Apply autopilot | L | eng | — |
@@ -1793,6 +1793,82 @@ written before launch (no jobs found, empty digest, invalid key, CAPTCHA hit, we
 ### P5-3 — Opt-in error telemetry
 **Effort:** S–M · **Owner:** eng · **DoD:** Crash reporting that respects the privacy
 story; opt-in; actionable.
+**Status: DONE.**
+
+**Reachability chain:** spec (this story) → engine (`src/applicant/observability/
+telemetry.py`'s `TelemetryReporter`/`build_crash_event`, wired into the global
+unhandled-exception handler in `app/main.py`; `SetupService.telemetry_status()` /
+`configure_telemetry()` in `application/services/setup_service.py`; `GET`/`POST
+/api/setup/telemetry` in `app/routers/setup.py`) → workspace proxy
+(`workspace/routes/applicant_setup_routes.py`'s `get_telemetry`/`set_telemetry`,
+`workspace/src/applicant_engine.py`'s `setup_get_telemetry`/`setup_configure_telemetry`)
+→ JS (`workspace/static/js/applicantTelemetrySettings.js`) → nav (Settings → System →
+"Error telemetry" card, mounted by `settings.js`'s `mountRelocatedSetupStep` alongside
+the honest health panel).
+
+**What shipped:** a single opt-in toggle + operator-supplied destination field. Off by
+default (`TELEMETRY_ENABLED=false`, no bundled/default endpoint). On save, a crash from
+the engine's global exception handler is offered to `TelemetryReporter.capture`, which
+re-reads `telemetry_status()` fresh on every call (never a cached/caller-supplied
+decision) and only sends when `enabled` AND a destination is configured AND local-only
+private mode is off. The payload (`build_crash_event`) has exactly eight keys —
+exception type, a redacted one-line message, component, a route TEMPLATE (never a
+resolved URL/id), app version, a coarse platform string, a bounded redacted stack
+(basenames only, no `/home/<user>/...`), and a timestamp — reusing the exact
+secret-redaction patterns `observability/logging.py` already uses for log lines
+(`redact_text`, newly exported for this reuse), so there is one scrubbing implementation,
+not two that could drift apart.
+
+**Privacy guarantees + server-side enforcement:**
+- **Default OFF, opt-in only.** `telemetry_enabled`/`telemetry_endpoint` default to
+  `False`/`""` in `config.py`; the Settings toggle is unchecked and the endpoint field
+  blank until an operator explicitly saves both. Pinned:
+  `tests/unit/test_telemetry_reporting.py::test_telemetry_defaults_disabled_with_no_endpoint`
+  (+ the "only one of the two knobs set" variants).
+- **Hard off in local-only private mode, regardless of the stored opt-in.**
+  `telemetry_status()` folds in `SetupService._local_only` fresh on every read/capture —
+  the same "config stored untouched, enforcement computed at the one gate every consumer
+  reads" shape `docs/private-mode.md` already documents for the LLM tier ladder (updated
+  with a new bullet in this PR). Pinned:
+  `test_telemetry_forced_off_by_local_only_even_when_opted_in`,
+  `test_telemetry_env_sourced_default_also_respects_local_only`.
+- **Redaction chokepoint proven with real secrets.** `build_crash_event` is fed a fake
+  API key, a bearer token, URL userinfo credentials, and a JWT — all four are absent
+  from the payload; a traceback frame is asserted to never contain `/home/` or
+  `\Users\`. Pinned: the `test_build_crash_event_redacts_*` / `_strips_home_directory_*`
+  tests.
+- **A caller-supplied flag cannot bypass the gate.** `TelemetryReporter.capture` has no
+  `enabled`/`force`/`effective` parameter (pinned:
+  `test_capture_signature_has_no_enable_or_force_parameter`) — the only way to activate
+  sending is through the server's own persisted config, re-read on every call; a
+  status-fn that lies with an empty endpoint still refuses to send (defense in depth).
+  On the front door, `POST /api/applicant/setup/telemetry` is a Pydantic model with only
+  `enabled`/`endpoint` fields, so a client sending `{"effective": true}` never reaches
+  the engine at all (pinned: `test_put_telemetry_ignores_an_unknown_effective_field`).
+- **No hardcoded vendor / no silent phone-home.** There is no Applicant-operated
+  collection endpoint; the destination is whatever `http(s)` URL the operator supplies
+  (SSRF-validated via the existing `validate_operator_url`), documented honestly in the
+  privacy policy's new "Error reports you turn on" section and `docs/private-mode.md`.
+
+**Tests:** `tests/unit/test_telemetry_reporting.py` (22, engine-side: defaults,
+persistence/partial-update, local-only override, redaction, gate-bypass resistance),
+`workspace/tests/test_applicant_telemetry_routes.py` (10, front-door proxy: passthrough,
+auth/`can_configure` gates, partial-update forwarding, unknown-field stripping, error
+translation), `workspace/tests/test_applicant_telemetry_settings_ui.py` (19, JS/wiring:
+module shape, index.html/settings.js wiring, node-executed HTML-builder assertions,
+no-hardcoded-vendor check). Full green-increment gate re-run clean (hermetic engine
+suite 4222 passed, front-door `test_applicant_*` 3064 passed, `npm test` 76 passed,
+`ruff`/`lint-imports`/boot-smoke/single Alembic head/both white-label greps/
+`docker compose config` all clean).
+
+**Honest gaps:** only the global unhandled-exception handler (HTTP 500s) is wired as a
+capture call site today — a caught-and-logged error inside a background tick (the
+scheduler loop, the digest/discovery jobs) is not yet offered to the reporter, so a
+silent recoverable failure in those paths won't show up in telemetry even when opted in
+(the same crashes ARE still visible in the in-app health panel/logs). Extending capture
+to those call sites is a natural, additive follow-up through the same
+`container.telemetry.capture(...)` chokepoint — no new privacy design needed, just more
+call sites.
 
 ### P5-4 — Launch sequence
 **Effort:** M · **Owner:** you + eng · **Depends on:** cohort fixes · **DoD:** Soft launch

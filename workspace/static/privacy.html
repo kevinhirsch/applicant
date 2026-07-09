@@ -83,7 +83,7 @@
 
   <main>
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-07-08</p>
+    <p class="updated">Last updated: 2026-07-09</p>
 
     <p>Applicant is job-search software you run yourself — as a single self-hosted
     deployment, not a service Applicant operates on your behalf. There is no
@@ -160,10 +160,27 @@
     (the same as any self-hosted app's update process) — no job-search data is
     part of that traffic.</p>
 
+    <h3>Error reports you turn on</h3>
+    <p>Crash telemetry is off by default and opt-in (Settings → System → Error
+    telemetry). If you turn it on <em>and</em> configure a destination for it, a
+    crash sends only a sanitized signature — the error type, a scrubbed one-line
+    message, which part of the app, the app version, and a coarse platform
+    string. It never includes your résumé, job data, passwords, API keys, or a
+    file path with your username in it. There is no Applicant-operated
+    collection server and no default third-party vendor: the destination is
+    whatever HTTP endpoint you supply, so it can be your own self-hosted
+    collector. Leave it unconfigured (the default) and no crash report is ever
+    sent. If you've turned on the strict local-only private mode described
+    below, error telemetry is force-disabled regardless of this setting — see
+    <code>docs/private-mode.md</code> in the project source for the technical
+    detail.</p>
+
     <h2>What Applicant never does</h2>
     <ul>
-      <li>No analytics, telemetry, or third-party tracking scripts — not in the
-      app, not on the marketing site.</li>
+      <li>No analytics or third-party tracking scripts — not in the app, not on
+      the marketing site. The one opt-in exception is the crash-telemetry toggle
+      above, which is off by default, sends only a sanitized crash signature,
+      and has no default destination.</li>
       <li>No advertising, no selling or sharing data with data brokers, no use of
       your résumé or job-search activity to train anything beyond your own
       deployment's local memory.</li>

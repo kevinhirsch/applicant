@@ -278,6 +278,15 @@ class AutomationPrefsIn(BaseModel):
     egress_proxy_url: str | None = None
 
 
+class TelemetryIn(BaseModel):
+    """Settings > System > Error telemetry body (P5-3). Thin proxy body
+    mirroring the engine's own ``TelemetryIn`` (setup.py): both fields
+    ``Optional`` (default ``None``) so a save never clobbers the other one."""
+
+    enabled: bool | None = None
+    endpoint: str | None = None
+
+
 class SandboxConnectionIn(BaseModel):
     """Native Windows automation-sandbox connection (Proxmox VM) + login.
 
@@ -598,6 +607,38 @@ def setup_applicant_setup_routes() -> APIRouter:
                 )
         except EngineError as exc:
             logger.info("applicant set automation prefs failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
+
+    # ── Settings > System: opt-in error telemetry (P5-3) ─────────────────
+
+    @router.get("/telemetry")
+    async def get_telemetry(request: Request) -> JSONResponse:
+        """Opt-in error-telemetry status: the stored preference plus the
+        server-computed ``effective`` bit (False whenever the engine's
+        local-only private mode is on, regardless of the stored opt-in) — read
+        available to any logged-in user, same as every other setup GET."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_telemetry()
+        except EngineError as exc:
+            logger.info("applicant get telemetry status failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/telemetry")
+    async def set_telemetry(body: TelemetryIn, request: Request) -> JSONResponse:
+        """Save the opt-in error-telemetry preference (owner-scoped config
+        change, same ``can_configure`` gate as every other Settings write)."""
+        require_privilege(request, _CONFIG_PRIV)
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_configure_telemetry(
+                    body.model_dump(exclude_unset=True)
+                )
+        except EngineError as exc:
+            logger.info("applicant set telemetry preference failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content={"ok": True})
 
