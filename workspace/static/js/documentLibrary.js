@@ -76,7 +76,12 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
-let _libraryEscHandler = null;
+// X-4 (accessibility pass): cleanup fn returned by uiModule.initModalA11y —
+// wires the shared focus-trap/restore kit onto #doclib-modal (the daily
+// loop's review surface), which previously had no dialog semantics at all.
+// (Replaces the old bare `_libraryEscHandler` document-level Escape listener,
+// which had no Tab trap and no focus restore.)
+let _docLibA11yCleanup = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
 let _libraryImportMode = false;
@@ -1540,10 +1545,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const modal = document.createElement('div');
     modal.className = 'modal';
     modal.id = 'doclib-modal';
+    // X-4: dialog semantics (role/aria-modal/aria-labelledby) — this modal
+    // hosts the daily loop's entire review/redline step and previously had
+    // none (design-audit exhaustive2 lens 05, #3).
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'doclib-modal-title');
     modal.innerHTML = `
       <div class="modal-content doclib-modal-content" style="width:min(640px, 92vw);max-height:85vh;background:var(--bg);">
         <div class="modal-header">
-          <h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Documents</h4>
+          <h4 id="doclib-modal-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Documents</h4>
           <button class="close-btn" id="doclib-close">\u2716</button>
         </div>
         <div class="lib-tabs" id="doclib-lib-tabs" style="padding:0 10px;">
@@ -3116,6 +3127,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const redline = document.createElement('div');
       redline.className = 'doclib-applicant-redline';
       redline.style.cssText = 'font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow:auto;';
+      // X-4: this is the daily loop's actual review artifact — a
+      // display-only, non-focusable scroll box previously had no way for a
+      // keyboard user to read past the first 200px without a mouse wheel
+      // (design-audit exhaustive2 lens 05, #27). The "Show more" toggle below
+      // offers an alternative (expand to full height), but make the pane
+      // itself keyboard-scrollable too.
+      redline.setAttribute('tabindex', '0');
+      redline.setAttribute('role', 'region');
+      redline.setAttribute('aria-label', 'Proposed changes, scrollable');
       const renderedHtml = rl && (rl.rendered_html || rl.html);
       const additions = rl && Array.isArray(rl.additions) ? rl.additions : [];
       const subtractions = rl && Array.isArray(rl.subtractions) ? rl.subtractions : (rl && Array.isArray(rl.removals) ? rl.removals : []);
@@ -3130,9 +3150,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         redline.innerHTML = markdownModule.sanitizeAllowedHtml(renderedHtml);
       } else if (additions.length || subtractions.length) {
         // FALLBACK: plain add/remove lists when the engine returns no rendered
-        // redline HTML.
-        const add = additions.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
-        const sub = subtractions.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
+        // redline HTML. X-4: --redline-add/--redline-del (not the shared
+        // --color-success/--color-danger) — those two fail WCAG AA against
+        // this specific composited card surface in one theme each; see the
+        // token comments in style.css.
+        const add = additions.map(a => `<li style="color:var(--redline-add,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
+        const sub = subtractions.map(s => `<li style="color:var(--redline-del,#f08080);">− ${_esc(String(s))}</li>`).join('');
         redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Suggested changes — lines with + are text I'd add, − is text I'd remove</div><ul style="margin:0;padding-left:16px;list-style:none;">${add}${sub}</ul>`;
       } else {
         redline.innerHTML = '<div style="opacity:0.6;">No tracked changes to show — you can still ask for edits below.</div>';
@@ -4862,19 +4885,20 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (e.target === modal) closeLibrary();
     });
 
-    // Escape key
-    _libraryEscHandler = (e) => {
-      if (e.key === 'Escape') {
-        // Collapse expanded card first, then close modal on second Escape
-        const expanded = document.querySelector('#doclib-grid .doclib-card-expanded');
-        if (expanded) {
-          _collapseExpandedCard(expanded);
-        } else {
-          closeLibrary();
-        }
+    // X-4: route Escape + Tab-trap + focus-restore through the shared modal
+    // a11y kit (ui.js initModalA11y) instead of a bare document-level Escape
+    // listener — Tab previously escaped straight into the background app
+    // (design-audit exhaustive2 lens 05, #3). The "collapse the expanded card
+    // first, close on the next Escape" behavior is preserved as the closeFn.
+    if (_docLibA11yCleanup) { _docLibA11yCleanup(); _docLibA11yCleanup = null; }
+    _docLibA11yCleanup = uiModule.initModalA11y(modal, () => {
+      const expanded = document.querySelector('#doclib-grid .doclib-card-expanded');
+      if (expanded) {
+        _collapseExpandedCard(expanded);
+      } else {
+        closeLibrary();
       }
-    };
-    document.addEventListener('keydown', _libraryEscHandler);
+    });
 
     // Toggle active on tool button
     const btn = document.getElementById('tool-doclib-btn');
@@ -4904,9 +4928,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
     }
 
-    if (_libraryEscHandler) {
-      document.removeEventListener('keydown', _libraryEscHandler);
-      _libraryEscHandler = null;
+    if (_docLibA11yCleanup) {
+      _docLibA11yCleanup();
+      _docLibA11yCleanup = null;
     }
 
     const btn = document.getElementById('tool-doclib-btn');

@@ -241,6 +241,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover" />
 </head>
 <body>
+  <!-- X-4 (accessibility pass): skip-to-content link — the first focusable
+       element in the document, invisible until it receives keyboard focus.
+       Lets a keyboard user bypass the icon rail + sidebar nav (dozens of
+       Tab stops) and land straight in the main content region. -->
+  <a href="#chat-container" class="skip-link">Skip to main content</a>
   <!-- Loading overlay — hides all flashing until app is ready -->
   <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
     <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
@@ -1143,7 +1148,7 @@
     </div>
   </nav>
 
-  <main class="chat-container welcome-active" id="chat-container" role="region" aria-label="Chat area">
+  <main class="chat-container welcome-active" id="chat-container" role="region" aria-label="Chat area" tabindex="-1">
     <div class="chat-top-bar">
       <!-- P0-3 (P0-3b) — top-bar NOTIFICATION BELL: the THIRD notification surface
            (the rail's waiting-on-you area + transient toasts already exist). Reuses
