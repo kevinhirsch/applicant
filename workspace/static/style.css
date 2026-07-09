@@ -4212,9 +4212,19 @@ body.bg-pattern-sparkles {
       /* Document/email/gallery/research library — full-height bottom-sheet
          on mobile. Keep the rounded top corners + border-top so they match
          the cookbook/calendar/compare look instead of looking like raw
-         full-bleed panels. */
-      .doclib-modal-content,
-      .gallery-modal-content {
+         full-bleed panels. X-1 mobile audit: the two-class selector
+         (.modal-content.doclib-modal-content — every one of these windows
+         ships BOTH classes) and !important on `height` are load-bearing. The
+         base mobile sheet rule sets `.modal-content { height:auto !important }`,
+         which — being !important and equal-or-later in the cascade — otherwise
+         beat the old single-class `height:100dvh` (no !important) here, so the
+         library sheet collapsed to its content height and rendered as a short
+         strip when its body was near-empty (e.g. the Documents review surface
+         with no docs yet) instead of the intended full-height sheet. Two
+         classes out-specific the base one-class rule, and !important clears the
+         base's !important, so full height wins deterministically. */
+      .modal-content.doclib-modal-content,
+      .modal-content.gallery-modal-content {
         width: 100vw !important;
         max-width: 100vw !important;
         /* vh fallback, dvh override so the modal adapts to mobile
@@ -4222,8 +4232,8 @@ body.bg-pattern-sparkles {
            wins, so dvh must come after vh. */
         max-height: 100vh !important;
         max-height: 100dvh !important;
-        height: 100vh;
-        height: 100dvh;
+        height: 100vh !important;
+        height: 100dvh !important;
         border-radius: 14px 14px 0 0 !important;
         border: none !important;
         border-top: 1px solid var(--border) !important;
@@ -34414,6 +34424,29 @@ body.theme-frosted .ow-title {
   line-height: 1;
   color: var(--fg, #fff);
   pointer-events: none;          /* the title never eats a drag/click */
+}
+/* X-1 mobile golden-path audit (390×844): on a phone the absolutely-centered
+   title (centered at 50%, max-width 60%) COLLIDES with a right-side titlebar
+   control. On the sheet the close light is display:none, so nothing balances the
+   left — the Portal's centered "Waiting on you" overlapped its "You're in
+   control" pill by ~34px at 390px. Below the sheet breakpoint, flow the title
+   in-line instead: [ — hidden light cluster ][ title (flex, truncates) ][ right
+   controls ] — a left-title / right-actions band with no overlap. Desktop keeps
+   the centered macOS chrome untouched (this override is mobile-only). */
+@media (max-width: 768px) {
+  body.theme-frosted .ow-titlebar > .ow-controls { margin-right: 0; }
+  body.theme-frosted .ow-title {
+    position: static;
+    left: auto; top: auto;
+    transform: none;
+    max-width: none;
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 /* ── macOS TRAFFIC LIGHTS (the colored exception — NOT glass-refracted) ────────*/
 /* ONE token set for EVERY window family (owner: the stoplights read wrong-sized /

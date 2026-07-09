@@ -200,7 +200,15 @@ const MASKS = [
   // chrome on every shell state; masking it (down to the viewport bottom —
   // it is the bottommost element) keeps the whole surface pinned without
   // gating on its internal races.
-  { selector: '.chat-input-bar', reason: 'composer chrome settles through unpinnable async flips (enable/focus/model-chip)', toBottom: true },
+  // DESKTOP-ONLY (X-1): the race sources are desktop-specific — the composer
+  // autofocuses only at desktop widths, and the modal-close focus-restore
+  // races it there. At mobile widths the composer does NOT autofocus, so it
+  // settles deterministically (verified by the two-run zero-diff bless), and
+  // `toBottom` here would paint magenta over the bottom of every mobile
+  // BOTTOM SHEET — exactly where the sheet's primary actions live (Save job,
+  // the wizard's Continue, etc.). Skipping it on mobile keeps those visible in
+  // the baseline; the sheet's own chrome is what the mobile cell is there to pin.
+  { selector: '.chat-input-bar', reason: 'composer chrome settles through unpinnable async flips (enable/focus/model-chip)', toBottom: true, desktopOnly: true },
   // The gadget rail's two text stacks: their glyph raster varies per BROWSER
   // LAUNCH (in-place, ±1 row of AA per text line; runs within one launch are
   // byte-identical). Five pinning mechanisms failed to remove it (opaque
@@ -222,6 +230,12 @@ const MASK_PAD = 24;
 const MASK_GRID = 96;
 
 async function applyMasks(page) {
+  // Desktop-only masks (the composer bar) are skipped at mobile widths — they
+  // exist for desktop-specific races and would otherwise paint over mobile
+  // bottom-sheet content (see the `.chat-input-bar` mask note above).
+  const vp = page.viewportSize();
+  const isMobile = !!vp && vp.width < 768;
+  const active = MASKS.filter((m) => !(m.desktopOnly && isMobile));
   await page.evaluate((masks) => {
     const PAD = masks.pad, GRID = masks.grid;
     for (const spec of masks.entries) {
@@ -242,7 +256,7 @@ async function applyMasks(page) {
         document.body.appendChild(m);
       });
     }
-  }, { entries: MASKS, pad: MASK_PAD, grid: MASK_GRID }).catch(() => {});
+  }, { entries: active, pad: MASK_PAD, grid: MASK_GRID }).catch(() => {});
 }
 
 // ── Capture one state ────────────────────────────────────────────────────────
@@ -367,6 +381,10 @@ async function main() {
         for (const state of STATES) {
           const id = `${theme.tag}/${vp.tag}/${state.name}`;
           if (flags.only && !flags.only.test(state.name)) continue;
+          // Desktop-only states (the P0-3 gadget rail) do not exist below the
+          // 768px breakpoint — skip them on the mobile cell rather than shoot an
+          // absent surface (see surfaces.js `desktopOnly`).
+          if (state.desktopOnly && vp.width < 768) continue;
 
           const context = await browser.newContext({
             viewport: { width: vp.width, height: vp.height },
