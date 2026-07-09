@@ -175,3 +175,22 @@ def test_help_flag_exits_zero_without_touching_anything(tmp_path):
 def test_unknown_flag_is_rejected(tmp_path):
     res = _run(tmp_path, "--bogus-flag")
     assert res.returncode == 2
+
+
+def test_output_flag_without_a_path_fails_with_a_friendly_message(tmp_path):
+    # Under `set -u`, consuming $2 without guarding it would crash with a bash
+    # "unbound variable" error; the arg-parse loop must guard the operand and
+    # exit 2 with an intentional message instead (Greptile P1 on PR #783).
+    res = _run(tmp_path, "--output")
+    assert res.returncode == 2
+    combined = res.stdout + res.stderr
+    assert "requires a path" in combined
+    assert "unbound variable" not in combined
+
+
+def test_output_short_alias_without_a_path_also_fails_friendly(tmp_path):
+    res = _run(tmp_path, "-o")
+    assert res.returncode == 2
+    combined = res.stdout + res.stderr
+    assert "requires a path" in combined
+    assert "unbound variable" not in combined

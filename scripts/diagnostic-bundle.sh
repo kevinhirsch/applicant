@@ -13,7 +13,7 @@
 # there is no --apply gate — safe to run any time.
 #
 # Usage:
-#   scripts/diagnostic-bundle.sh [--output PATH]
+#   scripts/diagnostic-bundle.sh [--output|-o PATH]
 #
 # What lands in the archive (see its own MANIFEST.txt for exactly what was
 # collected vs. skipped on THIS run, and why — an absent docker socket or an
@@ -56,12 +56,20 @@ SERVICES=(applicant-ui api postgres searxng chromadb ntfy)
 OUTPUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --output)
+    --output|-o)
+      # Guard the operand BEFORE consuming it: under `set -u`, a bare
+      # `--output` with no following path would otherwise crash with an
+      # unbound-variable error ("$2: unbound variable") instead of this
+      # friendly message.
+      if [[ $# -lt 2 ]]; then
+        echo "Error: ${1} requires a path (e.g. ${1} /tmp/bundle.tar.gz)" >&2
+        exit 2
+      fi
       OUTPUT="$2"
       shift 2
       ;;
     -h|--help)
-      echo "Usage: diagnostic-bundle.sh [--output PATH]"
+      echo "Usage: diagnostic-bundle.sh [--output|-o PATH]"
       echo "  Collects a redacted diagnostic archive (version, compose status,"
       echo "  sanitized config, scrubbed logs, health) for a bug report or"
       echo "  support request. Safe to run any time -- read-only."
