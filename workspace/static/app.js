@@ -4041,13 +4041,13 @@ function startApplicantApp() {
   }).catch(() => {});
   modelsModule.refreshProviders();
   ragModule.loadPersonalDocs();
-  memoryModule.loadMemories(); // Ensure memories are loaded on page load
-  
-  // Ensure the memory list is rendered after loading
-  setTimeout(async () => {
-    await memoryModule.loadMemories();
-  }, 1000);
-  
+  // Load + render the memory list once on boot. (X-3 perf: dropped a redundant
+  // second `setTimeout(loadMemories, 1000)` that re-fetched /api/memory and
+  // re-rendered the same list on every page load — the memory pane is static in
+  // index.html, so the eager call above already populates it; the delayed
+  // duplicate was a wasted network round-trip + re-render each boot.)
+  memoryModule.loadMemories();
+
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();

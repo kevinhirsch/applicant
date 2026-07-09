@@ -111,7 +111,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P5-6 | Easy Apply autopilot | L | eng | — |
 | X-1 | Mobile golden-path audit | M | eng | DONE — digest→review→approve walked at 390×844 (iPhone-class portrait) via the P0-6 harness; fixed the shared macOS titlebar's centered title colliding with its right-side control on the sheet (Portal "Waiting on you" vs "You're in control", ~34px) and the library/gallery sheet collapsing to a short strip (missing `!important` let `height:auto` win over `height:100dvh`); mobile 390×844 added to the visual matrix (rail states are desktop-only per P0-3, composer mask desktop-only so sheet actions stay visible), baselines blessed with the two-run zero-diff proof |
 | X-2 | Cross-browser smoke | S–M | eng | DONE — golden path walked in **Firefox AND WebKit** (not just Chromium) via the engine-parameterized P0-6 harness (`run.js --engine firefox\|webkit`): a layout/error smoke (no page errors, no off-screen escapes, no horizontal overflow) over the front-door surface matrix, no cross-engine pixel gate. Executed here: both engines pass a clean golden-path-core smoke (login→Today/Portal→review library, exit 0, 18 states, 0 errors each), and WebKit additionally swept 75 full-matrix states (all nav/settings/wizard/rail, glass desktop+mobile) with 0 errors. The `@supports not (backdrop-filter)` solid-panel fallback was added so glass chrome (windows/sidebar/composer/modals/cards/toasts + free-floating search palette, colour-picker popover, mobile sheet) falls back to an opaque `--panel` in both themes where blur is unsupported — additive `@supports not` branch, so the committed Chromium/WebKit/modern-FF glass baselines are untouched. Fallback correctness gated per-PR by a deterministic source-assertion test (`glassBackdropFallback.test.js`); a `ci-cross-browser.yml` on-demand+weekly lane runs the FF/WebKit smoke (engine install prereq documented in `docs/integration-runner-setup.md`, tied to `scripts/setup-integration-runner.sh`) |
-| X-3 | Performance budget | M | eng | — |
+| X-3 | Performance budget | M | eng | DONE — **login→interactive** (nav→shell interactive: splash gone + composer enabled) and **surface-open** (hash-routed `openApplicant*` page open; windows retired in P0-3) measured by reusing the P0-6 hermetic app-boot (`workspace/tests/perf/measure.js`, Playwright + browser-side `performance.now()`). Baselines (CI-class runner, 1440×900, GPU-less headless): login→interactive **warm median 2699 ms / cold 3496 ms** (FCP ~212 ms, DOMContentLoaded ~1163 ms); surface-open warm medians **Today 671 / Tracker 630 / Results 655 / Activity 738 ms**. Budgets set (login→interactive warm ≤3500/cold ≤4500 ms, FCP ≤600, DCL ≤1600, surface-open median ≤1000/max ≤1500 ms) in `docs/performance-budget.md` (cross-linked from `docs/overview.md`), with the blur/aurora GPU cost as an **analytical** budget (headless GPU-less can't measure compositor cost — stated honestly). Cheap wins (front-door only, pixel-neutral — visual harness re-run clean vs the committed P0-6 glass/mobile baselines): dropped a **standing `will-change` on every glass button** (was permanently promoting each to its own GPU layer at rest for a transient press morph) and removed a **duplicate boot-time memory fetch** (redundant `setTimeout(loadMemories,1000)` re-fetch every boot). Regression guard `workspace/tests/js/perfBudget.test.js` (no-browser, in `npm test`) pins the reduced-motion mesh gate, transform/opacity-only mesh keyframes, and the no-`will-change` invariant. Deferred (would breach a constraint): de-stacking the modal scrim `blur(2px)` (alters a committed baseline) and deferring the synchronous `MemoryVectorStore.rebuild()` (startup-ordering risk). **X-series (X-1/2/3/4) now fully closed.** |
 | X-4 | Accessibility pass | M | eng | DONE — keyboard-only golden path (digest→review→approve) operable: sidebar nav destinations get generic Enter/Space activation (Documents/Profile/Calendar/etc. were mouse-only when the rail is collapsed), `#doclib-modal` review host gains dialog semantics + shared focus-trap/restore, redline pane is keyboard-scrollable, hover-revealed card actions reveal on `:focus-within`, skip-to-content link added. WCAG-AA contrast sweep extended (`test_applicant_x4_a11y_contrast.py`) across base light+dark tokens + the review step: found & fixed two real AA failures (redline +/- fallback — danger ~2.4:1 dark, success ~2.4:1 light on the composited card) via dedicated `--redline-add/--redline-del` tokens. Two pinning tests added. Honest gap: the shared `--color-warning`/`--color-success`/`--color-muted` tokens as arbitrary text don't all clear AA in light theme, but retuning them touches ~90 vendored call sites — out of this surgical pass's scope, documented in the test |
 
 ## Universal Definition of Done (applies to every story)
@@ -2264,6 +2264,58 @@ surfaces in both themes.
 **Effort:** M · **Owner:** eng · **Schedule with:** Phase 1
 **DoD:** Login→interactive and window-open latency measured; budgets set; cheap wins taken
 (boot warm-up, blur/aurora GPU cost on modest hardware).
+
+**Status: DONE.**
+
+*Measured* — the DoD says "window-open" but windows were retired in P0-3; the modern
+equivalent is the hash-routed / launcher-driven **surface-open** (`window.openApplicant*`
++ `hashRouter.js`), which is what was measured. `workspace/tests/perf/measure.js`
+**reuses the P0-6 visual harness's hermetic app-boot** (`tests/visual/boot.js` — fresh
+SQLite, engine offline) and unlock fixture rather than a new app-boot path, and drives
+Chromium via Playwright taking all timings **browser-side** with `performance.now()` /
+Navigation Timing (no Node jitter). It does NOT pin the clock/animation the way the
+pixel harness does (those pins would destroy timings), and opens each surface on its own
+fresh interactive page. Baselines (CI-class runner, 1440×900, 6 iterations):
+- **login→interactive** (nav → splash detached + composer enabled): warm median
+  **2699 ms**, cold **3496 ms**; FCP ~212 ms, domInteractive ~241 ms, DOMContentLoaded
+  ~1163 ms. The shell paints/scripts fast (~0.2 s); the ~2.7 s is the post-DCL critical
+  path (`loadSessions()` → loader teardown) plus the deliberate assistant-session-selected
+  + composer-enabled settle.
+- **surface-open** (click → visible + one settled frame), warm median: **Today 671 /
+  Tracker 630 / Results 655 / Activity 738 ms**.
+
+*Budgets set* — regression ceilings on this box (with headroom over the warm baseline),
+in `docs/performance-budget.md` (cross-linked from `docs/overview.md`): login→interactive
+warm ≤ 3500 / cold ≤ 4500 ms, FCP ≤ 600, DOMContentLoaded ≤ 1600, surface-open median ≤
+1000 / max ≤ 1500 ms. **Honest caveats stated:** measured on THIS box's Chromium (not
+modest real hardware — rough ~2–3× field scaling given), and headless is **GPU-less
+(`--disable-gpu`)**, so the blur/aurora **compositor cost is analytical, not measured** —
+reasoned from the CSS with concrete invariants (mesh blur rasterized once + transform/
+opacity-only animation; ≤ 2 concurrent full-viewport backdrop passes; reduced-motion +
+reduced-transparency + `@supports-not` escape hatches).
+
+*Cheap wins taken* — front-door only, each safe + **pixel-neutral** (the Chromium visual
+harness re-ran clean against the committed P0-6 glass/dark desktop + 390×844 mobile
+baselines — a `will-change` compositing hint changes no pixels, and the JS win is
+post-auth): (1) **dropped a standing `will-change: transform` on the frosted glass-button
+morph rule** — that selector matches every button in every glass window/card/gadget +
+dock chip, so it permanently promoted each to its own compositor layer at rest for a
+transient `:active` press morph; the morph still transitions, the compositor promotes on
+demand. (2) **Removed a duplicate boot-time `memoryModule.loadMemories()`** — a redundant
+`setTimeout(…, 1000)` re-fetched `/api/memory` and re-rendered the same list on every
+page load. Also confirmed + documented the already-banked wins (lazy rare-surface loading,
+deferred route opener, compositor-only mesh, visibility-paused canvas rAF, deferred backend
+startup). **Deferred with reason** (would breach a constraint): de-stacking the modal scrim
+`blur(2px)` (part of a committed baseline) and deferring `MemoryVectorStore.rebuild()`
+(startup-ordering risk, empty/instant in the harness).
+
+*Regression guard* — `workspace/tests/js/perfBudget.test.js` (no-browser, deterministic, in
+`npm test`) asserts the reduced-motion mesh freeze, the transform/opacity-only mesh
+keyframes (no repaint-forcing property re-blurs the 54px gaussian per frame), and the
+no-standing-`will-change` invariant on the glass-button rule.
+
+With X-3 done the whole **X-series (X-1 mobile · X-2 cross-browser · X-3 performance · X-4
+accessibility) is closed.**
 
 ### X-4 — Accessibility pass
 **Effort:** M · **Owner:** eng · **Schedule with:** Phase 1
