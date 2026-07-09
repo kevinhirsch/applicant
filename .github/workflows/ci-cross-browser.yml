@@ -1,0 +1,106 @@
+# Cross-Browser Smoke (X-2) — the golden-path surface walk driven by Firefox
+# AND WebKit (not just the Visual Lane's Chromium). It reuses the SAME hermetic
+# harness (workspace/tests/visual/run.js) and the SAME surface matrix, but with
+# `--engine firefox` / `--engine webkit`: it boots the front-door offline, walks
+# login → Today → each nav section → Settings groups → theme picker → wizard
+# steps → the P0-3 rail states at 1440×900 / 1024×768 / 390×844 under the white-
+# glass and dark themes, and enforces the layout/error contract on every state
+# (no page errors, no off-screen escapes, no horizontal overflow). It does NOT
+# pixel-compare against the committed Chromium baselines — cross-engine glyph
+# raster + compositing legitimately differ, so a cross-engine pixel diff is
+# noise. Screenshots are uploaded as an artifact for eyeballing (incl. the
+# @supports solid-panel fallback surfaces).
+#
+# ON-DEMAND, NOT A PER-PR GATE — deliberately, and honestly, mirroring the
+# Visual + Integration Lanes: WebKit-on-Linux needs a pile of extra system libs
+# (libgtk-4, libgraphene, gstreamer, …) that the per-PR CI box does not carry,
+# so wiring this into the required gate would either bloat every PR's install or
+# add a flaky check. `npx playwright install --with-deps firefox webkit`
+# provisions them here at dispatch/schedule time (see
+# docs/integration-runner-setup.md). The `@supports not (backdrop-filter)`
+# solid-panel fallback's CORRECTNESS is gated per-PR by the deterministic source
+# assertion test (workspace/tests/js/glassBackdropFallback.test.js) in `npm
+# test`; this lane proves the live golden path actually renders in FF + WebKit.
+name: Cross-Browser Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Optional state-name regex (e.g. rail-.*) to run a subset"
+        required: false
+        default: ""
+      engines:
+        description: "Space-separated engines to run (firefox webkit)"
+        required: false
+        default: "firefox webkit"
+  schedule:
+    # Weekly sweep (Sunday 04:00 UTC, an hour after the Visual Lane) so a
+    # cross-browser golden-path break can't go unnoticed between dispatches.
+    - cron: "0 4 * * 0"
+
+concurrency:
+  group: cross-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv (Python 3.12 toolchain)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync engine deps + vendored front-door deps
+        run: |
+          uv sync
+          uv pip install -r workspace/requirements.txt
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Firefox + WebKit WITH their system deps — WebKit-on-Linux is the reason
+      # this is on-demand (the per-PR box lacks these libs). --with-deps runs the
+      # same apt provisioning docs/integration-runner-setup.md documents.
+      - name: Install Playwright + Firefox + WebKit (with system deps)
+        run: |
+          npm install -g playwright@1.56.1
+          npx playwright@1.56.1 install --with-deps firefox webkit
+
+      # actor-supplied workflow_dispatch inputs ride env, never spliced into the
+      # shell text — they are an injection surface.
+      - name: Cross-browser golden-path smoke (Firefox + WebKit)
+        env:
+          ONLY_INPUT: ${{ inputs.only }}
+          ENGINES_INPUT: ${{ inputs.engines }}
+        run: |
+          set -euo pipefail
+          ENGINES="${ENGINES_INPUT:-firefox webkit}"
+          rc=0
+          for eng in $ENGINES; do
+            echo "::group::cross-browser smoke — $eng"
+            node workspace/tests/visual/run.js --engine "$eng" ${ONLY_INPUT:+--only "$ONLY_INPUT"} || rc=1
+            # keep each engine's screenshots before the next run wipes .out
+            mv workspace/tests/visual/.out "/tmp/xbrowser-$eng" || true
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      - name: Upload cross-browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-browser-smoke
+          path: |
+            /tmp/xbrowser-firefox
+            /tmp/xbrowser-webkit
+          retention-days: 14
+          if-no-files-found: ignore

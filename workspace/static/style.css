@@ -33842,6 +33842,58 @@ body.theme-frosted #minimized-dock .minimized-dock-chip:last-child:not(:only-chi
   }
 }
 
+/* 1b. NO backdrop-filter SUPPORT (older Firefox, engines without the property in
+   EITHER form) → the SAME intentional solid opaque fallback as Reduce
+   Transparency above. This is a DIFFERENT condition than the media query: a
+   browser that cannot composite `backdrop-filter` but is NOT asking to reduce
+   transparency would otherwise get the translucent glass fill with NO blur
+   behind it — a see-through, low-contrast ghost shell. The feature query is the
+   exact inverse of kit-themes.css's positive frost gate, so the branch engages
+   only when NEITHER `backdrop-filter` NOR `-webkit-backdrop-filter` is
+   supported; where the effect works the glass path is byte-for-byte unchanged
+   (this whole block is additive — Chromium/WebKit/modern Firefox never enter
+   it, so the committed P0-6 glass baselines are untouched). --panel is opaque in
+   BOTH the white-glass and dark themes, so the fallback reads as a deliberate
+   solid panel with correct contrast in either. Covers the reduce-transparency
+   surface set PLUS the free-floating glass surfaces (command/search palette,
+   colour-picker popover, mobile bottom sheet) that float over the wallpaper with
+   no solid layer under them — those are exactly where a missing blur is most
+   visible. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  body.theme-frosted .ow-window,
+  body.theme-frosted .og-card,
+  body.theme-frosted .on-card,
+  body.theme-frosted .chat-input-bar,
+  body.theme-frosted #sidebar,
+  body.theme-frosted .icon-rail,
+  body.theme-frosted .modal-content,
+  body.theme-frosted .dropdown,
+  body.theme-frosted #minimized-dock.ow-has-rows,
+  body.theme-frosted #minimized-dock .minimized-dock-chip,
+  body.theme-frosted .admin-card,
+  body.theme-frosted .chat-top-bar,
+  body.theme-frosted .model-picker-menu,
+  body.theme-frosted .model-picker-btn,
+  body.theme-frosted .toast,
+  body.theme-frosted .tool-indicator,
+  body.theme-frosted .attach-card,
+  body.theme-frosted .attach-image-skeleton,
+  body.theme-frosted .msg-ai,
+  body.theme-frosted .msg-user,
+  body.theme-frosted .thinking-section,
+  body.theme-frosted .thinking-header,
+  /* free-floating glass chrome that has no solid parent to composite over */
+  body.theme-frosted .search-popup,
+  body.theme-frosted .cp-popover,
+  body.theme-frosted .ow-sheet {
+    background-color: var(--panel, var(--bg)) !important;
+    background-image: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    text-shadow: none !important;
+  }
+}
+
 /* 2. prefers-contrast: more (Increased Contrast) → raise the tint/contrast floor */
 /*    so text clears AA with margin over any animated-bg frame, and strengthen    */
 /*    the borders.                                                                */
