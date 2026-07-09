@@ -175,7 +175,13 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # telemetry) -- a Settings-tab panel in the SAME eager category as
     # applicantAutomationSettings.js/applicantHealth.js (settings.js reads its
     # window.mountApplicantTelemetrySettings global on System-tab open).
-    assert count == 53, f"expected 53 eager module <script> tags, got {count}"
+    # 54 after wiring applicantRealtime.js (realtime-websocket.md Phase 1, the
+    # multiplexed realtime WS client) -- a light, self-booting overlay in the SAME
+    # eager category as applicantBell.js/applicantRail.js: it self-boots a
+    # "who's connected" presence indicator and must be live the moment the shell
+    # paints so the realtime round-trip is reachable on first load, not a lazy
+    # launcher-only surface this wave lazy-loaded away.
+    assert count == 54, f"expected 54 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():

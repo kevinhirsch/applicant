@@ -38,6 +38,7 @@ from applicant.app.routers import (
     outcomes,
     pending_actions,
     post_submission,
+    realtime,
     remote,
     research,
     setup,
@@ -54,6 +55,12 @@ def register_routers(app: FastAPI) -> None:
     # health/capabilities (P1-3): ungated, like the trio above — an owner must be
     # able to see WHY automated work hasn't started before the gate even opens.
     app.include_router(health.router)
+    # Realtime WebSocket backbone (realtime-websocket.md, Phase 1): a multiplexed
+    # duplex socket per session speaking the {chan,type,seq,data} envelope. Ungated
+    # like the pre-gate group above — presence/round-trip must work before the LLM
+    # gate opens; every UPSTREAM command is still authorized server-side by the core
+    # seam (default-deny), so it adds no new authority.
+    app.include_router(realtime.router)
     # gated driving-port routers
     app.include_router(campaigns.router)
     app.include_router(criteria.router)

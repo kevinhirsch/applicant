@@ -2760,6 +2760,7 @@
 <script type="module" src="/static/js/applicantTelemetrySettings.js"></script>  <!-- P5-3: opt-in error telemetry (Settings → System) — off by default, hard-off in local-only private mode — mounts via window.mountApplicantTelemetrySettings -->
 <script type="module" src="/static/js/applicantRail.js"></script>  <!-- P0-3: the right-hand gadget rail (3-pane shell) — self-boots into #applicant-gadget-rail; a new LENS over existing proxies (portal/tracker/activity/guardrails/results/health/digest), no new engine endpoints -->
 <script type="module" src="/static/js/applicantBell.js"></script>  <!-- P0-3 (P0-3b): the top-bar notification BELL — the third notification surface; self-boots into #applicant-bell-wrap; reuses GET /api/applicant/portal/pending (same backing as the rail + Portal), no new engine endpoint -->
+<script type="module" src="/static/js/applicantRealtime.js"></script>  <!-- realtime-websocket.md Phase 1: the multiplexed realtime WS client — self-boots a "who's connected" presence indicator; connects to /api/applicant/realtime/ws (cookie-auth on upgrade, owner-scoped) and reconnects with replay + a visible fallback state -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
      seams exist for other lanes to call. -->

@@ -972,6 +972,15 @@ app.include_router(setup_applicant_remote_routes())
 from routes.applicant_vault_routes import setup_applicant_vault_routes
 app.include_router(setup_applicant_vault_routes())
 
+# Realtime WebSocket backbone (realtime-websocket.md, Phase 1): the ONE public
+# WebSocket, /api/applicant/realtime/ws. Authenticates the upgrade by the
+# applicant_session cookie (owner-scoped, require_engine_owner semantics — the
+# BaseHTTPMiddleware auth gate never runs for WS scopes) and bridges the
+# {chan,type,seq,data} envelope to the engine. Many tabs of the one owner share
+# one session (1 session : N sockets); presence proves the round-trip.
+from routes.applicant_realtime_routes import setup_applicant_realtime_routes
+app.include_router(setup_applicant_realtime_routes())
+
 # CRIT-ops: Debug/Activity (read-only observability) + Update button + run-mode/
 # throughput controls + discovery-source toggles. Admin-scoped engine proxies;
 # additive, disjoint prefixes (/api/applicant/admin, /api/applicant/ops).
