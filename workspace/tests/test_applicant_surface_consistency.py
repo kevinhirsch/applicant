@@ -172,6 +172,7 @@ def test_floating_menus_use_the_overlay_tier():
     reminder menus used to sit on ``--bg`` while every other menu used --panel."""
     menu_sel = re.compile(
         r"\.(?:[\w-]*dropdown|[\w-]*-menu|[\w-]*popover|overflow-menu|"
+        r"[\w-]*suggest|[\w-]*autocomplete|"
         r"model-picker-menu|note-reminder-menu|email-more-menu)\b"
     )
     offenders = []

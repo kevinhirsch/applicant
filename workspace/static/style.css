@@ -26043,7 +26043,7 @@ body.doc-find-active mark.doc-find-mark.current {
 
 .email-autocomplete {
   position: absolute; top: 100%; left: 58px; right: 0; z-index: 1000;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-overlay); border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-height: 240px; overflow-y: auto;
   margin-top: 2px;
 }
