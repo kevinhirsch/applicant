@@ -91,7 +91,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P3-3 | Business model + licensing | M | you+eng | — |
 | P3-4 | Docs site | M | eng | — |
 | P3-5 | Release engineering | M | eng | — |
-| P3-6 | Workspace DB migrations | M | eng | — |
+| P3-6 | Workspace DB migrations | M | eng | DONE — versioned SQLite migration framework (`workspace/core/schema_migrations.py`) keyed off native `PRAGMA user_version`, wired into `init_db()` after the legacy `_migrate_*` baseline; numbered registry, per-migration transaction + halt-on-failure, `schema_migrations` history table, first real migration (v1 scheduled_tasks owner+task_type index) ships + upgrades an old DB cleanly in the test (`test_applicant_schema_migrations.py`) |
 | P3-7 | Platform matrix | S–M | eng+you | — |
 | P3-8 | Digest deliverability | S–M | eng | — |
 | P4-1 | Positioning statement | S | you+eng | — |
@@ -1537,6 +1537,22 @@ GHCR, stable/beta channels.
 **Effort:** M · **Owner:** eng · **DoD:** A mechanism exists for evolving the workspace
 SQLite schema across releases (the engine has Alembic; the workspace does not); the first
 post-launch schema change upgrades cleanly in a test.
+**Status: DONE** — `workspace/core/schema_migrations.py` is the workspace's zero-dependency
+answer to Alembic: a numbered `Migration` registry applied off SQLite's native
+`PRAGMA user_version` counter. `user_version == 0` is the **baseline** (everything
+`create_all` + the legacy `_migrate_*` sweeps produce); from there forward each schema
+change is a numbered migration that runs exactly once, in ascending order, **each in its
+own transaction** — a failure rolls that one back and *halts the run* so a broken DB is
+never half-migrated. Every applied migration is also recorded in a `schema_migrations`
+history table (`version, name, applied_at`). Wired into `init_db()` right after the legacy
+baseline (guarded so a migration issue can't block boot; no-op on non-SQLite backends).
+The **first post-launch schema change ships through it** — v1 adds the
+`ix_scheduled_tasks_owner_type` composite index (a real hot path: the per-owner
+housekeeping sweeps in `task_scheduler`) — and `test_applicant_schema_migrations.py`
+proves an existing v0 DB upgrades to it cleanly with data intact, re-runs as a no-op,
+halts+rolls back on a failing migration, and rejects a mis-numbered registry. Adding a
+future schema change is now "append a `Migration` with the next integer version," not
+"hand-write another `_migrate_*` and remember to append it to `init_db()`."
 
 ### P3-7 — Platform matrix *(operational)*
 **Effort:** S–M · **Owner:** eng + you decide · **DoD:** amd64-only constraint documented
