@@ -133,6 +133,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
+| [`docs/install-targets.md`](install-targets.md) | One-command install/upgrade/uninstall lifecycle for Ubuntu/Debian, Proxmox, and NAS-class boxes, and what is verified vs. dispatch-ready-only |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 
 ---

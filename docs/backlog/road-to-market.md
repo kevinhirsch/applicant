@@ -86,7 +86,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P2-12 | Durability drills | M | eng | DONE — 4 hermetic drills (`tests/unit/test_p2_12_durability_drills.py`); found + fixed 2 real durability bugs (docs/known-issues.md) |
 | P2-13 | Source reliability matrix | M | eng | PARTIAL — hermetic region/category quality matrix + per-source reliability doc (`docs/discovery-source-reliability.md`); per-source health-in-UI already reachable (H2); live-deploy coverage confirmation remains. **Dispatch-able now:** the `claude/integration-lane-live-legs` PR sets `DISCOVERY_LIVE_TEST=1` always-on in `ci-integration.yml` (non-destructive, so no separate confirm gate), which enables `tests/integration/test_discovery_live.py` against the real jobspy boards on every dispatch/weekly run. **Blocked, not yet observed:** the self-hosted runner's Postgres service container fails to start (`docs/known-issues.md` K9), so this hasn't executed live yet either. |
 | P2-14 | Easy Apply: assisted mode | M | both | PARTIAL — product surface DONE (consent screen recorded server-side + assisted-mode brief: deep link + prepared materials + checklist, reachable from the digest's Easy Apply chip); live-account automation (walk the modal, real proof run) explicitly DEFERRED — no owner-supplied LinkedIn account yet (issue #723) |
-| P3-1 | Install on tested targets | M–L | eng | — |
+| P3-1 | Install on tested targets | M–L | eng | PARTIAL — full lifecycle scripts (`install.sh` incl. `--doctor`/`--uninstall`/`--purge`, `update.sh`, `proxmox-deploy.sh`) hardened + hermetically tested (`tests/unit/test_install_script_lifecycle.py`, `tests/unit/test_deploy_scripts_syntax.py`), lifecycle documented for Ubuntu/Debian + Proxmox + a NAS-class box (`docs/install-targets.md`). **Dispatch-able now:** `install-uninstall-drill` job added to `ci-integration.yml` (mirrors the P1-7 `destroy-drill` pattern — isolated throwaway compose project, gated behind an exact `confirm_install_drill` input) runs the real `install.sh --apply` → `--doctor` → `--uninstall` → `--purge` lifecycle end to end. **Blocked, not yet observed:** no Docker host, Proxmox node, or NAS box exists in this environment, and the self-hosted Integration Lane runner can't reach its own Docker socket (`docs/known-issues.md` K9) — same class of gap as P1-2/P1-7; the DoD's real Ubuntu/Debian + Proxmox + NAS verification is unproven until a host/runner fix lets this job (or a manual run) actually execute. |
 | P3-2 | Requirements & model matrix | S–M | eng | DONE — published host-requirements + model-matrix table (`docs/requirements-and-model-matrix.md`), grounded in the compose stack, `proxmox-deploy.sh` defaults, the tier-ladder port, the parse-verify tier study, and the P2-6 eval harness; unproven functions labelled expected-untested with the P2-6 harness as the verification pointer |
 | P3-3 | Business model + licensing | M | you+eng | — |
 | P3-4 | Docs site | M | eng | — |
@@ -1488,9 +1488,52 @@ live LinkedIn automation.**
 # Phase 3
 
 ### P3-1 — One-command install, tested targets
-**Effort:** M–L · **Owner:** eng · **Depends on:** Phase 1 complete
+**Effort:** M–L · **Owner:** eng · **Depends on:** Phase 1 complete · **Status: PARTIAL.**
 **DoD:** `docker compose up` verified on Ubuntu/Debian + the Proxmox script + one
 NAS-class box; clean upgrade (`update.sh`) and uninstall paths tested.
+- [~] `docker compose up` verified on Ubuntu/Debian, the Proxmox script, and a
+      NAS-class box. *(Mechanically ready on all three — `scripts/install.sh`
+      is a single apt/Docker-aware installer, `scripts/proxmox-deploy.sh`
+      provisions the VM and runs it via cloud-init, and `docs/install-targets.md`
+      §3 documents the NAS-specific enablement steps (Synology Container
+      Manager / QNAP Container Station) — but no actual Ubuntu/Debian box,
+      Proxmox node, or NAS unit exists in this build environment to run any of
+      them against, so none has been *observed* live.)*
+- [~] Clean upgrade (`update.sh`) tested. *(Its backup → migrate → restart →
+      heartbeat → auto-rollback control flow is fully covered hermetically —
+      `test_update_script_backup_guard.py`, `test_update_script_migration_rollback.py`,
+      `test_update_script_rollback.py` — against a fake Docker/Postgres. A live
+      "old code → new code" drill is out of scope here: `update.sh` intentionally
+      `git reset --hard`s to `origin/main`, which would be unsafe to run inside
+      this PR's own CI checkout; see `docs/install-targets.md` for why.)*
+- [x] Uninstall path tested. *(`scripts/install.sh --uninstall`/`--purge` were
+      already implemented; new hermetic coverage — `tests/unit/test_install_script_lifecycle.py`
+      — asserts `--uninstall` never touches volumes, `--purge` refuses without
+      explicit confirmation, and a confirmed `--purge` removes volumes/images/`.env`.)*
+
+**Status note (P3-1).** Marked **PARTIAL**, honestly — same class of gap as P1-2/P1-7.
+The install/upgrade/uninstall *mechanism* was already largely built (`install.sh`
+already shipped `--apply`/`--update`/`--doctor`/`--uninstall`/`--purge`;
+`update.sh` already had a full backup→migrate→restart→heartbeat→auto-rollback
+flow) — this pass added the missing hermetic proof and the dispatch-ready live
+leg: `tests/unit/test_install_script_lifecycle.py` (uninstall never touches
+volumes; purge is confirm-gated; dry runs touch nothing), `tests/unit/test_deploy_scripts_syntax.py`
+(`bash -n` over every script under `scripts/`, closing a gap that previously
+left `proxmox-deploy.sh`/`updater-daemon.sh` unchecked), `docs/install-targets.md`
+(the one-command install → upgrade → uninstall lifecycle for Ubuntu/Debian,
+Proxmox, and a NAS-class box, plus an honest verified-vs-dispatch-ready table),
+and an `install-uninstall-drill` job in `ci-integration.yml` that mirrors the
+P1-7 `destroy-drill` pattern (isolated throwaway compose project, own port
+window, gated behind an exact `confirm_install_drill` input) to run the real
+`install.sh --apply → --doctor → --uninstall → --purge` sequence end to end.
+**The live gap:** this build environment has no Docker host, no Proxmox node,
+and no NAS unit, and the project's self-hosted Integration Lane runner
+(`ubnthost01-applicant`) cannot currently reach its own Docker socket
+(`docs/known-issues.md` K9) — so the new `install-uninstall-drill` job, like
+`destroy-drill` before it, has never actually executed, and the DoD's real
+"verified on Ubuntu/Debian + Proxmox + a NAS-class box" claim remains
+unproven until either the runner-host fix lands or an operator runs the
+documented lifecycle by hand on real hardware and reports back.
 
 ### P3-2 — Requirements & model matrix
 **Effort:** S–M · **Owner:** eng · **Status: DONE.**
