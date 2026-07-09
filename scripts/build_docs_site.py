@@ -73,7 +73,7 @@ def md_block_to_html(text: str) -> str:
 
     def flush_para():
         if para:
-            parts.append("<p>" + md_inline(" ".join(l.strip() for l in para)) + "</p>")
+            parts.append("<p>" + md_inline(" ".join(line.strip() for line in para)) + "</p>")
             para.clear()
 
     def flush_list():
