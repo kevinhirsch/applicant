@@ -9,11 +9,10 @@ safety / a promised feature that silently never runs), **med**, **low**.
 
 Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
-**Snapshot (after PRs #626–#630 + chat unification):** 13 fixed —
-DISC-0/3/7/8/9/10/11/12/13/15/15b/17/18;
-6 open — DISC-2 (restart-durable ledgers, highest value), DISC-4, DISC-5, DISC-6, DISC-14,
-DISC-16. Per-lens backlog status lives in
-[`exhaustive2/CLOSURE-STATUS.md`](exhaustive2/CLOSURE-STATUS.md).
+**Snapshot (after the DISC-2/3/12 restart-durability + boot-visibility batch):** fixed —
+DISC-0/2/3/4/5/6/7/8/9/10/11/12/13/14/15/15b/17/18;
+1 open — DISC-16 (reverse-direction `owner` kwargs never populated). Per-lens backlog
+status lives in [`exhaustive2/CLOSURE-STATUS.md`](exhaustive2/CLOSURE-STATUS.md).
 
 ---
 
@@ -45,7 +44,7 @@ DISC-16. Per-lens backlog status lives in
   takes its OWN later clock read for `due_at` — so a stale timestamp reused across them can make
   every rung's `due_at` look microseconds in the future and skip firing (a real footgun hit and
   fixed while doing lens 10 #9). Thread one `now` value through `notify()`→`_build_rungs()`→`_fire_due()`.
-  Where: `src/applicant/adapters/notification/apprise_notifier.py`. Status: fixed (PR pending) —
+  Where: `src/applicant/adapters/notification/apprise_notifier.py`. Status: **fixed** —
   `notify()` now takes a single clock read and threads it through `_build_rungs(notification, now)`
   and `_fire_due(delivery, now)`; regression test in
   `tests/unit/test_notifier_disc14_single_clock_read.py`.
@@ -108,7 +107,12 @@ DISC-16. Per-lens backlog status lives in
   no counter — a batch of failed redrives is invisible in logs and on `/healthz`. Same
   "no aggregate signal" class as 04-#48, scoped inside one boot step.
   Where: `app/lifespan.py::_redrive_pending`.
-  Status: open (surfaced fixing 04-#48).
+  Status: **fixed** — each per-workflow redrive failure is logged at `warning` (a genuine
+  anomaly, not routine info) and counted into a `failed` tally; a non-zero tally emits one
+  batch-level `redrive_failed_batch` warning AND records a `durable_recovery_redrives`
+  failed step onto the process's `BootHealth` snapshot (04-#48's existing aggregate signal)
+  so a batch of failed redrives is visible on `/healthz`, not just buried in logs. Regression
+  test: `tests/unit/test_lifespan_redrive_visibility.py`.
 
 - **DISC-13 · high (security) · Loopback trust was bypassable behind a proxy/tunnel.**
   The first-run/unconfigured loopback bypass in `applicant_ops_routes._require_admin`,
@@ -158,14 +162,42 @@ DISC-16. Per-lens backlog status lives in
   them, so the resume-backoff and routine state reset and the loop can re-attempt
   everything at once. Needs a storage-backed ledger (persist + reload on boot).
   Where: `app/container.py` (ledger construction) + `application/services/agent_loop.py`.
-  Status: open. (Audit 04-#30/#41 touch this; capturing the restart-durability half.)
+  Status: **fixed** — the retry-storm source is the **`ResumeLedger`** (the backoff
+  window `last_resume` + the failure/give-up cap, exactly the "where" scoped above), so
+  it is now storage-backed: a new `ConfigLedgerStore`
+  (`adapters/storage/ledger_persistence.py`) persists a JSON snapshot to the SAME
+  durable `app_config` table the OOBE ladder/wizard state already uses — **no new table
+  or migration**. The container injects it and calls `restore()` at boot (before any
+  loop binds the ledger's dicts); `AgentLoop` re-persists after every mutation
+  (`_mark_resumed`, `_record_resume_failure`, `retry_given_up`), so on the next boot the
+  backoff/give-up state is reloaded and the loop no longer treats every parked
+  application as immediately "due". On the real-DB lane the store opens a **fresh session
+  per write** via `session_factory` (scheduler-thread-safe — it never touches the boot
+  Session, CONC-2), mirroring `AuditLogService`'s per-event isolation; with no DB it
+  round-trips through the in-memory config store (nothing survives a restart there
+  anyway). Regression tests:
+  `tests/unit/test_resume_ledger_durable_disc2.py` (snapshot/restore across a simulated
+  restart incl. datetimes; in-place `_load_snapshot`; every mutation site persists; a
+  SQLite `app_config` round-trip; end-to-end container rebuild). **Out of scope
+  (honest):** `CurationLedger` (curation dedupe — a restart just re-dedupes, no storm)
+  and `InMemoryRoutineStore` (planning priors only; the store's own docstring defers
+  durability to a future DB-backed adapter implementing its Protocol) are intentionally
+  left in-memory — neither is the retry-storm source and both are outside this "where".
+  (Audit 04-#30/#41 touch this; capturing the restart-durability half.)
 
 - **DISC-3 · med · Prefill diagnostics ring resets every tick.**
   Unlike the routine store, the prefill diagnostics ring has no injectable process-lived
   option, so it resets on every per-tick service rebuild — diagnostics for a stuck
   prefill vanish between ticks.
   Where: `application/services/prefill_service.py` (diagnostics ring) + `container.py`.
-  Status: open. (Audit 04-#39.)
+  Status: **fixed** — lift-and-shift of the exact process-lived pattern the routine
+  store / resume ledger already use: `PrefillService` takes an injectable
+  `diagnostics_ring`, the container builds ONE process-lived `PrefillDiagnosticsRing`
+  (`container.py`) and injects it into the shared singleton AND every per-tick/per-
+  request `PrefillService` rebuild, so a diagnostic recorded on any tick is visible
+  through the never-rebuilt `container.prefill_service` the admin
+  `/api/admin/prefill-diagnostics` route reads. Regression test:
+  `tests/unit/test_prefill_diagnostics_durable_lens04.py`. (Audit 04-#39.)
 
 - **DISC-4 · med · Saved model-connection keys can't be reused in a tier.**
   Picking a saved connection into a model-ladder tier (lens 11 #9) cannot auto-fill its

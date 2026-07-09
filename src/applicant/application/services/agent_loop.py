@@ -82,12 +82,88 @@ class ResumeLedger:
     failing one would never reach the give-up cap. The container creates ONE of these
     for the process and injects it into every per-tick loop, with its own lock since
     each per-tick loop has a different ``_state_lock``.
+
+    **Restart durability (DISC-2).** Being process-lived made the ledger *tick*-safe,
+    but a genuine process restart (an ``update.sh`` deploy, an OOM kill, a crash)
+    still wiped it: the backoff window (``last_resume``) reset to empty, so on the
+    next boot every parked application looked immediately "due" and the loop could
+    re-attempt everything at once — a retry storm. When the container injects a
+    ``persister`` (a duck-typed ``load()``/``save(dict)`` snapshot store — the
+    ``ConfigLedgerStore`` over the durable ``app_config`` table), the ledger reloads
+    its snapshot at boot (:meth:`restore`) and re-persists after every mutation
+    (:meth:`persist`), so the backoff/failure/give-up state survives a restart and
+    the storm can't happen. Absent a persister (unit tests, legacy construction) the
+    ledger is byte-identical to before — a pure in-memory dataclass.
     """
 
     last_resume: dict[str, datetime] = field(default_factory=dict)
     failures: dict[str, int] = field(default_factory=dict)
     giveup: set[str] = field(default_factory=set)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    #: Optional restart-durable snapshot store (DISC-2). Duck-typed: ``load() ->
+    #: dict | None`` and ``save(dict) -> None``. Injected by the container; ``None``
+    #: keeps the ledger a pure in-memory object (unchanged default behaviour).
+    persister: Any = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-able snapshot of the durable state (taken under the lock).
+
+        ``last_resume`` datetimes are serialized as ISO-8601 strings; ``giveup`` (a
+        set) as a sorted list. ``failures`` is already JSON-able. This is the exact
+        shape :meth:`_load_snapshot` reads back.
+        """
+        with self.lock:
+            return {
+                "last_resume": {k: v.isoformat() for k, v in self.last_resume.items()},
+                "failures": dict(self.failures),
+                "giveup": sorted(self.giveup),
+            }
+
+    def _load_snapshot(self, data: dict[str, Any]) -> None:
+        """Replace the durable state from a :meth:`snapshot` dict, IN PLACE.
+
+        Mutates the existing ``last_resume``/``failures``/``giveup`` containers
+        rather than rebinding them, because ``AgentLoop.__init__`` captures direct
+        references to these objects (``self._last_resume = ledger.last_resume`` …);
+        rebinding would silently strand those aliases on the old empty dicts. A
+        malformed/partial snapshot is tolerated field-by-field so a corrupt blob
+        never blocks boot.
+        """
+        with self.lock:
+            self.last_resume.clear()
+            for k, v in (data.get("last_resume") or {}).items():
+                try:
+                    self.last_resume[k] = datetime.fromisoformat(v)
+                except (TypeError, ValueError):  # pragma: no cover - defensive: skip a bad entry
+                    continue
+            self.failures.clear()
+            for k, v in (data.get("failures") or {}).items():
+                try:
+                    self.failures[k] = int(v)
+                except (TypeError, ValueError):  # pragma: no cover - defensive: skip a bad entry
+                    continue
+            self.giveup.clear()
+            self.giveup.update(str(k) for k in (data.get("giveup") or []))
+
+    def restore(self) -> None:
+        """Reload the durable state from the persister at boot (no-op without one)."""
+        if self.persister is None:
+            return
+        data = self.persister.load()
+        if data:
+            self._load_snapshot(data)
+
+    def persist(self) -> None:
+        """Persist the current durable state (no-op without a persister).
+
+        Called after every mutation. The persister itself never raises (it logs and
+        drops on a storage blip), so a failed write leaves the in-memory ledger
+        correct for the life of the process and only forfeits the durability of that
+        one mutation — the tick is never broken.
+        """
+        if self.persister is None:
+            return
+        self.persister.save(self.snapshot())
 
 
 @dataclass
@@ -945,6 +1021,8 @@ class AgentLoop:
                 # A clean resume clears the failure streak (the app made progress).
                 with self._resume_ledger.lock:
                     self._resume_failures.pop(str(app.id), None)
+                # DISC-2: durably record the cleared streak + advanced backoff.
+                self._resume_ledger.persist()
             except Exception:
                 if self._capacity is not None:
                     self._capacity.release_sandbox(str(app.id))
@@ -968,6 +1046,10 @@ class AgentLoop:
             capped = n >= _RESUME_FAILURE_CAP and key not in self._resume_giveup
             if capped:
                 self._resume_giveup.add(key)
+        # DISC-2: persist the failure streak + give-up set so a restart doesn't reset
+        # the cap (a permanently-failing app would otherwise get a fresh 5 tries every
+        # boot and churn the sandbox forever).
+        self._resume_ledger.persist()
         if not capped:
             log.warning("resume_failed_slot_released", application_id=key, failures=n)
             return
@@ -1089,12 +1171,18 @@ class AgentLoop:
         """
         key = str(application_id)
         cleared = False
+        resume_cleared = False
         with self._resume_ledger.lock:
             if key in self._resume_giveup:
                 self._resume_giveup.discard(key)
                 self._resume_failures.pop(key, None)
                 self._last_resume.pop(key, None)
                 cleared = True
+                resume_cleared = True
+        if resume_cleared:
+            # DISC-2: the operator's retry clears the durable give-up/backoff too, so
+            # the next boot re-drives the app instead of resurrecting a stale give-up.
+            self._resume_ledger.persist()
         with self._approval_start_ledger.lock:
             if key in self._approval_start_giveup:
                 self._approval_start_giveup.discard(key)
@@ -1274,6 +1362,9 @@ class AgentLoop:
     def _mark_resumed(self, application_id: ApplicationId, now: datetime) -> None:
         with self._resume_ledger.lock:
             self._last_resume[str(application_id)] = now
+        # DISC-2: the backoff timestamp IS the retry-storm guard — persist it so a
+        # restart doesn't wipe it and make every parked app immediately "due" again.
+        self._resume_ledger.persist()
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:
         """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).
