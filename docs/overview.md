@@ -132,8 +132,28 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/voice-and-truthfulness.md`](voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](open-items.md) | Open items and defaults |
 | [`docs/backup-restore.md`](backup-restore.md) | Operator backup/restore + the owner "Download my data" export |
+| [`docs/support.md`](support.md) | Getting support: the redacted diagnostic-bundle command, issue templates, community chat |
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
+| [`docs/install-targets.md`](install-targets.md) | One-command install/upgrade/uninstall lifecycle for Ubuntu/Debian, Proxmox, and NAS-class boxes, and what is verified vs. dispatch-ready-only |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
+| [`docs/known-issues.md`](known-issues.md) | Living bug log — open defects, product decisions pending, deploy-gated findings |
+| [`docs/security-review.md`](security-review.md) | Launch-gate security pass: secrets at rest, dependency audit, endpoint sweep |
+| [`docs/reverse-proxy-https.md`](reverse-proxy-https.md) | Putting a reverse proxy (Caddy/Traefik/nginx) in front for TLS |
+| [`docs/private-mode.md`](private-mode.md) | The verified local-only privacy contract (`LLM_LOCAL_ONLY`) |
+
+A user-facing **docs site** (Quickstart, FAQ, Troubleshooting, Security & Privacy) is
+generated straight from the docs above plus the shipped landing page and compose
+files — see [`scripts/build_docs_site.py`](../scripts/build_docs_site.py). Regenerate
+it any time with:
+
+```bash
+python scripts/build_docs_site.py         # writes docs/site/*.html (gitignored — regenerate, don't hand-edit)
+python -m http.server --directory docs/site 8080   # serve it locally to preview
+```
+
+Because every page is pulled live from the repo's own docs/scripts/compose files
+(never hand-duplicated prose), the site can't silently drift from what's actually
+shipped — see `workspace/tests/test_applicant_docs_site.py` for the pinning tests.
 
 ---
 

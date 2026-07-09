@@ -29,6 +29,11 @@ const OFFSCREEN_ALLOWLIST = [
   // parks it at translateX(120%) / opacity:0 off the right edge and `.show`
   // slides it in — its parked position is off-screen by design.
   { selector: '.toast:not(.show)', reason: 'staged toast parks off the right edge (translateX(120%)) until .show slides it in' },
+  // X-4 (accessibility pass): the skip-to-content link (index.html, first
+  // element in <body>) is off-screen (left:-9999px) by design until it
+  // receives keyboard focus, exactly like the toast above — no crawl state
+  // ever focuses it, so it is legitimately off-screen in every screenshot.
+  { selector: '.skip-link', reason: 'skip-to-content link parks off-screen (left:-9999px) until it receives keyboard focus' },
   // The vendored chat composer settles its height through several independent
   // async flips (session re-enable, autofocus/focus-restore, model-chip
   // fetch) — during a flip its bottom icon row can transiently sit a few px

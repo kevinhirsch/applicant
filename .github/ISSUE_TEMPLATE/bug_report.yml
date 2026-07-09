@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in your self-hosted Applicant instance isn't working right.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. A few things that make this
+        much faster to fix:
+
+        - **Never paste secrets** — API keys, passwords, tokens, or your database
+          connection string. Use the redacted diagnostic bundle below instead; it
+          scrubs those automatically before anything is written.
+        - One bug per report, please.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen instead?
+      placeholder: Tell us what you saw, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger it, if you know them.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: false
+  - type: textarea
+    id: diagnostic-bundle
+    attributes:
+      label: Diagnostic bundle
+      description: |
+        Run `scripts/diagnostic-bundle.sh` on the machine running Applicant (or
+        copy the command from Settings → System) and attach the resulting
+        `.tar.gz` here, or paste its `MANIFEST.txt` contents. Every secret-bearing
+        value is redacted by the script itself before the archive is written —
+        please still skim it before attaching, and never edit around the
+        redaction markers.
+      placeholder: |
+        $ bash scripts/diagnostic-bundle.sh
+        Diagnostic bundle written to: .diagnostics/applicant-diagnostic-<timestamp>.tar.gz
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: From the diagnostic bundle's version.txt, or `git rev-parse HEAD` in your checkout.
+    validations:
+      required: false
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How is it deployed?
+      options:
+        - Proxmox one-liner (scripts/proxmox-deploy.sh)
+        - Docker Compose on my own host (scripts/install.sh)
+        - Other / not sure
+    validations:
+      required: false

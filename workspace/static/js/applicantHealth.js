@@ -27,9 +27,19 @@
 // a check — an unreachable engine or a gated read shows its own designed
 // state, never a silently-empty "everything's fine".
 
+import uiModule from './ui.js';
 import { esc, _fetchJSON, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
 
 const API = '/api/applicant/health/capabilities';
+
+// The redacted diagnostic-bundle command (P5-1, "Support machinery"). This
+// needs to run on the deploy HOST (it shells out to `docker compose`), which
+// is why this is a copyable command rather than a live "Download" button —
+// the containers this panel itself runs inside have no Docker access to
+// collect from. Every secret-bearing value is redacted by the script itself
+// before anything is written (scripts/lib/diagnostic_redact.py); see
+// docs/support.md for the full picture (issue templates, community chat).
+const _DIAGNOSTIC_BUNDLE_CMD = 'bash scripts/diagnostic-bundle.sh';
 
 // ── Settings -> System: the full panel ──────────────────────────────────────
 
@@ -102,6 +112,33 @@ async function _renderPanelInto(body) {
   }
 }
 
+function _copyDiagnosticCommand() {
+  try {
+    if (uiModule && typeof uiModule.copyToClipboard === 'function') {
+      uiModule.copyToClipboard(_DIAGNOSTIC_BUNDLE_CMD);
+      return;
+    }
+  } catch { /* fall through */ }
+  try {
+    navigator.clipboard.writeText(_DIAGNOSTIC_BUNDLE_CMD);
+    if (uiModule && typeof uiModule.showToast === 'function') uiModule.showToast('Copied.');
+  } catch { /* best-effort only */ }
+}
+
+// Filing a bug or support request? Point at the redacted diagnostic-bundle
+// command (P5-1) — a copyable command, not a live download, since it needs
+// Docker access this container doesn't have (see the module docstring above).
+function _diagnosticsCardHTML() {
+  return `<div class="admin-card" style="margin-top:12px;">
+    <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Diagnostics</h2>
+    <div class="admin-toggle-sub" style="margin-bottom:8px">Filing a bug or a support request? Run this on the machine hosting Applicant — it collects version/status/config/logs into one archive, with every secret redacted automatically before anything is written.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <code style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;background:color-mix(in srgb, var(--fg,#000) 6%, transparent);font-size:12px;">${esc(_DIAGNOSTIC_BUNDLE_CMD)}</code>
+      <button type="button" class="cal-btn" id="applicant-health-copy-diag">Copy command</button>
+    </div>
+  </div>`;
+}
+
 /**
  * Mount the full health panel into `container` (a bare host div, e.g.
  * Settings -> System's `#ao-settings-health`). Re-fetches fresh every mount
@@ -115,8 +152,11 @@ export async function mountApplicantHealthPanel(container) {
       <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Engine health</h2>
       <div class="admin-toggle-sub" style="margin-bottom:8px">What the assistant actually has wired up — every silent stub is named here, with the fix.</div>
       <div id="applicant-health-body"></div>
-    </div>`;
+    </div>
+    ${_diagnosticsCardHTML()}`;
   await _renderPanelInto(container.querySelector('#applicant-health-body'));
+  const copyBtn = container.querySelector('#applicant-health-copy-diag');
+  if (copyBtn) copyBtn.addEventListener('click', _copyDiagnosticCommand);
 }
 
 // ── Portal ("Today" home base): the compact banner ─────────────────────────

@@ -532,6 +532,9 @@ class ScheduledTask(TimestampMixin, Base):
     session = relationship("Session", backref=backref("scheduled_tasks", cascade="save-update, merge"))
     then_task = relationship("ScheduledTask", remote_side=[id], foreign_keys=[then_task_id])
 
+    # NB: ix_scheduled_tasks_owner_type (owner, task_type) is added by versioned
+    # migration v1 (core/schema_migrations.py), not create_all — it upgrades
+    # existing DBs, and CREATE INDEX IF NOT EXISTS makes it a no-op on fresh ones.
     __table_args__ = (
         Index('ix_scheduled_tasks_due', 'status', 'next_run'),
         Index('ix_scheduled_tasks_event', 'trigger_type', 'trigger_event', 'status'),
@@ -1527,6 +1530,15 @@ def init_db():
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    # Everything above is the BASELINE (user_version 0): create_all + the legacy
+    # idempotent _migrate_* sweeps. From here forward, schema changes go through
+    # the versioned framework (PRAGMA user_version) instead of a new ad-hoc
+    # _migrate_* function — see core/schema_migrations.py.
+    try:
+        from core.schema_migrations import run_migrations_for_url
+        run_migrations_for_url(DATABASE_URL)
+    except Exception as e:  # never let a migration issue block boot
+        logging.getLogger(__name__).warning(f"versioned schema migrations failed: {e}")
 
 
 def _migrate_encrypt_endpoint_keys():
