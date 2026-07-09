@@ -201,6 +201,56 @@ def test_research_uses_longer_research_timeout():
     assert research_to > ping_to
 
 
+def test_research_timeout_default_outlasts_workspace_budget(monkeypatch):
+    # DISC-5 regression: the engine->workspace research INNER hop must default to a
+    # transport ceiling that outlasts the workspace's own research budget (clamped up
+    # to _RESEARCH_MAX_MAX_TIME=600s in applicant_internal_routes.py), matching the
+    # front-door route's 630s read ceiling — not the snappy 30s that 502'd any run
+    # longer than a trivial cache hit. Pinned so a regression is caught w/o a live run.
+    monkeypatch.delenv("WORKSPACE_RESEARCH_TIMEOUT", raising=False)
+    client = HttpWorkspaceClient(base_url="http://applicant-ui:7000", token="t")
+    assert client._research_timeout == 630.0
+    # And it must dwarf the snappy default used by the other callbacks.
+    assert client._research_timeout > client._timeout
+
+
+def test_research_timeout_env_override(monkeypatch):
+    # Config-local (adapter-local) tuning: a deploy can widen/narrow the ceiling via
+    # env without threading a new setting through the container.
+    monkeypatch.setenv("WORKSPACE_RESEARCH_TIMEOUT", "720")
+    client = HttpWorkspaceClient(base_url="http://applicant-ui:7000", token="t")
+    assert client._research_timeout == 720.0
+
+
+def test_research_timeout_env_ignored_when_invalid(monkeypatch):
+    # A junk / non-positive override falls back to the sane default (never 0/negative,
+    # which would instantly time out every research call).
+    for bad in ("", "not-a-number", "0", "-5"):
+        monkeypatch.setenv("WORKSPACE_RESEARCH_TIMEOUT", bad)
+        client = HttpWorkspaceClient(base_url="http://applicant-ui:7000", token="t")
+        assert client._research_timeout == 630.0
+
+
+def test_research_default_timeout_is_applied_on_the_wire(monkeypatch):
+    # End-to-end (hermetic): with no explicit research_timeout and no env override,
+    # the actual per-call read timeout the client puts on the /research request is the
+    # long default — proving the inner hop won't 502 a legitimate multi-minute run.
+    monkeypatch.delenv("WORKSPACE_RESEARCH_TIMEOUT", raising=False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"ok": True})
+
+    client = HttpWorkspaceClient(
+        base_url="http://applicant-ui:7000",
+        token="secret-token",
+        transport=httpx.MockTransport(handler),
+    )
+    client.run_research(query="ml roles")
+    assert seen["/api/applicant/internal/research"]["read"] == 630.0
+
+
 def test_research_timeout_sets_is_timeout():
     # An ephemeral timeout on the research call must still be distinguishable from a
     # connection-refused (is_timeout=True) so callers can retry vs. degrade.

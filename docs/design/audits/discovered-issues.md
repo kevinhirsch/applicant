@@ -57,7 +57,12 @@ DISC-16. Per-lens backlog status lives in
   run could 502 at that inner hop even after the route fix. Verify and, if short, lengthen.
   Where: `src/applicant/adapters/.../research` workspace-callback adapter vs
   `workspace/routes/applicant_internal_routes.py` (`_RESEARCH_*` request-budget clamp).
-  Status: open (surfaced fixing 04-#10).
+  Status: fixed (PR pending) — the engine-side `HttpWorkspaceClient` research
+  transport ceiling was still the snappy 30s default while the workspace research
+  budget clamps up to 600s, so a long manual run 502'd at this inner hop. Raised the
+  default to 630s (600s budget ceiling + buffer, matching the front-door route's
+  `_RESEARCH_RUN_MAX_TIMEOUT`), resolved config-local from `WORKSPACE_RESEARCH_TIMEOUT`
+  with that sane default, and pinned it with hermetic tests.
 
 - **DISC-6 · low · Already-resolved pending action isn't surfaced to the UI.**
   The service `resolve()` now returns a distinguishable already-resolved signal (lens 04
