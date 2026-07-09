@@ -294,6 +294,17 @@ async def lifespan(app: FastAPI):
     # 0) Register graceful-shutdown signal handlers (SIGTERM/SIGINT).
     _register_shutdown_signals()
 
+    # 0a) Bind the running app loop to the realtime registry so the Phase 2 ``notif``
+    #     publish seam (called from the SYNC scheduler tick's worker thread and from
+    #     threadpool request handlers) can marshal its downstream fan-out back onto
+    #     the loop thread — asyncio.Queue is not thread-safe (realtime-websocket.md).
+    try:
+        from applicant.app.realtime import get_registry
+
+        get_registry().bind_loop(asyncio.get_running_loop())
+    except Exception as exc:  # pragma: no cover - defensive: never block boot on this
+        log.warning("realtime_loop_bind_failed", error=str(exc))
+
     # 0b) Startup capability report — log which optional capabilities are REAL vs
     #    stub/degraded so operators can see the engine's effective configuration
     #    without digging through adapter code or waiting for a silent failure.

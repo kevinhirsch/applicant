@@ -92,6 +92,37 @@ function connectionStateLabel(state) {
   }
 }
 
+// The push channel is "live" only when the socket is fully open; every other
+// state (connecting/reconnecting/fallback/idle) means the FE must keep — or fall
+// back to — polling. The Portal listens for this to retire/restore its badge poll
+// so there is never a silent dead UI (realtime-websocket.md Phase 2 fallback).
+function realtimeLiveDetail(state) {
+  return { live: state === 'open' };
+}
+
+// A `notif` frame arrived (a notification was created, or the pending-action set
+// changed). Drive the SAME update path the poll used: refresh the Portal's badge +
+// in-app notifications (which toasts genuinely-new ones via ui.js showToast and
+// fans `applicant:pending-changed` out to the bell + rail through their existing
+// listeners). Reuses applicantPortal.js's refreshBadge — it does NOT rebuild the
+// Portal render, the bell, or the toast. When the Portal module isn't mounted on a
+// given surface, still poke the shared cross-surface contract so bell/rail re-read.
+function notifRefresh() {
+  try {
+    const portal = (typeof window !== 'undefined') && window.applicantPortalModule;
+    if (portal && typeof portal.refreshBadge === 'function') {
+      portal.refreshBadge();
+      return true;
+    }
+  } catch { /* no-op */ }
+  try {
+    if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      document.dispatchEvent(new CustomEvent('applicant:pending-changed', { detail: {} }));
+    }
+  } catch { /* no-op */ }
+  return false;
+}
+
 // ── connection (browser-only; the JS suite slices the pure helpers above) ─────
 
 const WS_PATH = '/api/applicant/realtime';   // the front-door proxy this consumes
@@ -140,6 +171,16 @@ class ApplicantRealtime {
   _setState(state) {
     this._state = state;
     for (const cb of this._stateCbs) { try { cb(state); } catch { /* no-op */ } }
+    // Tell the rest of the shell whether the push channel is live, so the Portal
+    // can retire its badge poll while we're pushing and restore it on WS loss
+    // (fallback). Never a silent dead UI.
+    try {
+      if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+        document.dispatchEvent(
+          new CustomEvent('applicant:realtime', { detail: realtimeLiveDetail(state) }),
+        );
+      }
+    } catch { /* no-op */ }
   }
 
   _open() {
@@ -236,6 +277,10 @@ function mountApplicantRealtime(opts = {}) {
       el.hidden = false;
       el.textContent = presenceLabel(count);
     })
+    // Phase 2 push: a notification/pending-action changed server-side. Drive the
+    // same refresh the poll did — bell/rail/Portal update through their existing
+    // listeners; the poll is retired while live and restored on loss (fallback).
+    .onChannel('notif', () => { notifRefresh(); })
     .connect();
   return _client;
 }
@@ -261,6 +306,8 @@ const applicantRealtimeModule = {
   applyIncoming,
   presenceLabel,
   connectionStateLabel,
+  realtimeLiveDetail,
+  notifRefresh,
   WS_PATH,
 };
 
@@ -273,6 +320,8 @@ export {
   applyIncoming,
   presenceLabel,
   connectionStateLabel,
+  realtimeLiveDetail,
+  notifRefresh,
 };
 
 try { window.applicantRealtimeModule = applicantRealtimeModule; } catch { /* no-op */ }

@@ -15,7 +15,9 @@ Kinds are stable strings the UI can switch on:
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from applicant.core import task_metadata
 from applicant.core.entities.pending_action import PendingAction
@@ -42,8 +44,35 @@ RESOLVE_NOT_FOUND = "not_found"
 
 
 class PendingActionsService:
-    def __init__(self, storage) -> None:
+    def __init__(
+        self,
+        storage,
+        *,
+        realtime: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> None:
         self._storage = storage
+        # Phase 2 (realtime-websocket.md): a ``notif`` publisher injected by the
+        # container. Called whenever the open pending-action set changes (created /
+        # resolved / snoozed) so the front-door refreshes its bell/rail/Portal off
+        # the WS push instead of the poll (the poll stays as the fallback). BE→FE
+        # surfacing only — it carries no action verb and authorizes nothing. No
+        # publisher (unit tests / legacy construction) ⇒ a no-op, unchanged behavior.
+        self._realtime = realtime
+
+    def _emit_changed(self, event: str) -> None:
+        """Fan a ``notif``/``pending`` frame that the pending set changed (Phase 2).
+
+        The FE reaction is a refresh regardless of ``event``, so the payload is a
+        minimal poke (``event`` = ``created``/``resolved``/``snoozed``); it never
+        carries the item's contents. Never raises — a transport hiccup must not
+        break the materialize/resolve path that emitted it.
+        """
+        if self._realtime is None:
+            return
+        try:
+            self._realtime("pending", {"event": event})
+        except Exception:  # pragma: no cover - push must never break the caller
+            pass
 
     # --- materialize (FR-UI-3) --------------------------------------------
     def materialize(
@@ -86,6 +115,7 @@ class PendingActionsService:
                 reason=title,
             )
         )
+        self._emit_changed("created")
         return action
 
     # --- convenience constructors -----------------------------------------
@@ -171,6 +201,7 @@ class PendingActionsService:
                         reason=action.title,
                     )
                 )
+            self._emit_changed("created")
         return results
 
     def missing_attribute(
@@ -302,6 +333,7 @@ class PendingActionsService:
             return RESOLVE_ALREADY_RESOLVED
         self._storage.pending_actions.resolve(action_id)
         self._storage.commit()
+        self._emit_changed("resolved")
         return RESOLVE_RESOLVED
 
     def resolve_many(
@@ -328,6 +360,8 @@ class PendingActionsService:
             else:
                 skipped.append(str(aid))
         self._storage.commit()
+        if resolved:
+            self._emit_changed("resolved")
         return {"resolved": resolved, "skipped": skipped}
 
     def snooze(
@@ -356,14 +390,20 @@ class PendingActionsService:
         # ``add`` is an upsert (merge) keyed on id, so re-adding persists the field.
         self._storage.pending_actions.add(updated)
         self._storage.commit()
+        # A snooze removes the item from the home base until it comes due, so the
+        # visible pending set changed — push so the badge/rail stay honest.
+        self._emit_changed("snoozed")
         return updated
 
     def resolve_by_dedup(self, campaign_id: CampaignId, dedup_key: str) -> None:
         """Resolve a materialized item by its dedup key (idempotency aid)."""
         action = self._find_open_by_dedup(campaign_id, dedup_key)
+        resolved = action is not None
         if action is not None:
             self._storage.pending_actions.resolve(action.id)
         self._storage.commit()
+        if resolved:
+            self._emit_changed("resolved")
 
     def _find_open_by_dedup(self, campaign_id: CampaignId, dedup_key: str):
         """Indexed open-by-dedup lookup (#13).

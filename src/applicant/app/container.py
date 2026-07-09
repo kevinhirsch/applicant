@@ -1072,8 +1072,18 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     criteria_service = CriteriaService(storage, llm)
     agent_run_service = AgentRunService(storage)
-    notification_service = NotificationService(notification)
-    pending_actions_service = PendingActionsService(storage)
+    # Phase 2 realtime push (realtime-websocket.md): the ONE process-lived ``notif``
+    # publisher, threaded into the notification + pending-action services (main,
+    # per-tick, per-request) so every path that creates a notification or mutates the
+    # open pending-action set fans a downstream ``notif`` frame to the realtime
+    # registry. Like resume_ledger/digest_cache above, it is built ONCE here and
+    # injected into every rebuild — the registry it publishes to is a module-global
+    # that survives the scheduler's per-tick service rebuilds. BE→FE surfacing only.
+    from applicant.app.realtime import make_notif_publisher
+
+    notif_publisher = make_notif_publisher()
+    notification_service = NotificationService(notification, realtime=notif_publisher)
+    pending_actions_service = PendingActionsService(storage, realtime=notif_publisher)
     digest_service = DigestService(
         storage,
         notification,
@@ -1552,7 +1562,7 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         cs = CriteriaService(tick_storage, llm)
         ars = AgentRunService(tick_storage)
-        pas = PendingActionsService(tick_storage)
+        pas = PendingActionsService(tick_storage, realtime=notif_publisher)
         dg = DigestService(
             tick_storage,
             notification,
@@ -1706,7 +1716,7 @@ def build_container(settings: Settings | None = None) -> Container:
             base=rs_ls, storage=req_storage, recall=agent_memory.recall
         )
         rs_criteria = CriteriaService(req_storage, llm)
-        rs_pas = PendingActionsService(req_storage)
+        rs_pas = PendingActionsService(req_storage, realtime=notif_publisher)
         rs_scoring = ScoringService(
             req_storage,
             llm,

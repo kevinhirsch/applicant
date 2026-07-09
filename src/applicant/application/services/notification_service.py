@@ -19,7 +19,9 @@ a scheduled tick and tests can step it directly.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from datetime import UTC, date, datetime
+from typing import Any
 
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.notification import Notification, NotificationUrgency
@@ -27,9 +29,60 @@ from applicant.ports.driven.notification import Notification, NotificationUrgenc
 log = get_logger(__name__)
 
 
+class _RealtimePublishingNotifier:
+    """Transparent proxy over the notifier that also fans a ``notif`` frame.
+
+    Every ``notify_*`` method on :class:`NotificationService` funnels through the
+    notifier's ``notify()``, so wrapping it here is the single seam that makes ANY
+    created notification (decision/approval, digest-ready, error, status, weekly
+    recap, positive outcome, …) push a downstream ``notif`` frame over the realtime
+    bridge — the front-door then refreshes its bell/rail/Portal off the push instead
+    of the poll (realtime-websocket.md Phase 2). Pure pass-through for every other
+    port method (``expire``/``advance``/``list_inbox``/``mark_seen``/``send_email``/
+    …) via ``__getattr__``. Push is BE→FE surfacing only; it authorizes nothing.
+    """
+
+    __slots__ = ("_inner", "_publish")
+
+    def __init__(self, inner: Any, publish: Callable[[str, dict[str, Any]], None]) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_publish", publish)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def notify(self, notification: Notification) -> str:
+        handle = self._inner.notify(notification)
+        try:
+            urgency = getattr(notification, "urgency", "")
+            self._publish(
+                "notification",
+                {
+                    "urgency": getattr(urgency, "value", str(urgency)),
+                    "dedup_key": getattr(notification, "dedup_key", None),
+                },
+            )
+        except Exception:  # pragma: no cover - push must never break a notify()
+            pass
+        return handle
+
+
 class NotificationService:
-    def __init__(self, notification) -> None:
-        self._notification = notification
+    def __init__(
+        self,
+        notification,
+        *,
+        realtime: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> None:
+        # Phase 2: when a ``realtime`` publisher is injected (the container wires it
+        # to the process-lived registry), wrap the notifier so every created
+        # notification also pushes a ``notif`` frame. No publisher (unit tests /
+        # legacy construction) ⇒ the raw notifier, byte-identical to before.
+        self._notification = (
+            _RealtimePublishingNotifier(notification, realtime)
+            if realtime is not None
+            else notification
+        )
         # (campaign_id, UTC date) the digest-ready ping already fired for (#15). This
         # service instance is SHARED across the scheduler's fresh-per-tick AgentLoops,
         # so this per-day marker survives the loop's empty ``_digest_sent`` and makes

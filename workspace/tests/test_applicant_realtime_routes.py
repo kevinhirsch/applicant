@@ -86,6 +86,17 @@ class FakeEngineBridge:
             raise BridgeClosed("closed")
         return frame
 
+    def push_down(self, chan, mtype, data):
+        """Simulate the engine fanning a server-originated frame down the bridge.
+
+        Phase 2 uses this for the ``notif`` channel: the engine's notification /
+        pending-action publish seam calls ``registry.publish_all`` which fans a
+        ``notif`` frame down; the workspace relays it to every browser tab.
+        """
+        frame = {"chan": chan, "type": mtype, "seq": self._seq, "data": data}
+        self._seq += 1
+        self._q.put_nowait(frame)
+
     async def close(self):
         self._closed = True
         self._q.put_nowait(None)
@@ -152,6 +163,59 @@ def test_owner_upgrade_is_accepted_and_greeted():
             hello = ws.receive_json()
             assert hello["chan"] == "sys"
             assert hello["type"] == "hello"
+
+
+# --- notif push relay over the full bridge (Phase 2) ------------------------
+
+
+def _read_frame(ws, chan, mtype, *, max_frames=12):
+    """Read frames until one matches ``chan``/``mtype`` (skips presence chatter)."""
+    for _ in range(max_frames):
+        f = ws.receive_json()
+        if f.get("chan") == chan and f.get("type") == mtype:
+            return f
+    raise AssertionError(f"never saw {chan}/{mtype}")
+
+
+def test_engine_notif_frame_relays_down_to_the_browser_tab():
+    # The engine's notification/pending-action publish seam fans a `notif` frame;
+    # the workspace bridge relays it to the owner's tab so the FE can refresh off
+    # the push instead of the poll.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=t1", headers=_cookie("tok")
+        ) as ws:
+            _read_presence_count(ws, 1)  # bridge is up (owner session established)
+            bridge = connector.bridges["admin"]
+            bridge.push_down("notif", "pending", {"event": "created"})
+            frame = _read_frame(ws, "notif", "pending")
+            assert frame["data"] == {"event": "created"}
+
+
+def test_notif_frames_replay_on_reconnect_then_go_live():
+    # A `notif` frame the engine sent while a tab was briefly gone is replayed from
+    # the per-channel buffer on reconnect (gap-free), not lost.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=anchor", headers=_cookie("tok")
+        ) as anchor:
+            _read_presence_count(anchor, 1)
+            bridge = connector.bridges["admin"]
+            bridge.push_down("notif", "notification", {"urgency": "normal"})
+            # A fresh tab (no resume hint) replays the buffered notif history.
+            with c.websocket_connect(
+                "/api/applicant/realtime/ws?tab=t2", headers=_cookie("tok")
+            ) as t2:
+                frame = _read_frame(t2, "notif", "notification")
+                assert frame["data"] == {"urgency": "normal"}
 
 
 # --- presence round-trip over the full bridge -------------------------------
