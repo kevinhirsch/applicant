@@ -34167,7 +34167,17 @@ body.theme-frosted #minimized-dock .minimized-dock-chip {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 22%, transparent);
   transition: background-color .18s ease, box-shadow .18s ease,
               transform .14s cubic-bezier(.34,1.56,.64,1), filter .18s ease;
-  will-change: transform;
+  /* X-3 perf: no `will-change: transform` here. This selector matches EVERY
+     button inside every glass window/card/gadget + dock chip, so a standing
+     `will-change` permanently promoted each one to its own compositor layer
+     (GPU memory per button, all the time) purely to hint a press micro-morph
+     that only fires transiently on :active. The transform still animates via
+     the transition above; the compositor promotes the pressed button on demand
+     for the ~140ms morph and drops the layer after — the right trade on modest
+     hardware. (`will-change` is a compositing hint only, so removing it does
+     not change a single rendered pixel — the P0-6 glass baselines are untouched,
+     proven by the visual harness re-run.) The mesh wallpaper keeps its
+     will-change because it animates continuously (meshGradient.css). */
 }
 /* SOFT luminous hairline on the gadget-card controls + dock chips (owner: "the hard
    black lines in the gadget dock don't embody Apple design"). On the LIGHT-glass cards

@@ -64,3 +64,6 @@ profiles/
 # Generated docs site (P3-4) — regenerate with scripts/build_docs_site.py;
 # never commit the output, that's what "can't drift" means here.
 docs/site/
+
+# X-3 perf measurement output (workspace/tests/perf/measure.js) — ephemeral
+workspace/tests/perf/.out/

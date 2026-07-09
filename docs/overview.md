@@ -121,6 +121,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/requirements.md`](requirements.md) | Catalog of every FR-*/NFR-* requirement ID |
 | [`docs/architecture.md`](architecture.md) | Two-app architecture: engine hexagon + workspace front door + bridge |
 | [`docs/frontend.md`](frontend.md) | The workspace front door: proxies, JS glue, feature activation |
+| [`docs/performance-budget.md`](performance-budget.md) | Front-door performance budget (X-3): login→interactive + surface-open baselines, set thresholds, the blur/aurora GPU analysis, and the cheap wins taken |
 | [`docs/dormant-surfaces.md`](dormant-surfaces.md) | Surface-by-surface front-door reachability + the one disabled surface |
 | [`docs/state-machine.md`](state-machine.md) | Application lifecycle state machine (engine) |
 | [`docs/data-model.md`](data-model.md) | Engine Postgres/JSONB schema (campaign-scoped, multi-ready) |
