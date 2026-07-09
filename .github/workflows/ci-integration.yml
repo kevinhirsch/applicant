@@ -1,18 +1,27 @@
 name: Integration Lane (NFR-OPS-1)
 
 # Staged integration lane: runs the @pytest.mark.integration suite with real
-# dependencies (Postgres, TeX, browser) and optionally a live ATS dry-run.
-# Never performs a real final submit — the engine's review-before-submit gate
-# stops all pre-fill runs at the review boundary.
+# dependencies (Postgres, TeX, LibreOffice, a real browser stack) and
+# optionally a live ATS dry-run, live discovery-board coverage, and the P1-7
+# backup/restore/destroy drill. Never performs a real final submit — the
+# engine's review-before-submit gate stops all pre-fill runs at the review
+# boundary, and the destroy drill only ever touches its own throwaway
+# docker-compose project, never a deployed stack.
 #
 # Triggers:
-#   - Manually (workflow_dispatch) with an optional ATS dry-run URL.
-#   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green.
+#   - Manually (workflow_dispatch) with an optional ATS dry-run URL and an
+#     optional, separately-gated confirm_destroy phrase for the P1-7 drill.
+#   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green (the
+#     destroy drill NEVER runs on the schedule — dispatch-only, see below).
 on:
   workflow_dispatch:
     inputs:
       ats_dry_run_url:
         description: "Live ATS URL to dry-run pre-fill against (stops at review boundary; leave blank to skip)"
+        required: false
+        default: ""
+      confirm_destroy:
+        description: "P1-7 destroy drill (backup -> wipe named volumes -> restore) against an ISOLATED throwaway compose stack. Type exactly: yes-i-mean-it to run it. Leave blank to skip — never runs on the weekly schedule."
         required: false
         default: ""
   schedule:
@@ -25,14 +34,18 @@ concurrency:
 jobs:
   integration:
     # Runs on the self-hosted runner. The `self-hosted` label matches yours
-    # regardless of OS/arch. This lane needs heavy system deps (TeX, Xvfb, a
-    # browser) and Docker service containers — because the runner has NO
-    # passwordless sudo, those system deps must be PRE-BAKED on the runner host
-    # (this is also the speedup: no per-run apt installs). The steps below verify
-    # them and fail fast with guidance if any is missing, rather than installing.
-    # Host prerequisites: Docker reachable without sudo (for the postgres service
-    # container); TeX (lualatex or xelatex + moderncv/fontspec/fontawesome5);
-    # Xvfb (`xvfb-run`); fonts (open-sans, font-awesome).
+    # regardless of OS/arch. This lane needs heavy system deps (TeX,
+    # LibreOffice, Xvfb, a browser) and Docker service containers — because
+    # the runner has NO passwordless sudo, those system deps must be
+    # PRE-BAKED on the runner host (this is also the speedup: no per-run apt
+    # installs). The steps below verify them and fail fast with guidance if
+    # any is missing, rather than installing.
+    # Host prerequisites: Docker reachable without sudo (for the postgres
+    # service container); TeX (lualatex or xelatex + moderncv/fontspec/
+    # fontawesome5); LibreOffice with the Writer component (`soffice`,
+    # `libreoffice-writer` — same package `docker/Dockerfile` bakes into the
+    # deploy image, P2-10's docx render path); Xvfb (`xvfb-run`); fonts
+    # (open-sans, font-awesome).
     #
     # HOSTED FALLBACK: to run this lane on GitHub-hosted instead (which permits
     # the `sudo apt-get` installs), comment the `self-hosted` line, uncomment
@@ -58,6 +71,15 @@ jobs:
     env:
       DATABASE_URL: "postgresql+psycopg://applicant:applicant@localhost:5432/applicant"
       APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
+      # P2-13 remainder: live board coverage confirmation. Non-destructive
+      # (read-only searches against real job boards), so it is always-on for
+      # this lane rather than gated behind its own confirm input — unlike the
+      # P1-7 drill below, there is nothing here that can damage anything.
+      DISCOVERY_LIVE_TEST: "1"
+      # Optional: a real SearXNG instance to include in the live discovery
+      # check. Blank is fine — the jobspy boards still run live without it;
+      # set the SEARXNG_URL repo secret to also exercise the searxng client.
+      SEARXNG_URL: ${{ secrets.SEARXNG_URL || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -70,10 +92,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Sync dependencies (incl. browser extra for patchright)
+      - name: Sync dependencies (incl. browser extra for patchright + camoufox)
         run: uv sync --extra browser
 
-      # --- TeX (FR-RESUME-3/4 real-render path) ----------------------------
+      # --- TeX (FR-RESUME-3/4 real-render path; P2-10 LaTeX lane) ----------
       # No sudo on the self-hosted runner, so TeX must be PRE-BAKED on the host
       # (texlive-latex-extra/-luatex/-xetex/-fonts-* + moderncv/fontspec/
       # fontawesome5 + fonts-open-sans/-font-awesome). Verify, don't install.
@@ -85,12 +107,33 @@ jobs:
           fi
           lualatex --version || xelatex --version
 
-      # --- Browser binary (FR-PREFILL / FR-STEALTH) -------------------------
-      # patchright installs the browser into uv's cache (user-space, no sudo) and
-      # persists between runs on the self-hosted host. Xvfb must be pre-baked
+      # --- LibreOffice (P2-10 docx-fallback render path) --------------------
+      # Same reasoning as TeX: no sudo in CI, so the FULL LibreOffice Writer
+      # component must be PRE-BAKED on the host (`apt-get install
+      # libreoffice-writer`, the same package docker/Dockerfile installs in
+      # the deploy image). `soffice` alone (libreoffice-core) is not enough —
+      # DocxTailor's real convert needs the Writer component, and a bare
+      # `soffice --version` can succeed even when it's missing, so this only
+      # verifies the binary is reachable; the parseability proof test itself
+      # (tests/integration/test_ats_parseability_proof.py) is what proves the
+      # Writer component actually converts (it self-skips honestly rather
+      # than false-passing when the real convert fails).
+      - name: Verify LibreOffice (soffice) is installed on the runner
+        run: |
+          if ! command -v soffice >/dev/null; then
+            echo "::error::soffice not found on the runner. Pre-bake LibreOffice on the self-hosted host (no sudo in CI): apt-get install libreoffice-writer"
+            exit 1
+          fi
+          soffice --version
+
+      # --- Browser binaries (FR-PREFILL / FR-STEALTH) -----------------------
+      # patchright/camoufox install into uv's cache (user-space, no sudo) and
+      # persist between runs on the self-hosted host. Xvfb must be pre-baked
       # (needs sudo to apt-install), so verify it rather than install.
       - name: Install Chromium via patchright
         run: uv run patchright install chromium
+      - name: Fetch Camoufox (default stealth engine; P1-2 stealth-stack leg)
+        run: uv run camoufox fetch
       - name: Verify Xvfb is installed on the runner
         run: |
           if ! command -v xvfb-run >/dev/null; then
@@ -122,8 +165,8 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          # LatexTailor writes to a tmp dir; integration tests that parameterize
-          # output_dir=tmp_path produce PDFs under pytest's tmp root.
+          # LatexTailor/DocxTailor write to a tmp dir; integration tests that
+          # parameterize output_dir=tmp_path produce PDFs under pytest's tmp root.
           find /tmp -name '*.pdf' -newer pyproject.toml 2>/dev/null \
             | head -20 | xargs -I{} cp {} artifacts/ 2>/dev/null || true
           echo "PDFs collected: $(ls artifacts/*.pdf 2>/dev/null | wc -l)"
@@ -153,3 +196,77 @@ jobs:
           else
             echo "No ATS dry-run URL provided — live ATS test skipped."
           fi
+
+      # --- P2-10 / P2-13 result summary --------------------------------------
+      - name: Real-render + live-discovery result summary
+        if: always()
+        run: |
+          echo "--- ATS-parseability proof (P2-10: TeX + LibreOffice real render) ---"
+          grep -i "parseability" reports/integration.log || echo "no test_ats_parseability_proof lines found"
+          echo "--- Live discovery-board coverage (P2-13) ---"
+          grep -i "discovery_live" reports/integration.log || echo "no test_discovery_live lines found"
+          echo "--- Camoufox stealth stack (P1-2) ---"
+          grep -i "camoufox" reports/integration.log || echo "no camoufox test lines found"
+
+  # --- P1-7 remainder: the --confirm-destroy restore drill ------------------
+  destroy-drill:
+    # Dispatch-only (never on the weekly schedule) AND only when the operator
+    # types the exact confirm_destroy phrase — a double gate on top of the
+    # drill script's own --confirm-destroy flag. Runs the REAL
+    # scripts/backup-restore-drill.sh against docker/docker-compose.prod.yml,
+    # but in COMPLETE isolation from any real deployed stack on this host:
+    #   - `COMPOSE_PROJECT_NAME` below is unique to this job. `docker compose`
+    #     derives every container, network, and NAMED VOLUME (pgdata,
+    #     engine-state, workspace-data, ...) from the project name, so this
+    #     run can never see or wipe a real deployment's volumes even though it
+    #     reuses the same compose file.
+    #   - A throwaway `.env` (own random POSTGRES_PASSWORD, own APP_PORT) is
+    #     pointed to via `APPLICANT_ENV_FILE` — the drill script and the
+    #     `backup.sh`/`restore.sh` it calls all honor that override (see their
+    #     headers), so the real deploy `.env` is never read or written.
+    # The drill is torn down (`down -v`) at the end regardless of outcome so
+    # no throwaway container/volume lingers on the shared runner host.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    env:
+      CONFIRM_DESTROY: ${{ github.event.inputs.confirm_destroy }}
+      COMPOSE_PROJECT_NAME: applicant-ci-destroy-drill
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Gate on the exact confirm_destroy phrase
+        id: gate
+        run: |
+          if [ "${CONFIRM_DESTROY}" = "yes-i-mean-it" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "confirm_destroy not set to the exact phrase — skipping the destroy drill (this is the default; nothing destructive runs)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify Docker is reachable without sudo
+        if: steps.gate.outputs.run == 'true'
+        run: docker version
+
+      - name: Build an isolated throwaway .env (own port + password, never the real deploy .env)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          drill_dir="${RUNNER_TEMP}/applicant-destroy-drill"
+          mkdir -p "${drill_dir}"
+          {
+            echo "APP_PORT=18080"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "APPLICANT_INTERNAL_TOKEN=$(openssl rand -hex 16)"
+          } > "${drill_dir}/.env"
+          echo "APPLICANT_ENV_FILE=${drill_dir}/.env" >> "$GITHUB_ENV"
+          echo "APPLICANT_BACKUP_DIR=${drill_dir}/backups" >> "$GITHUB_ENV"
+
+      - name: Run the backup -> destroy volumes -> restore drill (--confirm-destroy)
+        if: steps.gate.outputs.run == 'true'
+        run: scripts/backup-restore-drill.sh --confirm-destroy
+
+      - name: Tear down the throwaway drill stack (always — leaves nothing behind)
+        if: always() && steps.gate.outputs.run == 'true'
+        run: docker compose -f docker/docker-compose.prod.yml down -v || true
