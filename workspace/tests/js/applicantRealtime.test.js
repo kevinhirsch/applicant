@@ -104,3 +104,60 @@ test('connectionStateLabel names every state in plain language', () => {
   assert.equal(connectionStateLabel('reconnecting'), 'Reconnecting…');
   assert.match(connectionStateLabel('fallback'), /periodic refresh/);
 });
+
+test('realtimeLiveDetail is live ONLY when the socket is fully open', () => {
+  const { realtimeLiveDetail } = load('realtimeLiveDetail');
+  assert.deepEqual(realtimeLiveDetail('open'), { live: true });
+  for (const s of ['connecting', 'reconnecting', 'fallback', 'idle']) {
+    assert.deepEqual(realtimeLiveDetail(s), { live: false });
+  }
+});
+
+test('_setState persists the current live flag on window (Greptile #804) so a late-registering Portal can reconcile a socket that opened before its listener existed', () => {
+  // The dispatched `applicant:realtime` event is one-shot per edge; persisting the
+  // level on `window.__applicantRealtimeLive` is what lets the Portal reconcile on
+  // boot instead of staying stuck polling until the next transition.
+  const idx = SRC.indexOf('_setState(state)');
+  assert.ok(idx !== -1, '_setState is present');
+  const body = SRC.slice(idx, idx + 1200);
+  assert.ok(
+    /window\.__applicantRealtimeLive\s*=\s*!!detail\.live/.test(body),
+    '_setState records the current live flag on window before dispatching the edge event',
+  );
+  // The persisted flag must be set BEFORE the edge event is dispatched.
+  assert.ok(
+    body.indexOf('window.__applicantRealtimeLive') < body.indexOf("new CustomEvent('applicant:realtime'"),
+    'the window flag is persisted before the one-shot event is dispatched',
+  );
+});
+
+test('notifRefresh drives the existing poll path via Portal refreshBadge', () => {
+  const { notifRefresh } = load('notifRefresh');
+  let calls = 0;
+  global.window = { applicantPortalModule: { refreshBadge: () => { calls += 1; } } };
+  try {
+    // A notif frame reuses the Portal's refreshBadge (badge + notifs + toasts +
+    // the applicant:pending-changed fan-out) — it does NOT rebuild any of them.
+    assert.equal(notifRefresh(), true);
+    assert.equal(calls, 1);
+  } finally {
+    delete global.window;
+  }
+});
+
+test('notifRefresh falls back to the pending-changed contract when Portal is absent', () => {
+  const { notifRefresh } = load('notifRefresh');
+  const events = [];
+  global.window = {}; // no applicantPortalModule mounted on this surface
+  global.CustomEvent = class { constructor(type, opts) { this.type = type; this.detail = opts && opts.detail; } };
+  global.document = { dispatchEvent: (e) => { events.push(e); } };
+  try {
+    assert.equal(notifRefresh(), false);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'applicant:pending-changed');
+  } finally {
+    delete global.window;
+    delete global.document;
+    delete global.CustomEvent;
+  }
+});

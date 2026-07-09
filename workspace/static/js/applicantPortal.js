@@ -2444,6 +2444,32 @@ async function refreshBadge() {
   _setBadge(pendingCount + infoCount);
 }
 
+// ── Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2) ────────────
+//
+// When the realtime WS push channel is LIVE, the `notif` frames drive refreshes
+// (applicantRealtime.js calls refreshBadge on each), so we RETIRE the active badge
+// poll — no redundant 60s fetches. When the socket drops or can't establish, we
+// RESTORE the poll as the fallback so the badge never silently goes stale (an
+// honesty invariant: no silent dead UI). The visible "reconnecting…"/"paused"
+// state lives on applicantRealtime.js's own indicator; here we only own the poll.
+let _realtimeLive = false;
+
+function _applyRealtimeLive(live) {
+  const next = !!live;
+  if (next === _realtimeLive) return;
+  _realtimeLive = next;
+  if (next) {
+    // Live: retire the poll, but do one immediate catch-up so anything that
+    // changed between the last poll and going live is reflected right away.
+    if (_badgePollStop) { _badgePollStop(); _badgePollStop = null; }
+    refreshBadge();
+  } else if (!_badgePollStop) {
+    // Lost the push channel: fall back to polling (and refresh once now).
+    refreshBadge();
+    _badgePollStop = pollVisible(refreshBadge, BADGE_POLL_MS);
+  }
+}
+
 // ── Today's digest (home-base embed, C1) ────────────────────────────────────────
 //
 // Reuses the Email tool's digest module wholesale: its data accessors
@@ -2722,6 +2748,21 @@ function _boot() {
   refreshBadge();
   if (_badgePollStop) { _badgePollStop(); _badgePollStop = null; }
   _badgePollStop = pollVisible(refreshBadge, BADGE_POLL_MS);
+  // Phase 2: retire this poll while the realtime push channel is live, and restore
+  // it on WS loss (fallback). applicantRealtime.js emits `applicant:realtime` with
+  // { live } on every connection-state change.
+  document.addEventListener('applicant:realtime', (e) => {
+    _applyRealtimeLive(!!(e && e.detail && e.detail.live));
+  });
+  // The `applicant:realtime` event is one-shot per state change, so if the socket
+  // already reached `open` before this listener existed (Portal dynamically
+  // imported / re-mounted after the WS opened), reconcile the current live flag
+  // now — otherwise the poll would keep running until the next transition.
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) {
+      _applyRealtimeLive(true);
+    }
+  } catch { /* no-op */ }
   // Note: the redundant boot-time "auto-land on Today" watcher added in PR #640
   // was retired with the 3-pane shell (P0-3). The gadget rail now surfaces the
   // Today state permanently as the third pane, so there is no need for a second

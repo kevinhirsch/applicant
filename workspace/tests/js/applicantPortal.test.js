@@ -1004,3 +1004,62 @@ test('_computeStreakDays (finding #66) credits "today" from a server-observed ru
     'the server-observed run for "today" must be credited toward the streak even though the client clock itself still reads yesterday',
   );
 });
+
+// ── realtime-websocket.md Phase 2: notif push retires the poll, WS loss restores it ──
+
+test('_applyRealtimeLive retires the badge poll while the WS is live and restores it on loss (fallback)', () => {
+  const harness = [
+    'let stopped = 0, started = 0, refreshed = 0;',
+    'let _realtimeLive = false;',
+    'let _badgePollStop = () => { stopped += 1; };', // a poll is running at boot
+    'const BADGE_POLL_MS = 60000;',
+    'function refreshBadge() { refreshed += 1; }',
+    'function pollVisible() { started += 1; return () => { stopped += 1; }; }',
+    extractFunction(SRC, '_applyRealtimeLive'),
+    'return { apply: _applyRealtimeLive, state: () => ({ live: _realtimeLive, hasPoll: !!_badgePollStop, stopped, started, refreshed }) };',
+  ].join('\n');
+  // eslint-disable-next-line no-new-func
+  const { apply, state } = new Function(harness)();
+
+  // Boot: the poll is running, not yet live.
+  assert.equal(state().hasPoll, true, 'poll is active at boot');
+
+  // Go live: the active poll is retired (stopped once) + one immediate catch-up.
+  apply(true);
+  let s = state();
+  assert.equal(s.live, true);
+  assert.equal(s.hasPoll, false, 'the poll is retired while the push channel is live');
+  assert.equal(s.stopped, 1);
+  assert.equal(s.refreshed, 1, 'one immediate catch-up refresh on going live');
+
+  // Idempotent: re-asserting live does nothing further (no double-stop, no re-refresh).
+  apply(true);
+  assert.equal(state().stopped, 1);
+  assert.equal(state().refreshed, 1);
+
+  // Lose the socket: the poll is RESTORED as the fallback (never a silent dead UI).
+  apply(false);
+  s = state();
+  assert.equal(s.live, false);
+  assert.equal(s.hasPoll, true, 'the poll is restored when the push channel drops');
+  assert.equal(s.started, 1, 'polling restarts via pollVisible');
+  assert.equal(s.refreshed, 2, 'a refresh fires immediately on falling back');
+});
+
+test('_boot reconciles an already-live socket (Greptile #804): the one-shot applicant:realtime edge can fire before this listener exists, so boot reads the persisted window flag and retires the poll', () => {
+  // The `applicant:realtime` event is one-shot per state change. If the socket
+  // reached `open` before the Portal registered its listener (dynamic import /
+  // SPA re-mount after the WS opened), the edge is missed. _boot must therefore
+  // reconcile the persisted `window.__applicantRealtimeLive` flag on boot.
+  const idx = SRC.indexOf("document.addEventListener('applicant:realtime'");
+  assert.ok(idx !== -1, 'the boot listener registration is present');
+  const after = SRC.slice(idx, idx + 600);
+  assert.ok(
+    /window\.__applicantRealtimeLive/.test(after),
+    'boot reads the persisted realtime-live flag right after registering the listener',
+  );
+  assert.ok(
+    /_applyRealtimeLive\(true\)/.test(after),
+    'a pre-existing live socket retires the poll on boot (not just on the next transition)',
+  );
+});

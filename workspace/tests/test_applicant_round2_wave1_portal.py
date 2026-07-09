@@ -426,7 +426,9 @@ def test_boot_wires_poll_visible_with_refresh_badge_and_stops_prior_handle_on_re
         const _KEYDOWN_ACTIVATE_ONLY_IDS = [];
         const BADGE_POLL_MS = 60000;
         let _badgePollStop = null;
-        globalThis.document = {{ getElementById: () => null, readyState: 'complete' }};
+        // _boot also registers an `applicant:realtime` listener (Phase 2: retire the
+        // poll while the WS push is live, restore it on loss) — stub addEventListener.
+        globalThis.document = {{ getElementById: () => null, readyState: 'complete', addEventListener: () => {{}} }};
         globalThis.setInterval = () => 1;
         globalThis.clearInterval = () => {{}};
 

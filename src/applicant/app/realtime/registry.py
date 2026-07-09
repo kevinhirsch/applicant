@@ -127,6 +127,17 @@ class RealtimeRegistry:
     def __init__(self, evict_grace_s: float = _EVICT_GRACE_S) -> None:
         self._sessions: dict[str, RealtimeSession] = {}
         self._grace = evict_grace_s
+        # The app event loop the WS sockets + their subscriber queues live on.
+        # Bound once at startup (lifespan) so ``publish_all`` — called from the
+        # SYNC scheduler tick (a worker thread) or a threadpool request handler —
+        # can hop a downstream fan-out back onto the loop thread. asyncio.Queue is
+        # not thread-safe, so publishing off-loop must go through
+        # ``loop.call_soon_threadsafe`` (Phase 2 notif push).
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
+        """Record the app event loop so off-loop publishers can hop onto it."""
+        self._loop = loop
 
     def get_or_create(self, session_id: str) -> RealtimeSession:
         sess = self._sessions.get(session_id)
@@ -134,6 +145,46 @@ class RealtimeRegistry:
             sess = RealtimeSession(session_id)
             self._sessions[session_id] = sess
         return sess
+
+    def publish_all(self, chan: str, mtype: str, data: dict[str, Any]) -> None:
+        """Fan a server-originated frame to EVERY live session's ``chan`` buffer.
+
+        The engine is single-tenant, so in practice there is one owner bridge
+        session (many tabs share it); broadcasting to all live sessions reaches
+        whatever bridge(s) are currently connected without the publisher needing
+        to know the workspace's per-owner session id. Used by the notification +
+        pending-action publish seams (Phase 2 ``notif``).
+
+        Thread-safe: when called off the app loop (the sync scheduler tick runs in
+        a worker thread; sync request handlers run in a threadpool), the actual
+        buffer append + queue fan-out is marshalled back onto the loop via
+        ``call_soon_threadsafe`` so no asyncio.Queue is touched cross-thread. With
+        no loop bound (unit context) it publishes inline. Never raises — a
+        transport hiccup must never break the service that emitted the event.
+        """
+
+        def _do() -> None:
+            for sess in list(self._sessions.values()):
+                try:
+                    sess.publish(chan, mtype, data)
+                except Exception:  # pragma: no cover - one session never breaks others
+                    pass
+
+        loop = self._loop
+        if loop is None:
+            _do()
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            _do()
+        else:
+            try:
+                loop.call_soon_threadsafe(_do)
+            except Exception:  # pragma: no cover - loop closing/closed during shutdown
+                pass
 
     def get(self, session_id: str) -> RealtimeSession | None:
         return self._sessions.get(session_id)
