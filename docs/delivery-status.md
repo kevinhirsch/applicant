@@ -279,9 +279,14 @@ Reconciled this session: **P0-2** (built #731 → DONE), **P2-6** (judge/rubric/
 machinery already built for #309 → PARTIAL, golden set is the DoR-gated remainder). When
 picking future work, verify against the code, not the status column.
 
-**Phase 0 remaining:** P0-3 (3-pane shell / window retirement) is in the concurrent
-retirement lane (not yet on main); P0-6 (visual-regression harness) is sequenced last and
-blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once P0-3 lands, then P0-6.
+**Phase 0 remaining:** P0-3 (3-pane shell / window retirement) is **DONE** — the shell, gadgets,
+bell, and wordmark-home shipped, and the window-manager retirement landed (the AppKit floating-window/
+modal-stack kit `appkitWindow.js` + `windowResize.js` is retired from the surface — unwired: 0
+importers, no `<script>` tag, no runtime call site; the file stays in tree as the T13-gated dormant
+vendored asset; the Applicant surfaces already render as hash-routed pages; modal-stack tests replaced
+by the `test_applicant_shell_page_contract.py` shell/page view contract). P0-6 (visual-regression
+harness) is sequenced last and blesses baselines only *after* P0-3/4/5 merge — so Phase 0 seals once
+P0-6 runs.
 
 **Phase 2 remaining, by gate:** owner-input — P2-1 (ToS), P2-2 (privacy),
 P2-6 (golden set + weights + per-rubric runner + trigger), P2-14 (LinkedIn account for the
