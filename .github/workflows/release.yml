@@ -74,10 +74,19 @@ jobs:
       # => beta. See docs/release-process.md for the full convention.
       - name: Resolve the release tag, version, and channel
         id: meta
+        env:
+          # SECURITY (template-injection class, zizmor): the tag is
+          # attacker-influenceable — anyone who can push a tag chooses its
+          # text, and git tag names permit shell metacharacters ($(), backticks,
+          # ;, |). Route it through env and reference it ONLY as "$RAW_TAG" so
+          # it is a bash STRING VALUE, never spliced into the script SOURCE
+          # before bash parses it. The strict regex below (which also forbids
+          # shell metacharacters in the prerelease segment) is the real gate.
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
-            echo "::error::'${TAG}' is not a valid release tag (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease)"
+          TAG="${RAW_TAG}"
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'${TAG}' is not a valid release tag (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease, prerelease limited to [0-9A-Za-z.-])"
             exit 1
           fi
           VERSION="${TAG#v}"
@@ -97,10 +106,16 @@ jobs:
       # this is the release-time half of that same invariant, checked against
       # the tag itself rather than just internal self-consistency.
       - name: VERSION file matches the tag being released
+        env:
+          # Step outputs are derived from the validated tag, but still route
+          # them through env (never raw-splice into the run body) — same
+          # template-injection discipline as every other run step here.
+          META_TAG: ${{ steps.meta.outputs.tag }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ "${FILE_VERSION}" != "${{ steps.meta.outputs.version }}" ]]; then
-            echo "::error::VERSION file (${FILE_VERSION}) does not match tag ${{ steps.meta.outputs.tag }} (${{ steps.meta.outputs.version }}) — bump VERSION + pyproject.toml + src/applicant/version.py together, land that on main, THEN tag."
+          if [[ "${FILE_VERSION}" != "${META_VERSION}" ]]; then
+            echo "::error::VERSION file (${FILE_VERSION}) does not match tag ${META_TAG} (${META_VERSION}) — bump VERSION + pyproject.toml + src/applicant/version.py together, land that on main, THEN tag."
             exit 1
           fi
 
@@ -119,12 +134,18 @@ jobs:
 
       - name: Compute image names + tag lists
         id: tags
+        env:
+          # Route every expression through env (REGISTRY is already a
+          # workflow-level env var, so it's referenced directly as "$REGISTRY").
+          OWNER: ${{ github.repository_owner }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
+          META_CHANNEL: ${{ steps.meta.outputs.channel }}
         run: |
-          OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          API_IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/applicant-api"
-          UI_IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/applicant-ui"
-          VERSION="${{ steps.meta.outputs.version }}"
-          CHANNEL="${{ steps.meta.outputs.channel }}"
+          OWNER_LC="$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          API_IMAGE="${REGISTRY}/${OWNER_LC}/applicant-api"
+          UI_IMAGE="${REGISTRY}/${OWNER_LC}/applicant-ui"
+          VERSION="${META_VERSION}"
+          CHANNEL="${META_CHANNEL}"
           # Every image gets: the exact version tag (immutable, for pinning)
           # and the moving channel tag (stable/beta). Stable releases ALSO
           # move :latest — beta never does, so an operator who never opts
@@ -172,15 +193,26 @@ jobs:
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       #     ghcr.io/<owner>/applicant-api:<version>
       - name: Sign the published images (cosign keyless/OIDC)
+        env:
+          API_IMAGE: ${{ steps.tags.outputs.api_image }}
+          API_DIGEST: ${{ steps.build_api.outputs.digest }}
+          UI_IMAGE: ${{ steps.tags.outputs.ui_image }}
+          UI_DIGEST: ${{ steps.build_ui.outputs.digest }}
         run: |
-          cosign sign --yes "${{ steps.tags.outputs.api_image }}@${{ steps.build_api.outputs.digest }}"
-          cosign sign --yes "${{ steps.tags.outputs.ui_image }}@${{ steps.build_ui.outputs.digest }}"
+          cosign sign --yes "${API_IMAGE}@${API_DIGEST}"
+          cosign sign --yes "${UI_IMAGE}@${UI_DIGEST}"
 
       - name: Release summary
+        env:
+          META_TAG: ${{ steps.meta.outputs.tag }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
+          META_CHANNEL: ${{ steps.meta.outputs.channel }}
+          API_IMAGE: ${{ steps.tags.outputs.api_image }}
+          UI_IMAGE: ${{ steps.tags.outputs.ui_image }}
         run: |
           {
-            echo "### Released ${{ steps.meta.outputs.tag }} (${{ steps.meta.outputs.channel }} channel)"
-            echo "- \`${{ steps.tags.outputs.api_image }}:${{ steps.meta.outputs.version }}\` (+ \`:${{ steps.meta.outputs.channel }}\`)"
-            echo "- \`${{ steps.tags.outputs.ui_image }}:${{ steps.meta.outputs.version }}\` (+ \`:${{ steps.meta.outputs.channel }}\`)"
+            echo "### Released ${META_TAG} (${META_CHANNEL} channel)"
+            echo "- \`${API_IMAGE}:${META_VERSION}\` (+ \`:${META_CHANNEL}\`)"
+            echo "- \`${UI_IMAGE}:${META_VERSION}\` (+ \`:${META_CHANNEL}\`)"
             echo "- signed keyless via cosign (Sigstore OIDC); verify with the command in this workflow's own comment."
           } >>"$GITHUB_STEP_SUMMARY"

@@ -26,6 +26,7 @@ def test_check_release_version_script_passes_on_this_checkout():
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        timeout=60,  # fail fast if the check ever hangs, don't stall CI
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -122,6 +123,46 @@ def test_release_tag_globs_are_actions_globs_not_regex(release_workflow):
     # a two-part version, a bare word).
     for ref in ("main", "release", "v1.2", "1.4.0"):
         assert not _matches_any(ref), f"{ref!r} should not match the release tag glob {tag_patterns}"
+
+
+def test_release_workflow_has_no_raw_expressions_inside_run_bodies(release_workflow):
+    # Regression guard for the CodeRabbit CRITICAL (template injection, zizmor)
+    # on PR #782: a `${{ ... }}` spliced RAW into a `run:` script body expands
+    # BEFORE bash parses the script, so shell quoting gives no protection and an
+    # attacker-chosen tag (git tags permit `$()`/backticks/`;`/`|`) could inject
+    # commands into a job that holds `packages: write` + `id-token: write`. Every
+    # expression used in a run body MUST be routed through step-level `env:` and
+    # referenced as a shell `"$VAR"`. Parse the raw file line-by-line, tracking
+    # `run:` blocks by indentation, and assert no `${{` survives inside one.
+    text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    offenders: list[tuple[int, str]] = []
+    in_run = False
+    run_indent = 0
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        run_match = re.match(r"^(\s*)run:\s*\|?\s*$", line)
+        if run_match:
+            in_run = True
+            run_indent = len(run_match.group(1))
+            continue
+        if in_run:
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip())
+            if stripped and indent <= run_indent:
+                in_run = False  # dedented back out of the run block
+            elif "${{" in line:
+                offenders.append((lineno, line))
+    assert not offenders, (
+        "raw ${{ }} expression(s) inside a run: body (template-injection risk) — "
+        f"route through step env: and use \"$VAR\": {offenders}"
+    )
+
+
+def test_release_workflow_routes_the_tag_through_env_not_a_raw_run_splice(release_workflow):
+    # Positive companion to the guard above: the attacker-influenceable tag must
+    # be bound to a step `env:` var and consumed as a shell variable.
+    text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}" in text
+    assert 'TAG="${RAW_TAG}"' in text
 
 
 def test_release_workflow_is_never_a_per_pr_gate(release_workflow):

@@ -49,7 +49,10 @@ def capabilities(container: Container = Depends(get_container)) -> dict:
         postgres_engine=getattr(container, "engine", None),
     )
     return {
+        **report,
+        # Explicit keys go AFTER the spread so they always win — a future
+        # ``version``/``generated_at`` key in the report can never silently
+        # shadow the real engine version or the freshly-stamped timestamp.
         "generated_at": datetime.now(UTC).isoformat(),
         "version": __version__,
-        **report,
     }

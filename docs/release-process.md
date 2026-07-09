@@ -75,7 +75,7 @@ never touches `:latest`, so nobody lands on a pre-release image by pulling the d
 
 Published images (GHCR, once the one-time setup in §6 is done and a real tag has been pushed):
 
-```
+```text
 ghcr.io/<owner>/applicant-api:<version>   ghcr.io/<owner>/applicant-api:stable|beta   ghcr.io/<owner>/applicant-api:latest (stable only)
 ghcr.io/<owner>/applicant-ui:<version>    ghcr.io/<owner>/applicant-ui:stable|beta    ghcr.io/<owner>/applicant-ui:latest (stable only)
 ```
