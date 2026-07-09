@@ -22,6 +22,7 @@ This is the clearly-marked boundary the work package asks for: swapping
 from __future__ import annotations
 
 import logging
+import os
 import re
 import socket
 import time
@@ -34,6 +35,8 @@ from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allow
 from applicant.ports.driven.browser_automation import DetectedField, PageState
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from applicant.core.entities.plan import Plan
 
 log = logging.getLogger(__name__)
@@ -1024,6 +1027,7 @@ class PlaywrightPageSource:
         proxy: dict[str, str] | None = None,
         user_data_dir: str = "",
         channel: str = DEFAULT_CHANNEL,
+        env: Mapping[str, str] | None = None,
     ) -> dict:
         """Build the ``launch_persistent_context`` kwargs (pure + unit-testable).
 
@@ -1032,6 +1036,19 @@ class PlaywrightPageSource:
         Google Chrome, headful), the tz/locale tied to egress, AND the residential
         proxy (FR-STEALTH-4) are all threaded into the real launch, without
         constructing a browser.
+
+        ``env`` is the process environment handed to the browser subprocess. It
+        defaults to the live ``os.environ`` (copied). We thread it EXPLICITLY —
+        rather than relying on Playwright/patchright's default env inheritance —
+        because the headful Chrome launched by ``launch_persistent_context`` needs
+        a real X display: the ambient ``DISPLAY`` (the CI Xvfb ``:99``, or the
+        deploy container's virtual display) MUST reach the browser or it dies at
+        ozone init with "Missing X server or $DISPLAY" (a ``TargetClosedError``
+        surfaces to the caller). Playwright REPLACES the env when ``env=`` is given,
+        so we pass the ENTIRE environment (not just ``DISPLAY``) — a partial dict
+        would drop ``PATH``/``HOME``/etc. and break the launch. The camoufox path
+        needs no equivalent because its ``"virtual"`` mode brings its own Xvfb and
+        injects ``DISPLAY`` into ``os.environ`` itself.
         """
         width, _, height = fingerprint.get("resolution", "1920x1080").partition("x")
         scale = fingerprint.get("device_scale_factor", "1")
@@ -1059,6 +1076,9 @@ class PlaywrightPageSource:
             "viewport": {"width": int(width or 1920), "height": int(height or 1080)},
             "device_scale_factor": scale_f,
             "args": PlaywrightPageSource._stealth_args(chrome_major=chrome_major),
+            # Thread the FULL process environment (incl. DISPLAY) to the browser so
+            # the headful Chrome reaches the X server; see the docstring above.
+            "env": {str(k): str(v) for k, v in (os.environ if env is None else env).items()},
         }
         if proxy:
             # FR-STEALTH-4: residential proxy actually used for automation egress.
