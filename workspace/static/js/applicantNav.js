@@ -69,7 +69,10 @@ const ICON = {
 //          Results, Activity) or whose sidebar door is the settings gear.
 const NAV = [
   { group: 'today', items: [
-    { rail: 'rail-portal', side: 'tool-portal-btn', label: 'Today', icon: 'today', title: 'Pending — everything that needs your attention, across all your job searches' },
+    // keydownSelfWired: applicantPortal.js's own `_wireLauncher` already binds
+    // an Enter/Space keydown handler for this id (`_LAUNCHER_IDS`) — skip the
+    // generic wiring below so the launcher doesn't fire twice per keypress.
+    { rail: 'rail-portal', side: 'tool-portal-btn', label: 'Today', icon: 'today', title: 'Pending — everything that needs your attention, across all your job searches', keydownSelfWired: true },
   ] },
   { group: 'search', items: [
     { rail: 'rail-tracker', side: 'tool-tracker-btn', label: 'Tracker', icon: 'tracker', title: 'Tracker — where each application stands', delegate: 'rail-tracker' },
@@ -82,7 +85,10 @@ const NAV = [
     // inside the old tool-library-btn list-item.
     { rail: 'rail-archive', side: 'tool-library-btn', label: 'Documents', icon: 'documents', title: 'Documents — your resumes, cover letters, and application files',
       sideExtra: '<button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document"><svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="list-item-plus-label">new</span></button>' },
-    { rail: 'rail-applicant-gallery', side: 'tool-applicant-gallery-btn', label: 'Gallery', icon: 'gallery', title: 'Application Gallery — screenshots and materials from my work' },
+    // keydownSelfWired: applicantPortal.js's `_wireKeydownActivation` already
+    // binds an Enter/Space keydown handler for this id
+    // (`_KEYDOWN_ACTIVATE_ONLY_IDS`) — skip the generic wiring below.
+    { rail: 'rail-applicant-gallery', side: 'tool-applicant-gallery-btn', label: 'Gallery', icon: 'gallery', title: 'Application Gallery — screenshots and materials from my work', keydownSelfWired: true },
   ] },
   { group: 'profile', items: [
     { rail: 'rail-memory', side: 'tool-memory-btn', label: 'Profile', icon: 'profile', title: 'Profile — the details I use to apply for you' },
@@ -193,6 +199,7 @@ export function renderNav() {
   if (sideMount) sideMount.innerHTML = sideHTML.join('');
   _rendered = true;
   _wireDelegates();
+  _wireKeyboardActivation();
 }
 
 /**
@@ -200,7 +207,10 @@ export function renderNav() {
  * sidebar id (Tracker/Results/Activity only wire their rail button; the
  * Settings sidebar door forwards to the gear). Everything else is wired by its
  * own module (Portal/Chat/Gallery launcher polls) or by app.js's `_railToolMap`
- * (Documents/Profile/Calendar/Daily-updates), so we must NOT double-wire those.
+ * (Documents/Profile/Calendar/Daily-updates), so we must NOT double-wire the
+ * CLICK handler for those. (Keyboard activation for all of them is handled
+ * uniformly by `_wireKeyboardActivation` below, regardless of which module
+ * wires the click.)
  */
 function _wireDelegates() {
   for (const group of NAV) {
@@ -220,6 +230,48 @@ function _wireDelegates() {
           e.preventDefault();
           forward();
         }
+      });
+    }
+  }
+}
+
+// X-4 (accessibility pass): every sidebar item renders as `role="button"
+// tabindex="0"` (`_sidebarItem` above), but a plain `<div>` — unlike a real
+// `<button>` — does not fire `click` on Enter/Space by itself. Destinations
+// with a `delegate` already get keydown-to-forward wiring from
+// `_wireDelegates` above; Portal and Gallery wire their own keydown handlers
+// in `applicantPortal.js` (`_wireLauncher`/`_wireKeydownActivation`). Every
+// OTHER destination — Documents, Profile, Daily updates, Calendar, Chat, the
+// utility twins — is opened only by a 'click' listener registered elsewhere
+// (`app.js`'s `_railToolMap`/direct `tool-*-btn` wiring), so a keyboard user
+// tabbing to those rows and pressing Enter/Space previously did nothing: with
+// the sidebar expanded (where the icon-rail is `display:none`), those
+// destinations were keyboard-unreachable — including `tool-library-btn`
+// ("Documents"), the entry point into the golden path's review step. Rather
+// than hand-wire keydown in every consuming module, dispatch a synthetic
+// click from here once, centrally, for every rendered sidebar item — click
+// listeners registered anywhere else on the same element still fire.
+function _wireKeyboardActivation() {
+  for (const group of NAV) {
+    if (!group.items) continue;
+    for (const item of group.items) {
+      // Delegate items are already fully keydown-wired by `_wireDelegates`
+      // above (which forwards directly), and `keydownSelfWired` items bind
+      // their own keydown handler in their own module (Portal, Gallery) —
+      // wiring a second generic handler on either would fire the underlying
+      // action twice per keypress.
+      if (!item.side || item.delegate || item.keydownSelfWired) continue;
+      const sideEl = document.getElementById(item.side);
+      if (!sideEl || sideEl._applicantNavKeyWired) continue;
+      sideEl._applicantNavKeyWired = true;
+      sideEl.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+        // Ignore keydowns bubbling up from a nested interactive child (e.g.
+        // the Documents row's inline "+ new document" button, `sideExtra`
+        // above) — that child already handles its own Enter/Space natively.
+        if (e.target !== sideEl) return;
+        e.preventDefault();
+        sideEl.click();
       });
     }
   }
