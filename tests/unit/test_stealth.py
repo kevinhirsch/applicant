@@ -7,6 +7,7 @@ injected ``random.Random(seed)`` so cadence/mouse/scroll assertions are exact, a
 
 from __future__ import annotations
 
+import os
 import random
 
 import pytest
@@ -213,6 +214,39 @@ class TestEgressThreadedIntoLaunch:
         assert "--disable-blink-features=AutomationControlled" in args
         # We still reveal NO automation flags.
         assert not any("--headless" in a or "--enable-automation" in a for a in args)
+
+    def test_launch_kwargs_threads_full_process_env_to_browser(self):
+        """The headful Chrome needs the ambient DISPLAY (FR-STEALTH-1 runs headful,
+        no --headless tell). launch_kwargs must thread the WHOLE process env — incl.
+        DISPLAY — into launch_persistent_context(env=...) so the browser can reach
+        the X server, and not a partial dict (Playwright REPLACES env when given, so
+        a partial dict would drop PATH/HOME and break the launch)."""
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        supplied = {"DISPLAY": ":99", "PATH": "/usr/bin", "HOME": "/home/app"}
+        kwargs = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT, env=supplied)
+        # The env is threaded through in FULL (identical, not a DISPLAY-only subset).
+        assert kwargs["env"] == supplied
+        assert kwargs["env"]["DISPLAY"] == ":99"
+        # It is a copy, not the same object (so a later mutation can't leak in).
+        assert kwargs["env"] is not supplied
+
+    def test_launch_kwargs_defaults_env_to_os_environ_including_display(self, monkeypatch):
+        """With no explicit env, launch_kwargs falls back to the live os.environ so a
+        DISPLAY exported by the CI Xvfb step (or the deploy container) reaches the
+        headful Chrome subprocess. Other essential vars (PATH) come along too — proof
+        it's the full environment, not a DISPLAY-only partial."""
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        monkeypatch.setenv("DISPLAY", ":99")
+        monkeypatch.setenv("APPLICANT_ENV_MARKER", "sentinel")
+        kwargs = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT)
+        assert kwargs["env"]["DISPLAY"] == ":99"
+        assert kwargs["env"]["APPLICANT_ENV_MARKER"] == "sentinel"
+        # The FULL environment is carried (PATH is always present in os.environ),
+        # not just DISPLAY — guarding against a partial dict that drops PATH/HOME.
+        assert "PATH" in kwargs["env"]
+        assert kwargs["env"].get("PATH") == os.environ.get("PATH")
 
     def test_browser_passes_egress_proxy_to_source(self, monkeypatch):
         # The adapter must hand the EgressPolicy's launch_proxy() to the page source.
