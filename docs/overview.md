@@ -137,6 +137,7 @@ The full build specification and developer docs live under [`docs/`]():
 | [`docs/requirements-and-model-matrix.md`](requirements-and-model-matrix.md) | Host hardware/software requirements, per-service footprint, supported LLM providers, and which model class is good enough for which product function |
 | [`docs/platform-matrix.md`](platform-matrix.md) | Supported CPU architecture (amd64-only, with the binary reasons), Docker-on-WSL2 setup + gotchas, other host-OS notes |
 | [`docs/install-targets.md`](install-targets.md) | One-command install/upgrade/uninstall lifecycle for Ubuntu/Debian, Proxmox, and NAS-class boxes, and what is verified vs. dispatch-ready-only |
+| [`docs/integration-runner-setup.md`](integration-runner-setup.md) | Onboarding a self-hosted CI runner for the Integration Lane: one-command host setup (Docker-without-sudo, TeX, LibreOffice, Xvfb, fonts) + verification checklist |
 | [`docs/licensing.md`](licensing.md) | How Applicant is licensed (MIT, open source) and funded (free to self-host, optional donations) |
 | [`docs/adr/`](adr/) | Architecture Decision Records |
 | [`docs/known-issues.md`](known-issues.md) | Living bug log — open defects, product decisions pending, deploy-gated findings |

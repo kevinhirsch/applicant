@@ -60,6 +60,13 @@ jobs:
     # deploy image, P2-10's docx render path); Xvfb (`xvfb-run`); fonts
     # (open-sans, font-awesome).
     #
+    # ONE-COMMAND SETUP: to pre-bake ALL of the above (system deps + fonts +
+    # add the runner user to the `docker` group so Docker works without sudo +
+    # warm the TeX font cache) on a fresh self-hosted runner host, run:
+    #     sudo bash scripts/setup-integration-runner.sh
+    # It is idempotent and safe to re-run. See docs/integration-runner-setup.md
+    # for the full onboarding procedure + manual-fallback commands.
+    #
     # HOSTED FALLBACK: to run this lane on GitHub-hosted instead (which permits
     # the `sudo apt-get` installs), comment the `self-hosted` line, uncomment
     # `ubuntu-latest`, and restore the apt install steps from git history.
@@ -117,10 +124,56 @@ jobs:
       - name: Verify TeX is installed on the runner
         run: |
           if ! command -v lualatex >/dev/null && ! command -v xelatex >/dev/null; then
-            echo "::error::No TeX engine (lualatex/xelatex) on the runner. Pre-bake TeX Live on the self-hosted host (no sudo in CI): apt-get install texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-luatex texlive-xetex fonts-open-sans fonts-font-awesome"
+            echo "::error::No TeX engine (lualatex/xelatex) on the runner. Pre-bake TeX Live on the self-hosted host (no sudo in CI). One-command fix: sudo bash scripts/setup-integration-runner.sh — or manually: apt-get install texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-luatex texlive-xetex fonts-open-sans fonts-font-awesome"
             exit 1
           fi
           lualatex --version || xelatex --version
+
+      # --- Warm the TeX font cache (bucket 2: cold-cache render timeouts) ----
+      # The FIRST xelatex/lualatex compile on a cold box builds the luaotfload /
+      # fontconfig font caches, which alone can exceed the per-test 60s
+      # pytest-timeout — flaking test_ats_parseability_proof.py (P2-10 LaTeX
+      # leg), test_resume_render_real.py, and test_onboarding_endpoints.py::
+      # test_conversion_accept_reject_persists (renders on the accept path).
+      # Prime the caches ONCE here, before the suite, so those tests hit a warm
+      # cache. Warm-up only: this step MUST NEVER fail the job (best-effort).
+      # NOTE: a truly cold box may still be slow on the real-compile tests; we do
+      # NOT change pytest-timeout globally here — the test files own their own
+      # timeout handling — this step is the conservative cache-priming measure.
+      - name: Warm TeX font cache
+        run: |
+          set +e   # warm-up only — never fail the job on a priming hiccup
+          echo "Priming TeX font caches (luaotfload + fontconfig) before the timed integration suite..."
+          # 1. Rebuild the luaotfload font-name database if the tool exists.
+          if command -v luaotfload-tool >/dev/null 2>&1; then
+            luaotfload-tool --update || true
+          fi
+          # 2. Throwaway compile that exercises the SAME stack the real render
+          #    uses (moderncv document class + fontspec + fontawesome5), so the
+          #    caches the real render needs are actually built. Mirrors
+          #    templates/latex/moderncv/main.tex.j2 (moderncvstyle/moderncvcolor
+          #    + \name are needed for moderncv to compile cleanly).
+          warm_dir="${RUNNER_TEMP:-/tmp}/applicant-tex-warm"
+          mkdir -p "$warm_dir"
+          cat > "$warm_dir/warm.tex" <<'EOF'
+          \documentclass[11pt,a4paper,sans]{moderncv}
+          \moderncvstyle{banking}
+          \moderncvcolor{blue}
+          \usepackage{fontspec}
+          \usepackage{fontawesome5}
+          \name{Warm}{Cache}
+          \begin{document}
+          \makecvtitle
+          warm \faGithub
+          \end{document}
+          EOF
+          if command -v lualatex >/dev/null 2>&1; then
+            ( cd "$warm_dir" && lualatex -interaction=nonstopmode -halt-on-error warm.tex ) || true
+          elif command -v xelatex >/dev/null 2>&1; then
+            ( cd "$warm_dir" && xelatex -interaction=nonstopmode -halt-on-error warm.tex ) || true
+          fi
+          rm -rf "$warm_dir" || true
+          echo "TeX font cache warm-up complete (best-effort; any failure above is non-fatal)."
 
       # --- LibreOffice (P2-10 docx-fallback render path) --------------------
       # Same reasoning as TeX: no sudo in CI, so the FULL LibreOffice Writer
@@ -136,7 +189,7 @@ jobs:
       - name: Verify LibreOffice (soffice) is installed on the runner
         run: |
           if ! command -v soffice >/dev/null; then
-            echo "::error::soffice not found on the runner. Pre-bake LibreOffice on the self-hosted host (no sudo in CI): apt-get install libreoffice-writer"
+            echo "::error::soffice not found on the runner. Pre-bake LibreOffice on the self-hosted host (no sudo in CI). One-command fix: sudo bash scripts/setup-integration-runner.sh — or manually: apt-get install libreoffice-writer"
             exit 1
           fi
           soffice --version
@@ -152,7 +205,7 @@ jobs:
       - name: Verify Xvfb is installed on the runner
         run: |
           if ! command -v xvfb-run >/dev/null; then
-            echo "::error::xvfb-run not found on the runner. Pre-bake it on the self-hosted host (no sudo in CI): apt-get install xvfb"
+            echo "::error::xvfb-run not found on the runner. Pre-bake it on the self-hosted host (no sudo in CI). One-command fix: sudo bash scripts/setup-integration-runner.sh — or manually: apt-get install xvfb"
             exit 1
           fi
 
@@ -166,8 +219,15 @@ jobs:
 
       - name: Integration test suite
         run: |
-          # Wrap in Xvfb so browser tests can open a display.
-          xvfb-run --auto-servernum uv run pytest -v -m integration \
+          # Wrap in Xvfb so browser tests can open a display. Use an EXPLICIT
+          # --server-num=99 (NOT --auto-servernum): the step env pins
+          # DISPLAY=:99 and pytest-xdist worker subprocesses that spawn Chromium
+          # inherit that value. --auto-servernum picks a random display number
+          # and only exports the matching DISPLAY to its DIRECT child, so the
+          # inherited :99 would point at no X server ("Missing X server or
+          # $DISPLAY" -> patchright TargetClosedError). Pinning Xvfb to :99 makes
+          # the running server and the exported DISPLAY agree for every worker.
+          xvfb-run --server-num=99 uv run pytest -v -m integration \
             --tb=short \
             --junitxml=reports/integration-results.xml \
             2>&1 | tee reports/integration.log
