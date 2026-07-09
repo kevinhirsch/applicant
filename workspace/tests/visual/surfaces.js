@@ -17,10 +17,16 @@
 
 'use strict';
 
-// ── Viewports (P0-6 DoD) ─────────────────────────────────────────────────────
+// ── Viewports (P0-6 DoD; mobile added in X-1) ────────────────────────────────
+// 390×844 is the iPhone-class portrait cell the X-1 mobile golden-path audit
+// walks (digest → review → approve): it exercises the < 768px behavior contract
+// (P0-3 rail collapse + bottom-sheet fallback) that the two desktop cells never
+// reach, so a mobile-only layout escape (overflow / off-screen control / broken
+// sheet) is caught here and nowhere else in the matrix.
 const VIEWPORTS = [
   { tag: '1440x900', width: 1440, height: 900 },
   { tag: '1024x768', width: 1024, height: 768 },
+  { tag: '390x844', width: 390, height: 844 },
 ];
 
 // ── Themes (P0-6 DoD: white-glass + one dark theme) ─────────────────────────
@@ -91,10 +97,54 @@ async function _clearLanding(page) {
   await page.waitForTimeout(300);
 }
 
+// On mobile (< 768px) the nav sidebar auto-collapses behind the hamburger
+// (sidebar-layout.js) — the `#tool-*-btn` / `#user-bar-settings` nav controls
+// live inside `#sidebar` and are not clickable until it is revealed. Mirror the
+// real mobile tap (hamburger → nav) so the same click-path openers reach the
+// same nav on every viewport. A no-op on desktop, where the sidebar is already
+// laid out, so the desktop baselines are untouched.
+async function _revealNavIfMobile(page) {
+  const vp = page.viewportSize();
+  if (!vp || vp.width >= 768) return false;
+  const hidden = await page.evaluate(() => {
+    const s = document.getElementById('sidebar');
+    return !s || s.classList.contains('hidden');
+  });
+  if (!hidden) return false;
+  const burger = await page.$('#hamburger-btn');
+  if (!burger) return false;
+  await burger.click({ timeout: 4000 }).catch(() => {});
+  await page.waitForSelector('#sidebar:not(.hidden)', { state: 'attached', timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  return true;
+}
+
+// Selecting a nav item on a phone closes the drawer (the target modal takes the
+// screen). Tapping a `.list-item` tool does this on its own, but the settings
+// gear (`#user-bar-settings`) leaves the drawer up — so after opening the target
+// we deterministically re-collapse the drawer we opened, capturing the clean
+// target surface a real tap would leave. (Mobile hamburger is a 2-way toggle,
+// so force-hiding is stable — the auto-collapse observer never re-opens it.)
+async function _collapseNavMobile(page) {
+  await page.evaluate(() => {
+    const s = document.getElementById('sidebar');
+    const b = document.getElementById('sidebar-backdrop');
+    if (s) s.classList.add('hidden');
+    if (b) b.classList.remove('visible');
+    if (window.syncRailSide) window.syncRailSide();
+  }).catch(() => {});
+  await page.waitForTimeout(250);
+}
+
 async function _clickAndSettle(page, selector, rootSel) {
+  // Only the nav controls live in the collapsible sidebar; an in-modal target
+  // (e.g. a settings tab) must NOT trigger a reveal or it would pop the sidebar
+  // over the open modal.
+  const revealed = /^#tool-|^#user-bar-settings$/.test(selector) ? await _revealNavIfMobile(page) : false;
   const el = await page.$(selector);
   if (!el) throw new Error(`opener ${selector} not found`);
   await el.click({ timeout: 4000 });
+  if (revealed) await _collapseNavMobile(page);
   if (rootSel) {
     await page.waitForSelector(rootSel, { state: 'visible', timeout: 6000 });
   }
@@ -178,9 +228,16 @@ const STATES = [
   { name: 'wizard-profile', open: async (page) => { await _clearLanding(page); await _openWizard(page, 2); } },
 
   // 8. P0-3 gadget-rail states (fixture-fed so the gadgets/queue render).
+  //    DESKTOP-ONLY: the P0-3 behavior contract is that on < 768px the gadget
+  //    rail collapses away entirely and the bottom-sheet fallback stands in for
+  //    it — so the rail simply does not render on mobile (its `#applicant-rail-*`
+  //    nodes never appear). The mobile counterpart of these states is the Portal
+  //    bottom sheet, already walked by `today`. Capturing them at 390×844 would
+  //    only ever screenshot an absent rail, so they are skipped there (run.js).
   {
     name: 'rail-pinned',
     fixtures: 'rail',
+    desktopOnly: true,
     localStorage: { 'applicant-rail-pins': '["digest","health"]' },
     open: async (page) => {
       await _clearLanding(page);
@@ -191,6 +248,7 @@ const STATES = [
   {
     name: 'rail-collapsed',
     fixtures: 'rail',
+    desktopOnly: true,
     localStorage: { 'applicant-rail-collapsed': '1' },
     open: async (page) => {
       await _clearLanding(page);
@@ -201,6 +259,7 @@ const STATES = [
   {
     name: 'rail-notifications',
     fixtures: 'rail',
+    desktopOnly: true,
     open: async (page) => {
       await _clearLanding(page);
       await page.waitForSelector('#applicant-rail-waiting.has-items', { state: 'visible', timeout: 8000 });

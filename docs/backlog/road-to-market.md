@@ -109,7 +109,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P5-4 | Launch sequence | M | you+eng | — |
 | P5-5 | Post-launch flywheel | ongoing | both | — |
 | P5-6 | Easy Apply autopilot | L | eng | — |
-| X-1 | Mobile golden-path audit | M | eng | — |
+| X-1 | Mobile golden-path audit | M | eng | DONE — digest→review→approve walked at 390×844 (iPhone-class portrait) via the P0-6 harness; fixed the shared macOS titlebar's centered title colliding with its right-side control on the sheet (Portal "Waiting on you" vs "You're in control", ~34px) and the library/gallery sheet collapsing to a short strip (missing `!important` let `height:auto` win over `height:100dvh`); mobile 390×844 added to the visual matrix (rail states are desktop-only per P0-3, composer mask desktop-only so sheet actions stay visible), baselines blessed with the two-run zero-diff proof |
 | X-2 | Cross-browser smoke | S–M | eng | — |
 | X-3 | Performance budget | M | eng | — |
 | X-4 | Accessibility pass | M | eng | DONE — keyboard-only golden path (digest→review→approve) operable: sidebar nav destinations get generic Enter/Space activation (Documents/Profile/Calendar/etc. were mouse-only when the rail is collapsed), `#doclib-modal` review host gains dialog semantics + shared focus-trap/restore, redline pane is keyboard-scrollable, hover-revealed card actions reveal on `:focus-within`, skip-to-content link added. WCAG-AA contrast sweep extended (`test_applicant_x4_a11y_contrast.py`) across base light+dark tokens + the review step: found & fixed two real AA failures (redline +/- fallback — danger ~2.4:1 dark, success ~2.4:1 light on the composited card) via dedicated `--redline-add/--redline-del` tokens. Two pinning tests added. Honest gap: the shared `--color-warning`/`--color-success`/`--color-muted` tokens as arbitrary text don't all clear AA in light theme, but retuning them touches ~90 vendored call sites — out of this surgical pass's scope, documented in the test |
@@ -2186,6 +2186,36 @@ Each is a fast-follow or later-version candidate, not an oversight.
 **Effort:** M · **Owner:** eng · **Schedule with:** P0-6 (add mobile to the harness)
 **DoD:** The "digest → review on phone → approve" path walked at 390×844; issues fixed;
 mobile added to the visual matrix.
+
+**Status: DONE.**
+
+*Walked digest → review → approve at 390×844 (iPhone-class portrait)* through the P0-6
+harness (extended to drive the phone nav: it now reveals the collapsed sidebar via the
+hamburger before a nav tap, then re-collapses it, mirroring the real mobile flow). Real
+issues found and fixed, mobile-scoped so the desktop baselines stay byte-identical:
+- **Titlebar collision.** The shared macOS window titlebar centers its title absolutely
+  (`.ow-title`, `left:50%`, `max-width:60%`). On the sheet the close light is
+  `display:none`, so nothing balanced the center and the centered title overlapped the
+  right-side control — the Portal's "Waiting on you" ran ~34px into its "You're in control"
+  pill at 390px. Below the 768px breakpoint the title now flows in-line (left-title /
+  right-actions, truncating) with no overlap; desktop keeps the centered chrome.
+- **Library/gallery sheet collapsed to a short strip.** `.doclib-modal-content` /
+  `.gallery-modal-content` (the Documents *review* surface, email, gallery) set
+  `height:100dvh` without `!important`, so the base mobile `.modal-content { height:auto
+  !important }` won and the sheet shrank to its (near-empty) content and floated instead of
+  filling the screen. Bumped to a two-class selector + `!important` so full height wins
+  deterministically.
+- **Composer mask clobbered sheet actions.** The P0-6 `.chat-input-bar` mask paints to the
+  viewport bottom; on mobile that magenta covered the bottom of every bottom sheet (Save
+  job, the wizard's Continue, …). Its flake sources are desktop-only (autofocus +
+  modal-close focus-restore), so the mask is now desktop-only — mobile sheets keep their
+  actions visible and still render deterministically (proven by the two-run bless).
+
+*Mobile 390×844 added to the visual matrix* (`workspace/tests/visual/`): the viewport is in
+the harness's `VIEWPORTS`, the P0-3 gadget-rail states are marked desktop-only (on <768px
+the rail collapses away — its mobile counterpart is the Portal bottom sheet, already walked
+by `today`), and the new mobile baselines were blessed with the harness's two-consecutive-
+runs zero-diff proof. Honest carve-out: emulated 390×844 viewport, not a real device.
 
 ### X-2 — Cross-browser smoke
 **Effort:** S–M · **Owner:** eng · **Schedule with:** P0-6
