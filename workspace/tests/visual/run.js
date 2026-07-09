@@ -25,14 +25,32 @@
 //   node workspace/tests/visual/run.js --bless          # accept current rendering as baseline
 //   node workspace/tests/visual/run.js --only 'rail-.*' # subset (regex on state name)
 //   node workspace/tests/visual/run.js --base http://127.0.0.1:7000  # reuse a running front-door
+//   node workspace/tests/visual/run.js --engine firefox # X-2 cross-browser smoke (firefox|webkit)
+//   node workspace/tests/visual/run.js --engine webkit  # WebKit golden-path smoke
 //
 // Exit 0 = green. Exit 1 = visual diff / layout violation / missing baseline;
 // diff images land in workspace/tests/visual/.out/diff/. `--bless` is the
 // ONLY way to accept a visual change.
 //
+// ── Engines (X-2) ────────────────────────────────────────────────────────────
+// --engine chromium (DEFAULT) is the pixel-pinned Visual Lane: it compares the
+// posterized screenshot of every state against the committed baselines/ AND
+// runs the layout detectors. Unchanged by X-2.
+// --engine firefox | webkit is a cross-browser SMOKE: it walks the SAME matrix
+// and enforces the SAME layout/error contract (no page errors, no off-screen
+// escapes, no horizontal overflow), but does NOT pixel-compare against the
+// Chromium baselines — cross-engine glyph raster + compositing legitimately
+// differ, so a cross-engine pixel diff is noise. Screenshots still land in
+// .out/current for eyeballing; an optional per-engine baselines-<engine>/ dir
+// can be blessed but never gates. The golden path "passes in FF+WebKit" when
+// this smoke is green.
+//
 // Requires the `playwright` npm package (resolved locally or from the global
-// npm root) and its Chromium (PLAYWRIGHT_BROWSERS_PATH or a chromium-* dir
-// under /opt/pw-browsers).
+// npm root) and the engine binary: Chromium from PLAYWRIGHT_BROWSERS_PATH or a
+// chromium-* dir under /opt/pw-browsers; Firefox/WebKit resolved by Playwright
+// from PLAYWRIGHT_BROWSERS_PATH (install with `npx playwright install --with-deps
+// firefox webkit` — WebKit-on-Linux needs extra system libs; see
+// docs/integration-runner-setup.md).
 
 'use strict';
 
@@ -47,7 +65,6 @@ const { decodePNG, encodePNG, comparePNG, posterize } = require('./png');
 const { bootFrontDoor } = require('./boot');
 
 const HERE = __dirname;
-const BASELINE_DIR = path.join(HERE, 'baselines');
 const OUT_DIR = path.join(HERE, '.out');
 
 // The pinned wall clock every page sees: 2026-07-01 14:30 UTC (a Wednesday).
@@ -55,12 +72,31 @@ const FIXED_TS = Date.UTC(2026, 6, 1, 14, 30, 0);
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
+const ENGINES = ['chromium', 'firefox', 'webkit'];
 const flags = {
   bless: argv.includes('--bless'),
   only: (() => { const i = argv.indexOf('--only'); return i >= 0 ? new RegExp(argv[i + 1]) : null; })(),
   base: (() => { const i = argv.indexOf('--base'); return i >= 0 ? argv[i + 1] : null; })(),
   port: (() => { const i = argv.indexOf('--port'); return i >= 0 ? Number(argv[i + 1]) : 7311; })(),
+  // X-2 cross-browser smoke: which Playwright engine drives the walk. Default
+  // chromium keeps the per-PR / pre-push Visual Lane byte-identical — nothing
+  // about the default path changes. firefox|webkit run the SAME surface matrix
+  // as a functional/layout SMOKE (errors + off-screen + horizontal-overflow
+  // asserts), but do NOT pixel-compare against the Chromium baselines: cross-
+  // engine glyph rasterization + compositing differ, so a cross-engine pixel
+  // diff is noise, not signal. The golden-path pass/fail for FF/WebKit is the
+  // layout/error contract, exactly the machine-independent half of the harness.
+  engine: (() => { const i = argv.indexOf('--engine'); return i >= 0 ? String(argv[i + 1]) : 'chromium'; })(),
 };
+if (!ENGINES.includes(flags.engine)) {
+  console.error(`--engine must be one of ${ENGINES.join('|')} (got '${flags.engine}')`);
+  process.exit(2);
+}
+const ENGINE = flags.engine;
+const IS_CHROMIUM = ENGINE === 'chromium';
+// Chromium keeps the committed baseline dir; other engines get their OWN dir so
+// an optional cross-engine bless never touches the P0-6 Chromium baselines.
+const BASELINE_DIR = path.join(HERE, IS_CHROMIUM ? 'baselines' : `baselines-${ENGINE}`);
 
 // ── Playwright resolution (no local node_modules needed) ─────────────────────
 function requirePlaywright() {
@@ -73,12 +109,18 @@ function requirePlaywright() {
   }
 }
 
-function chromiumExecutable() {
+// Resolve a browser executable out of PLAYWRIGHT_BROWSERS_PATH / /opt/pw-browsers.
+// Chromium is pinned by explicit path (the Visual Lane's determinism contract
+// relies on the exact binary); Firefox/WebKit return null so Playwright resolves
+// its own bundled build from PLAYWRIGHT_BROWSERS_PATH — those engines are the
+// on-demand smoke, not the pixel-pinned lane, so an explicit path isn't needed.
+function browserExecutable(engine) {
+  if (engine !== 'chromium') return null; // let Playwright resolve FF/WebKit itself
   if (process.env.VISUAL_CHROMIUM) return process.env.VISUAL_CHROMIUM;
   const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers'].filter(Boolean);
   for (const root of roots) {
     let entries = [];
-    try { entries = fs.readdirSync(root).filter((d) => d.startsWith('chromium')).sort().reverse(); } catch (_) { continue; }
+    try { entries = fs.readdirSync(root).filter((d) => d.startsWith('chromium') && !d.includes('headless')).sort().reverse(); } catch (_) { continue; }
     for (const dir of entries) {
       const cand = path.join(root, dir, 'chrome-linux', 'chrome');
       if (fs.existsSync(cand)) return cand;
@@ -335,20 +377,25 @@ async function main() {
   // Raster-determinism flags: text over composited/translucent surfaces
   // otherwise flips between LCD-subpixel and grayscale antialiasing depending
   // on run-variable layer promotion — --disable-lcd-text pins one AA mode;
-  // partial-raster/low-res-tiling produce frame-dependent tile seams.
-  const launch = {
-    headless: true,
-    args: [
-      '--no-sandbox', '--disable-gpu', '--force-color-profile=srgb', '--hide-scrollbars',
-      '--disable-lcd-text', '--disable-partial-raster', '--disable-skia-runtime-opts',
-      '--disable-low-res-tiling',
-      // Text raster determinism: hinting + fractional glyph positions vary
-      // with run-to-run layer promotion — the last few dozen px of AA jitter
-      // on small rail-card text came from exactly this pair.
-      '--font-render-hinting=none', '--disable-font-subpixel-positioning',
-    ],
-  };
-  const exe = chromiumExecutable();
+  // partial-raster/low-res-tiling produce frame-dependent tile seams. These are
+  // CHROMIUM-ONLY Chrome switches: Firefox/WebKit reject unknown --flags at
+  // launch, and they run in SMOKE mode (no pixel gate) where raster determinism
+  // is not load-bearing, so their launch is a plain headless one.
+  const launch = IS_CHROMIUM
+    ? {
+      headless: true,
+      args: [
+        '--no-sandbox', '--disable-gpu', '--force-color-profile=srgb', '--hide-scrollbars',
+        '--disable-lcd-text', '--disable-partial-raster', '--disable-skia-runtime-opts',
+        '--disable-low-res-tiling',
+        // Text raster determinism: hinting + fractional glyph positions vary
+        // with run-to-run layer promotion — the last few dozen px of AA jitter
+        // on small rail-card text came from exactly this pair.
+        '--font-render-hinting=none', '--disable-font-subpixel-positioning',
+      ],
+    }
+    : { headless: true };
+  const exe = browserExecutable(ENGINE);
   if (exe) launch.executablePath = exe;
 
   const results = [];
@@ -359,7 +406,7 @@ async function main() {
   let browser = null;
 
   try {
-    browser = await playwright.chromium.launch(launch);
+    browser = await playwright[ENGINE].launch(launch);
     // WARM-UP (determinism): the very first render in a fresh browser process
     // rasterizes text measurably differently from every later one (font/glyph
     // cache warm-up — verified: shot 1 of N differs by a few hundred px, shots
@@ -438,6 +485,12 @@ async function main() {
           fs.mkdirSync(path.dirname(currentPath), { recursive: true });
           fs.writeFileSync(currentPath, pngOut);
 
+          // Cross-engine SMOKE (firefox|webkit): the pass/fail is the layout +
+          // error contract asserted above, NOT pixels. A per-engine baseline is
+          // OPTIONAL — compared when present (a human blessed one), but its
+          // absence is informational, never a failure. This is why the default
+          // Chromium lane is unchanged while FF/WebKit can run green on a runner
+          // that has never blessed them.
           const baselinePath = path.join(BASELINE_DIR, rel);
           if (flags.bless) {
             fs.mkdirSync(path.dirname(baselinePath), { recursive: true });
@@ -445,19 +498,32 @@ async function main() {
             entry.blessed = true;
             console.log(`  BLESS   ${id}`);
           } else if (!fs.existsSync(baselinePath)) {
-            entry.status = 'missing-baseline';
-            failures.push(`[missing]    ${id}: no baseline — run with --bless to create it`);
-            console.log(`  MISSING ${id}`);
+            if (IS_CHROMIUM) {
+              entry.status = 'missing-baseline';
+              failures.push(`[missing]    ${id}: no baseline — run with --bless to create it`);
+              console.log(`  MISSING ${id}`);
+            } else {
+              entry.status = entry.status === 'ok' ? 'smoke' : entry.status;
+              console.log(`  ${entry.status === 'smoke' ? 'smoke  ' : 'LAYOUT '} ${id}  (${ENGINE}, no pixel gate)`);
+            }
           } else {
             const cmp = comparePNG(fs.readFileSync(baselinePath), pngOut);
             if (!cmp.equal) {
-              entry.status = 'diff';
               entry.diff = { diffCount: cmp.diffCount, total: cmp.total, note: cmp.note };
               const diffPath = path.join(OUT_DIR, 'diff', rel);
               fs.mkdirSync(path.dirname(diffPath), { recursive: true });
               if (cmp.diffImage) fs.writeFileSync(diffPath, cmp.diffImage);
-              failures.push(`[diff]       ${id}: ${cmp.note} -> ${path.relative(process.cwd(), diffPath)}`);
-              console.log(`  DIFF    ${id}  ${cmp.note}`);
+              // A pixel diff gates ONLY the Chromium lane. For FF/WebKit a diff
+              // against a per-engine baseline is a determinism note, not a
+              // regression — the golden-path pass/fail is the layout contract.
+              if (IS_CHROMIUM) {
+                entry.status = 'diff';
+                failures.push(`[diff]       ${id}: ${cmp.note} -> ${path.relative(process.cwd(), diffPath)}`);
+                console.log(`  DIFF    ${id}  ${cmp.note}`);
+              } else {
+                if (entry.status === 'ok') entry.status = 'smoke-diff';
+                console.log(`  diff*   ${id}  ${cmp.note} (${ENGINE}, non-gating)`);
+              }
             } else if (entry.status === 'ok') {
               console.log(`  ok      ${id}`);
             } else {
@@ -476,6 +542,8 @@ async function main() {
 
   const report = {
     when: new Date().toISOString(),
+    engine: ENGINE,
+    mode: IS_CHROMIUM ? 'pixel-baseline' : 'cross-browser-smoke',
     matrix: { themes: THEMES.map((t) => t.tag), viewports: VIEWPORTS.map((v) => v.tag), states: STATES.map((s) => s.name) },
     captured,
     bless: flags.bless,
@@ -484,7 +552,7 @@ async function main() {
   };
   fs.writeFileSync(path.join(OUT_DIR, 'report.json'), JSON.stringify(report, null, 2));
 
-  console.log(`\n${captured} states captured (${THEMES.length} themes x ${VIEWPORTS.length} viewports x ${flags.only ? 'subset' : STATES.length + ' states'})`);
+  console.log(`\n[${ENGINE}] ${captured} states captured (${THEMES.length} themes x ${VIEWPORTS.length} viewports x ${flags.only ? 'subset' : STATES.length + ' states'})`);
   if (failures.length) {
     console.log(`\nFAIL — ${failures.length} issue(s):`);
     for (const f of failures) console.log('  ' + f);
@@ -492,7 +560,9 @@ async function main() {
     console.log('If a change is intended, re-run with --bless to accept it as the new baseline.');
     return 1;
   }
-  console.log(flags.bless ? '\nBaselines blessed.' : '\nGREEN — zero pixel diff, no layout violations.');
+  if (flags.bless) { console.log(`\n[${ENGINE}] Baselines blessed.`); }
+  else if (IS_CHROMIUM) { console.log('\nGREEN — zero pixel diff, no layout violations.'); }
+  else { console.log(`\nGREEN — [${ENGINE}] cross-browser smoke passed (no errors, no off-screen escapes, no horizontal overflow).`); }
   return 0;
 }
 

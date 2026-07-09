@@ -111,3 +111,46 @@ let the weekly Sunday 02:00 UTC schedule run it.
 If no self-hosted runner is available, the lane can be flipped to a GitHub-hosted
 runner (which permits `sudo apt-get`): see the `HOSTED FALLBACK` note near the top
 of `.github/workflows/ci-integration.yml`.
+
+## Cross-Browser Smoke prerequisite (X-2)
+
+The **Cross-Browser Smoke** lane (`.github/workflows/ci-cross-browser.yml`) drives
+the front-door golden-path walk (`workspace/tests/visual/run.js --engine firefox`
+and `--engine webkit`) under Firefox and WebKit — the layout/error contract only
+(no page errors, no off-screen escapes, no horizontal overflow); it does **not**
+pixel-compare against the Chromium baselines. Like the Integration + Visual Lanes
+it is **on-demand** (workflow_dispatch + weekly), not a per-PR gate, because
+WebKit-on-Linux needs a pile of extra system libraries the default per-PR CI box
+does not carry.
+
+Provision the engines + their system deps with one scriptable command (the
+GitHub-hosted lane runs this itself; on a self-hosted runner run it once):
+
+```bash
+# Firefox needs few libs; WebKit-on-Linux pulls the heavy set
+# (libgtk-4, libgraphene, gstreamer, libwoff2, libopus, libvpx, …).
+npx playwright@1.56.1 install --with-deps firefox webkit
+```
+
+Notes:
+- `--with-deps` shells out to `apt-get`; it needs root (hosted runners) or a
+  passwordless-sudo runner user. On a box where `apt` drops privileges to the
+  `_apt` sandbox user and `/tmp` is not world-accessible, pass
+  `APT::Sandbox::User=root` (or install the packages the validator lists by hand).
+- The per-PR gate on the **`@supports` solid-panel fallback** does NOT need these
+  engines: its correctness is asserted deterministically from source by
+  `workspace/tests/js/glassBackdropFallback.test.js` (in `npm test`), which slices
+  the `@supports not (backdrop-filter)` block out of `style.css` and checks it
+  solidifies the golden-path glass surfaces to an opaque panel in both themes.
+
+Verification:
+
+- [ ] `npx playwright install --with-deps firefox webkit` completes without a
+      "Host system is missing dependencies" warning.
+- [ ] `node workspace/tests/visual/run.js --engine firefox --only login` boots the
+      front-door and prints a `[firefox]` GREEN smoke line.
+- [ ] `node workspace/tests/visual/run.js --engine webkit --only login` does the
+      same under `[webkit]`.
+
+Then trigger it via **workflow_dispatch** (Actions → *Cross-Browser Smoke*), or let
+the weekly Sunday 04:00 UTC schedule run it.

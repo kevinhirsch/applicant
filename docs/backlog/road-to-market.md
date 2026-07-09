@@ -110,7 +110,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P5-5 | Post-launch flywheel | ongoing | both | — |
 | P5-6 | Easy Apply autopilot | L | eng | — |
 | X-1 | Mobile golden-path audit | M | eng | DONE — digest→review→approve walked at 390×844 (iPhone-class portrait) via the P0-6 harness; fixed the shared macOS titlebar's centered title colliding with its right-side control on the sheet (Portal "Waiting on you" vs "You're in control", ~34px) and the library/gallery sheet collapsing to a short strip (missing `!important` let `height:auto` win over `height:100dvh`); mobile 390×844 added to the visual matrix (rail states are desktop-only per P0-3, composer mask desktop-only so sheet actions stay visible), baselines blessed with the two-run zero-diff proof |
-| X-2 | Cross-browser smoke | S–M | eng | — |
+| X-2 | Cross-browser smoke | S–M | eng | DONE — golden path walked in **Firefox AND WebKit** (not just Chromium) via the engine-parameterized P0-6 harness (`run.js --engine firefox\|webkit`): a layout/error smoke (no page errors, no off-screen escapes, no horizontal overflow) over the front-door surface matrix, no cross-engine pixel gate. Executed here: both engines pass a clean golden-path-core smoke (login→Today/Portal→review library, exit 0, 18 states, 0 errors each), and WebKit additionally swept 75 full-matrix states (all nav/settings/wizard/rail, glass desktop+mobile) with 0 errors. The `@supports not (backdrop-filter)` solid-panel fallback was added so glass chrome (windows/sidebar/composer/modals/cards/toasts + free-floating search palette, colour-picker popover, mobile sheet) falls back to an opaque `--panel` in both themes where blur is unsupported — additive `@supports not` branch, so the committed Chromium/WebKit/modern-FF glass baselines are untouched. Fallback correctness gated per-PR by a deterministic source-assertion test (`glassBackdropFallback.test.js`); a `ci-cross-browser.yml` on-demand+weekly lane runs the FF/WebKit smoke (engine install prereq documented in `docs/integration-runner-setup.md`, tied to `scripts/setup-integration-runner.sh`) |
 | X-3 | Performance budget | M | eng | — |
 | X-4 | Accessibility pass | M | eng | DONE — keyboard-only golden path (digest→review→approve) operable: sidebar nav destinations get generic Enter/Space activation (Documents/Profile/Calendar/etc. were mouse-only when the rail is collapsed), `#doclib-modal` review host gains dialog semantics + shared focus-trap/restore, redline pane is keyboard-scrollable, hover-revealed card actions reveal on `:focus-within`, skip-to-content link added. WCAG-AA contrast sweep extended (`test_applicant_x4_a11y_contrast.py`) across base light+dark tokens + the review step: found & fixed two real AA failures (redline +/- fallback — danger ~2.4:1 dark, success ~2.4:1 light on the composited card) via dedicated `--redline-add/--redline-del` tokens. Two pinning tests added. Honest gap: the shared `--color-warning`/`--color-success`/`--color-muted` tokens as arbitrary text don't all clear AA in light theme, but retuning them touches ~90 vendored call sites — out of this surgical pass's scope, documented in the test |
 
@@ -2221,6 +2221,44 @@ runs zero-diff proof. Honest carve-out: emulated 390×844 viewport, not a real d
 **Effort:** S–M · **Owner:** eng · **Schedule with:** P0-6
 **DoD:** Golden path passes in Firefox + WebKit; the `@supports` solid-panel fallback
 looks intentional where glass is unsupported.
+
+**Status: DONE.**
+
+*Golden path in Firefox + WebKit.* The P0-6 visual harness (`workspace/tests/visual/run.js`)
+was Chromium-only. Lifted-and-shifted its `chromiumExecutable()`/launch path into an
+engine-parameterized launcher: `--engine chromium|firefox|webkit`, default `chromium` so the
+per-PR / pre-push Visual Lane is byte-identical. `firefox`/`webkit` run the SAME surface matrix
+as a functional/layout **smoke** — the machine-independent half of the harness (no page errors,
+no off-screen escapes, no horizontal overflow) — and deliberately do NOT pixel-compare against
+the Chromium baselines (cross-engine glyph raster + compositing differ, so a cross-engine pixel
+diff is noise). Both engines were **actually executed on this box** (Playwright Firefox + WebKit installed,
+WebKit's Linux system libs apt-installed): each passes a clean golden-path-core smoke
+(login → Today/Portal → review library, across both themes and all three viewports — **18
+states, exit 0, 0 errors / 0 off-screen / 0 overflow** each), and WebKit additionally swept **75
+of the full-matrix states** (every nav section, all Settings groups, the wizard, the P0-3 rail,
+glass desktop + 390×844 mobile) with **0 errors** before being sequenced out for the final clean
+per-engine core runs (interrupted for orchestration, not by any failure — the shared
+fixed-path hermetic SQLite means two front-doors can't boot at once, so the engines run
+sequentially). An on-demand + weekly `.github/workflows/ci-cross-browser.yml` lane runs it on a
+runner (mirroring the Visual + Integration lanes — NOT a per-PR gate, since WebKit-on-Linux
+needs extra system libs; `npx playwright install --with-deps firefox webkit`, documented in
+`docs/integration-runner-setup.md` and tied to `scripts/setup-integration-runner.sh`).
+
+*The `@supports` solid-panel fallback looks intentional.* The glass house theme
+(`body.theme-frosted`) frosts chrome with `backdrop-filter`; the only prior fallback was the
+`@media (prefers-reduced-transparency: reduce)` block (a DIFFERENT condition than "the engine
+can't do backdrop-filter"). Added a parallel `@supports not ((backdrop-filter: blur(1px)) or
+(-webkit-backdrop-filter: blur(1px)))` block (the exact inverse of the kit-themes.css positive
+frost gate) that solidifies every glass surface to the opaque `--panel` — deliberate, correct
+contrast in BOTH themes — covering windows/sidebar/composer/modals/dropdowns/cards/toasts/dock
+PLUS the free-floating glass that has no solid parent (command/search palette, colour-picker
+popover, mobile bottom sheet). It is an **additive** branch: Chromium, WebKit, and modern
+Firefox all support `backdrop-filter`, so the branch never renders there and the committed P0-6
+glass baselines (desktop + the X-1 390×844 mobile) are untouched. Its correctness is gated
+per-PR — without any FF/WebKit binary — by a deterministic source-assertion test
+(`workspace/tests/js/glassBackdropFallback.test.js`, in `npm test`) that slices the block out of
+`style.css` and asserts it drops the blur + gradient for an opaque panel on the golden-path
+surfaces in both themes.
 
 ### X-3 — Performance budget
 **Effort:** M · **Owner:** eng · **Schedule with:** Phase 1
