@@ -277,6 +277,17 @@ class Scheduler:
             post_submission = (
                 services.get("post_submission_service") if services else None
             ) or self._post_submission
+            # CONC-2: prefer the per-tick, Session-isolated setup service (built by the
+            # container factory against THIS tick's fresh Session) for every gate /
+            # automation-prefs read below, exactly like ``curation``/``post_submission``
+            # above. The shared boot ``self._setup`` is the fallback (in-memory / no-DB
+            # lane, where there is no Session to isolate). This is what keeps the 24/7
+            # scheduler thread's automated-work gate reads off the boot Session a
+            # concurrent gated request handler is reading (``This session is provisioning
+            # a new connection`` race under real Postgres).
+            setup = (
+                services.get("setup_service") if services else None
+            ) or self._setup
 
             for campaign in self._active_campaigns(storage):
                 # (a) advance the per-campaign run loop one step. IDEM-1: the loop
@@ -306,11 +317,11 @@ class Scheduler:
             #     gated + idempotent, while the per-tick storage/session is still open
             #     (its summaries provider may read recent runs from it). Runs inside the
             #     same try so the session is always closed in the finally below.
-            curated = self._run_curation(curation, storage, now)
+            curated = self._run_curation(curation, storage, now, setup=setup)
             # (b2) push the proactive periodic agent status update once per UTC day
             #      (FR-AGENT-7/FR-OBS-2), gated + idempotent. Uses the SAME campaigns the
             #      loop ticked above so a freshly-removed campaign gets none.
-            status_pushed = self._run_status_updates(storage, now)
+            status_pushed = self._run_status_updates(storage, now, setup=setup)
             # (b3) push the proactive "still blocked on essentials" nudge once per
             #      (campaign, UTC day) (FR-NOTIF / FR-ONBOARD), gated + idempotent. Uses
             #      the SAME campaigns the loop ticked so a freshly-removed campaign gets none.
@@ -319,7 +330,7 @@ class Scheduler:
             #      once per (campaign, ISO week), gated + idempotent. Reuses the SAME
             #      shared ``digest_service`` + notification fan-out the daily digest
             #      already uses. Uses the SAME campaigns the loop ticked above.
-            weekly_recapped = self._run_weekly_recap(storage, now)
+            weekly_recapped = self._run_weekly_recap(storage, now, setup=setup)
             # (b5) #363: run the PII retention sweep once per UTC day, gated +
             #     idempotent. Prunes stored PII/EEO older than the configured window.
             retention_pruned = self._run_pii_retention(now)
@@ -327,14 +338,18 @@ class Scheduler:
             #      sweep (ghosting detection + follow-up drafting) once per
             #      (campaign, UTC day), gated + idempotent. Uses the SAME campaigns
             #      the loop ticked above.
-            post_submission_swept = self._run_post_submission_sweep(post_submission, storage, now)
+            post_submission_swept = self._run_post_submission_sweep(
+                post_submission, storage, now, setup=setup
+            )
             # (b7) dark-engine audit B2 item 7: send every owner-approved,
             #      now-due follow-up. Runs EVERY tick (not once/day) -- see the
             #      ``_inbox_scan_days``/send-queue field comment in __init__.
-            follow_ups_sent = self._run_follow_up_send(post_submission, now)
+            follow_ups_sent = self._run_follow_up_send(post_submission, now, setup=setup)
             # (b8) dark-engine audit B2 item 10: the inbox-to-outcome scan sweep,
             #      once per (campaign, UTC day), gated + idempotent.
-            inbox_scan_result = self._run_inbox_scan_sweep(post_submission, storage, now)
+            inbox_scan_result = self._run_inbox_scan_sweep(
+                post_submission, storage, now, setup=setup
+            )
         except Exception:
             # The tick body itself blew up (services factory / campaign query / a nudge
             # ran unguarded) — count it as a failed tick for stall detection. The
@@ -599,15 +614,19 @@ class Scheduler:
                 self._campaign_locks[key] = lock
             return lock
 
-    def _automated_work_allowed(self) -> bool:
+    def _automated_work_allowed(self, setup=None) -> bool:
         """True when automated work may begin (FR-ONBOARD-2/FR-OOBE-3).
 
-        Treated as open when no ``setup_service`` is wired (legacy/unit tests).
+        Treated as open when no ``setup_service`` is wired (legacy/unit tests). CONC-2:
+        ``setup`` is the per-tick, Session-isolated setup service resolved in ``tick``;
+        it defaults to the process-lived boot ``self._setup`` so a direct call (unit
+        tests, the in-memory lane with no per-tick Session) is unchanged.
         """
-        if self._setup is None:
+        svc = setup if setup is not None else self._setup
+        if svc is None:
             return True
         try:
-            return bool(self._setup.is_automated_work_allowed())
+            return bool(svc.is_automated_work_allowed())
         except Exception:  # pragma: no cover - defensive: gate failure closes the gate
             return False
 
@@ -636,7 +655,7 @@ class Scheduler:
         return fired
 
     # --- closed-loop curation nudge (FR-MIND-7) ---------------------------
-    def _effective_curation_schedule(self) -> str:
+    def _effective_curation_schedule(self, setup=None) -> str:
         """The LIVE cadence in effect right now, re-read every tick.
 
         Dark-engine audit item 66: the constructor-time ``self._curation_schedule``
@@ -651,9 +670,10 @@ class Scheduler:
         when nothing has been saved yet or no ``setup_service`` is wired
         (legacy/unit tests, in-memory boot).
         """
-        if self._setup is not None:
+        svc = setup if setup is not None else self._setup
+        if svc is not None:
             try:
-                stored = self._setup.get_automation_prefs()
+                stored = svc.get_automation_prefs()
             except Exception:  # pragma: no cover - defensive: never break a tick
                 stored = None
             value = (stored or {}).get("curation_schedule")
@@ -661,7 +681,7 @@ class Scheduler:
                 return str(value).strip().lower()
         return self._curation_schedule
 
-    def _run_curation(self, curation, storage, now: datetime) -> dict:
+    def _run_curation(self, curation, storage, now: datetime, setup=None) -> dict:
         """Run the curation nudge at most once per UTC day, gated + idempotent.
 
         Fast no-op when (a) disabled (``CURATION_SCHEDULE`` off / no service, or the
@@ -673,9 +693,9 @@ class Scheduler:
         duplicates proposals (FR-MIND-7). Memory/skills proposed are advisory only
         and confer no authority (FR-MIND-11).
         """
-        if curation is None or self._effective_curation_schedule() in ("", "off"):
+        if curation is None or self._effective_curation_schedule(setup) in ("", "off"):
             return {"ran": False, "reason": "disabled"}
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return {"ran": False, "reason": "gated"}
         today = now.date()
         self._prune_curation_days(today)
@@ -712,7 +732,7 @@ class Scheduler:
         }
 
     # --- proactive periodic status update (FR-AGENT-7 / FR-OBS-2) ---------
-    def _run_status_updates(self, storage, now: datetime) -> list[str]:
+    def _run_status_updates(self, storage, now: datetime, setup=None) -> list[str]:
         """Push the periodic agent status update at most once per (campaign, UTC day).
 
         Fast no-op when (a) disabled (``STATUS_UPDATE_SCHEDULE`` off / no service), or
@@ -724,7 +744,7 @@ class Scheduler:
         """
         if self._status_update is None or self._status_update_schedule in ("", "off"):
             return []
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return []
         today = now.date()
         self._prune_status_update_days(today)
@@ -801,7 +821,7 @@ class Scheduler:
         }
 
     # --- weekly recap (Top-25 #18) -----------------------------------------
-    def _run_weekly_recap(self, storage, now: datetime) -> list[str]:
+    def _run_weekly_recap(self, storage, now: datetime, setup=None) -> list[str]:
         """Push the weekly recap at most once per (campaign, ISO week).
 
         Fast no-op when (a) disabled (``WEEKLY_RECAP_SCHEDULE`` off / no digest
@@ -815,7 +835,7 @@ class Scheduler:
         """
         if self._digest is None or self._weekly_recap_schedule in ("", "off"):
             return []
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return []
         iso_year, iso_week, _ = now.isocalendar()
         week_key = (iso_year, iso_week)
@@ -872,7 +892,9 @@ class Scheduler:
         return pruned
 
     # --- post-submission lifecycle sweep (dark-engine audit B2 items 8/9/60) ---
-    def _run_post_submission_sweep(self, post_submission, storage, now: datetime) -> dict:
+    def _run_post_submission_sweep(
+        self, post_submission, storage, now: datetime, setup=None
+    ) -> dict:
         """Run the ghosting + follow-up-drafting sweep at most once per (campaign, UTC day).
 
         Fast no-op when (a) no ``post_submission_service`` is wired, or (b) the
@@ -889,7 +911,7 @@ class Scheduler:
         """
         if post_submission is None:
             return {"ghosted": [], "followups_drafted": []}
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return {"ghosted": [], "followups_drafted": []}
         today = now.date()
         self._prune_post_submission_days(today)
@@ -922,7 +944,7 @@ class Scheduler:
         }
 
     # --- follow-up send queue (dark-engine audit B2 item 7) -----------------
-    def _run_follow_up_send(self, post_submission, now: datetime) -> list[str]:
+    def _run_follow_up_send(self, post_submission, now: datetime, setup=None) -> list[str]:
         """Send every owner-approved, now-due follow-up (item 7's send-queue
         driver -- ``PostSubmissionService.send_scheduled_follow_ups`` /
         ``schedule_follow_up`` previously had zero callers).
@@ -941,7 +963,7 @@ class Scheduler:
         """
         if post_submission is None:
             return []
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return []
         try:
             sent = post_submission.send_scheduled_follow_ups(now=now)
@@ -951,7 +973,9 @@ class Scheduler:
         return [str(f.id) for f in sent] if sent else []
 
     # --- inbox-to-outcome scan sweep (dark-engine audit B2 item 10) --------
-    def _run_inbox_scan_sweep(self, post_submission, storage, now: datetime) -> dict:
+    def _run_inbox_scan_sweep(
+        self, post_submission, storage, now: datetime, setup=None
+    ) -> dict:
         """Rejection/interview/offer inbox scan, at most once per (campaign,
         UTC day) (item 10 -- ``PostSubmissionService.scan_email_for_rejection``
         et al. were never fed the owner's actual inbox).
@@ -969,7 +993,7 @@ class Scheduler:
         empty = {"scanned": 0, "matched": 0}
         if post_submission is None:
             return empty
-        if not self._automated_work_allowed():
+        if not self._automated_work_allowed(setup):
             return empty
         today = now.date()
         self._prune_inbox_scan_days(today)

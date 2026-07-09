@@ -600,88 +600,113 @@ def build_container(settings: Settings | None = None) -> Container:
     resume_parser = LLMVerifiedResumeParser(
         ResumeParser(), enabled=settings.parse_verify_enabled
     )
-    onboarding_service = OnboardingService(
-        storage=storage,
-        config_store=config_store,
-        resume_parser=resume_parser,
-    )
-
-    # The hard apply-gate: autonomous applying (discovery -> apply) is BLOCKED until
-    # the required-to-apply essentials exist for SOME campaign (target roles, work
-    # mode, locations, salary floor, key skills, and a résumé). The onboarding form
-    # itself requires virtually nothing — the agent gathers these over time (chat,
-    # résumé parse, learning) — so the gate keys on the readiness of the essentials,
-    # not on a fully-completed comprehensive intake. It BLOCKS, never half-applies.
-    def _onboarding_gate() -> bool:
-        for c in storage.campaigns.list():
-            if onboarding_service.is_ready_to_apply(str(c.id)):
-                return True
-        return False
-
-    # Perf item #8: ``_onboarding_gate`` scans every campaign and computes full
-    # apply-readiness (criteria load + résumé check) per campaign, and it backs
-    # ``require_automated_work`` — polled by agent_status, digest, and agent-runs
-    # every 45-60s from every surface. Wrap it in a short-TTL memo (see
-    # ``TTLCachedGate`` for the safety reasoning) so the expensive scan runs at
-    # most once per TTL window instead of once per poll. Wrapping the closure
-    # here — rather than caching inside ``SetupService.is_automated_work_allowed``
-    # — keeps unit tests that build a bare ``SetupService`` with their own
-    # real-time gate closure unaffected (they must keep seeing changes
-    # immediately); only this real, expensive, container-wired closure is cached.
-    _onboarding_gate_cached = TTLCachedGate(
-        _onboarding_gate, DEFAULT_ONBOARDING_GATE_CACHE_TTL_S
-    )
-
-    # The matching "what's still missing" reporter for the gate: the FIRST campaign's
-    # readiness drives the setup-status payload + chat copy so the front door can say
-    # "I can't start applying until I know: ..." with the real remaining items. Reads
-    # real campaign data only; never fabricated.
-    def _apply_readiness():
-        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
-
-        # Exclude the reserved __system__ campaign (instance secrets only — it has no
-        # criteria/résumé). Including it made the "what's still missing" surface fall
-        # back to ITS emptiness (campaigns[0]) and report every essential missing —
-        # e.g. claiming a résumé is needed right after one was uploaded to the real
-        # campaign. Mirror campaign_service.list_campaigns(), which already excludes it.
-        campaigns = [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
-        for c in campaigns:
-            r = onboarding_service.apply_readiness(str(c.id))
-            if r.ready:
-                return r
-        if campaigns:
-            return onboarding_service.apply_readiness(str(campaigns[0].id))
-        return None
-
-    # Setup service so the persisted ladder can configure the LLM adapter; its
-    # automated-work gate now requires ONLY the LLM + apply-readiness gates (channels
-    # and the sandbox moved into Settings and are optional). The channels gate is
-    # still wired so the status payload reports channel state for the Settings UI;
-    # it reads the wizard-persisted channel config OR env defaults.
-    setup_service = SetupService(
-        llm_configured=settings.llm_configured,
-        config_store=config_store,
-        credentials=credentials,
-        onboarding_gate=_onboarding_gate_cached,
-        sandbox_backend=settings.sandbox_backend,
-        # P2-11: local-only private mode filters the effective ladder AND the
-        # LLM gate inside SetupService (single chokepoint for every consumer).
-        local_only=settings.llm_local_only,
-        # P5-3: env-sourced telemetry DEFAULTS only; Settings > System can
-        # override at runtime (persisted like every other Settings knob), and
-        # the real send-or-not decision is recomputed fresh by
-        # ``telemetry_status`` on every call, folding in ``local_only`` too.
-        telemetry_enabled_default=settings.telemetry_enabled,
-        telemetry_endpoint_default=settings.telemetry_endpoint,
-    )
-    setup_service.set_apply_readiness_reporter(_apply_readiness)
-
-    def _channels_gate() -> bool:
-        return setup_service.channels_configured() or bool(
-            settings.discord_webhook_url or settings.apprise_urls
+    # CONC-2 (scheduler ↔ request Session isolation): the onboarding-gate scan and the
+    # config-store reads/writes that back the automated-work gate BOTH ride whatever
+    # Session ``a_storage``/``a_config_store`` were built on. The boot-time stack binds
+    # to the process-lived boot Session, but the 24/7 scheduler thread must NOT reuse
+    # it: a background tick reading the gate while a gated request handler reads the
+    # same boot Session raises ``This session is provisioning a new connection;
+    # concurrent operations are not permitted`` (first surfaced under real Postgres +
+    # xdist, where connection provisioning is slow enough to widen the race; the
+    # in-memory lane has no Session so it never manifests). So the whole setup/onboarding
+    # stack is built by this factory, and ``_build_tick_services`` below builds a SECOND
+    # stack bound to the tick's OWN fresh Session — mirroring how storage-bound services
+    # are already isolated per tick. ``a_config_store`` and ``a_storage`` MUST share one
+    # Session (the caller pairs them so).
+    def _build_setup_stack(a_storage, a_config_store):
+        onboarding_service = OnboardingService(
+            storage=a_storage,
+            config_store=a_config_store,
+            resume_parser=resume_parser,
         )
 
-    setup_service.set_channels_gate(_channels_gate)
+        # The hard apply-gate: autonomous applying (discovery -> apply) is BLOCKED until
+        # the required-to-apply essentials exist for SOME campaign (target roles, work
+        # mode, locations, salary floor, key skills, and a résumé). The onboarding form
+        # itself requires virtually nothing — the agent gathers these over time (chat,
+        # résumé parse, learning) — so the gate keys on the readiness of the essentials,
+        # not on a fully-completed comprehensive intake. It BLOCKS, never half-applies.
+        def _onboarding_gate() -> bool:
+            for c in a_storage.campaigns.list():
+                if onboarding_service.is_ready_to_apply(str(c.id)):
+                    return True
+            return False
+
+        # Perf item #8: ``_onboarding_gate`` scans every campaign and computes full
+        # apply-readiness (criteria load + résumé check) per campaign, and it backs
+        # ``require_automated_work`` — polled by agent_status, digest, and agent-runs
+        # every 45-60s from every surface. Wrap it in a short-TTL memo (see
+        # ``TTLCachedGate`` for the safety reasoning) so the expensive scan runs at
+        # most once per TTL window instead of once per poll. Wrapping the closure
+        # here — rather than caching inside ``SetupService.is_automated_work_allowed``
+        # — keeps unit tests that build a bare ``SetupService`` with their own
+        # real-time gate closure unaffected (they must keep seeing changes
+        # immediately); only this real, expensive, container-wired closure is cached.
+        _onboarding_gate_cached = TTLCachedGate(
+            _onboarding_gate, DEFAULT_ONBOARDING_GATE_CACHE_TTL_S
+        )
+
+        # The matching "what's still missing" reporter for the gate: the FIRST campaign's
+        # readiness drives the setup-status payload + chat copy so the front door can say
+        # "I can't start applying until I know: ..." with the real remaining items. Reads
+        # real campaign data only; never fabricated.
+        def _apply_readiness():
+            from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+            # Exclude the reserved __system__ campaign (instance secrets only — it has no
+            # criteria/résumé). Including it made the "what's still missing" surface fall
+            # back to ITS emptiness (campaigns[0]) and report every essential missing —
+            # e.g. claiming a résumé is needed right after one was uploaded to the real
+            # campaign. Mirror campaign_service.list_campaigns(), which already excludes it.
+            campaigns = [
+                c for c in a_storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID
+            ]
+            for c in campaigns:
+                r = onboarding_service.apply_readiness(str(c.id))
+                if r.ready:
+                    return r
+            if campaigns:
+                return onboarding_service.apply_readiness(str(campaigns[0].id))
+            return None
+
+        # Setup service so the persisted ladder can configure the LLM adapter; its
+        # automated-work gate now requires ONLY the LLM + apply-readiness gates (channels
+        # and the sandbox moved into Settings and are optional). The channels gate is
+        # still wired so the status payload reports channel state for the Settings UI;
+        # it reads the wizard-persisted channel config OR env defaults.
+        setup_service = SetupService(
+            llm_configured=settings.llm_configured,
+            config_store=a_config_store,
+            credentials=credentials,
+            onboarding_gate=_onboarding_gate_cached,
+            sandbox_backend=settings.sandbox_backend,
+            # P2-11: local-only private mode filters the effective ladder AND the
+            # LLM gate inside SetupService (single chokepoint for every consumer).
+            local_only=settings.llm_local_only,
+            # P5-3: env-sourced telemetry DEFAULTS only; Settings > System can
+            # override at runtime (persisted like every other Settings knob), and
+            # the real send-or-not decision is recomputed fresh by
+            # ``telemetry_status`` on every call, folding in ``local_only`` too.
+            telemetry_enabled_default=settings.telemetry_enabled,
+            telemetry_endpoint_default=settings.telemetry_endpoint,
+        )
+        setup_service.set_apply_readiness_reporter(_apply_readiness)
+
+        def _channels_gate() -> bool:
+            return setup_service.channels_configured() or bool(
+                settings.discord_webhook_url or settings.apprise_urls
+            )
+
+        setup_service.set_channels_gate(_channels_gate)
+        # The gate cache is returned so the boot caller can invalidate it immediately
+        # after each readiness-flipping write path (see ``_invalidate_gate_after``);
+        # the per-tick caller discards it (a per-tick cache lives and dies with the tick).
+        return setup_service, onboarding_service, _onboarding_gate_cached
+
+    # Boot-time stack, bound to the process-lived boot Session (``config_store`` above).
+    setup_service, onboarding_service, _onboarding_gate_cached = _build_setup_stack(
+        storage, config_store
+    )
 
     # G07 / lens 11 #22: pre-submit safety parameters -- built ONCE and shared by
     # every AgentLoop (pipeline-start block) AND every DigestService (digest-row
@@ -1467,6 +1492,21 @@ def build_container(settings: Settings | None = None) -> Container:
     # orchestrator/sandbox/...) and session-free services are reused. With in-memory
     # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
     def _build_tick_services(tick_storage):
+        # CONC-2: a per-tick setup/onboarding stack bound to THIS tick's fresh Session
+        # (never the process-lived boot Session the request gate reads), so the 24/7
+        # scheduler thread's automated-work gate + apply-readiness reads can never race
+        # a concurrent gated request handler on one non-thread-safe Session. Mirrors the
+        # per-tick storage isolation below; the scheduler + this tick's AgentLoop/
+        # PrefillService all read the gate through ``tick_setup_service``.
+        tick_session = getattr(tick_storage, "_session", None)
+        tick_config_store = (
+            SqlAlchemyAppConfigStore(tick_session)
+            if tick_session is not None
+            else InMemoryAppConfigStore()
+        )
+        tick_setup_service, _tick_onboarding, _tick_gate_cache = _build_setup_stack(
+            tick_storage, tick_config_store
+        )
         # #44: share the ONE process-lived EpisodicLessonLedger (not a per-tick
         # instance), so a lesson reflected on in one tick is recalled in the next.
         ls = LearningService(tick_storage, embedding, lesson_ledger=lesson_ledger)
@@ -1542,8 +1582,10 @@ def build_container(settings: Settings | None = None) -> Container:
             # so induced routines + ACE counters survive the per-tick loop rebuild.
             routine_store=routine_store,
             # Lens 11 #22: live re-read of a Settings > Automation match-rate-floor
-            # override (see the main ``prefill_service`` build above).
-            setup_service=setup_service,
+            # override (see the main ``prefill_service`` build above). CONC-2: the
+            # per-tick, Session-isolated setup service so this tick's re-read never
+            # touches the boot Session the request gate reads.
+            setup_service=tick_setup_service,
             # Lens 04 #39 / DISC-3: share the ONE process-lived diagnostics ring (NOT
             # a per-tick instance), so silent-degradation diagnostics recorded during
             # this tick survive the per-tick loop rebuild.
@@ -1590,7 +1632,10 @@ def build_container(settings: Settings | None = None) -> Container:
             final_approval_service=final_approval_service,
             sandbox=sandbox,
             orchestrator=orchestrator,
-            setup_service=setup_service,
+            # CONC-2: the per-tick, Session-isolated setup service (see the top of this
+            # factory) so the loop's automated-work gate reads this tick's fresh Session,
+            # never the boot Session a concurrent request handler's gate is reading.
+            setup_service=tick_setup_service,
             research_service=research_service,
             resume_ledger=resume_ledger,
             digest_ledger=digest_ledger,
@@ -1617,6 +1662,10 @@ def build_container(settings: Settings | None = None) -> Container:
             # the scheduler's ghosting/follow-up sweep runs against THIS tick's storage
             # (CONC-2), same pattern as ``curation_service`` above.
             "post_submission_service": post_sub,
+            # CONC-2: the per-tick, Session-isolated setup service so the scheduler's own
+            # automated-work gate + automation-prefs reads use THIS tick's fresh Session
+            # (see Scheduler.tick), never the boot Session the request gate reads.
+            "setup_service": tick_setup_service,
         }
 
     # CONC-REQ-1: build the storage-bound services for ONE request from a per-request
