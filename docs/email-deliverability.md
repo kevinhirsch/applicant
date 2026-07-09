@@ -37,7 +37,7 @@ before it decides whether to trust the message:
    domain that lists which mail servers are allowed to send as you. Example,
    for a domain sending only through one SMTP relay:
 
-   ```
+   ```text
    yourdomain.com.  TXT  "v=spf1 mx a:smtp.yourhost.com ~all"
    ```
 
@@ -50,7 +50,7 @@ before it decides whether to trust the message:
    key as a DNS TXT record so the recipient can verify the signature wasn't
    tampered with in transit:
 
-   ```
+   ```text
    selector._domainkey.yourdomain.com.  TXT  "v=DKIM1; k=rsa; p=<public-key>"
    ```
 
@@ -64,7 +64,7 @@ before it decides whether to trust the message:
    tells receiving servers what to do when SPF and/or DKIM fail, and where to
    send aggregate failure reports:
 
-   ```
+   ```text
    _dmarc.yourdomain.com.  TXT  "v=DMARC1; p=quarantine; rua=mailto:you@yourdomain.com"
    ```
 
@@ -86,7 +86,7 @@ already supports a custom From name/address and a Reply-To address as query
 parameters on the same `apprise_urls` value — no code change needed to use
 them, just add the params:
 
-```
+```text
 mailtos://user:pass@smtp.yourhost.com:587?from=Applicant&reply=you@yourdomain.com
 ```
 

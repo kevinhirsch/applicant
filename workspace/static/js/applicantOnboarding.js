@@ -684,6 +684,17 @@ function _tip(text) {
   return `<span class="preset-hint-icon ao-tip" role="img" data-tip="${esc(text)}" aria-label="${esc(text)}" tabindex="0">?</span>`;
 }
 
+// Small inline pill next to a notification-channel label. `variant` is
+// 'recommended' (blue, carries the ao-ch-recommended class the pins key off)
+// or 'setup' (amber, class-less). The rest of the inline style is shared so the
+// three call sites stay in sync.
+function _channelBadge(text, variant) {
+  const cls = variant === 'recommended' ? ' class="ao-ch-recommended"' : '';
+  const color = variant === 'recommended' ? '#2f6fed' : '#8a6d3b';
+  const bg = variant === 'recommended' ? 'rgba(47,111,237,0.12)' : 'rgba(138,109,59,0.12)';
+  return `<span${cls} style="font-size:10px;font-weight:600;color:${color};background:${bg};border-radius:3px;padding:1px 5px;margin-left:4px;">${text}</span>`;
+}
+
 // ── render the active step ──────────────────────────────────────────────────
 
 async function _renderStep() {
@@ -1003,12 +1014,12 @@ async function _renderChannels() {
   try { _browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* keep UTC fallback */ }
   const qhTz = qh.tz || _browserTz;
   _setBody(`
-    <h2 class="ao-step-title">Notifications ${_tip('How I reach you — Discord and/or email — with your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
+    <h2 class="ao-step-title">Notifications ${_tip('How I reach you — Discord, phone push (ntfy), and/or email — with your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
     <p class="ao-step-desc">Add a Discord webhook and/or an email address so I can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later. Discord and phone push (ntfy) are <strong>recommended</strong>: they need no DNS setup and can't land in a spam folder. Email works too, but it's only as reliable as your own mail server's setup — see the deliverability tips below before you lean on it.</p>
     <div class="admin-card">
       <div class="settings-col">
         <div class="settings-row">
-          <label class="settings-label">Discord webhook <span class="ao-ch-recommended" style="font-size:10px;font-weight:600;color:#2f6fed;background:rgba(47,111,237,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Recommended</span>
+          <label class="settings-label">Discord webhook ${_channelBadge('Recommended', 'recommended')}
             ${_tip('In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.')}
           </label>
           <input id="ao-ch-discord" class="settings-select" type="text" placeholder="https://discord.com/api/webhooks/…" value="${esc(cur.discord_webhook_url || '')}" />
@@ -1016,7 +1027,7 @@ async function _renderChannels() {
         </div>
         <div class="settings-row"><span id="ao-ch-test-discord-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div class="settings-row">
-          <label class="settings-label">Phone push (ntfy) <span class="ao-ch-recommended" style="font-size:10px;font-weight:600;color:#2f6fed;background:rgba(47,111,237,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Recommended</span>
+          <label class="settings-label">Phone push (ntfy) ${_channelBadge('Recommended', 'recommended')}
             ${_tip('A free ntfy topic URL for instant push to your phone, e.g. ntfy://ntfy.sh/your-secret-topic. Install the ntfy app, subscribe to the same topic, and urgent action alerts arrive as push notifications. Add several, comma-separated.')}
           </label>
           <input id="ao-ch-ntfy" class="settings-select" type="text" placeholder="${cur.ntfy_configured ? '•••• already saved — leave blank to keep' : 'ntfy://ntfy.sh/your-secret-topic'}" value="" />
@@ -1024,7 +1035,7 @@ async function _renderChannels() {
         </div>
         <div class="settings-row"><span id="ao-ch-test-ntfy-msg" style="font-size:11px;margin-left:auto;"></span></div>
         <div class="settings-row">
-          <label class="settings-label">Email / SMTP <span style="font-size:10px;font-weight:600;color:#8a6d3b;background:rgba(138,109,59,0.12);border-radius:3px;padding:1px 5px;margin-left:4px;">Needs setup for reliable delivery</span>
+          <label class="settings-label">Email / SMTP ${_channelBadge('Needs setup for reliable delivery', 'setup')}
             ${_tip('An Apprise-style URL, e.g. mailto://user:pass@gmail.com. You can add several, comma-separated. Sending through your own SMTP host? Add SPF/DKIM/DMARC records for that domain or digests can land in spam — see the deliverability tips below.')}
           </label>
           <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
