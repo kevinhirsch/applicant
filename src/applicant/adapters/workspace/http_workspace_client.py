@@ -21,6 +21,7 @@ down workspace never 500s the engine).
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -40,10 +41,38 @@ _INTERNAL_PREFIX = "/api/applicant/internal"
 #: Default per-call HTTP timeout for the SHORT callbacks (ping, calendar, local
 #: models) — these answer quickly, so a tight bound surfaces a down workspace fast.
 _DEFAULT_TIMEOUT = 10.0
+#: Env var to tune the deep-research transport ceiling (seconds) at deploy time
+#: without a code change or container-wiring (config-local; read at construction).
+_RESEARCH_TIMEOUT_ENV = "WORKSPACE_RESEARCH_TIMEOUT"
 #: Deep research is a multi-source synchronous LLM job, so it needs a much longer
 #: HTTP read budget than the snappy callbacks. This is the *transport* ceiling; the
-#: research *budget* is carried separately in the ``max_time`` body field.
-_DEFAULT_RESEARCH_TIMEOUT = 30.0
+#: research *budget* is carried separately in the ``max_time`` body field. The
+#: default MUST outlast the workspace's own research-budget ceiling
+#: (``_RESEARCH_MAX_MAX_TIME`` = 600s in ``applicant_internal_routes.py``) plus
+#: buffer, and mirrors the front-door route's read ceiling
+#: (``_RESEARCH_RUN_MAX_TIMEOUT`` = 630s in ``applicant_research_routes.py``) —
+#: else a legitimate long run 502s at THIS inner hop before the workspace answers
+#: (DISC-5: the earlier 30s default cut off any run longer than a trivial cache hit).
+_DEFAULT_RESEARCH_TIMEOUT = 630.0
+
+
+def _resolve_research_timeout() -> float:
+    """Deep-research transport ceiling (seconds).
+
+    ``WORKSPACE_RESEARCH_TIMEOUT`` when set to a positive number, else the sane
+    default (:data:`_DEFAULT_RESEARCH_TIMEOUT`). Resolved at construction so a
+    deploy can tune it via env without threading a new setting through the
+    container — the value is adapter-local by design.
+    """
+    raw = os.environ.get(_RESEARCH_TIMEOUT_ENV)
+    if raw:
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            val = 0.0
+        if val > 0:
+            return val
+    return _DEFAULT_RESEARCH_TIMEOUT
 #: HTTP statuses treated as transient here: a fronting proxy returns these while the
 #: workspace container is restarting / redeploying, so the request never reached the
 #: app. They are safe to retry; every other 4xx/5xx is surfaced immediately.
@@ -65,7 +94,7 @@ class HttpWorkspaceClient:
         base_url: str = DEFAULT_WORKSPACE_URL,
         token: str = "",
         timeout: float = _DEFAULT_TIMEOUT,
-        research_timeout: float = _DEFAULT_RESEARCH_TIMEOUT,
+        research_timeout: float | None = None,
         transport: httpx.BaseTransport | None = None,
         retry_attempts: int = _DEFAULT_RETRY_ATTEMPTS,
         retry_backoff: float = _DEFAULT_RETRY_BACKOFF,
@@ -76,8 +105,14 @@ class HttpWorkspaceClient:
         self._token = (token or "").strip()
         self._timeout = timeout
         # Research gets its own (longer) transport ceiling; the snappy callbacks
-        # keep the short default so a down workspace is detected quickly.
-        self._research_timeout = research_timeout
+        # keep the short default so a down workspace is detected quickly. When the
+        # caller doesn't pin it, resolve from env/default (config-local) so the
+        # inner research hop's read budget outlasts the workspace's own run budget.
+        self._research_timeout = (
+            float(research_timeout)
+            if research_timeout is not None
+            else _resolve_research_timeout()
+        )
         # Injectable transport so tests use httpx.MockTransport (hermetic).
         self._transport = transport
         # Bounded retry with exponential backoff for the idempotent/safe callbacks
