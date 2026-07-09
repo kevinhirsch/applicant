@@ -123,14 +123,20 @@ def test_purge_without_confirmation_refuses_and_touches_nothing(tmp_path):
 
 
 def test_purge_with_explicit_yes_removes_volumes_images_and_env(tmp_path):
-    res, log, scratch_repo = _run(tmp_path, "--purge", "-y")
-    assert res.returncode == 0, res.stderr
-    assert "down --volumes --rmi local --remove-orphans" in log
-    # .env is removed by purge (if present) — write one first to prove removal.
+    # Seed a .env at the deterministic scratch-repo path _run() derives ENV_FILE
+    # from (REPO_ROOT/.env), so purge has a real file to delete. _run() recreates
+    # the dir with exist_ok and rewrites only the script + compose file — it never
+    # touches an existing .env — so this pre-seeded file is present when purge runs.
+    scratch_repo = tmp_path / "repo"
+    scratch_repo.mkdir(parents=True, exist_ok=True)
     env_file = scratch_repo / ".env"
     env_file.write_text("POSTGRES_PASSWORD=x\n", encoding="utf-8")
-    res2, log2, _ = _run(tmp_path, "--purge", "-y")
-    assert res2.returncode == 0, res2.stderr
+    res, log, _ = _run(tmp_path, "--purge", "-y")
+    assert res.returncode == 0, res.stderr
+    assert "down --volumes --rmi local --remove-orphans" in log
+    # The regression this guards (Greptile P2 on PR #780): purge must ACTUALLY
+    # delete .env, not merely log that it would — assert the file is gone.
+    assert not env_file.exists()
 
 
 def test_doctor_mode_is_read_only(tmp_path):
