@@ -81,6 +81,7 @@ def client(monkeypatch):
 
 _ALL_REAL = {
     "generated_at": "2026-07-08T00:00:00+00:00",
+    "version": "0.1.0",
     "capabilities": [
         {"name": "postgres", "label": "Database (Postgres)", "status": "real",
          "detail": "ok (connected)", "load_bearing": True, "fix": ""},
@@ -130,6 +131,15 @@ def test_proxies_the_engines_real_report_verbatim(client):
     names = {c["name"] for c in body["capabilities"]}
     assert names == {"postgres", "resume_renderer", "browser", "orchestrator"}
     assert ("health_capabilities") in FakeEngine.calls
+    # P3-5 (release engineering): the engine's real version is proxied verbatim.
+    assert body["version"] == "0.1.0"
+
+
+def test_missing_version_from_engine_proxies_as_empty_not_invented(client):
+    FakeEngine.response = _ONE_DEGRADED  # has no "version" key
+    r = client.get("/api/applicant/health/capabilities")
+    body = r.json()
+    assert body["version"] == ""
 
 
 def test_degraded_item_carries_fix_copy_and_load_bearing_flag(client):

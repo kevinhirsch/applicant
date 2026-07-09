@@ -74,12 +74,21 @@ function _panelSummaryHTML(data, caps) {
   return `<div style="font-size:12px;margin-bottom:10px;color:var(--color-danger,#e06c6c);">${degraded} of ${total} capabilit${degraded === 1 ? 'y is' : 'ies are'} running in a degraded/stub mode — see the fix below each one.</div>`;
 }
 
+// Running engine version (P3-5, release engineering). Renders nothing when the
+// payload carries none (older engine / degraded read) — the absence of a
+// version must never be dressed up as one.
+function _versionLineHTML(data) {
+  const v = data && data.version;
+  if (!v) return '';
+  return `<div style="font-size:11px;opacity:0.55;margin-bottom:6px;">Engine v${esc(String(v))}</div>`;
+}
+
 function _panelBodyHTML(data) {
   const caps = Array.isArray(data && data.capabilities) ? data.capabilities : [];
   if (!caps.length) {
-    return `<div style="font-size:12px;opacity:0.7;padding:8px 2px;">Nothing to report yet.</div>`;
+    return `${_versionLineHTML(data)}<div style="font-size:12px;opacity:0.7;padding:8px 2px;">Nothing to report yet.</div>`;
   }
-  return _panelSummaryHTML(data, caps) + caps.map(_capabilityRowHTML).join('');
+  return _versionLineHTML(data) + _panelSummaryHTML(data, caps) + caps.map(_capabilityRowHTML).join('');
 }
 
 async function _renderPanelInto(body) {
