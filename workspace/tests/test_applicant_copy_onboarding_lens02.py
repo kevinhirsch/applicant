@@ -79,7 +79,7 @@ def test_connect_a_model_tooltip_and_save_error_are_first_person():
 
 def test_notifications_step_is_first_person():
     js = _read(ONBOARDING_JS)
-    assert "How I reach you — Discord and/or email" in js
+    assert "How I reach you — Discord, phone push (ntfy), and/or email" in js
     assert "so I can send you updates and ask for approvals" in js
     assert "How Applicant reaches you" not in js
     assert "so Applicant can send you updates" not in js
