@@ -97,7 +97,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 | P4-1 | Positioning statement | S | you+eng | — |
 | P4-2 | Landing page | M | eng | PARTIAL — pricing + FAQ + proof-strip/hero-video slots shipped, nav-reachable; real video/screenshots pending P4-3 |
 | P4-3 | Proof assets | M | eng+you | — |
-| P4-4 | Competitive teardown | M | eng | — |
+| P4-4 | Competitive teardown | M | eng | DONE — `docs/competitive-teardown.md` |
 | P4-5 | Early-access cohort | M | you+eng | — |
 | P4-6 | Pricing validation | S | you | — |
 | P4-DEC-1 | Source-available decision | — | you | — |
@@ -1579,6 +1579,20 @@ a before/after tailoring diff.
 **Effort:** M · **Owner:** eng · **DoD:** Feature grid + failure modes + pricing for
 AIHawk, LazyApply, Simplify, and the tracker/AIApply classes; verifies the current
 comp set (confirm Sonara status) and sharpens P4-1.
+**Status: DONE** — `docs/competitive-teardown.md`. Live-researched (verified against
+vendor primary sources where reachable; third-party review-blog claims explicitly
+labeled reported-unverified per the H-series honesty bar). Comp-set re-verified:
+**AIHawk is archived** (owner archived the repo 2026-05-17, confirmed on the GitHub
+page) and is now a historical/OSS reference rather than a maintained rival; **Sonara
+confirmed still live** but with an unstable history (2024 shutdown → BOLD acquisition
+→ relaunch → reported outage reports as recently as April 2026) that itself sharpens
+the self-hosted/no-vendor-mortality argument for P4-1. Added Teal/Huntr/JobRight.ai as
+the tracker-class representatives alongside AIApply. Key output for P4-1: Applicant's
+sharpest, cheapest-to-defend claims are review-before-submit as architecture (no
+competitor researched enforces this in logic) and the protected-question honesty
+policy (no competitor discloses one at all) — plus an honest gap list (no free tier,
+narrower ATS/board coverage claims, no full LinkedIn Easy Apply autopilot yet — that's
+P5-6, thinner distribution/social proof pre-launch) so P4-2 doesn't over-claim.
 
 ### P4-5 — Early-access cohort
 **Effort:** M · **Owner:** you recruit / eng instrument · **DoD:** 10–20 users with a
