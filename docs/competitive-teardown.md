@@ -127,10 +127,13 @@ Evidence-class column: **VP** = verified from the vendor's own pricing page;
   low switching visibility (annual-only, auto-renewing, credit-metered) rather than
   transparent recurring pricing.
 - **Platform ToS exposure.** AIHawk and the wider "LinkedIn auto-apply bot" archetype
-  operate against LinkedIn's terms; LinkedIn has taken direct action against automation
-  vendors before (e.g., the 2024 Kennected cease-and-desist over "scraping member data and
-  facilitating automated engagement," and the multi-year hiQ Labs v. LinkedIn scraping
-  litigation) — no confirmed AIHawk-specific enforcement action was found in this research
+  operate against LinkedIn's terms. Two distinct enforcement tracks illustrate the
+  platform's posture, and they are not the same category: (1) direct action against an
+  automation vendor — the 2024 Kennected cease-and-desist over "scraping member data and
+  facilitating automated engagement"; and (2) data-access litigation — hiQ Labs v.
+  LinkedIn, a multi-year case over scraping of *public* profile data (not a
+  vendor-automation C&D). Both are cited only for the platform's general willingness to
+  enforce, not as equivalent precedents — no confirmed AIHawk-specific enforcement action was found in this research
   (absence of evidence, not evidence of absence), but the pattern is well established
   enough that "gets your account banned" is a standing risk for any tool in this shape.
   This is very likely a contributing factor in AIHawk's archival, though we found no
