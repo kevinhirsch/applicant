@@ -47,7 +47,7 @@ résumé, key, and submissions. Don't conflate their ordering.
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
 | P0-2 | Seeded demo mode | M | eng | DONE — DEMO_MODE seed (5-stage apps, digest, redline, interview, activity, momentum, portal) + front-door banner/one-click clear (PR #731) |
-| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | PARTIAL — gadget rail + top-bar bell + wordmark-home shipped; **#640 auto-land watcher removed** (retirement lane); full window-manager retirement (tiling/docking plumbing + modal-stack test-contract rewrite) still open — feature-heavy, owner direction needed (see note) |
+| P0-3 | The 3-pane shell (chat center, gadget rail) | L | eng | DONE — 3-pane shell + 8 v1 gadgets + top-bar bell + wordmark-home shipped; **window-manager retired from the surface**: the AppKit floating-window/modal-stack kit (`appkitWindow.js` + `windowResize.js`) is unwired (0 importers, no `<script>` tag, no runtime call site; kept in tree as the T13-gated dormant vendored asset), Portal/Today/Tracker/Results already render as hash-routed pages via the existing launchers, and modal-stack tests replaced by the `test_applicant_shell_page_contract.py` shell/page view contract |
 | P0-4 | De-workspace the surface | M | eng | DONE — speaker "Applicant", padlocks → absence, window titles fixed, no-model-name pin tests |
 | P0-5 | Empty states that sell | S–M | eng | DONE — shared kit gained the icon+sentence+CTA design; tracker/activity/results empty+gated states all route somewhere real (theme check via CI-run composition tests; live dark/light screenshot pass rides P0-6) |
 | P0-6 | Visual regression harness | M | eng | DONE — `workspace/tests/visual/` walks the full matrix (27 states × 2 viewports × 2 themes, incl. the P0-3 rail states) with off-screen + overflow detectors on every state; baselines blessed post-P0-3b/4/5 with a two-consecutive-runs zero-diff proof; `--bless` is the only accept path. Honest carve-outs: the rail's two text stacks are masked (per-launch glyph raster variance survived five pinning mechanisms; their content/order stays pinned by the headless composition suites), and the composer bar is masked for its async settle. Live walk runs pre-push + the on-demand Visual Lane workflow (not per-PR — see the DoD note); the harness's codec tests ride per-PR `npm test` |
@@ -237,10 +237,33 @@ not a separate view; there is no `#portal`/`#chat` center toggle.)*
       expands to its full page in one click via the SAME `window` launcher that page
       already exports (`openApplicantTracker/Today/Results`, `applicantActivityModule`,
       the `#rail-email` seam) — no new engine endpoints, no floating window.
-- [ ] The window manager is retired from the default product surface; modal-stack tests
-      replaced by the shell/page view contract. **In the concurrent window-retirement lane**
-      (owns the applicantPortal/Today window-stack plumbing, app.js modal-stack code, and the
-      #640 watcher). P0-3b deliberately did NOT touch that plumbing to avoid colliding with it.
+- [x] The window manager is retired from the default product surface; modal-stack tests
+      replaced by the shell/page view contract. The floating-window / modal-stack primitive is the
+      AppKit window kit `static/js/appkitWindow.js` (the `AppkitWindow` class, the `AppkitSlots`
+      z-anchor engine, the `_modalStack` push/pop, the `.ow-scrim` dim, the `nextWindowZ` band
+      authority, minimize/restore-to-dock, `dismissTop`/`stackIds`) plus its sole dependency
+      `windowResize.js`. It is **retired from the active product surface — unwired**: no shipped
+      surface module imports it, no `<script>` tag loads it, and no wired surface has a runtime call
+      site (`new AppkitWindow` / `AppkitWindowKit.create` / `AppkitSlots.register`), so the shell
+      never constructs a floating window. The kit file itself is deliberately **left in tree as a
+      dormant vendored asset** — it is the FR-UIKIT/T13 "Window kit" whose existence is a hard
+      regression gate in `tests/bdd/.../uikit_registry.py`; retiring a primitive from the surface is
+      about what the surface *loads and runs*, not about deleting a vendored file (deleting it would
+      break the T13 gate and rebuild nothing). The Applicant home surfaces already render as pages,
+      not windows: Portal/Today/Tracker/Results open a full-view hash-routed `.modal` page via
+      `_ensureModalEl()` + the existing `window.openApplicant*` launchers (reachability re-verified —
+      the rail and bell open the same launchers), and `hashRouter.js` is the one-surface-at-a-time
+      view arbiter that replaced the window stack (a real surface→surface nav closes the previous
+      surface; the native chat pane is the persistent backdrop, never stacked). Modal-stack coverage
+      is replaced by the positive `test_applicant_shell_page_contract.py` view contract (shell 3
+      panes · rail is a static flex sibling with no scrim/focus-trap · gadgets expand to pages via
+      the existing launchers · no floating-window primitive is wired into the surface — RED-verified
+      by re-adding an import/call site). The legacy tool-window stack (`modalManager.js`/
+      `tileManager.js`/`modalSnap.js`/`windowDrag.js`) belongs to the still-reachable **vendored
+      workspace** surfaces (email/notes/memory/theme/settings/cookbook), which are NOT the default
+      product surface — untouched, out of scope. (The live `ui.js` `initModalA11y` Escape arbiter is
+      the shared DIALOG a11y trap for styledConfirm and the routed pages, not the retired kit — kept,
+      its coverage in `test_applicant_round1_remainder_modalstack.py` unweakened.)
 - [x] The auto-land watcher added in PR #640 is removed. The redundant boot-time
       `_autoLandOnToday()` setInterval watcher in `applicantPortal.js` (`_boot`) —
       plus its `_landNow`/`_onboardingUp`/`_autoLandedOnToday`/`_LAND_SURFACES`
@@ -271,13 +294,27 @@ single, deep-link-guarded home-base landing in `app.js`'s onboarding chain untou
 bounded, mechanical half of the retirement lane and required no test changes (nothing pinned the
 watcher internals; the hashrouting suite asserts only app.js's `skipHashUpdate` landing).
 
-**Still open (row stays PARTIAL):** fully retiring the floating-window manager — the tiling/docking/
-snapping subsystem (`tileManager.js`, `modalSnap.js`, `windowDrag.js`, `modalManager.js`) is woven
-through ~10 modules (email, notes, memory, theme, settings, …) and the DoD explicitly calls for the
-**modal-stack tests to be replaced by a shell/page view contract**. That is a feature-heavy, cross-
-cutting refactor plus a test-contract rewrite (a design decision, not a mechanical edit), so per the
-backlog's "ask first" rule it is deliberately left for the owner's direction rather than guessed at.
-Once that lands, this row can flip to DONE.
+**Retirement closed (2026-07-09, row flips to DONE):** the earlier "still open" framing had
+over-scoped the retirement to the vendored **tool-window** subsystem (`tileManager.js`,
+`modalSnap.js`, `windowDrag.js`, `modalManager.js`) — but that stack powers the still-reachable
+workspace surfaces (email/notes/memory/theme/settings/cookbook), which are NOT the default product
+surface; retiring it would break live surfaces and is out of this DoD's scope. The floating-window /
+modal-stack primitive actually **on the Applicant product surface** is the AppKit window kit
+`static/js/appkitWindow.js` (`AppkitWindow`/`AppkitSlots`/`_modalStack`/`.ow-scrim`/`nextWindowZ`/
+`dismissTop`/`stackIds`) + its sole dependency `windowResize.js`. Two verification sweeps confirmed
+it is **already unwired**: zero importers, no `<script>` tag, no external runtime call site (and no
+service-worker/manifest/CSS/app.py loader). Retiring a primitive from the product surface is about
+what the surface *loads and runs*, so the kit is retired **by staying unwired** — the file is
+deliberately kept in tree as a dormant vendored asset because its existence is a hard regression gate
+in the FR-UIKIT/T13 acceptance spec (`tests/bdd/steps/uikit_registry.py`); deleting it would break
+that gate and rebuild nothing. The Applicant home surfaces were already pages (Portal/Today/Tracker/
+Results = full-view hash-routed `.modal` pages via `_ensureModalEl()` + the existing
+`window.openApplicant*` launchers the rail and bell already call), and `hashRouter.js` is the
+one-surface-at-a-time view arbiter that replaced the window stack. Modal-stack coverage is now the
+positive `test_applicant_shell_page_contract.py` shell/page view contract (RED-verified: re-adding an
+import or a `window.AppkitWindowKit.create(...)` call site on the surface flips it), and the `.ow-*`
+CSS chrome the routed pages borrow stays in `style.css`. The one source-composition cross-check that
+reads `appkitWindow.js` (`test_applicant_round1_missingkits.py`) is unaffected — the file stays.
 
 ### P0-4 — De-workspace the surface
 **As** a non-technical user, **I want** to never see model names, token counters, or
