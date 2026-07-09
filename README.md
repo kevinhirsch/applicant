@@ -1,5 +1,8 @@
 # Applicant
 
+**The autopilot that can't fire itself: free, open source, and built so a human always
+has the final say before anything gets submitted.**
+
 A self-hosted, single-operator workspace.
 
 Architecture, setup, and operations are documented under [`docs/`](docs/) —
