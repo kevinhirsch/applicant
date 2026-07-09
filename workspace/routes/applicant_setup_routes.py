@@ -114,6 +114,10 @@ class TierItemIn(BaseModel):
     api_key: str = ""
     api_key_ref: str = ""  # carried back to keep an existing key across edit/reorder
     context_window: int = 8192
+    # DISC-4: bind this tier to a saved model-connection's key by reference (the
+    # id only — never the key). Forwarded to the engine, which resolves the
+    # connection's sealed key server-side; the plaintext never reaches the browser.
+    connection_id: str = ""
 
 
 class LadderIn(BaseModel):

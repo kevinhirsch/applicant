@@ -173,7 +173,16 @@ DISC-16. Per-lens backlog status lives in
   the ref), so the user must re-enter the key. A backend route to bind a tier to a saved
   connection's key *by reference* (never exposing plaintext) would close it.
   Where: engine model-endpoint service + a new bind-by-ref route; `applicantModelLadder.js`.
-  Status: open (surfaced fixing 11-#9; the front-end already prompts for the key once).
+  Status: fixed (PR pending). A tier now carries a `connection_id` reference (never a key):
+  the ladder save route (`PUT /api/setup/llm/tiers`, `TierSettings.connection_id`) accepts
+  the saved connection's id, and `SetupService.build_ladder` resolves that connection's
+  sealed key server-side AT USE TIME (`_resolve_connection_key`, reading the shared vault via
+  the connection's own `model.endpoint.{id}` ref) — so rotating the connection's key flows to
+  every bound tier and the plaintext is never copied into the tier, never returned to the
+  client, never logged. `applicantModelLadder.js` binds the tier on pick (no re-prompt when
+  the connection has a key) and re-sends the id on save; `get_tiers` surfaces `connection_id`
+  (non-secret) but never the key. Precedence: a freshly typed key wins, then `connection_id`,
+  then the tier's own `api_key_ref`.
 
 ---
 

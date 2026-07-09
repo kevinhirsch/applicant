@@ -147,6 +147,10 @@ function _blankTier() {
     api_key: '',
     api_key_ref: '',
     context_window: 128000,
+    // DISC-4: when set, this tier is bound to a saved connection's key BY
+    // REFERENCE — the engine resolves that connection's sealed key server-side
+    // at use time, so no key is ever re-typed or sent to the browser.
+    connection_id: '',
     _hasKey: false,
     _connectionId: '',
     _connectionModels: [],
@@ -166,6 +170,10 @@ async function _load() {
     // own value and is never relabeled as a guess.
     const parsed = parseInt(t.context_window, 10);
     const isFallback = !(Number.isFinite(parsed) && parsed > 0);
+    // DISC-4: a tier persisted with a by-reference connection binding comes back
+    // carrying `connection_id` (never a key). Keep it so the picker shows the
+    // bound connection selected and Save re-sends the same reference.
+    const connectionId = t.connection_id || '';
     return {
       provider: t.provider || 'openrouter',
       base_url: t.base_url || '',
@@ -173,8 +181,12 @@ async function _load() {
       api_key: '', // never populated from the server (secret omitted)
       api_key_ref: t.api_key_ref || '',
       context_window: isFallback ? 8192 : parsed,
+      connection_id: connectionId,
+      // `_hasKey` is this tier's OWN sealed key (leave-blank-to-keep). A
+      // connection binding is tracked separately (`_connectionHasKey`) so the
+      // two are never conflated in the notes or the remove-confirm.
       _hasKey: !!(t.api_key_ref || t.api_key),
-      _connectionId: '',
+      _connectionId: connectionId,
       _connectionModels: [],
       _connectionHasKey: false,
       _ctxKnown: false,
@@ -190,6 +202,23 @@ async function _load() {
   } catch {
     _endpoints = [];
   }
+  // DISC-4: reconcile each tier's by-ref binding against the freshly loaded
+  // connections so the row can honestly say whether the bound connection still
+  // exists and still carries a sealed key (its key is never sent here).
+  _tiers.forEach((t) => {
+    if (!t.connection_id) return;
+    const ep = _endpoints.find((e) => String(e.id) === String(t.connection_id));
+    if (ep) {
+      t._connectionHasKey = !!ep.has_key;
+      if (Array.isArray(ep.models)) t._connectionModels = ep.models;
+    } else {
+      // The bound connection was removed — drop the stale binding so the row
+      // falls back to manual entry rather than pointing at nothing.
+      t.connection_id = '';
+      t._connectionId = '';
+      t._connectionHasKey = false;
+    }
+  });
   _dirty = false;
   _render(data.engine_available === false);
 }
@@ -330,8 +359,14 @@ function _syncFromDOM() {
     // the same way base_url/model already are above.
     const key = get('.ml-key').trim();
     if (key) { _tiers[i].api_key = key; }
+    // DISC-4: keep the persisted by-ref binding (`connection_id`) in lock-step
+    // with the picker's current selection — "— enter manually —" (value "")
+    // clears it so the tier falls back to a typed/own key.
     const connSel = row.querySelector('.ml-connection');
-    if (connSel) _tiers[i]._connectionId = connSel.value;
+    if (connSel) {
+      _tiers[i]._connectionId = connSel.value;
+      _tiers[i].connection_id = connSel.value;
+    }
   });
 }
 
@@ -372,11 +407,15 @@ function _tierRowHTML(t, i) {
   const providerOpts = PROVIDERS.map(
     ([v, label]) => `<option value="${v}"${t.provider === v ? ' selected' : ''}>${esc(label)}</option>`,
   ).join('');
+  // DISC-4: a tier bound to a saved connection that HAS a key reuses that key
+  // by reference — no re-entry. The key stays sealed server-side (it is never
+  // sent to the browser), and typing here only overrides it at this level.
+  const boundWithKey = !!(t.connection_id && t._connectionHasKey);
   let keyNote = '';
-  if (t._hasKey) {
+  if (boundWithKey) {
+    keyNote = '<span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:2px;">Using the saved key from this connection — it stays sealed and is applied by reference, so there\'s no need to re-enter it here. Type a key only to override it at this level.</span>';
+  } else if (t._hasKey) {
     keyNote = '<span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:2px;">A key is saved — leave blank to keep it.</span>';
-  } else if (t._connectionHasKey) {
-    keyNote = '<span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:2px;">That connection has a saved key I can\'t copy automatically (it stays sealed) — enter it once here to use it at this level.</span>';
   }
   const modelListId = `ml-models-${i}`;
   const modelList = (t._connectionModels || [])
@@ -409,7 +448,7 @@ function _tierRowHTML(t, i) {
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">API key
           <span style="display:flex;gap:6px;align-items:center;margin-top:3px;">
-            <input type="password" class="settings-select ml-key" value="" placeholder="${t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)'}" autocomplete="off" style="display:block;width:240px;" />
+            <input type="password" class="settings-select ml-key" value="" placeholder="${boundWithKey ? "•••••••• (using this connection's saved key)" : (t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)')}" autocomplete="off" style="display:block;width:240px;" />
             <button type="button" class="ml-key-toggle cal-btn" aria-pressed="false"
               title="Show/hide this level's API key as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
           </span>
@@ -545,6 +584,10 @@ function _wireTierEditing() {
 
     // Saved-connection picker (lens 11 #9): fills provider/address/model
     // picklist from the chosen connection instead of forcing re-entry.
+    // DISC-4: it ALSO binds the tier to that connection's key BY REFERENCE
+    // (`connection_id`), so a connection with a saved key is reused with no
+    // re-entry — the engine resolves the sealed key server-side at use time and
+    // the plaintext is never sent to the browser.
     const connEl = row.querySelector('.ml-connection');
     if (connEl) {
       connEl.addEventListener('change', () => {
@@ -553,6 +596,7 @@ function _wireTierEditing() {
         const t = _tiers[i];
         if (!t) return;
         t._connectionId = epId;
+        t.connection_id = epId; // persisted by-ref binding (cleared when epId is "")
         if (epId) {
           const ep = _endpoints.find((e) => String(e.id) === epId);
           if (ep) {
@@ -562,6 +606,9 @@ function _wireTierEditing() {
             t._connectionHasKey = !!ep.has_key;
             if (!t.model && t._connectionModels.length) t.model = t._connectionModels[0];
           }
+        } else {
+          // Back to manual entry — drop the binding and its key marker.
+          t._connectionHasKey = false;
         }
         _markDirty();
         _render(false);
@@ -746,8 +793,15 @@ async function _save() {
         model: t.model,
         context_window: t.context_window || 8192,
       };
-      if (t.api_key) tier.api_key = t.api_key;          // a newly typed key wins
-      else if (t._hasKey && t.api_key_ref) tier.api_key_ref = t.api_key_ref;  // else keep the saved one
+      // DISC-4 precedence (matches the engine's own resolution order):
+      //  1. a newly typed key wins;
+      //  2. else a by-reference connection binding (send only the id — the
+      //     engine resolves that connection's sealed key server-side at use
+      //     time; the key never travels through the browser);
+      //  3. else keep this tier's own already-sealed key by ref.
+      if (t.api_key) tier.api_key = t.api_key;
+      else if (t.connection_id) tier.connection_id = t.connection_id;
+      else if (t._hasKey && t.api_key_ref) tier.api_key_ref = t.api_key_ref;
       return tier;
     }),
   };

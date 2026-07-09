@@ -137,6 +137,13 @@ def validate_hhmm(value: str, *, field: str = "time") -> str:
 
 
 _LADDER_KEY = "llm.tier_ladder"
+#: App-config key the ModelEndpointService persists saved connections under
+#: (mirrors ``ModelEndpointService._ENDPOINTS_KEY``). SetupService reads it —
+#: never writes it — to resolve a tier's by-reference connection binding
+#: (DISC-4) at ladder-build time; both services share the same config-store and
+#: credential vault, so the connection's own sealed ``api_key_ref`` resolves
+#: with no cross-service wiring.
+_MODEL_ENDPOINTS_KEY = "model.endpoints"
 _STEPS_KEY = "wizard.steps_complete"
 _CHANNELS_KEY = "notify.channels"
 #: P5-3 opt-in error-telemetry preference: ``{"enabled": bool, "endpoint": str}``.
@@ -1466,6 +1473,18 @@ class SetupService:
         # Phase 1 — resolve effective keys from current state (reads only, no writes).
         effective_keys: list[str] = []
         for t in tiers:
+            # DISC-4 by-reference bind: a tier may carry only a ``connection_id``
+            # (a saved model-connection's id) instead of a key. We DON'T copy the
+            # connection's key here — build_ladder resolves it live at use time —
+            # but the connection must exist so the tier isn't bound to nothing.
+            if not t.api_key and getattr(t, "connection_id", ""):
+                if self._connection_record(t.connection_id) is None:
+                    raise ValueError(
+                        "That saved model connection no longer exists — "
+                        "pick another connection or enter the key."
+                    )
+                effective_keys.append("")
+                continue
             key = t.api_key
             if not key and getattr(t, "api_key_ref", ""):
                 key = self._resolve_secret({"api_key_ref": t.api_key_ref})
@@ -1540,8 +1559,13 @@ class SetupService:
             "model": tier.model,
             "context_window": tier.context_window,
         }
-        # ``key`` is the pre-resolved effective key (phase 1 of set_tiers); when not
-        # supplied, fall back to the tier's inline key (direct callers).
+        # DISC-4 precedence: a freshly typed ``api_key`` wins; else a by-reference
+        # connection binding (the tier stores only the connection's id and the key
+        # is resolved live in build_ladder — never copied/sealed here); else this
+        # tier's own pre-resolved key (phase 1 of set_tiers / a direct caller).
+        if not tier.api_key and getattr(tier, "connection_id", ""):
+            record["connection_id"] = tier.connection_id
+            return record
         effective = key if key is not None else tier.api_key
         if effective:
             if self._credentials is not None:
@@ -1556,10 +1580,53 @@ class SetupService:
     def _resolve_secret(self, record: dict[str, Any]) -> str:
         if "api_key" in record:
             return record["api_key"]
+        # DISC-4: a tier bound to a saved connection resolves that connection's
+        # key server-side at use time (build_ladder), so a rotated connection key
+        # flows to every bound tier and the plaintext never leaves the server.
+        conn_id = record.get("connection_id")
+        if conn_id:
+            return self._resolve_connection_key(conn_id)
         ref = record.get("api_key_ref")
         if ref and self._credentials is not None:
             cred = self._retrieve_secret(ref)
             return cred or ""
+        return ""
+
+    # --- saved-connection (model-endpoint) by-reference resolution (DISC-4) ---
+    def _connection_record(self, connection_id: str) -> dict[str, Any] | None:
+        """Look up a saved model-connection record by id from the shared store.
+
+        SetupService and ModelEndpointService share one app-config store, so the
+        connection registry the endpoint service persists under
+        ``_MODEL_ENDPOINTS_KEY`` is readable here directly — no cross-service
+        wiring, and this method never writes it.
+        """
+        if not connection_id:
+            return None
+        rec = self._store.get(_MODEL_ENDPOINTS_KEY)
+        if not rec:
+            return None
+        for ep in rec.get("endpoints", []):
+            if ep.get("id") == connection_id:
+                return ep
+        return None
+
+    def _resolve_connection_key(self, connection_id: str) -> str:
+        """Resolve a saved connection's sealed key (empty when it has none).
+
+        The connection stores its key the same shape a tier does: an inline
+        ``api_key`` (no-vault/test mode) or an ``api_key_ref`` into the SHARED
+        credential vault (``model.endpoint.{id}``). Either resolves here without
+        the plaintext ever leaving the server.
+        """
+        ep = self._connection_record(connection_id)
+        if ep is None:
+            return ""
+        if "api_key" in ep:
+            return ep["api_key"]
+        ref = ep.get("api_key_ref")
+        if ref and self._credentials is not None:
+            return self._retrieve_secret(ref) or ""
         return ""
 
     # --- credential-store helpers (LLM keys reuse the vault path) ---------

@@ -223,6 +223,22 @@ def test_set_tiers_rejects_empty(monkeypatch):
     assert resp.status_code == 400
 
 
+def test_set_tiers_forwards_connection_id_by_reference(monkeypatch):
+    """DISC-4: a tier bound to a saved connection forwards only the connection's
+    id (a reference) — never a key — to the engine."""
+    _patch_engine(monkeypatch, result=None)
+    body = {"tiers": [
+        {"provider": "openai", "base_url": "https://conn.test/v1", "model": "m1", "connection_id": "conn-123"},
+    ]}
+    resp = _make_client().put("/api/applicant/setup/llm/tiers", json=body)
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_tiers"
+    tier = args[0]["tiers"][0]
+    assert tier["connection_id"] == "conn-123"  # reference carried through
+    assert not tier.get("api_key")  # no plaintext key travels through the proxy
+
+
 def test_llm_from_endpoint_forwards_body(monkeypatch):
     _patch_engine(monkeypatch, result=None)
     resp = _make_client().post(
