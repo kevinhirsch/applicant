@@ -45,7 +45,7 @@ import logging
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, List
 
 logger = logging.getLogger(__name__)
@@ -152,19 +152,29 @@ def run_migrations(db_path: str, migrations: List[Migration] = MIGRATIONS) -> in
     conn = sqlite3.connect(db_path)
     try:
         _ensure_history_table(conn)
-        current = _get_user_version(conn)
-        applied = current
+        applied = _get_user_version(conn)
         for m in ordered:
-            if m.version <= current:
+            if m.version <= applied:
                 continue
             try:
-                conn.execute("BEGIN")
+                # BEGIN IMMEDIATE takes the write lock up front, then we RE-READ
+                # user_version inside the transaction: if a second worker booting
+                # concurrently already applied this version between our read and
+                # the lock, we skip rather than double-apply its body (harmless
+                # for today's idempotent index, load-bearing for a future
+                # non-idempotent migration).
+                conn.execute("BEGIN IMMEDIATE")
+                locked_version = _get_user_version(conn)
+                if locked_version >= m.version:
+                    conn.rollback()
+                    applied = locked_version
+                    continue
                 m.up(conn)
                 _set_user_version(conn, m.version)
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_migrations(version, name, applied_at) "
                     "VALUES (?, ?, ?)",
-                    (m.version, m.name, datetime.utcnow().isoformat()),
+                    (m.version, m.name, datetime.now(timezone.utc).isoformat()),
                 )
                 conn.commit()
                 applied = m.version

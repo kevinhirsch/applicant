@@ -174,6 +174,19 @@ def test_bad_registry_is_rejected():
         validate_registry([Migration(2, "starts-late", lambda c: None)])
 
 
+def test_url_with_real_sqlite_path_upgrades():
+    """Happy path for run_migrations_for_url: a real sqlite:/// URL parses to a
+    path and drives the same upgrade as run_migrations(path)."""
+    path = _fresh_db()
+    try:
+        result = run_migrations_for_url(f"sqlite:///{path}")
+        assert result == head_version() == 1
+        assert _user_version(path) == 1
+        assert "ix_scheduled_tasks_owner_type" in _indexes(path)
+    finally:
+        os.unlink(path)
+
+
 def test_non_sqlite_url_is_noop():
     assert run_migrations_for_url("postgresql://x/y") == 0
     assert run_migrations_for_url("") == 0
