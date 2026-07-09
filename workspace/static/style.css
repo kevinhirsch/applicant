@@ -44,6 +44,28 @@
   --green: #50fa7b;
   --warn: #f0ad4e;
 
+  /* ── Surface elevation ramp (single source of truth for chrome fills) ─────
+     Every chrome surface must derive its background from ONE of these four
+     tokens so light/dark flip together and same-class surfaces stay identical.
+     Before this ramp, windows/menus/cards picked --panel OR --bg ad-hoc, so a
+     doclib window (was --bg) read a different colour from a settings window
+     (--panel) — light surfaces beside dark on the same theme. The tokens alias
+     --panel/--bg, both of which :root.light already redefines, so the aliases
+     flip per theme with no second definition needed (var() resolves lazily at
+     the element, under whichever :root.light/:root cascade applies).
+       · --surface-base    app canvas (body) — the ground everything sits on
+       · --surface-raised  windows, modals, sidebar, panes, cards, gadgets
+       · --surface-overlay floating menus / dropdowns / popovers
+       · --surface-inset   form controls, wells, code output (recessed)
+     Raised and overlay intentionally share --panel today (flat elevation);
+     they stay separate tokens so an overlay tier can diverge later without a
+     sweep. New surfaces MUST use these — the surface-consistency pytest gate
+     fails a window/menu/card that reaches for a raw hex or the wrong tier. */
+  --surface-base: var(--bg);
+  --surface-raised: var(--panel);
+  --surface-overlay: var(--panel);
+  --surface-inset: var(--bg);
+
   /* Syntax highlighting */
   --hl-bg: #1e2228;
   --hl-fg: #9cdef2;
@@ -4922,12 +4944,12 @@ body.bg-pattern-sparkles {
       background-color: inherit;
     }
     .modal-header:active { cursor:grabbing; }
-    /* Cookbook's modal-content is var(--bg) (inline) instead of the default
-       var(--panel), so its sticky header — which defaults to var(--panel) —
-       read as a different-coloured band. Match the header to the cookbook
-       body so the panel is one uniform colour. */
+    /* Cookbook's modal-content sets --surface-raised inline (matching every
+       other window); its sticky header defaults to var(--panel) — the same
+       colour, but pin it to the raised token too so the two never drift if
+       the ramp is re-pointed. One uniform panel colour. */
     #cookbook-modal .modal-header {
-      background: var(--bg);
+      background: var(--surface-raised);
       /* Cookbook opts out of the sticky header on mobile; the
          title bar scrolls away with the content instead of following. */
       position: static;
@@ -9117,7 +9139,7 @@ textarea.memory-add-input {
   display: inline-block; width: 14px; height: 14px; flex-shrink: 0;
 }
 .doc-langpicker-menu {
-  background: var(--bg);
+  background: var(--surface-overlay);
   border: 1px solid var(--border); border-radius: 8px;
   padding: 4px;
   box-shadow: 0 10px 28px rgba(0,0,0,0.32);
@@ -11627,7 +11649,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   width: min(600px, 92vw);
   max-height: 85vh;
   font-size: 12px;
-  background: var(--bg);
+  background: var(--surface-raised);
 }
 /* Anchor doclib modal to top so only the bottom edge moves on resize */
 #doclib-modal {
@@ -11644,11 +11666,10 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   font-size: 13px;
   font-weight: 600;
 }
-/* Match the sticky modal-header to the doclib modal-content body color
-   (var(--bg)) instead of the global var(--panel) default — otherwise the
-   header reads as a darker stripe above the email list. */
+/* Pin the sticky header to the doclib body's raised surface so it never
+   reads as a differently-coloured stripe above the list. */
 .doclib-modal-content > .modal-header {
-  background: var(--bg);
+  background: var(--surface-raised);
 }
 .doclib-stats {
   font-size: 11px;
@@ -15203,7 +15224,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Cards — match admin-card */
 .cookbook-card {
-  background: var(--bg);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
@@ -16800,7 +16821,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Env bar — match admin-card */
 .cookbook-env-bar {
-  background: var(--bg);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
@@ -18515,7 +18536,7 @@ body:not(.welcome-ready) #welcome-screen {
 }
 
 /* ── Tasks ── */
-.tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+.tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--surface-raised); font-size: 12px; }
 
 /* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
    full-bleed (its underline spans the whole modal width). The Tasks bar is a
@@ -19028,7 +19049,7 @@ a.chat-link[href^="#research-"] {
 .task-preset-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   padding: 12px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg); cursor: pointer; transition: all 0.15s; text-align: left;
+  background: var(--surface-raised); cursor: pointer; transition: all 0.15s; text-align: left;
   color: var(--fg);
 }
 .task-preset-card:hover {
@@ -23925,7 +23946,7 @@ button .spinner-whirlpool {
 }
 /* Group model picker — match app theme */
 #group-model-picker .modal-content {
-  background: var(--bg);
+  background: var(--surface-raised);
   color: var(--fg);
   border: 1px solid var(--border);
 }
@@ -24665,7 +24686,7 @@ button .spinner-whirlpool {
   left: 12px;
   right: 12px;
   top: calc(100% - 4px);
-  background: var(--bg);
+  background: var(--surface-overlay);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 6px 18px rgba(0,0,0,0.25);
@@ -25494,7 +25515,7 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-dropdown {
   position: absolute; right: 0; top: 100%; z-index: 9999;
-  min-width: 120px; background: var(--bg); border: 1px solid var(--border);
+  min-width: 120px; background: var(--surface-overlay); border: 1px solid var(--border);
   border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 4px 0;
 }
 .email-loading { padding: 16px; text-align: center; font-size: 12px; opacity: 0.5; }
@@ -25852,7 +25873,7 @@ body.doc-find-active mark.doc-find-mark.current {
 .doc-email-richbody p { margin: 0.5em 0; }
 .email-more-menu {
   position: absolute; bottom: 100%; right: 0; margin-bottom: 6px;
-  min-width: 160px; background: var(--bg); border: 1px solid var(--border);
+  min-width: 160px; background: var(--surface-overlay); border: 1px solid var(--border);
   border-radius: 6px; box-shadow: 0 -4px 12px rgba(0,0,0,0.2); padding: 4px;
   z-index: 100;
 }
@@ -27879,7 +27900,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 /* Reminder dropdown menu */
 .note-reminder-menu {
   position: fixed;
-  background: var(--bg);
+  background: var(--surface-overlay);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.25);
