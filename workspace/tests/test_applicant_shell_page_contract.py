@@ -254,13 +254,19 @@ def test_no_wired_module_imports_the_retired_kit(fname: str) -> None:
     # (not `[^\n;]`) lets the statement span physical lines, so a MULTILINE
     # `import { AppkitWindow }\n  from "./appkitWindow.js";` still matches;
     # non-greedy + the `;`/quote boundaries keep it from spilling across
-    # statements. Covers `import X from "./appkitWindow.js"`,
-    # `import './js/appkitWindow.js'`, `import("../appkitWindow.js")`, and
-    # `export * from './appkitWindow.js'`.
+    # statements. The `(?:[?#][^'"]*)?` after the filename allows a cache-busting
+    # query / hash suffix (`?v=…`, `#…`) — the browser loads
+    # `'./appkitWindow.js?v=retire'` as the retired module just the same — while
+    # The quote class is all three JS string delimiters (' " `), so a
+    # template-literal dynamic import(`./appkitWindow.js`) is caught too.
+    # still NOT matching a different file like `appkitWindow.jsx` (nothing
+    # `?`/`#`/quote right after `.js`). Covers `import X from "./appkitWindow.js"`,
+    # `import './js/appkitWindow.js'`, `import("../appkitWindow.js")`,
+    # `export * from './appkitWindow.js'`, and `import './appkitWindow.js?v=1'`.
     dep_re = re.compile(
-        r"""(?:import\b[^;]*?|export\b[^;]*?\bfrom\s*)['"][^'"]*"""
+        r"""(?:import\b[^;]*?|export\b[^;]*?\bfrom\s*)['"`][^'"`]*"""
         + re.escape(fname)
-        + r"""['"]"""
+        + r"""(?:[?#][^'"`]*)?['"`]"""
     )
     for path in _wired_surface_js():
         src = _strip_js_comments(path.read_text(encoding="utf-8"))
