@@ -22,7 +22,7 @@ separate places, so this isn't a soft preference — it's baked into the build:
    Windows CDP takeover backend, and the local `chromium`-engine sandbox all
    depend on it): the Dockerfile downloads
 
-   ```
+   ```text
    https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
    ```
 

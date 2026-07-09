@@ -74,6 +74,16 @@ def test_documented_constraint_matches_the_dockerfile():
 def test_install_sh_warns_on_non_amd64_host():
     # scripts/install.sh's preflight should surface the same honest signal at
     # install time, not just in a doc nobody reads before running the script.
+    # Pin the actual preflight branch (the case guard + the exact ui_warn
+    # tokens the script emits), not just an incidental mention of the words —
+    # a loose substring check would still pass if the warning were deleted but
+    # "amd64" survived somewhere unrelated in the file.
     install_sh = _INSTALL_SH.read_text()
-    assert "platform-matrix.md" in install_sh
-    assert "x86_64" in install_sh or "amd64" in install_sh
+    # The arch dispatch that gates the warning.
+    assert "x86_64|amd64)" in install_sh, (
+        "install.sh preflight must branch on the host arch (case x86_64|amd64)"
+    )
+    # The exact warn strings the added branch emits (see the ui_warn lines).
+    assert "is not x86_64/amd64 — the production image" in install_sh
+    assert "(real Google Chrome + Camoufox) is amd64-only today. See" in install_sh
+    assert "docs/platform-matrix.md before continuing on this host." in install_sh
