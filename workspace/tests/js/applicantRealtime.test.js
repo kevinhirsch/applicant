@@ -161,3 +161,56 @@ test('notifRefresh falls back to the pending-changed contract when Portal is abs
     delete global.CustomEvent;
   }
 });
+
+// ── Phase 3 agent co-steer helpers ───────────────────────────────────────────
+
+test('agentEventSummary prefers the run intent and falls back to a plain line', () => {
+  const { agentEventSummary } = load('agentEventSummary');
+  assert.equal(agentEventSummary({ data: { intent: 'Tailoring your resume.' } }), 'Tailoring your resume.');
+  assert.equal(agentEventSummary({ data: {} }), 'Working on your job search');
+  assert.equal(agentEventSummary(null), 'Working on your job search');
+});
+
+test('buildAgentPauseFrame shapes an agent/pause envelope carrying the campaign', () => {
+  const { buildAgentPauseFrame } = load('buildAgentPauseFrame');
+  assert.deepEqual(buildAgentPauseFrame('c-1'), {
+    chan: 'agent', type: 'pause', seq: 0, data: { campaign_id: 'c-1' },
+  });
+});
+
+test('buildAgentRedirectFrame carries only the provided run-config fields, never approve', () => {
+  const { buildAgentRedirectFrame } = load('buildAgentRedirectFrame');
+  const full = buildAgentRedirectFrame('c-1', { run_mode: 'until_n_viable', throughput_target: 7, schedule: { target_viable: 5 } });
+  assert.deepEqual(full, {
+    chan: 'agent',
+    type: 'redirect',
+    seq: 0,
+    data: { campaign_id: 'c-1', run_mode: 'until_n_viable', throughput_target: 7, schedule: { target_viable: 5 } },
+  });
+  // Absent fields are omitted (a bare redirect only names the campaign).
+  assert.deepEqual(buildAgentRedirectFrame('c-2', {}), {
+    chan: 'agent', type: 'redirect', seq: 0, data: { campaign_id: 'c-2' },
+  });
+  // The envelope is never an approve/submit — that verb isn't buildable here.
+  assert.notEqual(full.type, 'approve');
+});
+
+test('agentRefresh live-renders through the existing Activity strip (refreshStatus) + a DOM event', () => {
+  const { agentRefresh, agentEventSummary } = load('agentRefresh', 'agentEventSummary');
+  let refreshed = 0;
+  const events = [];
+  global.window = { applicantActivityModule: { refreshStatus: () => { refreshed += 1; } } };
+  global.CustomEvent = class { constructor(type, opts) { this.type = type; this.detail = opts && opts.detail; } };
+  global.document = { dispatchEvent: (e) => { events.push(e); } };
+  try {
+    assert.equal(agentRefresh({ data: { intent: 'Reviewing 3 roles.' } }), true);
+    assert.equal(refreshed, 1); // reused the existing strip's refresh, not a rebuild
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'applicant:agent-event');
+    assert.equal(events[0].detail.summary, 'Reviewing 3 roles.');
+  } finally {
+    delete global.window;
+    delete global.document;
+    delete global.CustomEvent;
+  }
+});

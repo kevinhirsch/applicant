@@ -10,7 +10,16 @@ Process-lived (module-global registry) so it survives the scheduler's per-tick
 ``AgentLoop`` rebuilds — never hang realtime state off a per-tick object.
 """
 
-from applicant.app.realtime.publish import NotifPublisher, make_notif_publisher
+from applicant.app.realtime.agent_control import (
+    AgentControlDispatcher,
+    make_agent_control_dispatcher,
+)
+from applicant.app.realtime.publish import (
+    AgentPublisher,
+    NotifPublisher,
+    make_agent_publisher,
+    make_notif_publisher,
+)
 from applicant.app.realtime.registry import (
     RealtimeRegistry,
     RealtimeSession,
@@ -23,4 +32,8 @@ __all__ = [
     "get_registry",
     "make_notif_publisher",
     "NotifPublisher",
+    "make_agent_publisher",
+    "AgentPublisher",
+    "make_agent_control_dispatcher",
+    "AgentControlDispatcher",
 ]
