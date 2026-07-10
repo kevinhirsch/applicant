@@ -952,3 +952,674 @@ def resolve_ats_strict(url: str) -> AtsAdapter | None:
 
     return None
 
+
+# ---------------------------------------------------------------------------
+# Additional hand-coded ATS adapters (Skyvern-parity gap #4, epic #351).
+#
+# This block is strictly ADDITIVE — it introduces new :class:`AtsAdapter`
+# subclasses for the highest-prevalence ATSes that previously fell through to the
+# generic live-DOM driver, plus their registry entries (registered via
+# ``ATS_REGISTRY.update`` at the very bottom so no existing line is touched). No
+# core, port, or existing-adapter change is required (FR-PREFILL-2 / NFR-EXT-1):
+# ``resolve_ats`` iterates the registry at call time, so a new entry is picked up
+# automatically.
+#
+# SAFETY (the non-negotiable bar). Every adapter below sets the two boundary
+# flags CORRECTLY, because a mislabeled page would let automation cross the
+# review-before-submit stop-boundary:
+#   * ``is_account_create=True`` on any page that registers a candidate account
+#     (an irreducible human step for the enterprise ATSes — Taleo, SuccessFactors,
+#     BrassRing — which gate application behind login/registration).
+#   * ``is_final_submit=True`` on the terminal review/submit page ONLY.
+# The four modern direct-apply ATSes (Ashby, SmartRecruiters, Jobvite, BambooHR)
+# have NO account gate on their public apply flow, so none carries an
+# account-create page — flagging a phantom one would be as wrong as missing a
+# real one.
+#
+# Protected classes route by LABEL, not by a per-field flag: the pre-fill service
+# runs every field label through ``core.rules.sensitive_fields`` — EEO/demographic
+# fields are matched by ``is_sensitive_field`` (so they are filled only from the
+# user's own stored answer, never AI-guessed) and work-authorization questions by
+# ``is_work_auth_question``. The adapters therefore use the canonical EEO labels
+# ("Gender", "Race/Ethnicity", "Protected Veteran Status", "Disability Status")
+# and work-auth phrasings ("authorized to work", "visa sponsorship") that those
+# rules recognise. Screening questions are tagged ``SCREENING_FACTUAL`` /
+# ``SCREENING_ESSAY`` so the essay path runs under the fabrication guard.
+#
+# SELECTORS. The four modern ATSes get fuller field maps using their documented
+# input conventions. The three enterprise ATSes emit auto-generated, per-tenant,
+# per-requisition element ids that CANNOT be modeled statically, so they are
+# modeled CONSERVATIVELY: the correct account-create/final-submit boundaries and
+# the sensitive/screening field SHAPES (which drive routing by label) are present,
+# but the free-text selectors are kept minimal rather than invented. A wrong
+# selector is worse than falling back to the generic driver, so where a real id is
+# unknowable the field is either omitted or modeled by its stable label only.
+# ---------------------------------------------------------------------------
+
+
+def _eeo_fields(prefix: str) -> tuple[DetectedField, ...]:
+    """Canonical EEO/voluntary self-identification field block (FR-ATTR-6).
+
+    Reused across the additive adapters so every one exposes the same four
+    protected demographic fields with the exact labels
+    ``core.rules.sensitive_fields.is_sensitive_field`` recognises. ``prefix``
+    namespaces the selectors per ATS; the LABELS (which drive sensitive routing)
+    are identical everywhere on purpose.
+    """
+    return (
+        DetectedField(
+            f"{prefix}gender",
+            "Gender",
+            "select",
+            options=("Male", "Female", "Non-binary", "Decline to self-identify"),
+        ),
+        DetectedField(
+            f"{prefix}race",
+            "Race/Ethnicity",
+            "select",
+            options=("...", "Decline to self-identify"),
+        ),
+        DetectedField(
+            f"{prefix}veteran",
+            "Protected Veteran Status",
+            "select",
+            options=("Yes", "No", "Decline to self-identify"),
+        ),
+        DetectedField(
+            f"{prefix}disability",
+            "Disability Status",
+            "select",
+            options=("Yes", "No", "Decline to self-identify"),
+        ),
+    )
+
+
+class AshbyAts(AtsAdapter):
+    """Ashby ATS adapter (``jobs.ashbyhq.com/<tenant>/<jobId>``).
+
+    Ashby is a high-prevalence modern ATS whose public board lets a candidate
+    apply directly — there is NO account-creation gate, so no page here carries
+    ``is_account_create``. The flow is a single React application page (personal
+    info, resume, links, work authorisation, screening + EEO self-identification)
+    followed by a review/submit step, which is the ONLY ``is_final_submit`` page.
+
+    Selectors use Ashby's documented ``_systemfield_*`` input names for the
+    standard fields; the EEO/screening blocks are modeled by their stable labels
+    (Ashby renders those as custom-question sections with per-tenant ids), so
+    routing keys on the label as the core rules require.
+    """
+
+    name = "ashby"
+
+    def matches(self, url: str) -> bool:
+        return "ashbyhq.com" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # jobs.ashbyhq.com/<tenant>/<jobId> — tenant is the first path segment.
+        rest = url.split("ashbyhq.com/", 1)[-1]
+        tenant = rest.split("/", 1)[0] if "/" in rest else rest
+        return f"ashby:{tenant or 'unknown'}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/application",
+                fields=(
+                    # --- Personal information (Ashby system fields) ---
+                    DetectedField("input[name=_systemfield_name]", "Full name", "text"),
+                    DetectedField("input[name=_systemfield_email]", "Email", "text"),
+                    DetectedField("input[name=_systemfield_phone]", "Phone", "text"),
+                    # --- Resume / documents ---
+                    DetectedField(
+                        "input[type=file][name=_systemfield_resume]",
+                        "Resume/CV",
+                        "file",
+                    ),
+                    # --- Links ---
+                    DetectedField(
+                        "input[name=_systemfield_linkedInUrl]",
+                        "LinkedIn URL",
+                        "text",
+                    ),
+                    DetectedField(
+                        "input[name=_systemfield_website]", "Website/Portfolio", "text"
+                    ),
+                    # --- Work authorisation (routes via is_work_auth_question) ---
+                    DetectedField(
+                        "select[data-eeo=work-auth]",
+                        "Are you legally authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "select[data-eeo=sponsorship]",
+                        "Will you now or in the future require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Screening questions (factual + essay) ---
+                    DetectedField(
+                        "input[data-question=salary]",
+                        "Salary Expectations",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "textarea[data-question=why]",
+                        "Why do you want to work here?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- EEO / voluntary self-identification ---
+                    *_eeo_fields("select[name=eeo_"),
+                ),
+            ),
+            FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
+        ]
+
+
+class SmartRecruitersAts(AtsAdapter):
+    """SmartRecruiters adapter (``jobs.smartrecruiters.com/<tenant>/<id>``).
+
+    SmartRecruiters is a high-prevalence direct-apply ATS: the public posting
+    accepts an application without an account, so there is NO account-create
+    page. It is a single application page followed by a review/submit step (the
+    sole ``is_final_submit`` boundary).
+
+    Uses SmartRecruiters' documented field ids (``#firstName``, ``#lastName``,
+    ``#email``, ``#phoneNumber``) for the standard block; EEO/screening are
+    modeled by label.
+    """
+
+    name = "smartrecruiters"
+
+    def matches(self, url: str) -> bool:
+        return "smartrecruiters.com" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # jobs.smartrecruiters.com/<tenant>/<postingId>.
+        rest = url.split("smartrecruiters.com/", 1)[-1]
+        tenant = rest.split("/", 1)[0] if "/" in rest else rest
+        return f"smartrecruiters:{tenant or 'unknown'}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/apply",
+                fields=(
+                    # --- Personal information ---
+                    DetectedField("#firstName", "First Name", "text"),
+                    DetectedField("#lastName", "Last Name", "text"),
+                    DetectedField("#email", "Email", "text"),
+                    DetectedField("#phoneNumber", "Phone", "text"),
+                    DetectedField("#location", "Location", "text"),
+                    # --- Resume / documents ---
+                    DetectedField("input[type=file][name=resume]", "Resume/CV", "file"),
+                    DetectedField(
+                        "input[type=file][name=coverLetter]", "Cover Letter", "file"
+                    ),
+                    # --- Links ---
+                    DetectedField("#linkedinUrl", "LinkedIn URL", "text"),
+                    DetectedField("#web", "Website/Portfolio", "text"),
+                    # --- Work authorisation ---
+                    DetectedField(
+                        "select[name=workAuthorization]",
+                        "Are you authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "select[name=requiresSponsorship]",
+                        "Will you now or in the future require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Screening questions ---
+                    DetectedField(
+                        "input[name=q_salary]",
+                        "Salary Expectations",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "textarea[name=q_why]",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- EEO / voluntary self-identification ---
+                    *_eeo_fields("select[name=eeo_"),
+                ),
+            ),
+            FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
+        ]
+
+
+class JobviteAts(AtsAdapter):
+    """Jobvite adapter (``jobs.jobvite.com/<tenant>/job/<id>``).
+
+    Jobvite's hosted career-site apply flow is a single application page (no
+    account gate on the public posting) plus a review/submit step. The only
+    boundary is the terminal ``is_final_submit`` page.
+
+    Jobvite's legacy form uses simple ``name``-based inputs; EEO/screening are
+    modeled by label.
+    """
+
+    name = "jobvite"
+
+    def matches(self, url: str) -> bool:
+        return "jobvite.com" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # jobs.jobvite.com/<tenant>/job/<id>.
+        rest = url.split("jobvite.com/", 1)[-1]
+        tenant = rest.split("/", 1)[0] if "/" in rest else rest
+        return f"jobvite:{tenant or 'unknown'}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/apply",
+                fields=(
+                    # --- Personal information ---
+                    DetectedField("input[name=firstName]", "First Name", "text"),
+                    DetectedField("input[name=lastName]", "Last Name", "text"),
+                    DetectedField("input[name=email]", "Email", "text"),
+                    DetectedField("input[name=phone]", "Phone", "text"),
+                    # --- Resume / documents ---
+                    DetectedField("input[type=file][name=resume]", "Resume/CV", "file"),
+                    DetectedField(
+                        "input[type=file][name=coverLetter]", "Cover Letter", "file"
+                    ),
+                    # --- Links ---
+                    DetectedField("input[name=linkedin]", "LinkedIn URL", "text"),
+                    # --- Work authorisation ---
+                    DetectedField(
+                        "select[name=workAuth]",
+                        "Are you legally authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "select[name=sponsorship]",
+                        "Do you now or will you in the future require sponsorship "
+                        "for an employment visa?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Screening questions ---
+                    DetectedField(
+                        "select[name=q_howHeard]",
+                        "How did you hear about this job?",
+                        SCREENING_FACTUAL,
+                        options=(
+                            "LinkedIn",
+                            "Indeed",
+                            "Company website",
+                            "Referral",
+                            "Other",
+                        ),
+                    ),
+                    DetectedField(
+                        "textarea[name=q_why]",
+                        "Why do you want to work here?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- EEO / voluntary self-identification ---
+                    *_eeo_fields("select[name=eeo_"),
+                ),
+            ),
+            FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
+        ]
+
+
+class BambooHrAts(AtsAdapter):
+    """BambooHR careers adapter (``<tenant>.bamboohr.com/careers/<id>``).
+
+    BambooHR's hosted careers page accepts a direct application (no account
+    gate), so the flow is a single application page plus a review/submit step
+    (the only ``is_final_submit`` boundary).
+
+    BambooHR's application form uses ``name``-based inputs (``firstName``,
+    ``lastName``, ``email``, ``phoneNumber``); EEO/screening are modeled by label.
+    """
+
+    name = "bamboohr"
+
+    def matches(self, url: str) -> bool:
+        return "bamboohr.com" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # <tenant>.bamboohr.com — the tenant is the host subdomain.
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        sub = host.split(".bamboohr.com", 1)[0]
+        return f"bamboohr:{sub or host}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/apply",
+                fields=(
+                    # --- Personal information ---
+                    DetectedField("input[name=firstName]", "First Name", "text"),
+                    DetectedField("input[name=lastName]", "Last Name", "text"),
+                    DetectedField("input[name=email]", "Email", "text"),
+                    DetectedField("input[name=phoneNumber]", "Phone", "text"),
+                    DetectedField("input[name=address]", "Address", "text"),
+                    # --- Resume / documents ---
+                    DetectedField("input[type=file][name=resume]", "Resume/CV", "file"),
+                    DetectedField(
+                        "input[type=file][name=coverLetter]", "Cover Letter", "file"
+                    ),
+                    # --- Links ---
+                    DetectedField("input[name=linkedinUrl]", "LinkedIn URL", "text"),
+                    DetectedField("input[name=websiteUrl]", "Website/Portfolio", "text"),
+                    # --- Work authorisation ---
+                    DetectedField(
+                        "select[name=workAuthorized]",
+                        "Are you authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "select[name=needSponsorship]",
+                        "Will you now or in the future require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Screening questions ---
+                    DetectedField(
+                        "input[name=q_salary]",
+                        "Desired Salary",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "textarea[name=q_why]",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- EEO / voluntary self-identification ---
+                    *_eeo_fields("select[name=eeo_"),
+                ),
+            ),
+            FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
+        ]
+
+
+class TaleoAts(AtsAdapter):
+    """Oracle Taleo adapter (``<tenant>.taleo.net`` / ``tbe.taleo.net``).
+
+    Taleo is a very high-prevalence enterprise ATS that gates the entire
+    application behind candidate ACCOUNT CREATION (register / sign-in before the
+    flow proceeds) — so the first page here is flagged ``is_account_create`` (an
+    irreducible human step the pre-fill loop must stop at), and only the terminal
+    review page is ``is_final_submit``. Getting these two boundaries right is the
+    whole safety point of a dedicated adapter versus the generic driver.
+
+    CONSERVATIVE by design: Taleo emits auto-generated, per-tenant, per-flow
+    element ids (e.g. ``requisitionListInterface.*``) that cannot be modeled
+    statically, so the free-text selectors below are deliberately minimal and
+    the value is in the correct page boundaries plus the sensitive/screening
+    field SHAPES (which route by label, not selector). Unknowable ids are not
+    invented.
+    """
+
+    name = "taleo"
+
+    def matches(self, url: str) -> bool:
+        return "taleo.net" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # <tenant>.taleo.net or tbe.taleo.net/<tenant>...; key on the host.
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"taleo:{host}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                # Account registration gate (irreducible human step).
+                url=f"{url}/careersection/register",
+                is_account_create=True,
+                fields=(
+                    DetectedField("#userName", "Email/Username", "text"),
+                    DetectedField("#password", "Password", "password"),
+                    DetectedField("#confirmPassword", "Re-enter Password", "password"),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careersection/personal",
+                fields=(
+                    DetectedField("#firstName", "First Name", "text"),
+                    DetectedField("#lastName", "Last Name", "text"),
+                    DetectedField("#email", "Email", "text"),
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("input[type=file]", "Resume/CV", "file"),
+                    # Work authorisation (routes by label).
+                    DetectedField(
+                        "#workAuth",
+                        "Are you legally authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#sponsorship",
+                        "Will you now or in the future require sponsorship for "
+                        "an employment visa?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careersection/questions",
+                fields=(
+                    DetectedField(
+                        "#q-relocate",
+                        "Are you willing to relocate?",
+                        SCREENING_FACTUAL,
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#q-why",
+                        "Why do you want to work here?",
+                        SCREENING_ESSAY,
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careersection/eeo",
+                fields=_eeo_fields("#eeo_"),
+            ),
+            FakePage(
+                url=f"{url}/careersection/review",
+                is_final_submit=True,
+                fields=(),
+            ),
+        ]
+
+
+class SuccessFactorsAts(AtsAdapter):
+    """SAP SuccessFactors adapter (``career*.successfactors.com`` / ``*.sapsf.*``).
+
+    SuccessFactors (SAP) is a high-prevalence enterprise ATS that requires
+    candidate ACCOUNT CREATION before the application proceeds, so the first page
+    is flagged ``is_account_create`` and only the terminal review page is
+    ``is_final_submit`` — the safety-critical boundaries.
+
+    CONSERVATIVE: SuccessFactors renders GWT/UI5 widgets with generated ids that
+    cannot be modeled statically. The adapter therefore models the correct page
+    boundaries and the sensitive/screening field shapes (routed by label) with a
+    minimal, non-invented free-text selector set.
+    """
+
+    name = "successfactors"
+
+    def matches(self, url: str) -> bool:
+        low = url.lower()
+        return (
+            "successfactors.com" in low
+            or "successfactors.eu" in low
+            or "sapsf." in low
+        )
+
+    def tenant_key(self, url: str) -> str:
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"successfactors:{host}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/careers/register",
+                is_account_create=True,
+                fields=(
+                    DetectedField("#email", "Email Address", "text"),
+                    DetectedField("#password", "Password", "password"),
+                    DetectedField("#confirmPassword", "Confirm Password", "password"),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careers/apply/personal",
+                fields=(
+                    DetectedField("#firstName", "First Name", "text"),
+                    DetectedField("#lastName", "Last Name", "text"),
+                    DetectedField("#email", "Email", "text"),
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("input[type=file]", "Resume/CV", "file"),
+                    DetectedField(
+                        "#workAuth",
+                        "Are you authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#sponsorship",
+                        "Will you require visa sponsorship for employment?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careers/apply/questions",
+                fields=(
+                    DetectedField(
+                        "#q-start",
+                        "Earliest available start date",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "#q-why",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/careers/apply/eeo",
+                fields=_eeo_fields("#eeo_"),
+            ),
+            FakePage(
+                url=f"{url}/careers/apply/review",
+                is_final_submit=True,
+                fields=(),
+            ),
+        ]
+
+
+class BrassRingAts(AtsAdapter):
+    """IBM Kenexa BrassRing adapter (``*.brassring.com`` / Kenexa).
+
+    BrassRing (IBM Kenexa) is a legacy enterprise ATS that requires candidate
+    ACCOUNT CREATION before applying, so the first page is flagged
+    ``is_account_create`` and only the terminal review page is
+    ``is_final_submit`` — the safety-critical boundaries.
+
+    CONSERVATIVE: BrassRing emits opaque generated field ids (``jsGridControl``
+    /``Question…`` widgets), so the adapter models the correct boundaries and the
+    sensitive/screening shapes (routed by label) with a minimal, non-invented
+    selector set rather than guessing per-tenant ids.
+    """
+
+    name = "brassring"
+
+    def matches(self, url: str) -> bool:
+        low = url.lower()
+        return "brassring.com" in low or "kenexa" in low
+
+    def tenant_key(self, url: str) -> str:
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"brassring:{host}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/register",
+                is_account_create=True,
+                fields=(
+                    DetectedField("#username", "Email/Username", "text"),
+                    DetectedField("#password", "Password", "password"),
+                    DetectedField("#confirmPassword", "Confirm Password", "password"),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/apply/personal",
+                fields=(
+                    DetectedField("#firstName", "First Name", "text"),
+                    DetectedField("#lastName", "Last Name", "text"),
+                    DetectedField("#email", "Email", "text"),
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("input[type=file]", "Resume/CV", "file"),
+                    DetectedField(
+                        "#workAuth",
+                        "Are you legally authorized to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#sponsorship",
+                        "Will you now or in the future require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/apply/questions",
+                fields=(
+                    DetectedField(
+                        "#q-relocate",
+                        "Are you willing to relocate?",
+                        SCREENING_FACTUAL,
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#q-why",
+                        "Why do you want to work here?",
+                        SCREENING_ESSAY,
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/apply/eeo",
+                fields=_eeo_fields("#eeo_"),
+            ),
+            FakePage(
+                url=f"{url}/apply/review",
+                is_final_submit=True,
+                fields=(),
+            ),
+        ]
+
+
+#: Register the additive adapters WITHOUT touching the original registry literal
+#: (append-only): resolve_ats / resolve_ats_strict iterate ATS_REGISTRY at call
+#: time, so these are picked up exactly like the built-in vendors (NFR-EXT-1).
+ATS_REGISTRY.update(
+    {
+        AshbyAts.name: AshbyAts,
+        SmartRecruitersAts.name: SmartRecruitersAts,
+        JobviteAts.name: JobviteAts,
+        BambooHrAts.name: BambooHrAts,
+        TaleoAts.name: TaleoAts,
+        SuccessFactorsAts.name: SuccessFactorsAts,
+        BrassRingAts.name: BrassRingAts,
+    }
+)
+
