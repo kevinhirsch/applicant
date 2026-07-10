@@ -61,7 +61,7 @@ async function _reconnectActive() {
           elapsed: task.started_at ? Date.now() - task.started_at * 1000 : 0,
           result: null, sources: null, findings: null,
           errorMsg: null, avgDuration: null, modelName: null,
-          settings: {}, _es: null, _timerInterval: null,
+          settings: {}, _es: null, _ws: null, _timerInterval: null,
         };
         _jobs.push(job);
         _connectStream(job);
@@ -86,7 +86,7 @@ async function _reconnectActive() {
           category: item.category || '',
           errorMsg: null, avgDuration: null, modelName: null,
           settings: { max_rounds: item.rounds || 8 },
-          _es: null, _timerInterval: null, _fromLibrary: true,
+          _es: null, _ws: null, _timerInterval: null, _fromLibrary: true,
         });
       }
     }
@@ -182,6 +182,7 @@ export function clearAll() {
   if (doneIds.length) _markDismissed(doneIds);
   for (const job of _jobs) {
     if (job._es) { job._es.close(); job._es = null; }
+    if (job._ws) { try { job._ws.close(); } catch (e) { console.warn("ws close failed", e) } job._ws = null; }
     if (job._timerInterval) { clearInterval(job._timerInterval); job._timerInterval = null; }
   }
   _jobs = [];
@@ -218,7 +219,7 @@ function _makeJob(query, settings) {
     category: settings?.category || '',
     errorMsg: null, avgDuration: null,
     modelName: null, endpointName: null,
-    _es: null, _timerInterval: null,
+    _es: null, _ws: null, _timerInterval: null,
   };
 }
 
@@ -252,28 +253,139 @@ async function _launchJob(job) {
   _notify();
 }
 
+// --- WebSocket transport helpers (pure; headlessly unit-tested via source
+// slicing, mirroring chatWsTransport.js) --------------------------------------
+
+// Build the research-WS URL. https→wss, http→ws. Derives the origin from an
+// absolute `apiBase` when one is set (cross-origin embed), else from `loc`.
+function researchWsUrl(loc, apiBase, sessionId) {
+  let httpBase = apiBase;
+  if (!httpBase || !/^https?:/i.test(httpBase)) {
+    httpBase = (loc && loc.origin) || '';
+  }
+  const wsBase = httpBase.replace(/^http/i, 'ws');
+  let url = `${wsBase}/api/research/ws`;
+  if (sessionId) url += `?session=${encodeURIComponent(sessionId)}`;
+  return url;
+}
+
+// The single upstream verb: subscribe to a research session's progress stream.
+// PURE TRANSPORT — it selects what to READ; it never starts/cancels research
+// (those stay on the HTTP routes), so the socket adds no authority.
+function buildResearchSubscribeFrame(sessionId, resume) {
+  const r = (typeof resume === 'number' && resume > 0) ? resume : 0;
+  return { type: 'subscribe', session: String(sessionId || ''), resume: r };
+}
+
+// Classify a server WS message into a normalized shape the reader acts on:
+//   { kind: 'event', data: {...} } — one progress/terminal payload (SSE parity)
+//   { kind: 'end' }                — stream finished (terminal sentinel)
+//   { kind: 'error', error }       — server rejected the subscribe
+//   { kind: 'ignore' }             — unparseable / unknown
+function parseResearchWsMessage(raw) {
+  let obj;
+  try {
+    obj = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+  } catch (_) {
+    return { kind: 'ignore' };
+  }
+  if (!obj || typeof obj !== 'object') return { kind: 'ignore' };
+  if (obj.type === 'event' && obj.data && typeof obj.data === 'object') {
+    return { kind: 'event', data: obj.data };
+  }
+  if (obj.type === 'end') return { kind: 'end' };
+  if (obj.type === 'error') return { kind: 'error', error: obj.error || 'error' };
+  return { kind: 'ignore' };
+}
+
+// Apply one progress/terminal payload to a job — the SHARED handler BOTH the WS
+// and the SSE (EventSource) transports feed, so event handling is identical
+// across transports. This is the exact logic the SSE `onmessage` ran before.
+function _handleResearchEvent(job, d) {
+  if (d.status === 'not_found') { _finishJob(job, 'error'); return; }
+  job.progress = d;
+  if (d.model && !job.modelName) job.modelName = d.model;
+  if (d.final) {
+    if (d.error) job.errorMsg = d.error;
+    _finishJob(job, d.status === 'done' ? 'done' : d.status === 'cancelled' ? 'cancelled' : 'error');
+    if (d.status === 'done') _fetchResult(job);
+    return;
+  }
+  _notify();
+}
+
+const _WS_CONNECT_TIMEOUT_MS = 4000;
+
 function _connectStream(job) {
   job._timerInterval = setInterval(() => {
     job.elapsed = Date.now() - job.startedAt;
     _notify();
   }, 1000);
 
+  // Prefer the WebSocket; fall back to the SSE EventSource (which itself falls
+  // back to polling) when the socket can't connect or drops mid-run — never a
+  // silent dead UI.
+  if (!_connectStreamWs(job)) {
+    _connectStreamSse(job);
+  }
+}
+
+function _connectStreamWs(job) {
+  const WS = (typeof WebSocket !== 'undefined') ? WebSocket : null;
+  if (!WS) return false;
+  let ws;
+  try {
+    ws = new WS(researchWsUrl(window.location, _apiBase, job.id));
+  } catch (e) { return false; }
+  job._ws = ws;
+  let committed = false;
+  const toSse = () => {
+    if (job._ws) { try { job._ws.close(); } catch (e) { console.warn("ws close failed", e) } job._ws = null; }
+    if (job.status === 'running') _connectStreamSse(job);
+  };
+  const connectTimer = setTimeout(() => {
+    // Never proved the socket works — abandon it; onclose falls back to SSE.
+    if (!committed) { try { ws.close(); } catch (e) { console.warn("ws close failed", e) } }
+  }, _WS_CONNECT_TIMEOUT_MS);
+  ws.onopen = () => {
+    try { ws.send(JSON.stringify(buildResearchSubscribeFrame(job.id, 0))); } catch (e) { console.warn("ws send failed", e) }
+  };
+  ws.onmessage = (evt) => {
+    const msg = parseResearchWsMessage(evt && evt.data);
+    if (msg.kind === 'ignore') return;
+    // A real server frame proves the subscribe was accepted — commit to the WS.
+    committed = true;
+    clearTimeout(connectTimer);
+    if (msg.kind === 'event') { _handleResearchEvent(job, msg.data); return; }
+    if (msg.kind === 'end') {
+      if (job._ws) { try { job._ws.close(); } catch (e) { console.warn("ws close failed", e) } job._ws = null; }
+      return;
+    }
+    if (msg.kind === 'error') { toSse(); return; }
+  };
+  ws.onerror = () => { try { ws.close(); } catch (e) { console.warn("ws close failed", e) } };
+  ws.onclose = () => {
+    clearTimeout(connectTimer);
+    job._ws = null;
+    // A terminal event already finished the job → a close is normal, do nothing.
+    // Otherwise recover: never committed → fall back to SSE; committed but the
+    // run is still open (unexpected drop) → resume via the poll fallback (the
+    // same recovery the SSE path uses on error). Never a silent dead UI.
+    if (job.status !== 'running') return;
+    if (!committed) { _connectStreamSse(job); return; }
+    setTimeout(() => _pollFallback(job), 1500);
+  };
+  return true;
+}
+
+function _connectStreamSse(job) {
   const es = new EventSource(`${_apiBase}/api/research/stream/${job.id}`);
   job._es = es;
 
   es.onmessage = (evt) => {
     try {
       const d = JSON.parse(evt.data);
-      if (d.status === 'not_found') { _finishJob(job, 'error'); return; }
-      job.progress = d;
-      if (d.model && !job.modelName) job.modelName = d.model;
-      if (d.final) {
-        if (d.error) job.errorMsg = d.error;
-        _finishJob(job, d.status === 'done' ? 'done' : d.status === 'cancelled' ? 'cancelled' : 'error');
-        if (d.status === 'done') _fetchResult(job);
-        return;
-      }
-      _notify();
+      _handleResearchEvent(job, d);
     } catch (e) { console.warn("fetch request failed", e) }
   };
 
@@ -303,6 +415,7 @@ async function _pollFallback(job) {
 function _finishJob(job, status) {
   job.status = status;
   if (job._es) { job._es.close(); job._es = null; }
+  if (job._ws) { try { job._ws.close(); } catch (e) { console.warn("ws close failed", e) } job._ws = null; }
   if (job._timerInterval) { clearInterval(job._timerInterval); job._timerInterval = null; }
   job.elapsed = Date.now() - (job.startedAt || Date.now());
   if (status === 'done') {

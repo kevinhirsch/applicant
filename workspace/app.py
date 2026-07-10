@@ -772,6 +772,13 @@ app.include_router(setup_chat_ws_routes())
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
+# Research progress over a WebSocket (SSE-parity transport; relays the SAME
+# progress payloads the /api/research/stream SSE route serves, owner-scoped on the
+# upgrade. Pure read-transport — start/cancel stay on the HTTP research routes,
+# and the SSE EventSource remains the automatic fallback lane).
+from routes.research_ws_routes import setup_research_ws_routes
+app.include_router(setup_research_ws_routes(research_handler))
+
 # History
 from routes.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))
