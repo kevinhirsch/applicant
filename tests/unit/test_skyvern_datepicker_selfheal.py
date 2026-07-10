@@ -292,8 +292,9 @@ class TestIsBoundaryControl:
     def test_create_account_text(self):
         assert is_boundary_control(_FakeEl({"type": "button"}, text="Create Account")) is True
 
-    def test_sign_up_aria_label(self):
-        assert is_boundary_control(_FakeEl({"aria-label": "Sign Up"})) is True
+    def test_sign_up_button_by_role(self):
+        # A real "Sign Up" control is button-like (role=button / a <button>) — refused.
+        assert is_boundary_control(_FakeEl({"aria-label": "Sign Up", "role": "button"})) is True
 
     def test_plain_fill_target_not_boundary(self):
         assert is_boundary_control(_FakeEl({"type": "text", "name": "first_name"})) is False
@@ -301,6 +302,18 @@ class TestIsBoundaryControl:
     def test_calendar_day_button_not_boundary(self):
         # A day cell <button>7</button> must NOT be judged a submit control.
         assert is_boundary_control(_FakeEl({"type": "button"}, text="7")) is False
+
+    def test_fillable_field_with_marker_substring_not_boundary(self):
+        # Greptile #817: a FILLABLE field whose name/label merely CONTAINS a boundary
+        # marker substring ("submit"/"register") is NOT a submit control — refusing it
+        # would record a false fill failure. Only button-like controls are judged by text.
+        assert is_boundary_control(_FakeEl({"type": "text", "name": "submitted_by"})) is False
+        assert is_boundary_control(_FakeEl({"aria-label": "Registered name"})) is False
+        assert is_boundary_control(_FakeEl({"type": "email", "name": "register_email"})) is False
+
+    def test_submit_button_still_refused_by_text(self):
+        # A genuine submit BUTTON (button-like + marker) is still refused.
+        assert is_boundary_control(_FakeEl({"type": "button"}, text="Submit Application")) is True
 
     def test_none(self):
         assert is_boundary_control(None) is False

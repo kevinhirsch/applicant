@@ -689,10 +689,43 @@ def is_boundary_control(element: Any) -> bool:
         typ = (element.get_attribute("type") or "").strip().lower()
     except Exception:
         typ = ""
+    # Inherent submit/reset/image inputs are always boundary controls.
     if typ in _SUBMIT_INPUT_TYPES:
         return True
+    # The identity-text markers ("submit"/"register"/…) are only meaningful on
+    # BUTTON-LIKE controls. A FILLABLE field whose name/label merely CONTAINS such a
+    # substring — `<input name="submitted_by">`, `aria-label="Registered name"` — is a
+    # normal field, NOT a submit control; refusing it would record a false fill
+    # failure. So restrict the substring-marker refusal to button/link-shaped elements.
+    if not _is_button_like(element, typ):
+        return False
     text = _element_identity_text(element)
     return any(marker in text for marker in _BOUNDARY_CONTROL_MARKERS)
+
+
+def _is_button_like(element: Any, typ: str) -> bool:
+    """True if ``element`` is a button/link-shaped control (not a fillable field).
+
+    Pure + defensive. ``type=button/submit/image/reset``, ``role=button|link``, or a
+    ``<button>``/``<a>`` tag qualify; a text/email/select/textarea input does not.
+    """
+    if typ in {"button", "submit", "image", "reset"}:
+        return True
+    try:
+        role = (element.get_attribute("role") or "").strip().lower()
+    except Exception:
+        role = ""
+    if role in {"button", "link"}:
+        return True
+    ev = getattr(element, "evaluate", None)
+    if callable(ev):
+        try:
+            tag = (ev("el => el.tagName") or "").strip().lower()
+        except Exception:
+            tag = ""
+        if tag in {"button", "a"}:
+            return True
+    return False
 
 
 @dataclass
