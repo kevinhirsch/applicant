@@ -45,6 +45,16 @@ _ALLOWED_UPSTREAM: dict[str, frozenset[str]] = {
     # leave, re-syncs its live set on (re)connect, and pings to keep-alive. None
     # of these are consequential actions.
     "presence": frozenset({"join", "leave", "sync", "ping"}),
+    # Phase 3 (SAFE SUBSET): co-steer a running agent. ONLY ``pause`` and
+    # ``redirect`` are enabled, and each is PURE TRANSPORT to an EXISTING
+    # owner-gated ``AgentRunService`` method the HTTP surface already exposes
+    # (``pause`` -> ``set_active(active=False)``, ``redirect`` -> ``configure_run``);
+    # the socket adds NO new authority. ``approve`` — and any submit/authorize
+    # verb — is DELIBERATELY absent: it touches the final-submit authorization
+    # boundary (review-before-submit) and is deferred to a separate, separately-
+    # reviewed pass, so an ``agent/approve`` frame stays default-DENIED here and
+    # can never self-authorize a final submit over the socket.
+    "agent": frozenset({"pause", "redirect"}),
 }
 
 
@@ -101,12 +111,13 @@ def authorize_upstream(chan: str, mtype: str) -> UpstreamDecision:
     """Decide whether an *upstream* (client→server) command may run — the safety seam.
 
     Default-DENY: only ``(chan, type)`` pairs explicitly enabled for this phase
-    are allowed. The consequential channels (``agent``/``takeover``) are not wired
-    in Phase 1, so an ``agent``/``approve`` or ``takeover``/``input`` frame is
-    refused here regardless of any payload flag — the review-before-submit
-    stop-boundary and the pre-fill boundary still hold. Downstream
-    (server-originated) frames are NOT run through this gate; only what a browser
-    sends up is.
+    are allowed. Phase 3 enables ONLY the safe ``agent`` co-steer verbs
+    (``pause``/``redirect``); ``agent``/``approve`` (and any submit/authorize
+    verb) and the whole ``takeover``/``input`` channel are still refused here
+    regardless of any payload flag — the review-before-submit stop-boundary and
+    the pre-fill boundary still hold, and the socket can never self-authorize a
+    final submit. Downstream (server-originated) frames are NOT run through this
+    gate; only what a browser sends up is.
     """
     allowed = _ALLOWED_UPSTREAM.get(chan, frozenset())
     if mtype in allowed:

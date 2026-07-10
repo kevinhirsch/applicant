@@ -54,8 +54,12 @@ class FakeEngineBridge:
         self._seq = 0
         self._q: asyncio.Queue = asyncio.Queue()
         self._closed = False
+        # Every frame the workspace forwards upstream (any channel) — used to prove
+        # the bridge forwards agent co-steer frames to the engine unchanged.
+        self.received: list[dict] = []
 
     async def send(self, frame):
+        self.received.append(frame)
         if frame.get("chan") != "presence":
             return
         t = frame.get("type")
@@ -216,6 +220,52 @@ def test_notif_frames_replay_on_reconnect_then_go_live():
             ) as t2:
                 frame = _read_frame(t2, "notif", "notification")
                 assert frame["data"] == {"urgency": "normal"}
+
+
+# --- agent co-steer relay + forward over the full bridge (Phase 3) ----------
+
+
+def test_engine_agent_event_relays_down_to_the_browser_tab():
+    # The engine's agent-run publish seam fans an `agent` event; the workspace bridge
+    # relays it to the owner's tab so the FE live-renders the running agent's progress.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=t1", headers=_cookie("tok")
+        ) as ws:
+            _read_presence_count(ws, 1)  # bridge is up
+            bridge = connector.bridges["admin"]
+            bridge.push_down("agent", "event", {"campaign_id": "c-1", "intent": "Tailoring."})
+            frame = _read_frame(ws, "agent", "event")
+            assert frame["data"] == {"campaign_id": "c-1", "intent": "Tailoring."}
+
+
+def test_browser_agent_pause_is_forwarded_upstream_to_the_engine():
+    # The workspace is thin transport: a browser agent/pause frame is forwarded to
+    # the engine unchanged (the engine authorizes it). The workspace never authorizes.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=t1", headers=_cookie("tok")
+        ) as ws:
+            _read_presence_count(ws, 1)
+            ws.send_json({"chan": "agent", "type": "pause", "seq": 0, "data": {"campaign_id": "c-1"}})
+            # The workspace receive loop forwards frames in order on one task, so a
+            # follow-up presence join whose state echo we read back guarantees the
+            # earlier agent/pause was already forwarded upstream.
+            ws.send_json({"chan": "presence", "type": "join", "seq": 0, "data": {"tab": "t2"}})
+            _read_presence_count(ws, 2)
+            bridge = connector.bridges["admin"]
+            agent_frames = [f for f in bridge.received if f.get("chan") == "agent"]
+            assert agent_frames, "agent/pause was never forwarded upstream"
+            assert agent_frames[0]["type"] == "pause"
+            assert agent_frames[0]["data"] == {"campaign_id": "c-1"}
 
 
 # --- presence round-trip over the full bridge -------------------------------

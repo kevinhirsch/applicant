@@ -25,8 +25,17 @@ from applicant.core.ids import AgentRunId, CampaignId, new_id
 
 
 class AgentRunService:
-    def __init__(self, storage) -> None:
+    def __init__(self, storage, *, realtime=None) -> None:
         self._storage = storage
+        # RT Phase 3 (realtime-websocket.md): an optional ``(mtype, data) -> None``
+        # publisher that fans a downstream ``agent`` frame whenever a run is recorded,
+        # so the operator's live tabs see the running agent's progress in realtime.
+        # BE→FE surfacing ONLY — it never authorizes an upstream command. ``None``
+        # (legacy construction / unit tests) is byte-identical: no push, no behavior
+        # change. Injected once by the container into every AgentRunService build
+        # (main + per-tick + per-request); the module-global realtime registry it
+        # publishes to survives the scheduler's per-tick service rebuilds.
+        self._realtime = realtime
 
     # --- run-control configuration (FR-AGENT-1/2) -------------------------
     def configure_run(
@@ -110,7 +119,33 @@ class AgentRunService:
         self._storage.agent_runs.add(run)
         self._storage.commit()
         self._prune_old_runs(campaign_id)
+        self._publish_run_event(run)
         return run
+
+    def _publish_run_event(self, run: AgentRun) -> None:
+        """Fan a downstream ``agent`` frame for a just-recorded run (RT Phase 3).
+
+        Carries the run's plain-language intent sentence + stats so a live tab can
+        render the running agent's progress without polling; a reconnecting tab
+        replays the ``agent`` channel buffer then goes live. No-op without a
+        publisher (legacy/unit construction). Never raises — a transport hiccup
+        must never break recording a run mid-tick.
+        """
+        if self._realtime is None:
+            return
+        try:
+            self._realtime(
+                "event",
+                {
+                    "campaign_id": str(run.campaign_id),
+                    "intent": run.intent_sentence,
+                    "stats": dict(run.stats or {}),
+                    "run_mode": run.run_mode.value,
+                    "run_seq": run.seq,
+                },
+            )
+        except Exception:  # pragma: no cover - surfacing must never break the tick
+            pass
 
     #: Rolling window of agent runs kept per campaign (#11 retention). Older runs are
     #: pruned so the ``agent_runs`` table does not grow unbounded under 24/7 ticking.

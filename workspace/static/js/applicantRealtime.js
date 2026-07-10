@@ -123,6 +123,58 @@ function notifRefresh() {
   return false;
 }
 
+// ── agent channel (Phase 3 co-steer): live run events down + pause/redirect up ──
+
+// Summarize an `agent` event frame into a short, plain-language, white-label label
+// (the running agent's current intent). Falls back to a generic line so a live
+// event never renders blank.
+function agentEventSummary(frame) {
+  const d = (frame && frame.data) || {};
+  const intent = d.intent && String(d.intent).trim();
+  if (intent) return intent;
+  return 'Working on your job search';
+}
+
+// Build an upstream `agent/pause` frame for a campaign (pause the running agent).
+// PURE TRANSPORT: the engine authorizes it server-side against the SAME owner-gated
+// path the HTTP pause uses (AgentRunService.set_active) — this only shapes the
+// envelope and adds no authority.
+function buildAgentPauseFrame(campaignId) {
+  return { chan: 'agent', type: 'pause', seq: 0, data: { campaign_id: String(campaignId || '') } };
+}
+
+// Build an upstream `agent/redirect` frame — steer/redirect a running agent by
+// reconfiguring its run (mode / throughput / schedule). Only the provided fields
+// ride along; the engine applies them via the EXISTING configure-run path. Never
+// carries an approve/submit — that verb is not enabled on the socket at all.
+function buildAgentRedirectFrame(campaignId, changes) {
+  const data = { campaign_id: String(campaignId || '') };
+  const c = changes || {};
+  if (c.run_mode != null) data.run_mode = c.run_mode;
+  if (c.throughput_target != null) data.throughput_target = c.throughput_target;
+  if (c.schedule != null) data.schedule = c.schedule;
+  return { chan: 'agent', type: 'redirect', seq: 0, data };
+}
+
+// An `agent` event arrived (a live run was recorded server-side). Drive the SAME UI
+// the poll updates — the existing Activity strip's intent pill / live dot — via
+// applicantActivity.refreshStatus, and fan a DOM event so any mounted surface can
+// live-render the run progress. Reuses existing agent-run UI; does NOT rebuild it.
+function agentRefresh(frame) {
+  try {
+    const mod = (typeof window !== 'undefined') && window.applicantActivityModule;
+    if (mod && typeof mod.refreshStatus === 'function') { mod.refreshStatus(); }
+  } catch { /* no-op */ }
+  try {
+    if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      document.dispatchEvent(new CustomEvent('applicant:agent-event', {
+        detail: { summary: agentEventSummary(frame), data: (frame && frame.data) || {} },
+      }));
+    }
+  } catch { /* no-op */ }
+  return true;
+}
+
 // ── connection (browser-only; the JS suite slices the pure helpers above) ─────
 
 const WS_PATH = '/api/applicant/realtime';   // the front-door proxy this consumes
@@ -289,8 +341,31 @@ function mountApplicantRealtime(opts = {}) {
     // same refresh the poll did — bell/rail/Portal update through their existing
     // listeners; the poll is retired while live and restored on loss (fallback).
     .onChannel('notif', () => { notifRefresh(); })
+    // Phase 3 push: a running agent recorded a run event. Live-render it through the
+    // existing Activity strip (refreshStatus) + a DOM event — no rebuilt UI.
+    .onChannel('agent', (frame) => { agentRefresh(frame); })
     .connect();
   return _client;
+}
+
+// Owner-gated pause of a running agent over the WS (Phase 3). The upgrade is already
+// owner-authenticated (a non-owner cannot reach the socket), and the ENGINE authorizes
+// the frame against the SAME owner-gated pause path the HTTP surface uses — this send
+// adds no authority. Returns false when the socket isn't open (the caller falls back
+// to the HTTP pause).
+function sendAgentPause(campaignId) {
+  if (!_client) return false;
+  const f = buildAgentPauseFrame(campaignId);
+  return _client.send(f.chan, f.type, f.data);
+}
+
+// Owner-gated redirect/steer of a running agent over the WS (Phase 3) — reconfigures
+// the run (mode / throughput / schedule) via the engine's existing configure-run path.
+// NEVER an approve/submit; that verb is not enabled on the socket.
+function sendAgentRedirect(campaignId, changes) {
+  if (!_client) return false;
+  const f = buildAgentRedirectFrame(campaignId, changes);
+  return _client.send(f.chan, f.type, f.data);
 }
 
 function _boot() {
@@ -316,6 +391,12 @@ const applicantRealtimeModule = {
   connectionStateLabel,
   realtimeLiveDetail,
   notifRefresh,
+  agentEventSummary,
+  buildAgentPauseFrame,
+  buildAgentRedirectFrame,
+  agentRefresh,
+  sendAgentPause,
+  sendAgentRedirect,
   WS_PATH,
 };
 
@@ -330,6 +411,12 @@ export {
   connectionStateLabel,
   realtimeLiveDetail,
   notifRefresh,
+  agentEventSummary,
+  buildAgentPauseFrame,
+  buildAgentRedirectFrame,
+  agentRefresh,
+  sendAgentPause,
+  sendAgentRedirect,
 };
 
 try { window.applicantRealtimeModule = applicantRealtimeModule; } catch { /* no-op */ }

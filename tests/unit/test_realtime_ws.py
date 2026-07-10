@@ -121,6 +121,31 @@ def test_denied_upstream_command_is_rejected_without_acting(client):
         assert err["data"]["chan"] == "agent"
 
 
+def test_agent_pause_reaches_the_bound_agent_control_dispatcher(client):
+    # Phase 3: agent/pause is an ENABLED upstream verb, so it is NOT refused at the
+    # envelope seam — it is forwarded to the container-bound dispatcher, which calls
+    # the real AgentRunService. Sending it with no campaign_id proves the dispatcher
+    # (not the deny seam) handled it: the reason is the dispatcher's own validation,
+    # not "not enabled".
+    with client.websocket_connect(_url(_sid())) as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"chan": "agent", "type": "pause", "seq": 0, "data": {}})
+        err = _next(ws, chan="sys", mtype="error")
+        assert "campaign_id" in err["data"]["reason"]
+        assert "not enabled" not in err["data"]["reason"]
+
+
+def test_agent_approve_is_still_refused_at_the_seam_in_phase_3(client):
+    # The deferred verb stays default-DENIED: it never reaches any handler and the
+    # reason is the envelope seam's "not enabled", proving it cannot self-authorize
+    # a final submit over the socket.
+    with client.websocket_connect(_url(_sid())) as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"chan": "agent", "type": "approve", "seq": 0, "data": {"campaign_id": "x"}})
+        err = _next(ws, chan="sys", mtype="error")
+        assert "not enabled" in err["data"]["reason"]
+
+
 def test_malformed_frame_is_rejected_but_keeps_the_socket_open(client):
     with client.websocket_connect(_url(_sid())) as ws:
         ws.receive_json()  # hello

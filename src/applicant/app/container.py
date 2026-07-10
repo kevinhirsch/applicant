@@ -1071,7 +1071,6 @@ def build_container(settings: Settings | None = None) -> Container:
         tool_registry=tool_registry,
     )
     criteria_service = CriteriaService(storage, llm)
-    agent_run_service = AgentRunService(storage)
     # Phase 2 realtime push (realtime-websocket.md): the ONE process-lived ``notif``
     # publisher, threaded into the notification + pending-action services (main,
     # per-tick, per-request) so every path that creates a notification or mutates the
@@ -1079,9 +1078,15 @@ def build_container(settings: Settings | None = None) -> Container:
     # registry. Like resume_ledger/digest_cache above, it is built ONCE here and
     # injected into every rebuild — the registry it publishes to is a module-global
     # that survives the scheduler's per-tick service rebuilds. BE→FE surfacing only.
-    from applicant.app.realtime import make_notif_publisher
+    # RT Phase 3 adds the sibling ``agent`` publisher: threaded into every
+    # AgentRunService build so each recorded run fans a downstream ``agent`` event to
+    # the operator's live tabs (BE→FE surfacing only — the upstream co-steer verbs are
+    # gated separately at ``authorize_upstream``, ``approve`` off).
+    from applicant.app.realtime import make_agent_publisher, make_notif_publisher
 
     notif_publisher = make_notif_publisher()
+    agent_publisher = make_agent_publisher()
+    agent_run_service = AgentRunService(storage, realtime=agent_publisher)
     notification_service = NotificationService(notification, realtime=notif_publisher)
     pending_actions_service = PendingActionsService(storage, realtime=notif_publisher)
     digest_service = DigestService(
@@ -1561,7 +1566,10 @@ def build_container(settings: Settings | None = None) -> Container:
             agent_memory=agent_memory,
         )
         cs = CriteriaService(tick_storage, llm)
-        ars = AgentRunService(tick_storage)
+        # RT Phase 3: the per-tick run recorder fans the live ``agent`` event — this
+        # is the path the 24/7 scheduler drives, so it is what surfaces a running
+        # agent's progress to the operator's tabs in realtime.
+        ars = AgentRunService(tick_storage, realtime=agent_publisher)
         pas = PendingActionsService(tick_storage, realtime=notif_publisher)
         dg = DigestService(
             tick_storage,
@@ -1764,7 +1772,7 @@ def build_container(settings: Settings | None = None) -> Container:
         # the chatbot's own-work report uses this request's isolated Session. The SAME
         # service is the run-control seam (FR-AGENT-1/2) for steering from chat — a
         # pause/resume/throughput change persists on THIS request's session (CONC-REQ-1).
-        rs_agent_runs = AgentRunService(req_storage)
+        rs_agent_runs = AgentRunService(req_storage, realtime=agent_publisher)
         # Request-scoped onboarding so the chat's apply-readiness gate ("what's still
         # missing before I can apply") reads THIS request's criteria + résumé state on its
         # own isolated Session (CONC-REQ-1). Bound to rs_criteria so a free-text criteria
@@ -1922,6 +1930,37 @@ def build_container(settings: Settings | None = None) -> Container:
             services = _build_request_services(SqlAlchemyStorage(req_session))
             services["_session"] = req_session
             return services
+
+    # RT Phase 3 (realtime-websocket.md): the upstream ``agent`` co-steer dispatcher.
+    # An authorized ``agent/pause``/``agent/redirect`` frame is PURE TRANSPORT to the
+    # EXISTING owner-gated ``AgentRunService`` (the SAME methods the HTTP surface uses:
+    # ``set_active`` for pause, ``configure_run`` for redirect) — the socket adds NO new
+    # authority, and ``approve``/submit verbs never reach here (default-denied at the
+    # envelope seam). The WS handler runs on the app loop, so each command gets a FRESH,
+    # session-isolated AgentRunService (never the request/boot Session) exactly like the
+    # per-request factory above; the no-DB lane falls back to the shared singleton.
+    from applicant.app.realtime import get_registry, make_agent_control_dispatcher
+
+    def _agent_control_service():
+        if session_factory is not None:
+            from applicant.adapters.storage.repositories import SqlAlchemyStorage
+
+            cmd_session = session_factory()
+            svc = AgentRunService(SqlAlchemyStorage(cmd_session), realtime=agent_publisher)
+
+            def _close() -> None:
+                try:
+                    cmd_session.close()
+                except Exception:  # pragma: no cover - defensive: close never raises
+                    pass
+
+            return svc, _close
+        # In-memory / no-DB lane: no Session to isolate, reuse the shared service.
+        return agent_run_service, (lambda: None)
+
+    get_registry().bind_agent_control(
+        make_agent_control_dispatcher(_agent_control_service)
+    )
 
     # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH
     # sibling of the chatbot self-report. Assembles a short, first-person, white-labeled

@@ -31,9 +31,16 @@ _EVICT_GRACE_S = 180.0
 class RealtimeSession:
     """One owner's live session: N sockets attach, per-channel replay + presence."""
 
-    __slots__ = ("session_id", "channels", "subscribers", "presence", "evict_task")
+    __slots__ = (
+        "session_id",
+        "channels",
+        "subscribers",
+        "presence",
+        "evict_task",
+        "agent_control",
+    )
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, agent_control: Any = None) -> None:
         self.session_id = session_id
         # chan -> ordered list of frame dicts; a frame's ``seq`` == its index, so
         # the buffer is both the replay log and the seq authority for the channel.
@@ -41,6 +48,13 @@ class RealtimeSession:
         self.subscribers: set[asyncio.Queue] = set()
         self.presence: set[str] = set()
         self.evict_task: asyncio.Task | None = None
+        # Phase 3 ``agent`` co-steer: ``(Frame) -> UpstreamDecision`` delegating an
+        # ALREADY-authorized ``pause``/``redirect`` to the EXISTING owner-gated
+        # ``AgentRunService`` (injected by the container via the registry). ``None``
+        # (unit context / not yet bound) => an authorized agent command is a no-op,
+        # never a mutation. It carries NO authority of its own — the safety decision
+        # already happened at ``authorize_upstream`` before this is ever consulted.
+        self.agent_control = agent_control
 
     # -- fan-out -----------------------------------------------------------
 
@@ -90,17 +104,42 @@ class RealtimeSession:
     def apply_upstream(self, frame: Frame) -> UpstreamDecision:
         """Authorize an upstream frame via the core seam, then apply it if allowed.
 
-        Phase 1 only implements the ``presence`` verbs. A denied frame mutates
-        NOTHING and returns the decision so the endpoint can send the reason back
-        to just that socket. This is the single server-side choke point later
-        phases extend — never gate it on a caller-supplied flag.
+        Phase 1 implements the ``presence`` verbs; Phase 3 adds the ``agent``
+        co-steer verbs (``pause``/``redirect``), delegated to the injected
+        agent-control handler that calls the EXISTING owner-gated
+        ``AgentRunService``. A denied frame mutates NOTHING and returns the
+        decision so the endpoint can send the reason back to just that socket.
+        This is the single server-side choke point later phases extend — never
+        gate it on a caller-supplied flag.
         """
         decision = authorize_upstream(frame.chan, frame.type)
         if not decision.allowed:
             return decision
         if frame.chan == "presence":
             self._apply_presence(frame)
+            return decision
+        if frame.chan == "agent":
+            return self._apply_agent(frame)
         return decision
+
+    def _apply_agent(self, frame: Frame) -> UpstreamDecision:
+        """Delegate an ALREADY-authorized ``agent`` co-steer frame (Phase 3).
+
+        ``authorize_upstream`` has already confirmed the verb is one of the safe
+        enabled set (``pause``/``redirect``); this only forwards it to the injected
+        handler, which calls the EXISTING ``AgentRunService`` method — pure
+        transport, no new authority. With no handler wired (unit context, or the
+        registry was never bound) an authorized command is a clean no-op rather
+        than a mutation, and never raises into the WS receive loop.
+        """
+        handler = self.agent_control
+        if handler is None:
+            return UpstreamDecision(True)
+        try:
+            outcome = handler(frame)
+        except Exception:  # pragma: no cover - defensive: a handler slip is not fatal
+            return UpstreamDecision(False, "agent control failed")
+        return outcome if outcome is not None else UpstreamDecision(True)
 
     def _apply_presence(self, frame: Frame) -> None:
         data = frame.data or {}
@@ -134,15 +173,33 @@ class RealtimeRegistry:
         # not thread-safe, so publishing off-loop must go through
         # ``loop.call_soon_threadsafe`` (Phase 2 notif push).
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Phase 3 ``agent`` co-steer handler: ``(Frame) -> UpstreamDecision``
+        # delegating an authorized ``pause``/``redirect`` to the EXISTING owner-gated
+        # ``AgentRunService``. Bound once at composition time (``container.py``); every
+        # session created here shares it. ``None`` (unit context / not bound) keeps an
+        # authorized agent command a clean no-op.
+        self._agent_control: Any = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
         """Record the app event loop so off-loop publishers can hop onto it."""
         self._loop = loop
 
+    def bind_agent_control(self, handler: Any) -> None:
+        """Bind the ``agent`` co-steer handler (Phase 3) onto the registry.
+
+        Refreshes every already-created session too, so binding order (this vs. a
+        session opened at boot) never leaves a live session without the handler.
+        The handler is pure transport to the existing ``AgentRunService`` — binding
+        it adds no authority the owner does not already have over HTTP.
+        """
+        self._agent_control = handler
+        for sess in list(self._sessions.values()):
+            sess.agent_control = handler
+
     def get_or_create(self, session_id: str) -> RealtimeSession:
         sess = self._sessions.get(session_id)
         if sess is None:
-            sess = RealtimeSession(session_id)
+            sess = RealtimeSession(session_id, agent_control=self._agent_control)
             self._sessions[session_id] = sess
         return sess
 
