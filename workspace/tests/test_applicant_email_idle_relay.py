@@ -302,6 +302,37 @@ async def test_manager_refresh_adds_account_and_keeps_poll_on_for_unwatched():
         await mgr.stop()
 
 
+async def test_manager_restart_account_rebuilds_the_watcher():
+    # Regression for "restart changed accounts": editing an account keeps the same
+    # (owner, account_id) key, so a plain refresh would leave the stale watcher on
+    # its old connection. restart_account must tear it down and rebuild it.
+    hub = EmailEventsHub()
+    created: list = []
+
+    def factory(owner, account_id):
+        c = FakeIdle(events=[])
+        created.append(c)
+        return c
+
+    mgr = EmailIdleManager(hub, conn_factory=factory, account_source=lambda: [("alice", "a1")])
+    await mgr.start()
+    try:
+        await asyncio.sleep(0.1)
+        first = mgr._watchers[("alice", "a1")]
+        assert hub.is_live("alice") is True
+        # Simulate an account edit — the watcher is rebuilt with a fresh connection.
+        await mgr.restart_account("a1")
+        await asyncio.sleep(0.1)
+        second = mgr._watchers[("alice", "a1")]
+        assert second is not first          # a NEW watcher (reconnects w/ new creds)
+        assert mgr.watcher_count == 1
+        assert len(created) >= 2            # a second IMAP connection was opened
+        assert created[0].closed is True    # the stale connection was closed
+        assert hub.is_live("alice") is True  # re-established after the restart
+    finally:
+        await mgr.stop()
+
+
 # --- WS route: auth + owner-scoped initial liveness -------------------------
 
 

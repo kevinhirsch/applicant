@@ -378,6 +378,23 @@ class EmailIdleManager:
             return
         await self._sync_watchers()
 
+    async def restart_account(self, account_id: str) -> None:
+        """Tear down and rebuild the watcher for one account so an edited row
+        (new imap_host/user/password) is picked up immediately.
+
+        The ``(owner, account_id)`` key is stable across an edit, so a plain
+        refresh would leave the live watcher holding its old IMAP connection and
+        keep pushing unread changes for the PREVIOUS mailbox until it happened to
+        disconnect. Stopping the watcher forces a fresh connect (which re-reads the
+        current credentials) on the next sync."""
+        if not self._started:
+            return
+        async with self._sync_lock:
+            for key in [k for k in self._watchers if k[1] == account_id]:
+                w = self._watchers.pop(key)
+                await w.stop()
+            await self._sync_watchers_locked()
+
     async def _sync_watchers(self) -> None:
         async with self._sync_lock:
             await self._sync_watchers_locked()

@@ -58,21 +58,39 @@ logger = logging.getLogger(__name__)
 APPLICANT_MAIL_ORIGIN = "applicant-ui"
 
 
-def _kick_email_idle_refresh(app) -> None:
-    """Re-enumerate the IMAP-IDLE watchers + the liveness denominator after an
-    account add/update/delete, so a newly-added or -enabled account gets a watcher
-    (and the unread poll isn't left suppressed for an account nothing is pushing).
+def _kick_email_idle_refresh(app, *, restart_account_id: str | None = None) -> None:
+    """Re-sync the IMAP-IDLE watchers + liveness denominator after an account
+    add/update/delete, so a new/enabled account gets a watcher (and the unread poll
+    isn't left suppressed for an account nothing is pushing). Pass
+    ``restart_account_id`` for an EDIT so that account's watcher is torn down and
+    rebuilt with the new credentials rather than left on its stale connection.
 
-    Fire-and-forget: a refresh failure must never fail the account mutation, and if
-    there's no running loop / no manager (tests, IDLE disabled) the next startup
-    sync covers it."""
+    A refresh failure must never fail the account mutation, and if there's no
+    running loop / no manager (tests, IDLE disabled) the next startup sync covers
+    it. The scheduled task is retained on app.state and its exception consumed, so
+    it can't be GC'd mid-flight or surface as an unretrieved-exception warning."""
     mgr = getattr(getattr(app, "state", None), "email_idle_manager", None)
     if mgr is None:
         return
+    coro = mgr.restart_account(restart_account_id) if restart_account_id else mgr.refresh()
     try:
-        asyncio.get_running_loop().create_task(mgr.refresh())
+        task = asyncio.get_running_loop().create_task(coro)
     except RuntimeError:
-        pass
+        coro.close()  # no running loop (sync test context) — nothing to run
+        return
+    tasks = getattr(app.state, "_email_idle_refresh_tasks", None)
+    if tasks is None:
+        tasks = set()
+        app.state._email_idle_refresh_tasks = tasks
+    tasks.add(task)
+
+    def _done(t: "asyncio.Task") -> None:
+        tasks.discard(t)
+        exc = t.exception() if not t.cancelled() else None
+        if exc is not None:
+            logger.warning("email idle refresh task failed: %s", exc)
+
+    task.add_done_callback(_done)
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -3031,8 +3049,10 @@ def setup_email_routes():
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
             db.commit()
-            # enabled/host/user may have changed — re-sync watchers + denominator.
-            _kick_email_idle_refresh(request.app)
+            # host/user/password/enabled may have changed — restart THIS account's
+            # watcher so it reconnects with the new credentials instead of keeping
+            # its stale IMAP connection open for the previous mailbox.
+            _kick_email_idle_refresh(request.app, restart_account_id=account_id)
             return {"ok": True, "id": row.id}
         finally:
             db.close()
