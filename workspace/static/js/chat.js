@@ -10,6 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
+import chatWsTransport from './chatWsTransport.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
@@ -1013,7 +1014,24 @@ import createResearchSynapse from './researchSynapse.js';
         return;
       }
 
-      const reader = res.body.getReader();
+      // Transport: prefer the chat WebSocket (duplex, same agent_runs replay
+      // buffer), and keep this request's SSE body (res.body) as the automatic
+      // fallback lane when the socket can't (re)connect. The returned reader has
+      // the SAME read()/cancel() contract as res.body.getReader(), so the loop
+      // below is transport-agnostic and byte-for-byte unchanged.
+      const reader = await chatWsTransport.openChatStreamReader({
+        res,
+        loc: window.location,
+        sessionId: streamSessionId,
+        abortSignal: abortCtrl.signal,
+        onStatus: (state) => {
+          // Honesty invariant: surface a visible reconnecting state (no silent
+          // dead UI) only when this session is in the foreground.
+          if (state === 'reconnecting' && sessionModule.getCurrentSessionId() === streamSessionId) {
+            try { if (window.showToast) window.showToast('Reconnecting to the live response…', 'info'); } catch (_) { /* no-op */ }
+          }
+        },
+      });
       const decoder = new TextDecoder();
       let buffer = '';
       let metrics = null;
