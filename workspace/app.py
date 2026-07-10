@@ -762,6 +762,12 @@ app.include_router(setup_chat_routes(
     skills_manager=skills_manager,
 ))
 
+# Chat streaming over a WebSocket (SSE-parity transport over the same
+# agent_runs replay buffer; message SEND stays on the HTTP chat handler above,
+# and SSE remains the automatic fallback lane).
+from routes.chat_ws_routes import setup_chat_ws_routes
+app.include_router(setup_chat_ws_routes())
+
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
