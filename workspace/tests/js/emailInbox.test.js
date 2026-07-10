@@ -103,3 +103,66 @@ test('applyEmailRelayAction: a new-mail nudge refreshes without touching the pol
   assert.equal(calls.start, 0);
   assert.equal(calls.stop, 0);
 });
+
+// Build a hermetic scope for the STATEFUL _connectEmailRelay: inject a fake
+// WebSocket + captured timers so the reconnect/backoff and the staleness
+// watchdog can be driven deterministically. Slices the real function bodies
+// (with emailRelayAction/applyEmailRelayAction) so a regression flips this red.
+function loadRelayScope() {
+  const body = ['emailRelayAction', 'applyEmailRelayAction', '_connectEmailRelay']
+    .map((n) => extractFunction(SRC, n)).join('\n');
+  const preamble = `
+    const timers = [];
+    let _emailRelay = null;
+    let _emailRelayStaleTimer = null;
+    const calls = { start: 0, stop: 0, refresh: 0, close: 0, wsNew: 0 };
+    function _startUnreadPoll() { calls.start += 1; }
+    function _stopUnreadPoll() { calls.stop += 1; }
+    function _refreshUnreadCount() { calls.refresh += 1; }
+    function setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; }
+    function clearTimeout(_id) { /* no-op for the test clock */ }
+    const window = { location: { protocol: 'http:', host: 'inbox.test' } };
+    class WebSocket {
+      constructor(url) { calls.wsNew += 1; this.url = url; _emailRelay = this;
+        this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null; }
+      close() { calls.close += 1; if (this.onclose) this.onclose(); }
+    }
+  `;
+  const tail = `
+    return {
+      calls, timers,
+      connect: _connectEmailRelay,
+      socket: () => _emailRelay,
+      driveByFn: (matchName) => {
+        // Fire the most recently scheduled timer whose callback is the named inner
+        // fn (the stale watchdog is an arrow; the reconnect schedules 'open').
+        for (let i = timers.length - 1; i >= 0; i--) { timers[i].fn(); return; }
+      },
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(`${preamble}\n${body}\n${tail}`)();
+}
+
+test('_connectEmailRelay: a stale live socket is force-closed AND a reconnect is scheduled', () => {
+  const scope = loadRelayScope();
+  scope.connect();
+  assert.equal(scope.calls.wsNew, 1, 'a relay socket is opened on connect');
+  const ws = scope.socket();
+
+  // A `live` frame doubles as a heartbeat and arms the staleness watchdog.
+  ws.onmessage({ data: JSON.stringify({ type: 'live' }) });
+  assert.equal(scope.timers.length >= 1, true, 'the stale watchdog is armed on a live frame');
+
+  // Fire the stale watchdog (heartbeats went silent though the socket never closed).
+  const startBefore = scope.calls.start;
+  scope.driveByFn();
+  // The honest fallback poll starts...
+  assert.equal(scope.calls.start > startBefore, true, 'stale ⇒ fallback poll starts');
+  // ...AND the half-dead socket is force-closed so onclose drives the reconnect.
+  assert.equal(scope.calls.close >= 1, true, 'stale ⇒ socket force-closed');
+
+  // onclose scheduled a reconnect; firing it opens a fresh socket (self-heal).
+  scope.driveByFn();
+  assert.equal(scope.calls.wsNew, 2, 'onclose ⇒ reconnect opens a new socket');
+});

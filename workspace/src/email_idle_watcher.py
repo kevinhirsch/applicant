@@ -415,11 +415,12 @@ class EmailIdleManager:
             self._heartbeat_task = None
         watchers = list(self._watchers.values())
         self._watchers.clear()
-        for w in watchers:
-            try:
-                await w.stop()
-            except Exception:
-                pass
+        # Stop every watcher concurrently — each AccountWatcher.stop() can wait out
+        # a drain window (~35s), so awaiting them serially would make shutdown scale
+        # linearly with the account count. gather bounds it to one watcher's window.
+        # return_exceptions keeps the prior behaviour of ignoring individual failures.
+        if watchers:
+            await asyncio.gather(*(w.stop() for w in watchers), return_exceptions=True)
 
     @property
     def watcher_count(self) -> int:

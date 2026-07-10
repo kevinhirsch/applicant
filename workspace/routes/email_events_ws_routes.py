@@ -72,6 +72,13 @@ def setup_email_events_ws_routes() -> APIRouter:
             logger.warning("email events ws error (owner=%s)", owner, exc_info=True)
         finally:
             writer_task.cancel()
+            # Await the cancelled task so a send_json that raised after the peer
+            # dropped is retrieved here rather than surfacing as asyncio's
+            # "Task exception was never retrieved" at GC.
+            try:
+                await writer_task
+            except (asyncio.CancelledError, Exception):
+                pass
             hub.detach(owner, queue)
             try:
                 await ws.close()

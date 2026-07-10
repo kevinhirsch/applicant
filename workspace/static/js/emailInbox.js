@@ -325,7 +325,14 @@ function _connectEmailRelay() {
 
   const armStale = () => {
     if (_emailRelayStaleTimer) clearTimeout(_emailRelayStaleTimer);
-    _emailRelayStaleTimer = setTimeout(() => { _startUnreadPoll(); }, STALE_MS);
+    _emailRelayStaleTimer = setTimeout(() => {
+      _startUnreadPoll();
+      // Heartbeats stopped though the socket never reported a close — force it
+      // shut so the onclose handler drives a real reconnect/backoff. Without this
+      // a half-dead socket (heartbeats silently gone, no TCP error) leaves the
+      // live push permanently dead until a manual page reload.
+      if (_emailRelay) { try { _emailRelay.close(); } catch { /* no-op */ } }
+    }, STALE_MS);
   };
   const clearStale = () => {
     if (_emailRelayStaleTimer) { clearTimeout(_emailRelayStaleTimer); _emailRelayStaleTimer = null; }
