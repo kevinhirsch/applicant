@@ -997,36 +997,39 @@ def resolve_ats_strict(url: str) -> AtsAdapter | None:
 # ---------------------------------------------------------------------------
 
 
-def _eeo_fields(prefix: str) -> tuple[DetectedField, ...]:
+def _eeo_fields(prefix: str, suffix: str = "") -> tuple[DetectedField, ...]:
     """Canonical EEO/voluntary self-identification field block (FR-ATTR-6).
 
     Reused across the additive adapters so every one exposes the same four
     protected demographic fields with the exact labels
     ``core.rules.sensitive_fields.is_sensitive_field`` recognises. ``prefix``
-    namespaces the selectors per ATS; the LABELS (which drive sensitive routing)
-    are identical everywhere on purpose.
+    (and optional ``suffix``) namespace the selectors per ATS — an attribute
+    selector like ``select[name=eeo_`` MUST pass ``suffix="]"`` so the emitted
+    selector is a valid, closed CSS attribute selector (``select[name=eeo_gender]``)
+    rather than the unclosed ``select[name=eeo_gender`` Playwright would reject.
+    The LABELS (which drive sensitive routing) are identical everywhere on purpose.
     """
     return (
         DetectedField(
-            f"{prefix}gender",
+            f"{prefix}gender{suffix}",
             "Gender",
             "select",
             options=("Male", "Female", "Non-binary", "Decline to self-identify"),
         ),
         DetectedField(
-            f"{prefix}race",
+            f"{prefix}race{suffix}",
             "Race/Ethnicity",
             "select",
             options=("...", "Decline to self-identify"),
         ),
         DetectedField(
-            f"{prefix}veteran",
+            f"{prefix}veteran{suffix}",
             "Protected Veteran Status",
             "select",
             options=("Yes", "No", "Decline to self-identify"),
         ),
         DetectedField(
-            f"{prefix}disability",
+            f"{prefix}disability{suffix}",
             "Disability Status",
             "select",
             options=("Yes", "No", "Decline to self-identify"),
@@ -1109,7 +1112,7 @@ class AshbyAts(AtsAdapter):
                         SCREENING_ESSAY,
                     ),
                     # --- EEO / voluntary self-identification ---
-                    *_eeo_fields("select[name=eeo_"),
+                    *_eeo_fields("select[name=eeo_", "]"),
                 ),
             ),
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
@@ -1184,7 +1187,7 @@ class SmartRecruitersAts(AtsAdapter):
                         SCREENING_ESSAY,
                     ),
                     # --- EEO / voluntary self-identification ---
-                    *_eeo_fields("select[name=eeo_"),
+                    *_eeo_fields("select[name=eeo_", "]"),
                 ),
             ),
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
@@ -1263,7 +1266,7 @@ class JobviteAts(AtsAdapter):
                         SCREENING_ESSAY,
                     ),
                     # --- EEO / voluntary self-identification ---
-                    *_eeo_fields("select[name=eeo_"),
+                    *_eeo_fields("select[name=eeo_", "]"),
                 ),
             ),
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
@@ -1336,7 +1339,7 @@ class BambooHrAts(AtsAdapter):
                         SCREENING_ESSAY,
                     ),
                     # --- EEO / voluntary self-identification ---
-                    *_eeo_fields("select[name=eeo_"),
+                    *_eeo_fields("select[name=eeo_", "]"),
                 ),
             ),
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),

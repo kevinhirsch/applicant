@@ -227,6 +227,22 @@ class TestAdditionalAtsAdapters:
                 if f.field_type in (SCREENING_FACTUAL, SCREENING_ESSAY):
                     assert not is_sensitive_field(f.label)
 
+    def test_attribute_selectors_are_valid_closed_css(self, cls, url, has_account):
+        # Regression: an EEO attribute selector like `select[name=eeo_gender` with
+        # no closing `]` is invalid CSS — Playwright rejects it and the PROTECTED
+        # field records a fill FAILURE instead of being prefilled. Every emitted
+        # `[...]` attribute selector must be balanced/closed.
+        for page in cls().pages(url):
+            for f in page.fields:
+                sel = f.selector
+                assert sel.count("[") == sel.count("]"), (
+                    f"unbalanced brackets in selector {sel!r} on {cls.__name__}"
+                )
+                if "[" in sel:
+                    assert sel.rstrip().endswith("]"), (
+                        f"unclosed attribute selector {sel!r} on {cls.__name__}"
+                    )
+
 
 @pytest.mark.unit
 class TestAdditionalAtsRegistry:
