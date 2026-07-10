@@ -188,6 +188,22 @@ class TestChooseDate:
         assert choose_date(page, page.TRIGGER, "whenever") is False
         assert page.clicked_cells == []
 
+    def test_unreachable_month_fails_softly_without_clicking(self):
+        # Greptile #817: with no next/prev control the calendar can never leave its
+        # start month, so it cannot reach the target. It MUST fail softly (return
+        # False, click nothing) rather than click the matching day in the WRONG month
+        # and silently record an incorrect date.
+        class _NoNav(FakeCalendarPage):
+            def query_selector(self, sel: str):
+                if sel in (".next", ".prev"):
+                    return None  # navigation impossible
+                return super().query_selector(sel)
+
+        page = _NoNav(start=(2026, 6))
+        assert choose_date(page, page.TRIGGER, "2026-09-15") is False
+        assert page.clicked_cells == []
+        assert page.current == (2026, 6)  # never moved
+
     def test_type_value_fills_calendar_date_field(self):
         """A date field with a JS calendar (no typeable input) now fills via type_value."""
         src = PlaywrightPageSource.__new__(PlaywrightPageSource)

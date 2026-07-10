@@ -1026,6 +1026,15 @@ def choose_date(
         except Exception:
             break
 
+    # Only click once the displayed month is CONFIRMED to be the target. If the
+    # header is unreadable, or navigation couldn't reach it (a date beyond
+    # ``max_nav`` months, a missing prev/next control, or an exhausted loop), the
+    # displayed month is NOT the target — fail softly rather than click the matching
+    # day in the wrong month, which would silently record an incorrect date. Leaving
+    # the field for the human is the honest outcome (never a wrong date).
+    if _calendar_current_month(page) != (ty, tm):
+        return False
+
     # Click the target day in the displayed month.
     want = str(td)
     for sel in _CALENDAR_DAY_SELECTORS:
