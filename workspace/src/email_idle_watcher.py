@@ -360,6 +360,10 @@ class EmailIdleManager:
         self._watchers: dict[tuple[str, str], AccountWatcher] = {}
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._started = False
+        # refresh() is now driven by account add/update/delete (not just startup),
+        # so serialize watcher reconciliation to avoid two overlapping syncs racing
+        # on _watchers (double-start / double-stop).
+        self._sync_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._started:
@@ -375,6 +379,10 @@ class EmailIdleManager:
         await self._sync_watchers()
 
     async def _sync_watchers(self) -> None:
+        async with self._sync_lock:
+            await self._sync_watchers_locked()
+
+    async def _sync_watchers_locked(self) -> None:
         try:
             accounts = await asyncio.to_thread(self._account_source)
         except Exception as e:

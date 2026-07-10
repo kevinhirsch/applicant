@@ -58,6 +58,23 @@ logger = logging.getLogger(__name__)
 APPLICANT_MAIL_ORIGIN = "applicant-ui"
 
 
+def _kick_email_idle_refresh(app) -> None:
+    """Re-enumerate the IMAP-IDLE watchers + the liveness denominator after an
+    account add/update/delete, so a newly-added or -enabled account gets a watcher
+    (and the unread poll isn't left suppressed for an account nothing is pushing).
+
+    Fire-and-forget: a refresh failure must never fail the account mutation, and if
+    there's no running loop / no manager (tests, IDLE disabled) the next startup
+    sync covers it."""
+    mgr = getattr(getattr(app, "state", None), "email_idle_manager", None)
+    if mgr is None:
+        return
+    try:
+        asyncio.get_running_loop().create_task(mgr.refresh())
+    except RuntimeError:
+        pass
+
+
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
     aliases = [owner or ""]
     try:
@@ -2937,7 +2954,7 @@ def setup_email_routes():
             db.close()
 
     @router.post("/accounts")
-    async def create_email_account(data: dict, owner: str = Depends(require_owner)):
+    async def create_email_account(data: dict, request: Request, owner: str = Depends(require_owner)):
         """Create a new email account."""
         from core.database import SessionLocal, EmailAccount
         from src.secret_storage import encrypt as _enc
@@ -2980,12 +2997,13 @@ def setup_email_routes():
                 row.is_default = True
             db.add(row)
             db.commit()
+            _kick_email_idle_refresh(request.app)  # watch the new account
             return {"ok": True, "id": row.id}
         finally:
             db.close()
 
     @router.put("/accounts/{account_id}")
-    async def update_email_account(account_id: str, data: dict, owner: str = Depends(require_user)):
+    async def update_email_account(account_id: str, data: dict, request: Request, owner: str = Depends(require_user)):
         """Update an email account. Passwords only overwrite if non-empty."""
         # Path param account_id — dep validated via Query, re-check the path-param value.
         _assert_owns_account(account_id, owner)
@@ -3013,12 +3031,14 @@ def setup_email_routes():
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
             db.commit()
+            # enabled/host/user may have changed — re-sync watchers + denominator.
+            _kick_email_idle_refresh(request.app)
             return {"ok": True, "id": row.id}
         finally:
             db.close()
 
     @router.delete("/accounts/{account_id}")
-    async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
+    async def delete_email_account(account_id: str, request: Request, owner: str = Depends(require_user)):
         _assert_owns_account(account_id, owner)
         from core.database import SessionLocal, EmailAccount
         db = SessionLocal()
@@ -3041,6 +3061,7 @@ def setup_email_routes():
                 if promote:
                     promote.is_default = True
                     db.commit()
+            _kick_email_idle_refresh(request.app)  # stop the removed account's watcher
             return {"ok": True}
         finally:
             db.close()

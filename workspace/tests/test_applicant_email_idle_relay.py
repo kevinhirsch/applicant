@@ -274,6 +274,34 @@ async def test_manager_refresh_drops_removed_accounts():
         await mgr.stop()
 
 
+async def test_manager_refresh_adds_account_and_keeps_poll_on_for_unwatched():
+    # Regression for "refresh is never invoked": adding an account after startup
+    # must grow the liveness denominator so the new (here non-IDLE) account keeps
+    # the poll on instead of being silently suppressed by an already-live sibling.
+    hub = EmailEventsHub()
+
+    def factory(owner, account_id):
+        # a1 supports IDLE and stays live; a2's server has no IDLE (never live).
+        return FakeIdle(events=[]) if account_id == "a1" else FakeIdle(has_idle=False)
+
+    accounts = [("alice", "a1")]
+    mgr = EmailIdleManager(hub, conn_factory=factory, account_source=lambda: list(accounts))
+    await mgr.start()
+    try:
+        await asyncio.sleep(0.1)
+        assert hub.is_live("alice") is True  # only a1 exists and it is live
+        # The user adds a second account; a refresh must pick it up.
+        accounts.append(("alice", "a2"))
+        await mgr.refresh()
+        await asyncio.sleep(0.1)
+        assert mgr.watcher_count == 2
+        # a2 is now in the denominator but never goes live, so the owner is no
+        # longer poll-suppressible — the new account's mail can't be missed.
+        assert hub.is_live("alice") is False
+    finally:
+        await mgr.stop()
+
+
 # --- WS route: auth + owner-scoped initial liveness -------------------------
 
 
