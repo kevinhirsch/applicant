@@ -49,6 +49,16 @@ const CAMPAIGNS_API = '/api/applicant/campaigns';
 let _modalEl = null;
 let _modalA11yCleanup = null;
 let _loading = false;
+// Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2). Today never had
+// its own data poll (it reads the SAME pending feed on open / manual refresh); this
+// adds a LIVE refetch off the engine's `notif`/`pending`/`tracker` push (surfaced by
+// applicantRealtime.js as `applicant:data-changed`) and — for parity with the other
+// surfaces — a WS-DOWN fallback poll that is RETIRED while the push channel is live and
+// RESTORED on loss, so an open deck never silently goes stale. Both refetches are
+// guarded (see `_maybeRefetch`) so they never yank an in-progress walkthrough or
+// discard typed input.
+let _realtimeLive = false;
+let _todayPollStop = null;
 
 // The walkthrough deck: the pending items returned by the SAME `/pending`
 // fetch Portal uses, and the current position within it. `_rawItems` keeps
@@ -230,6 +240,8 @@ function _close() {
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
+  // Tear down the WS-down fallback poll (if running) — it only exists while open.
+  if (_todayPollStop) { _todayPollStop(); _todayPollStop = null; }
   clearHash('today');
 }
 
@@ -1023,6 +1035,74 @@ export async function openApplicantToday(opts) {
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _requestClose);
   await _load(true);
+  // Start the WS-down fallback poll only when the push channel is NOT live; while it
+  // is live, `applicant:data-changed` drives refetches and the poll stays retired.
+  // Reconcile the current live level first (the socket may have opened before now).
+  if (_todayPollStop) { _todayPollStop(); _todayPollStop = null; }
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) _realtimeLive = true;
+  } catch { /* no-op */ }
+  _startTodayPollIfNeeded();
+}
+
+// ── Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2) ─────────────
+//
+// While the WS push channel is LIVE, the engine's push (surfaced as
+// `applicant:data-changed`) drives refetches, so the fallback poll is RETIRED; on WS
+// loss it is RESTORED so an open deck never silently goes stale. We only own the poll
+// while the modal is open (created on open, torn down on close).
+
+function _todayOpen() {
+  return !!_modalEl && !_modalEl.classList.contains('hidden');
+}
+
+// A push (or the fallback poll) says the pending feed may have changed — refetch
+// through the EXISTING _load, but only when it's safe to: never while typed input is
+// pending on the current card (micro-interactions #8), and never mid-walkthrough
+// (`_idx > 0` in the ready deck), so a background refetch can't yank the user off the
+// card they're working. A change reached mid-deck is picked up on the next return to
+// the start / reopen (the Bell + Portal already reflect it live meanwhile).
+function _maybeRefetch() {
+  if (!_todayOpen()) return;
+  if (_hasUnsavedInput()) return;
+  if (_state === 'ready' && _idx > 0) return;
+  _load(false);
+}
+
+// Visibility-aware fallback poll for an OPEN deck when the push channel is down.
+// Unlike applicantCore's pollVisible, it does NOT fire immediately on start: open()
+// just loaded the deck, so an instant re-fetch would only double-load (and toggle the
+// body's aria-busy) for no gain — the interval is the fallback cadence, not a reload.
+function _startTodayPollIfNeeded() {
+  if (!_todayOpen() || _realtimeLive || _todayPollStop) return;
+  let timer = setInterval(_maybeRefetch, 60000);
+  const onVis = () => {
+    if (document.visibilityState === 'visible') {
+      if (timer == null) timer = setInterval(_maybeRefetch, 60000);
+    } else if (timer != null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  document.addEventListener('visibilitychange', onVis);
+  _todayPollStop = () => {
+    if (timer != null) { clearInterval(timer); timer = null; }
+    document.removeEventListener('visibilitychange', onVis);
+  };
+}
+
+function _applyRealtimeLive(live) {
+  const next = !!live;
+  if (next === _realtimeLive) return;
+  _realtimeLive = next;
+  if (!_todayOpen()) return; // nothing to retire/restore while closed — open() reconciles
+  if (next) {
+    if (_todayPollStop) { _todayPollStop(); _todayPollStop = null; }
+    _maybeRefetch();
+  } else {
+    _maybeRefetch();
+    _startTodayPollIfNeeded();
+  }
 }
 
 // ── Launcher + boot ──────────────────────────────────────────────────────────
@@ -1050,6 +1130,19 @@ function _boot() {
       clearInterval(iv);
     }
   }, 500);
+  // Phase 2: refetch on a push while open, and retire the fallback poll while the push
+  // channel is live / restore it on WS loss. applicantRealtime.js emits
+  // `applicant:realtime` with { live } on every connection-state change and
+  // `applicant:data-changed` when a push says the owner's data moved. Registered once;
+  // both no-op while the modal is closed or mid-walkthrough (see `_maybeRefetch`).
+  document.addEventListener('applicant:realtime', (e) => {
+    _applyRealtimeLive(!!(e && e.detail && e.detail.live));
+  });
+  document.addEventListener('applicant:data-changed', () => { _maybeRefetch(); });
+  // Reconcile a socket that opened before this listener existed (one-shot edge event).
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) _applyRealtimeLive(true);
+  } catch { /* no-op */ }
 }
 
 if (document.readyState === 'loading') {

@@ -48,6 +48,11 @@ let _loading = false;
 // reset scroll position or kill an in-progress text selection mid-read. A
 // user-initiated refresh (showSpinner) always renders regardless.
 let _lastResultsKey = null;
+// Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2): true while the
+// WS push channel is live, so the 60s background poll is RETIRED and the engine's
+// `notif`/`tracker` push (surfaced as `applicant:data-changed`) drives refreshes
+// instead; on WS loss the poll is RESTORED as the fallback (no silent dead UI).
+let _realtimeLive = false;
 
 
 // ── Small formatting helpers ────────────────────────────────────────────────
@@ -397,9 +402,58 @@ export async function openApplicantResults(opts) {
   modal.style.display = 'flex';
   if (!(opts && opts.skipHashUpdate)) setHash('results');
   await _load(true);
-  // Keep it fresh while open (only while the tab is visible).
-  if (_pollStop) _pollStop();
+  // Keep it fresh while open (only while the tab is visible) — UNLESS the realtime
+  // push channel is live, in which case `applicant:data-changed` drives refreshes and
+  // the poll stays retired (restored automatically on WS loss). Reconcile the current
+  // live level first (the socket may have opened before this surface cared).
+  if (_pollStop) { _pollStop(); _pollStop = null; }
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) _realtimeLive = true;
+  } catch { /* no-op */ }
+  _startPollIfNeeded();
+}
+
+// ── Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2) ─────────────
+//
+// While the WS push channel is LIVE, the engine's `notif`/`tracker` push (surfaced
+// by applicantRealtime.js as `applicant:data-changed`) drives refreshes, so we RETIRE
+// the 60s poll — no redundant fetches. On WS loss we RESTORE it as the fallback so the
+// funnel never silently goes stale (an honesty invariant: no silent dead UI). We only
+// own the poll while the modal is open (it is created on open, torn down on close).
+
+function _isOpen() {
+  return !!_modalEl && !_modalEl.classList.contains('hidden');
+}
+
+// Start the visibility-aware poll only when it's needed: the modal is open AND the
+// push channel is NOT live AND no poll is already running.
+function _startPollIfNeeded() {
+  if (!_isOpen() || _realtimeLive || _pollStop) return;
   _pollStop = pollVisible(() => _load(false), 60000);
+}
+
+function _applyRealtimeLive(live) {
+  const next = !!live;
+  if (next === _realtimeLive) return;
+  _realtimeLive = next;
+  if (!_isOpen()) return; // nothing to retire/restore while closed — open() reconciles
+  if (next) {
+    // Live: retire the poll, but catch up once so anything that changed between the
+    // last poll and going live is reflected right away.
+    if (_pollStop) { _pollStop(); _pollStop = null; }
+    _load(false);
+  } else {
+    // Lost the push channel: fall back to polling (and refresh once now).
+    _load(false);
+    _startPollIfNeeded();
+  }
+}
+
+// A push says the underlying data changed — refetch through the EXISTING _load while
+// the modal is open. `_load`'s fingerprint guard skips the re-render when nothing
+// actually changed, so a redundant poke never disturbs an in-progress read.
+function _onDataChanged() {
+  if (_isOpen()) _load(false);
 }
 
 // ── Launcher + boot ──────────────────────────────────────────────────────────
@@ -424,6 +478,19 @@ function _boot() {
       clearInterval(iv);
     }
   }, 500);
+  // Phase 2: retire the poll while the realtime push channel is live and restore it on
+  // WS loss (fallback). applicantRealtime.js emits `applicant:realtime` with { live } on
+  // every connection-state change, and `applicant:data-changed` when a push says the
+  // owner's data moved. Registered once here; both no-op while the modal is closed.
+  document.addEventListener('applicant:realtime', (e) => {
+    _applyRealtimeLive(!!(e && e.detail && e.detail.live));
+  });
+  document.addEventListener('applicant:data-changed', () => { _onDataChanged(); });
+  // The `applicant:realtime` event is one-shot per state change, so reconcile the
+  // current live level now in case the socket opened before this listener existed.
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) _applyRealtimeLive(true);
+  } catch { /* no-op */ }
 }
 
 if (document.readyState === 'loading') {

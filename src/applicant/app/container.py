@@ -1198,6 +1198,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # actions (reuses the SAME substrate every other pending-action already
         # surfaces through -- no new UI).
         pending_actions=pending_actions_service,
+        # RT Phase 2: recording an outcome mutates the Tracker/Results data, so fan a
+        # downstream ``notif``/``tracker`` frame the front-door refetches off (poll stays
+        # the fallback). Same process-lived publisher the notification/pending seams use.
+        realtime=notif_publisher,
     )
     submission_service = SubmissionService(
         storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
@@ -1600,6 +1604,10 @@ def build_container(settings: Settings | None = None) -> Container:
             # B2 items 8/9/60: this tick's isolated PendingActionsService (CONC-2),
             # sharing this tick's Session -- see Scheduler._run_post_submission_sweep.
             pending_actions=pas,
+            # RT Phase 2: the scheduler-driven ghosting/outcome sweep records outcomes
+            # off-loop (worker thread); the shared publisher marshals the ``tracker`` push
+            # back onto the app loop (call_soon_threadsafe) so Results/Today refetch.
+            realtime=notif_publisher,
         )
         sub = SubmissionService(
             tick_storage, browser, learning=ls, advanced_learning=adv,
@@ -1840,6 +1848,9 @@ def build_container(settings: Settings | None = None) -> Container:
             # (CONC-REQ-1), so a request-triggered write (e.g. the new read
             # endpoint below) sees this request's own Session-scoped data.
             pending_actions=rs_pas,
+            # RT Phase 2: a request that records an outcome (e.g. the manual tracker tap)
+            # fans a ``tracker`` push so Results/Today refetch off it, poll as fallback.
+            realtime=notif_publisher,
         )
         rs_submission = SubmissionService(
             req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,

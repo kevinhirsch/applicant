@@ -162,6 +162,28 @@ test('notifRefresh falls back to the pending-changed contract when Portal is abs
   }
 });
 
+test('dataChangedRefresh fans applicant:data-changed carrying the frame type so data surfaces refetch', () => {
+  const { dataChangedRefresh } = load('dataChangedRefresh');
+  const events = [];
+  global.CustomEvent = class { constructor(type, opts) { this.type = type; this.detail = opts && opts.detail; } };
+  global.document = { dispatchEvent: (e) => { events.push(e); } };
+  try {
+    // A notif/tracker push tells Results/Today/Tracker (which read their OWN feeds,
+    // not the Portal badge) to refetch through their existing _load — SEPARATE from
+    // notifRefresh's Portal/bell path, so both fire on one frame.
+    assert.equal(dataChangedRefresh({ chan: 'notif', type: 'tracker', seq: 0, data: {} }), true);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'applicant:data-changed');
+    assert.equal(events[0].detail.type, 'tracker');
+    // A payloadless / typeless frame still fires, with an empty type (never throws).
+    assert.equal(dataChangedRefresh(null), true);
+    assert.equal(events[1].detail.type, '');
+  } finally {
+    delete global.document;
+    delete global.CustomEvent;
+  }
+});
+
 // ── Phase 3 agent co-steer helpers ───────────────────────────────────────────
 
 test('agentEventSummary prefers the run intent and falls back to a plain line', () => {
