@@ -6,9 +6,12 @@
 
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { openShellStreamReader } from './shellWsTransport.js';
 
 // Shared state/functions injected by init()
 let _envState;
+let _noteShellWsActivity;
+let _endShellWsActivity;
 let _sshCmd;
 let _getPort;
 let _getPlatform;
@@ -366,21 +369,35 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
   if (opts.use_tmux) payload.use_tmux = true;
 
   try {
-    const res = await fetch('/api/shell/stream', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
+    // Prefer the duplex WebSocket (/api/shell/ws); it runs the SAME command and
+    // relays the SAME SSE events. If the socket can't connect, openShellStreamReader
+    // defers to makeSse() — the classic /api/shell/stream POST — so the command
+    // runs on exactly one transport (never both). The reader exposes the same
+    // read()/cancel() contract as res.body.getReader(), so the loop below is
+    // unchanged. onActivity keeps the Running-tab poll retired while the WS feeds
+    // live output; the poll auto-resumes once that activity lapses (WS drop/end).
+    const reader = await openShellStreamReader({
+      loc: window.location,
+      payload,
+      abortSignal: controller.signal,
+      onActivity: () => { try { _noteShellWsActivity && _noteShellWsActivity(); } catch (_) { /* no-op */ } },
+      makeSse: async () => {
+        const res = await fetch('/api/shell/stream', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          const e = new Error('HTTP ' + res.status + ': ' + body);
+          e._httpError = true;
+          throw e;
+        }
+        return res.body.getReader();
+      },
     });
-
-    if (!res.ok) {
-      output.classList.add('cookbook-output-error');
-      output.textContent = 'HTTP ' + res.status + ': ' + (await res.text());
-      return;
-    }
-
-    const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
     let exitCode = null;
@@ -436,11 +453,18 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
   } catch (err) {
     if (err.name === 'AbortError') {
       output.textContent += (output.textContent ? '\n' : '') + '(stopped)';
+    } else if (err && err._httpError) {
+      // SSE-fallback POST returned a non-OK status — same rendering as before.
+      output.classList.add('cookbook-output-error');
+      output.textContent = err.message;
     } else {
       output.classList.add('cookbook-output-error');
       output.textContent += (output.textContent ? '\n' : '') + 'Request failed: ' + err.message;
     }
   } finally {
+    // The WS (if it won) is no longer feeding output — resume the Running-tab
+    // status poll immediately so nothing goes silently stale (honesty invariant).
+    try { _endShellWsActivity && _endShellWsActivity(); } catch (_) { /* no-op */ }
     if (serveBtn) serveBtn.style.display = '';
     if (stopBtn) stopBtn.style.display = 'none';
     delete panel._cookbookAbort;
@@ -573,4 +597,9 @@ export function initDownload(shared) {
   _renderRunningTab = shared._renderRunningTab;
   _loadTasks = shared._loadTasks;
   _saveTasks = shared._saveTasks;
+  // Poll-retirement hooks: while a shell-download WS is feeding live output, the
+  // Running-tab status poll is redundant, so it's suspended; on WS end/loss it
+  // resumes (never a silent dead UI). No-ops if not provided.
+  _noteShellWsActivity = shared._noteShellWsActivity;
+  _endShellWsActivity = shared._endShellWsActivity;
 }

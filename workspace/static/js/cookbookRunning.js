@@ -68,6 +68,35 @@ const TASK_POLL_INTERVAL_MS = 3000;       // delay between reconnect-loop iterat
 const BG_MONITOR_INTERVAL_MS = 10000;     // background task status poll
 const STALE_PROGRESS_MS = 5 * 60 * 1000;  // download with no progress this long = stale
 
+// ── Shell-download WebSocket coordination (retire the status poll while live) ──
+// When a shell/download WebSocket (shellWsTransport.js) is feeding live output,
+// the background STATUS poll (_pollBackgroundStatus) is redundant, so it's
+// skipped. The suspension is FRESHNESS-BASED, not a bare flag: it lapses on its
+// own SHELL_WS_SUSPEND_MS after the last WS frame, so a silently-dead socket can
+// never leave the poll retired forever (honesty invariant — no silent dead UI).
+// Serve reachability probing keeps running regardless, and the interval itself
+// never stops, so restoration is automatic on the next tick after activity lapses.
+const SHELL_WS_SUSPEND_MS = 15000;
+let _shellWsLastActivity = 0;
+
+function _shellWsPollSuspended() {
+  return _shellWsLastActivity > 0 && (Date.now() - _shellWsLastActivity) < SHELL_WS_SUSPEND_MS;
+}
+
+// Called by the download transport on each live WS frame — refreshes the
+// suspension window so the status poll stays retired while the socket streams.
+export function _noteShellWsActivity() {
+  _shellWsLastActivity = Date.now();
+}
+
+// Called when a shell WS ends / drops / falls back. Clears the suspension AND
+// polls once immediately so the Running tab is fresh the instant the live feed
+// stops — the poll is restored without waiting for the next interval tick.
+export function _endShellWsActivity() {
+  _shellWsLastActivity = 0;
+  try { _pollBackgroundStatus(); } catch (_) { /* no-op */ }
+}
+
 // ── Phase detection (mirrors Python _parse_serve_phase in cookbook_routes.py) ──
 // Single source of truth for serve task status. KEEP IN SYNC with the Python version.
 export function _parseServePhase(snapshot) {
@@ -2489,8 +2518,15 @@ function _refreshServerDots() {
 
 export function _startBackgroundMonitor() {
   if (_bgMonitorInterval) return;
-  _bgMonitorInterval = setInterval(() => { _pollBackgroundStatus(); _checkServeReachability(); }, BG_MONITOR_INTERVAL_MS);
-  _pollBackgroundStatus();
+  _bgMonitorInterval = setInterval(() => {
+    // Retire the status poll while a shell-download WS is feeding live output
+    // (the socket is the authoritative feed); it auto-resumes once that activity
+    // lapses. Serve reachability probing always runs — a serve can crash during
+    // a download, and that must never go unnoticed.
+    if (!_shellWsPollSuspended()) _pollBackgroundStatus();
+    _checkServeReachability();
+  }, BG_MONITOR_INTERVAL_MS);
+  if (!_shellWsPollSuspended()) _pollBackgroundStatus();
   _checkServeReachability();
 }
 

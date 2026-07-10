@@ -18,6 +18,7 @@ import {
   _launchServeTask, _serveAutoFix, _serveAutoRetry, _serveAutoRetryReplace, _serveAutoRetryRemove,
   _startBackgroundMonitor, _syncFromServer,
   _retryDownload, _nextAvailablePort, _processQueue,
+  _noteShellWsActivity, _endShellWsActivity,
 } from './cookbookRunning.js';
 
 import {
@@ -1814,6 +1815,8 @@ initDownload({
   _renderRunningTab,
   _loadTasks,
   _saveTasks,
+  _noteShellWsActivity,
+  _endShellWsActivity,
 });
 
 // Init serve module (adds cached models, serve panels, launch)
