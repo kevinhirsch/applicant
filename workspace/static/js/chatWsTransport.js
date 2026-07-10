@@ -179,12 +179,19 @@ class _ChatWsReader {
     }
     this._ws = ws;
     ws.onopen = () => {
-      this._attempts = 0;
+      // NOTE: do NOT reset _attempts here. A proxy/server can accept the socket
+      // (fire onopen) then drop it before any payload; resetting the budget on
+      // bare open would let that accept-then-drop cycle reconnect forever and
+      // never reach the CHAT_WS_MAX_RECONNECTS fallback. The budget is only
+      // cleared once a REAL frame arrives (onmessage), which proves the stream works.
       this._status('live');
       try { ws.send(JSON.stringify(buildChatSubscribeFrame(this._sessionId, this._delivered))); } catch (_) { /* onclose handles it */ }
     };
     ws.onmessage = (ev) => {
       const msg = parseChatWsMessage(ev && ev.data);
+      // A real server frame arrived — the stream is genuinely alive, so reset the
+      // reconnect budget (a later drop gets its own fresh set of attempts).
+      if (msg.kind === 'chunk' || msg.kind === 'end' || msg.kind === 'error') this._attempts = 0;
       if (msg.kind === 'chunk') this._pushChunk(msg.data);
       else if (msg.kind === 'end') { this._sawDone = true; this._finish(); this._closeSocket(); }
       else if (msg.kind === 'error') { this._finish(); this._closeSocket(); }

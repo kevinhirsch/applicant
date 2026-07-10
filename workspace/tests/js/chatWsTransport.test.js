@@ -94,3 +94,21 @@ test('chatWsBackoffMs grows exponentially and caps at 8s', () => {
   assert.equal(chatWsBackoffMs(2), 2000);
   assert.equal(chatWsBackoffMs(20), 8000); // capped
 });
+
+test('_open does NOT reset the reconnect budget on bare onopen (Greptile #808): an accept-then-drop-before-data cycle must consume the budget and reach fallback, not loop forever', () => {
+  // The reconnecting _open() socket: resetting _attempts in onopen would let a
+  // proxy that accepts then immediately drops the WS reconnect indefinitely,
+  // never reaching CHAT_WS_MAX_RECONNECTS. The budget is cleared only when a
+  // REAL frame arrives (onmessage), proving the stream is genuinely alive.
+  const openIdx = SRC.indexOf('_open() {');
+  assert.ok(openIdx !== -1, '_open is present');
+  // Bound the slice to the _open method (up to the next method / waitForOpen).
+  const end = SRC.indexOf('waitForOpen', openIdx);
+  const openBody = SRC.slice(openIdx, end === -1 ? openIdx + 1400 : end);
+  const onopenIdx = openBody.indexOf('ws.onopen');
+  const onmsgIdx = openBody.indexOf('ws.onmessage');
+  const onopenBlock = openBody.slice(onopenIdx, onmsgIdx);
+  assert.ok(!/_attempts\s*=\s*0/.test(onopenBlock), 'onopen must NOT reset the reconnect budget');
+  const onmsgBlock = openBody.slice(onmsgIdx);
+  assert.ok(/_attempts\s*=\s*0/.test(onmsgBlock), 'the budget resets on a real server frame (onmessage), not on bare open');
+});
