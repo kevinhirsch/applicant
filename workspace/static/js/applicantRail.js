@@ -59,6 +59,13 @@ const RECENT_RUNS_CAP = 3;
 
 let _mounted = false;
 let _pollStop = null;
+// Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2): true while the
+// WS push channel is live, so the 45s data poll is RETIRED (pushes reach the rail via
+// `applicant:pending-changed` + `applicant:data-changed`) and RESTORED on WS loss so
+// the rail never silently goes stale (an honesty invariant: no silent dead UI). Mirrors
+// applicantBell.js's `!_realtimeLive`-gated fallback so the two surfaces coordinate
+// identically.
+let _realtimeLive = false;
 // The waiting-count last surfaced as a toast — a genuinely-new item toasts
 // once; a steady or shrinking queue never re-toasts (mirrors the Portal badge
 // contract: a transient blip must not spam the same signal). -1 = unseeded
@@ -559,12 +566,15 @@ export function mountApplicantRail() {
   if (!rail) return;
   _mounted = true;
   _ensureScaffold();
-  // Slow, visibility-aware poll so a backgrounded tab doesn't hammer the proxy.
-  // pollVisible fires once immediately, seeding the first paint.
+  // Slow, visibility-aware poll so a backgrounded tab doesn't hammer the proxy. It is
+  // the WS-DOWN FALLBACK: while the realtime push channel is live the rail already
+  // re-reads on every `applicant:pending-changed` AND `applicant:data-changed` push, so
+  // `start()` is gated on `!_realtimeLive` to RETIRE the poll, and `applyLive(false)`
+  // RESTORES it on WS loss. The first tick still seeds the first paint immediately.
   if (_pollStop) _pollStop();
   let timer = null;
   const tick = () => { _refresh(); };
-  const start = () => { if (timer == null) timer = setInterval(tick, POLL_MS); };
+  const start = () => { if (timer == null && !_realtimeLive) timer = setInterval(tick, POLL_MS); };
   const stop = () => { if (timer != null) { clearInterval(timer); timer = null; } };
   const onVis = () => { if (document.visibilityState === 'visible') { tick(); start(); } else stop(); };
   document.addEventListener('visibilitychange', onVis);
@@ -574,9 +584,39 @@ export function mountApplicantRail() {
   // feed immediately so the rail's waiting area clears in lockstep with the
   // bell + Portal instead of waiting out its own poll.
   document.addEventListener('applicant:pending-changed', tick);
+  // Realtime push also drives a refresh: applicantRealtime.js fans
+  // `applicant:data-changed` when the engine's notif/tracker push says the owner's
+  // data moved, so the rail re-reads immediately while the WS is live instead of
+  // waiting out the (now-retired) poll — exactly the seam Results/Today ride.
+  document.addEventListener('applicant:data-changed', tick);
+  // Retire the poll while the realtime push channel is live; restore it (with one
+  // immediate catch-up) on WS loss. applicantRealtime.js emits `applicant:realtime`
+  // with { live } on every connection-state change. Mirrors applicantBell.js's
+  // `!_realtimeLive`-gated fallback so the two surfaces coordinate identically.
+  const applyLive = (live) => {
+    _realtimeLive = !!live;
+    if (_realtimeLive) {
+      stop();          // push drives refreshes now — no redundant poll
+      tick();          // one immediate catch-up so nothing is missed at the edge
+    } else if (document.visibilityState === 'visible') {
+      tick();
+      start();         // WS down — restore the fallback poll
+    }
+  };
+  const onRealtime = (e) => applyLive(!!(e && e.detail && e.detail.live));
+  document.addEventListener('applicant:realtime', onRealtime);
   tick();
   if (document.visibilityState === 'visible') start();
-  _pollStop = () => { stop(); document.removeEventListener('visibilitychange', onVis); document.removeEventListener('applicant:pending-changed', tick); };
+  // The `applicant:realtime` event is one-shot per state change, so reconcile the
+  // current live level now in case the socket opened before this listener existed.
+  try { if (typeof window !== 'undefined' && window.__applicantRealtimeLive) applyLive(true); } catch { /* no-op */ }
+  _pollStop = () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVis);
+    document.removeEventListener('applicant:pending-changed', tick);
+    document.removeEventListener('applicant:data-changed', tick);
+    document.removeEventListener('applicant:realtime', onRealtime);
+  };
 }
 
 function _boot() {

@@ -28,6 +28,7 @@ _RESULTS_JS = _JS_DIR / "applicantResults.js"
 _TODAY_JS = _JS_DIR / "applicantToday.js"
 _BELL_JS = _JS_DIR / "applicantBell.js"
 _ACTIVITY_JS = _JS_DIR / "applicantActivity.js"
+_RAIL_JS = _JS_DIR / "applicantRail.js"
 
 
 @pytest.fixture(scope="module")
@@ -53,6 +54,11 @@ def bell_src() -> str:
 @pytest.fixture(scope="module")
 def activity_src() -> str:
     return _ACTIVITY_JS.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def rail_src() -> str:
+    return _RAIL_JS.read_text(encoding="utf-8")
 
 
 # ── applicantRealtime.js: the push → data-surface fan-out ─────────────────────
@@ -161,3 +167,22 @@ def test_activity_listens_for_the_realtime_and_data_changed_signals(activity_src
     assert "document.addEventListener('applicant:data-changed', () => { refreshStatus(); });" in activity_src
     # Reconcile a socket that opened before this listener existed (level, not just edge).
     assert "window.__applicantRealtimeLive" in activity_src
+# ── applicantRail.js: retire the 45s data poll while live, restore on loss ─────
+
+
+def test_rail_retires_its_data_poll_while_live_and_restores_on_loss(rail_src: str) -> None:
+    assert "let _realtimeLive = false;" in rail_src
+    # start() will not arm the interval while the push channel is live (same gate as the bell).
+    assert "if (timer == null && !_realtimeLive)" in rail_src
+    # applyLive retires (stop) on live and restores (start) on WS loss.
+    assert "const applyLive = (live) =>" in rail_src
+    assert "addEventListener('applicant:realtime'" in rail_src
+    # The rail still re-reads on the shared pending-changed push while live, AND now also
+    # on the engine's data-changed push (the seam Results/Today ride).
+    assert "addEventListener('applicant:pending-changed', tick)" in rail_src
+    assert "addEventListener('applicant:data-changed', tick)" in rail_src
+    # Teardown removes the new listeners too (no leak on remount).
+    assert "removeEventListener('applicant:data-changed', tick)" in rail_src
+    assert "removeEventListener('applicant:realtime', onRealtime)" in rail_src
+    # Reconcile a socket that opened before this listener existed (level, not just edge).
+    assert "window.__applicantRealtimeLive" in rail_src

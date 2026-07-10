@@ -156,3 +156,74 @@ test('_streakDays counts back over consecutive local days and resets on a gap', 
   assert.equal(_streakDays([], now), 0, 'empty -> 0');
   assert.equal(_streakDays([iso(5)], now), 0, 'a run 5 days ago with nothing since -> 0');
 });
+
+// ── mountApplicantRail: the WS-down fallback poll ─────────────────────────────
+//
+// The rail's independent data poll is now a WS-DOWN FALLBACK: while the realtime
+// push channel is live the rail refreshes off `applicant:pending-changed` +
+// `applicant:data-changed`, so the `setInterval` timer is RETIRED; on WS loss the
+// visibility-aware poll is RESTORED (the honesty invariant: no silent dead UI).
+//
+// Like the pure-helper tests above this does NOT import the module (its self-boot
+// touches document/timers at eval time). It slices the REAL `mountApplicantRail`
+// body and runs it against fabricated document/window/timer stubs — so reverting the
+// `!_realtimeLive` gate or the realtime wiring flips these assertions red.
+function runMount({ windowLive = false, visibility = 'visible' } = {}) {
+  const mountSrc = extractFunction(SRC, 'mountApplicantRail');
+  const prelude = `
+    let _mounted = false;
+    let _pollStop = null;
+    let _realtimeLive = false;
+    const POLL_MS = 45000;
+    const state = { intervals: 0, refreshes: 0, active: new Set(), timerFn: null, listeners: {} };
+    let _seq = 1;
+    function setInterval(fn, ms) { state.intervals += 1; state.lastMs = ms; state.timerFn = fn; const id = _seq++; state.active.add(id); return id; }
+    function clearInterval(id) { state.active.delete(id); }
+    function _refresh() { state.refreshes += 1; }
+    const rail = { classList: { toggle() {}, contains() { return false; } }, setAttribute() {}, querySelector() { return null; }, innerHTML: '' };
+    function _railEl() { return rail; }
+    function _ensureScaffold() { return rail; }
+    const window = { __applicantRealtimeLive: ${windowLive ? 'true' : 'false'} };
+    const document = {
+      visibilityState: '${visibility}',
+      addEventListener(type, fn) { (state.listeners[type] = state.listeners[type] || []).push(fn); },
+      removeEventListener() {},
+    };
+    // Fire a realtime liveness edge into the listeners the mount registered.
+    state.emitRealtime = (live) => { for (const fn of (state.listeners['applicant:realtime'] || [])) fn({ detail: { live } }); };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(`${prelude}\n${mountSrc}\nmountApplicantRail();\nreturn state;`)();
+}
+
+test('mountApplicantRail runs NO independent interval poll while the realtime WS is live', () => {
+  // Socket already open before mount (window.__applicantRealtimeLive) — the reconcile
+  // retires any armed timer, so there is no live fallback interval.
+  const st = runMount({ windowLive: true });
+  assert.equal(st.active.size, 0, 'push is live -> the fallback interval is retired (no timer running)');
+  // It still painted immediately (the seed tick + the retire catch-up ran through _refresh).
+  assert.ok(st.refreshes >= 1, 'the rail still seed-paints even with the poll retired');
+});
+
+test('mountApplicantRail RESTORES the visibility-aware poll when the realtime WS is down (no silent dead UI)', () => {
+  // No live socket at mount: the fallback poll must be armed so the rail keeps updating.
+  const st = runMount({ windowLive: false });
+  assert.equal(st.active.size, 1, 'WS down -> exactly one fallback interval is running');
+  assert.equal(st.lastMs, 45000, 'the fallback polls at the slow 45s cadence');
+  // The armed timer really refreshes the rail when it fires.
+  const before = st.refreshes;
+  st.timerFn();
+  assert.equal(st.refreshes, before + 1, 'the fallback interval refreshes the rail when it fires');
+});
+
+test('mountApplicantRail retires then restores the poll as the realtime WS flips live/down', () => {
+  // Start WS-down: the fallback poll is running.
+  const st = runMount({ windowLive: false });
+  assert.equal(st.active.size, 1, 'starts on the fallback poll while WS is down');
+  // WS comes up: retire the poll (push drives refreshes now).
+  st.emitRealtime(true);
+  assert.equal(st.active.size, 0, 'realtime live -> the fallback poll is retired');
+  // WS drops again: restore the poll so the rail never silently goes stale.
+  st.emitRealtime(false);
+  assert.equal(st.active.size, 1, 'realtime down -> the fallback poll is restored');
+});
