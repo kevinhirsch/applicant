@@ -180,6 +180,14 @@ class PageSource(Protocol):
         """Capture a per-page screenshot; return its ref (FR-LOG-2)."""
         ...
 
+    def screenshot_bytes(self) -> bytes | None:
+        """Capture the current page as raw PNG bytes for the #305 vision lane.
+
+        ``None`` when the source cannot produce an image. Read-only — no navigation,
+        no submit — so it stays inside the pre-fill-stop boundary.
+        """
+        ...
+
     def advance(self) -> PageState | None:
         """Move to the next page; ``None`` once past the last page."""
         ...
@@ -328,6 +336,10 @@ class FakePageSource:
     def screenshot(self) -> str:
         self._screenshot_seq += 1
         return f"screenshot://fake/{self._index}/{self._screenshot_seq}"
+
+    def screenshot_bytes(self) -> bytes | None:
+        # The fake source has no real renderer; the vision lane degrades to text-only.
+        return None
 
     def advance(self) -> PageState | None:
         if self._index + 1 >= len(self._pages):
@@ -2066,6 +2078,17 @@ class PlaywrightPageSource:
         path = f"/tmp/applicant-{id(self)}-{slug}.png"
         self._page.screenshot(path=path)
         return f"file://{path}"
+
+    def screenshot_bytes(self) -> bytes | None:  # pragma: no cover - integration-gated
+        # #305 vision lane: Playwright's ``screenshot()`` with no ``path`` returns the
+        # raw PNG bytes in-memory — a read-only capture (no navigation/submit), so it
+        # stays inside the pre-fill-stop boundary. ``None`` on any driver error rather
+        # than fabricating an image.
+        try:
+            return self._page.screenshot()
+        except Exception:
+            log.warning("PageSource: screenshot_bytes() failed", exc_info=True)
+            return None
 
     def advance(self) -> PageState | None:  # pragma: no cover - integration-gated
         # Real multi-page navigation: a "Next"/"Continue" control is a benign

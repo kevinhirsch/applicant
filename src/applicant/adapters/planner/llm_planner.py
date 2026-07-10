@@ -73,11 +73,20 @@ class LLMPlanner:
         self._max_ops = max_ops
 
     def plan(self, input_: PlannerInput) -> Plan:
-        """Emit a Plan from the given input using the L1 LLM."""
+        """Emit a Plan from the given input using the L1 LLM.
+
+        #305 vision lane: when the observation carries a base64 PNG ``screenshot``,
+        the user message attaches it as an image so the model grounds its typed ops
+        against the RENDERED page (canvas / image-map / purely visual forms). With no
+        screenshot the message is text-only — byte-identical to before. Vision only
+        improves GROUNDING: the plan still fills by ``attribute_id`` through the DSL,
+        so an image can never inject a literal value or cross the stop-boundary.
+        """
         prompt = self._build_prompt(input_)
+        images = self._observation_images(input_)
         try:
             raw = self._llm.complete(
-                [ChatMessage(role="user", content=prompt)],
+                [ChatMessage(role="user", content=prompt, images=images)],
                 start_tier=1,
             )
         except Exception:
@@ -103,6 +112,17 @@ class LLMPlanner:
             plans.append(self.plan(inp))
         return plans
 
+    @staticmethod
+    def _observation_images(input_: PlannerInput) -> tuple[str, ...]:
+        """Base64 PNG image parts to attach to the planner message (#305 vision).
+
+        Returns the observation's ``screenshot`` as a one-image tuple when present,
+        else an empty tuple (text-only path, byte-identical to before).
+        """
+        obs = input_.observation
+        shot = getattr(obs, "screenshot", None) if obs is not None else None
+        return (shot,) if shot else ()
+
     def _build_prompt(self, input_: PlannerInput) -> str:
         parts = [_DSL_SCHEMA_DESCRIPTION]
         parts.append(f"\nGOAL: {input_.goal}")
@@ -110,6 +130,17 @@ class LLMPlanner:
             obs = input_.observation
             parts.append(f"\nCURRENT URL: {obs.url}")
             parts.append(f"\nDOM SNAPSHOT ({obs.snapshot_tokens} tokens):\n{obs.html_summary}")
+            # #305 vision lane: tell the model a rendered screenshot is attached so it
+            # grounds ops against the pixels (canvas / image-map / visual-only forms)
+            # AND the text-DOM. The op set is unchanged — it still fills by attribute_id.
+            if getattr(obs, "screenshot", None):
+                parts.append(
+                    "\nA SCREENSHOT of the rendered page is attached. Use it to LOCATE "
+                    "and ground the fields (especially canvas / image / visual-only "
+                    "controls the DOM snapshot misses), then emit the SAME typed ops "
+                    "(fill/select by attribute_id). Never transcribe a value from the "
+                    "image — values come only from the attribute manifest by id."
+                )
         if input_.facts:
             facts_str = "; ".join(f"{k}: {v}" for k, v in input_.facts.items())
             parts.append(f"\nATTRIBUTE MANIFEST (id: label):\n{facts_str}")

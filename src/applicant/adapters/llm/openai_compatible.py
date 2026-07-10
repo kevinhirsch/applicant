@@ -102,6 +102,49 @@ def _tool_message_dict(m: ChatMessage) -> dict[str, Any]:
     return out
 
 
+def _wire_content(m: ChatMessage) -> Any:
+    """Serialize a message's ``content`` for the OpenAI chat wire, vision-aware (#305).
+
+    A message with NO ``images`` returns the bare ``content`` string — byte-identical
+    to before, so every existing (role, content) call site is unchanged. When a user
+    message carries base64 PNG ``images`` (the vision lane), ``content`` becomes the
+    OpenAI multipart array: one ``text`` part plus one ``image_url`` part per image
+    (each wrapped as a ``data:image/png;base64,...`` URL). The image only helps the
+    model GROUND its typed ops against the rendered page — the plan it emits still
+    fills by ``attribute_id`` via the DSL, so an image can never inject a literal.
+    """
+    if not m.images:
+        return m.content
+    parts: list[dict[str, Any]] = [{"type": "text", "text": m.content}]
+    for img in m.images:
+        parts.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+        )
+    return parts
+
+
+def _raw_message(m: ChatMessage) -> dict[str, Any]:
+    """One message in the plain (non-tool) wire shape, vision-aware (#305).
+
+    Equivalent to ``{"role": m.role, "content": m.content}`` when no images are
+    attached; otherwise ``content`` carries the multipart image array.
+    """
+    return {"role": m.role, "content": _wire_content(m)}
+
+
+def _ollama_message(m: ChatMessage) -> dict[str, Any]:
+    """One message in Ollama's native chat shape, vision-aware (#305).
+
+    Ollama attaches images as a bare-base64 ``images`` list on the message rather
+    than the OpenAI multipart ``content`` array. No images ⇒ byte-identical to the
+    prior ``{"role", "content"}`` dict.
+    """
+    out: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.images:
+        out["images"] = list(m.images)
+    return out
+
+
 def _estimate_tokens(messages: list[ChatMessage]) -> int:
     chars = sum(len(m.role) + len(m.content) for m in messages)
     return max(1, chars // _CHARS_PER_TOKEN)
@@ -564,7 +607,7 @@ class OpenAICompatibleLLM:
             profile = get_profile(tier.provider, tier.base_url)
 
         url = profile.chat_url(base)
-        raw_messages = [{"role": m.role, "content": m.content} for m in messages]
+        raw_messages = [_raw_message(m) for m in messages]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
         payload = self._apply_prefix_cache(profile, payload)
 
@@ -580,7 +623,7 @@ class OpenAICompatibleLLM:
                     if _estimate_tokens(fb_messages) > tier.context_window:
                         raise _Overflow()
                     # Rebuild request without native response_format, with schema prompt.
-                    fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
+                    fb_raw_messages = [_raw_message(m) for m in fb_messages]
                     fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
                     fb_payload = self._apply_prefix_cache(profile, fb_payload)
                     text, raw = self._post_openai(tier, url, fb_payload)
@@ -647,7 +690,10 @@ class OpenAICompatibleLLM:
             if _estimate_tokens(msgs) > tier.context_window:
                 raise _Overflow()
 
-        raw_messages = [{"role": m.role, "content": m.content} for m in msgs]
+        # Ollama's native chat API carries images as a bare-base64 ``images`` list on
+        # the message (NOT the OpenAI multipart ``content`` array), so serialize the
+        # vision lane in that shape here. No images ⇒ byte-identical to before.
+        raw_messages = [_ollama_message(m) for m in msgs]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
         payload = self._apply_prefix_cache(profile, payload)
 

@@ -935,6 +935,31 @@ class PrefillService:
             host = ""
         return (host or url or "").lower()
 
+    def _capture_screenshot_b64(self, aid) -> str | None:
+        """#305 vision lane: grab a base64 PNG of the current page, or ``None``.
+
+        Fully defensive — a browser that lacks a raw-bytes capture, a ``None`` result,
+        or any driver error all degrade to ``None`` so the planner falls back to the
+        text-only prompt (byte-identical). The capture is read-only (no navigation, no
+        submit), so it stays inside the pre-fill-stop boundary.
+        """
+        capture = getattr(self._browser, "screenshot_bytes", None)
+        if capture is None:
+            return None
+        try:
+            raw = capture(aid)
+        except Exception:  # noqa: BLE001 — vision is best-effort; never crash the loop
+            log.warning("PlannerPath: screenshot_bytes() failed — text-only prompt", exc_info=True)
+            return None
+        if not raw:
+            return None
+        import base64
+
+        try:
+            return base64.b64encode(raw).decode("ascii")
+        except Exception:  # noqa: BLE001
+            return None
+
     def _execute_plan_for_page(self, app, attributes, result) -> PrefillResult | None:
         """#305 Plan-as-Data + #306 flywheel: emit, ground, and execute a typed Plan.
 
@@ -982,10 +1007,21 @@ class PrefillService:
         domain = self._routine_domain(state.url)
         prior_routine = self._prior_routine_text(domain)
 
+        # #305 vision lane: capture a screenshot of the RENDERED page so the planner
+        # can ground its typed ops against the pixels (canvas / image-map / visual-only
+        # forms the text-DOM snapshot misses). Gated by the SAME ``use_planner`` flag —
+        # this whole method only runs on the planner path — and fully defensive: a
+        # browser without a bytes capture, a None result, or any error degrades to the
+        # text-only prompt (byte-identical). The screenshot ONLY improves grounding;
+        # the emitted plan still fills by attribute_id through the DSL, so it can never
+        # inject a literal value or cross the stop-boundary.
+        screenshot_b64 = self._capture_screenshot_b64(aid)
+
         observation = PlannerObservation(
             url=state.url,
             html_summary=state.body or "",
             snapshot_tokens=len(state.body or "") // 4,
+            screenshot=screenshot_b64,
         )
 
         # Reflexion re-plan loop: first pass injects the prior; subsequent passes
