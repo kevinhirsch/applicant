@@ -170,12 +170,23 @@ class PatchrightBrowser:
         """Detect all fillable fields on the current page (FR-PREFILL-2/3)."""
         return list(self._source(application_id).detect_fields())
 
-    def fill_field(self, application_id: ApplicationId, selector: str, value: str) -> None:
+    def fill_field(
+        self,
+        application_id: ApplicationId,
+        selector: str,
+        value: str,
+        *,
+        label: str | None = None,
+    ) -> None:
         """Fill a single field (a deterministic, idempotent step).
 
         Filling routes through the boundary as a ``FILL_FIELD`` step (always
         allowed). Before typing, a human-like cadence/think-delay is computed
         (FR-STEALTH-2) so the real driver feeds believable timing into the page.
+
+        ``label`` is the field's human label, threaded to the page source so the real
+        driver can self-heal a broken/stale selector back onto the intended field
+        (Skyvern parity gap #5) — never onto a submit/account-create control.
         """
         ensure_action_allowed(StepKind.FILL_FIELD)
         session = self._session(application_id)
@@ -186,7 +197,7 @@ class PatchrightBrowser:
         # per-character timing reaches Playwright's type API.
         plan = session.human.type_cadence(value)  # advances the per-session logical clock
         cadence_ms = [k.delay_ms for k in plan]
-        session.source.type_value(selector, value, cadence_ms=cadence_ms)
+        session.source.type_value(selector, value, cadence_ms=cadence_ms, label=label)
 
     def upload_file(self, application_id: ApplicationId, selector: str, file_path: str) -> None:
         """Attach the rendered base résumé to a file input (FR-RESUME-4).

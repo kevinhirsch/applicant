@@ -64,8 +64,18 @@ class BrowserAutomationPort(Protocol):
         """Detect all fillable fields on the current page (FR-PREFILL-2/3)."""
         ...
 
-    def fill_field(self, application_id: ApplicationId, selector: str, value: str) -> None:
-        """Fill a single field (a deterministic, idempotent step)."""
+    def fill_field(
+        self,
+        application_id: ApplicationId,
+        selector: str,
+        value: str,
+        *,
+        label: str | None = None,
+    ) -> None:
+        """Fill a single field (a deterministic, idempotent step).
+
+        ``label`` is the field's human label — the real driver uses it to self-heal a
+        broken/stale selector back onto the intended field (Skyvern parity gap #5)."""
         ...
 
     def upload_file(self, application_id: ApplicationId, selector: str, file_path: str) -> None:

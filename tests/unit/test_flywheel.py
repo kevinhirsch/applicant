@@ -96,7 +96,7 @@ class _PlannerBrowser:
     def detect_fields(self, aid):
         return []
 
-    def fill_field(self, aid, selector, value):
+    def fill_field(self, aid, selector, value, *, label=None):
         self._attempts[selector] = self._attempts.get(selector, 0) + 1
         if selector in self._fail_refs and not (
             self._heal_after and self._attempts[selector] > 1

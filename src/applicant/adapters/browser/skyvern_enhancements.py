@@ -462,6 +462,7 @@ def recover_broken_selector(
     field_label: str | None = None,
     *,
     max_attempts: int = 3,
+    wait_config: AdaptiveWaitConfig | None = None,
 ) -> RecoveryResult:
     """Attempt to recover from a broken selector by trying alternative strategies.
 
@@ -476,6 +477,9 @@ def recover_broken_selector(
         original_selector: The selector that failed.
         field_label: Optional human-readable field label to guide recovery.
         max_attempts: Maximum number of recovery attempts.
+        wait_config: Adaptive-wait tuning for strategy 1. A caller on the hot pre-fill
+            path passes a SHORT config so a stale selector is declared broken quickly
+            instead of blocking the walk on the default multi-second ladder.
 
     Returns:
         RecoveryResult indicating whether recovery succeeded and how.
@@ -484,7 +488,7 @@ def recover_broken_selector(
     _start = time.monotonic()
 
     # Strategy 1: Retry with adaptive wait
-    wait_result = adaptive_wait_for_element(page, original_selector)
+    wait_result = adaptive_wait_for_element(page, original_selector, config=wait_config)
     attempts.append(
         RecoveryAttempt(
             strategy="adaptive_retry",
@@ -603,3 +607,504 @@ def _escape_css_string(value: str) -> str:
     """Escape a string for use in a CSS attribute selector."""
     # Escape backslashes first, then double-quotes
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# ── Stop-boundary guard (safety for self-heal + date-fill) ─────────────────
+#
+# A self-healed selector (gap #5) or a calendar day-cell (gap #3) is a RE-LOCATION
+# of the intended fillable field. It must never resolve onto a submit /
+# account-create / final-submit control — the review-before-submit / pre-fill
+# stop-boundary (``core/rules/prefill_boundary.py``) is untouched by recovery. This
+# guard is the server-side refusal: if a recovered target looks like such a control,
+# the caller refuses to act on it (issue #351 safety).
+
+#: Case-insensitive identity markers of a submit / account-create / final-submit
+#: control. A recovered / re-located target whose identity matches one of these is
+#: refused so the stop-boundary can never be crossed by a retarget.
+_BOUNDARY_CONTROL_MARKERS: tuple[str, ...] = (
+    "submit",
+    "sign up",
+    "signup",
+    "sign-up",
+    "create account",
+    "create-account",
+    "createaccount",
+    "register",
+    "apply now",
+    "apply-now",
+    "send application",
+    "submit application",
+    "review and submit",
+    "confirm and submit",
+    "finish and submit",
+    "final submit",
+)
+
+#: ``type`` values that are inherently submit controls (never a fill target). ``button``
+#: is deliberately EXCLUDED — a calendar day is often ``<button>7</button>`` — so a bare
+#: button is judged by its identity text, not its tag.
+_SUBMIT_INPUT_TYPES: frozenset[str] = frozenset({"submit", "image", "reset"})
+
+
+def _element_identity_text(element: Any) -> str:
+    """Concatenate an element's identity-bearing attributes + visible text (lowercased).
+
+    Defensive: any attribute/text read that raises is skipped so the guard never
+    crashes the fill loop.
+    """
+    parts: list[str] = []
+    for attr in (
+        "type", "id", "name", "value", "aria-label",
+        "data-automation-id", "data-testid", "title", "role",
+    ):
+        try:
+            v = element.get_attribute(attr)
+        except Exception:
+            v = None
+        if v:
+            parts.append(str(v))
+    for reader in ("inner_text", "text_content"):
+        fn = getattr(element, reader, None)
+        if callable(fn):
+            try:
+                t = fn()
+            except Exception:
+                continue
+            if t:
+                parts.append(str(t))
+            break
+    return " ".join(parts).lower()
+
+
+def is_boundary_control(element: Any) -> bool:
+    """True if ``element`` looks like a submit / account-create / final-submit control.
+
+    Pure + defensive. A self-heal recovery (gap #5) or a calendar day-click (gap #3)
+    that resolves to such a control is REFUSED so the review-before-submit / pre-fill
+    stop-boundary is never crossed by a retarget. ``None`` is not a control.
+    """
+    if element is None:
+        return False
+    try:
+        typ = (element.get_attribute("type") or "").strip().lower()
+    except Exception:
+        typ = ""
+    # Inherent submit/reset/image inputs are always boundary controls.
+    if typ in _SUBMIT_INPUT_TYPES:
+        return True
+    # The identity-text markers ("submit"/"register"/…) are only meaningful on
+    # BUTTON-LIKE controls. A FILLABLE field whose name/label merely CONTAINS such a
+    # substring — `<input name="submitted_by">`, `aria-label="Registered name"` — is a
+    # normal field, NOT a submit control; refusing it would record a false fill
+    # failure. So restrict the substring-marker refusal to button/link-shaped elements.
+    if not _is_button_like(element, typ):
+        return False
+    text = _element_identity_text(element)
+    return any(marker in text for marker in _BOUNDARY_CONTROL_MARKERS)
+
+
+def _is_button_like(element: Any, typ: str) -> bool:
+    """True if ``element`` is a button/link-shaped control (not a fillable field).
+
+    Pure + defensive. ``type=button/submit/image/reset``, ``role=button|link``, or a
+    ``<button>``/``<a>`` tag qualify; a text/email/select/textarea input does not.
+    """
+    if typ in {"button", "submit", "image", "reset"}:
+        return True
+    try:
+        role = (element.get_attribute("role") or "").strip().lower()
+    except Exception:
+        role = ""
+    if role in {"button", "link"}:
+        return True
+    ev = getattr(element, "evaluate", None)
+    if callable(ev):
+        try:
+            tag = (ev("el => el.tagName") or "").strip().lower()
+        except Exception:
+            tag = ""
+        if tag in {"button", "a"}:
+            return True
+    return False
+
+
+@dataclass
+class HealResult:
+    """Outcome of a self-heal attempt on a fill selector."""
+
+    selector: str | None
+    """The selector to fill — original when still valid, a healed alternative when
+    recovered, or ``None`` when nothing usable/safe was found."""
+
+    healed: bool = False
+    """True when ``selector`` is a RECOVERED alternative (differs from the original)."""
+
+    refused: bool = False
+    """True when recovery found a target but it resolves to a stop-boundary control,
+    so the caller must NOT act on it."""
+
+    reason: str = ""
+    """Human-readable detail (strategy used, or refusal cause)."""
+
+
+def heal_fill_selector(
+    page: Any,
+    selector: str,
+    field_label: str | None = None,
+    *,
+    wait_config: AdaptiveWaitConfig | None = None,
+) -> HealResult:
+    """Self-heal a broken/stale fill selector on the DEFAULT deterministic path.
+
+    Returns the ORIGINAL selector when it still resolves; otherwise runs
+    :func:`recover_broken_selector` and returns a healed alternative — but ONLY when
+    that alternative does NOT resolve to a submit / account-create / final-submit
+    control (the pre-fill stop-boundary). A recovery that would land on such a control
+    is REFUSED (``refused=True``), so the boundary can never be crossed by a retarget.
+
+    This never fills anything itself — it only decides WHICH selector (if any) is a
+    safe, intended fill target. The caller does the deterministic fill by
+    attribute-id (no free-form literal injection).
+    """
+    # 1. Is the original selector still present? (fast path — one lookup.)
+    try:
+        el = page.query_selector(selector)
+    except Exception:
+        el = None
+    if el is not None:
+        try:
+            visible = el.is_visible()
+        except Exception:
+            visible = True
+        if visible:
+            # A re-rendered page could point the original selector at a submit
+            # control; refuse rather than fill onto the boundary.
+            if is_boundary_control(el):
+                return HealResult(
+                    selector=None,
+                    refused=True,
+                    reason="original selector resolves to a stop-boundary control",
+                )
+            return HealResult(selector=selector, healed=False, reason="selector intact")
+
+    # 2. Original is broken/stale — recover.
+    result = recover_broken_selector(
+        page, selector, field_label, wait_config=wait_config
+    )
+    if not result.recovered:
+        return HealResult(
+            selector=None, healed=False, reason="no recovery candidate found"
+        )
+    alt = result.alternative_selector or selector
+    # 3. Boundary guard on the recovered target — the safety-critical refusal.
+    try:
+        alt_el = page.query_selector(alt)
+    except Exception:
+        alt_el = None
+    if is_boundary_control(alt_el):
+        return HealResult(
+            selector=None,
+            refused=True,
+            reason=f"healed selector {alt!r} resolves to a stop-boundary control",
+        )
+    strategy = result.attempts[-1].strategy if result.attempts else "recovered"
+    healed = alt != selector
+    return HealResult(
+        selector=alt,
+        healed=healed,
+        reason=f"recovered via {strategy}" if healed else "selector loaded late",
+    )
+
+
+# ── Native calendar / date-picker widgets (gap #3) ─────────────────────────
+#
+# Workday / Greenhouse date fields (start date, DOB) that render a JS calendar grid
+# rather than a typeable <input> cannot be filled by typing. These helpers detect
+# such a widget and drive it by clicking month-nav + the target day cell — the fill
+# stays by the intended field (never a submit control, guarded above).
+
+#: Identity markers that (together with a calendar signal) mark a date field.
+_DATE_FIELD_MARKERS: tuple[str, ...] = ("date", "calendar", "datepicker", "birth")
+
+#: Explicit calendar-widget class/id/automation signals (any one is sufficient).
+_CALENDAR_WIDGET_MARKERS: tuple[str, ...] = ("datepicker", "calendar", "date-picker")
+
+_MONTHS: dict[str, int] = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "october": 10,
+    "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+_MONTH_NAMES: tuple[str, ...] = (
+    "", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+#: Header text carrying the currently-displayed month/year of an open calendar.
+_CALENDAR_HEADER_SELECTORS: tuple[str, ...] = (
+    ".datepicker-switch",
+    ".react-datepicker__current-month",
+    "[data-automation-id='datePickerHeader']",
+    "[class*='calendar'] [class*='title']",
+    "[class*='datepicker'] [class*='header']",
+    "[role='grid'] [aria-live='polite']",
+)
+_CALENDAR_NEXT_SELECTORS: tuple[str, ...] = (
+    ".react-datepicker__navigation--next",
+    "[data-automation-id='nextMonth']",
+    "button[aria-label*='next' i]",
+    ".next",
+    "th.next",
+)
+_CALENDAR_PREV_SELECTORS: tuple[str, ...] = (
+    ".react-datepicker__navigation--previous",
+    "[data-automation-id='prevMonth']",
+    "button[aria-label*='prev' i]",
+    ".prev",
+    "th.prev",
+)
+_CALENDAR_DAY_SELECTORS: tuple[str, ...] = (
+    "[role='gridcell']",
+    "td.day",
+    ".react-datepicker__day",
+    "[class*='calendar'] [class*='day']",
+)
+#: A day cell belonging to an adjacent (previous/next) month — must be skipped so a
+#: "7" from the trailing month is not clicked instead of the target month's "7".
+_OUTSIDE_MONTH_MARKERS: tuple[str, ...] = (
+    "outside", "othermonth", "other-month", "adjacent", "muted", "old", "new",
+)
+
+
+def is_datepicker_element(element: Any) -> bool:
+    """True if ``element`` is a JS calendar / date-picker trigger (no typeable input).
+
+    Affirmative signal required so a normal typeable ``<input type=date>`` / text date
+    input is NOT hijacked: either an ``aria-haspopup`` dialog/grid on a date field, an
+    explicit ``datepicker``/``calendar`` class/automation id, or a READONLY date field
+    (which only opens a calendar). Pure + defensive.
+    """
+    if element is None:
+        return False
+
+    def attr(name: str) -> str:
+        try:
+            return (element.get_attribute(name) or "")
+        except Exception:
+            return ""
+
+    def has(name: str) -> bool:
+        try:
+            return element.get_attribute(name) is not None
+        except Exception:
+            return False
+
+    identity = " ".join(
+        attr(a)
+        for a in ("id", "name", "class", "data-automation-id", "aria-label",
+                  "placeholder", "type")
+    ).lower()
+    # Explicit calendar widget marker anywhere in the identity.
+    if any(k in identity for k in _CALENDAR_WIDGET_MARKERS):
+        return True
+    has_date_marker = any(m in identity for m in _DATE_FIELD_MARKERS)
+    if not has_date_marker:
+        return False
+    haspopup = attr("aria-haspopup").lower()
+    if haspopup in ("dialog", "grid"):
+        return True
+    readonly = has("readonly") or attr("aria-readonly").lower() == "true"
+    return readonly
+
+
+def parse_target_date(value: str) -> tuple[int, int, int] | None:
+    """Parse ``value`` into ``(year, month, day)``; ``None`` if unrecognised.
+
+    Accepts ISO ``YYYY-MM-DD`` (the normalized stored form), ``MM/DD/YYYY``, and
+    ``Month D, YYYY``. Kept tolerant but never guesses an ambiguous form.
+    """
+    import re as _re
+
+    v = (value or "").strip()
+    m = _re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", v)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return (y, mo, d) if 1 <= mo <= 12 and 1 <= d <= 31 else None
+    m = _re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", v)
+    if m:
+        mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return (y, mo, d) if 1 <= mo <= 12 and 1 <= d <= 31 else None
+    m = _re.match(r"^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$", v)
+    if m:
+        mo = _MONTHS.get(m.group(1).lower())
+        if mo:
+            d, y = int(m.group(2)), int(m.group(3))
+            return (y, mo, d) if 1 <= d <= 31 else None
+    return None
+
+
+def _parse_header_month(text: str) -> tuple[int, int] | None:
+    """Parse an open calendar's header text into ``(year, month)``."""
+    import re as _re
+
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    m = _re.search(r"(\d{4})[-/](\d{1,2})", t)  # 2026-07 / 2026/07
+    if m:
+        y, mo = int(m.group(1)), int(m.group(2))
+        if 1 <= mo <= 12:
+            return (y, mo)
+    m = _re.search(r"([a-z]+)\.?\s+(\d{4})", t)  # July 2026 / Jul 2026
+    if m:
+        mo = _MONTHS.get(m.group(1))
+        if mo:
+            return (int(m.group(2)), mo)
+    return None
+
+
+def _first_present(page: Any, selectors: tuple[str, ...]) -> Any:
+    """Return the first element found for any of ``selectors``, else ``None``."""
+    for sel in selectors:
+        try:
+            el = page.query_selector(sel)
+        except Exception:
+            el = None
+        if el is not None:
+            return el
+    return None
+
+
+def _calendar_current_month(page: Any) -> tuple[int, int] | None:
+    """Read the month/year an open calendar is currently displaying."""
+    el = _first_present(page, _CALENDAR_HEADER_SELECTORS)
+    if el is None:
+        return None
+    text = ""
+    for reader in ("inner_text", "text_content"):
+        fn = getattr(el, reader, None)
+        if callable(fn):
+            try:
+                text = fn() or ""
+            except Exception:
+                text = ""
+            if text:
+                break
+    if not text:
+        try:
+            text = el.get_attribute("aria-label") or ""
+        except Exception:
+            text = ""
+    return _parse_header_month(text)
+
+
+def _cell_is_outside_month(cell: Any) -> bool:
+    """True if a day cell belongs to an adjacent month (must be skipped)."""
+    try:
+        if (cell.get_attribute("aria-disabled") or "").lower() == "true":
+            return True
+    except Exception:
+        pass
+    try:
+        cls = (cell.get_attribute("class") or "").lower()
+    except Exception:
+        cls = ""
+    return any(m in cls for m in _OUTSIDE_MONTH_MARKERS)
+
+
+def choose_date(
+    page: Any,
+    selector: str,
+    value: str,
+    *,
+    boundary_guard: Any = is_boundary_control,
+    max_nav: int = 480,
+) -> bool:
+    """Open the calendar at ``selector`` and click the day cell for ``value``.
+
+    Navigates month-by-month to the target month/year, then clicks the matching day
+    IN the displayed month (adjacent-month cells are skipped). ``boundary_guard`` is
+    applied to the day cell so a control masquerading as a cell is never clicked —
+    the stop-boundary holds even here. Returns True iff a day was clicked.
+    """
+    target = parse_target_date(value)
+    if target is None:
+        return False
+    ty, tm, td = target
+    trigger = None
+    try:
+        trigger = page.query_selector(selector)
+    except Exception:
+        trigger = None
+    if trigger is None:
+        return False
+    # Guard the TRIGGER before opening it. `type_value` routes here before the
+    # heal/boundary guard runs, so a fill selector that now resolves to a submit /
+    # account-create control carrying a calendar marker would otherwise be CLICKED
+    # (activated) by opening the popup. Refuse before the click — the stop-boundary
+    # holds at the trigger, not only at the day cell (Greptile #817).
+    try:
+        if boundary_guard(trigger):
+            return False
+    except Exception:
+        return False
+    try:
+        trigger.click()  # open the calendar popup
+    except Exception:
+        return False
+
+    # Navigate to the target month/year.
+    for _ in range(max_nav):
+        cur = _calendar_current_month(page)
+        if cur is None:
+            break  # header unreadable — try to click the day in what is shown
+        if cur == (ty, tm):
+            break
+        direction = _CALENDAR_PREV_SELECTORS if (ty, tm) < cur else _CALENDAR_NEXT_SELECTORS
+        nav = _first_present(page, direction)
+        if nav is None:
+            break
+        try:
+            nav.click()
+        except Exception:
+            break
+
+    # Only click once the displayed month is CONFIRMED to be the target. If the
+    # header is unreadable, or navigation couldn't reach it (a date beyond
+    # ``max_nav`` months, a missing prev/next control, or an exhausted loop), the
+    # displayed month is NOT the target — fail softly rather than click the matching
+    # day in the wrong month, which would silently record an incorrect date. Leaving
+    # the field for the human is the honest outcome (never a wrong date).
+    if _calendar_current_month(page) != (ty, tm):
+        return False
+
+    # Click the target day in the displayed month.
+    want = str(td)
+    for sel in _CALENDAR_DAY_SELECTORS:
+        try:
+            cells = page.query_selector_all(sel)
+        except Exception:
+            cells = []
+        for cell in cells:
+            try:
+                if not cell.is_visible():
+                    continue
+            except Exception:
+                pass
+            if _cell_is_outside_month(cell):
+                continue
+            try:
+                txt = (cell.inner_text() or "").strip()
+            except Exception:
+                continue
+            if txt != want:
+                continue
+            # Safety: never click a submit/account-create control disguised as a cell.
+            if boundary_guard is not None and boundary_guard(cell):
+                continue
+            try:
+                cell.click()
+                return True
+            except Exception:
+                continue
+    return False

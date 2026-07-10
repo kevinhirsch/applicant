@@ -137,7 +137,7 @@ class _SingleFieldBrowser:
     def detect_fields(self, aid):  # noqa: ARG002
         return list(self._fields)
 
-    def fill_field(self, aid, selector, value):  # noqa: ARG002
+    def fill_field(self, aid, selector, value, *, label=None):  # noqa: ARG002
         if selector in self._fail:
             raise RuntimeError("element detached")
         self.filled[selector] = value
