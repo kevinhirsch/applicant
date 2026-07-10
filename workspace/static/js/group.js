@@ -8,6 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
+import chatWsTransport from './chatWsTransport.js';
 
 let API_BASE = '';
 let _active = false;
@@ -794,7 +795,16 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
       credentials: 'same-origin',
       signal: abortCtrl.signal,
     });
-    const reader = res.body.getReader();
+    // Transport: prefer the chat WebSocket (same agent_runs replay buffer),
+    // keeping this request's SSE body as the automatic fallback. The returned
+    // reader has the SAME read()/cancel() contract as res.body.getReader(),
+    // so the loop below is transport-agnostic and byte-for-byte unchanged.
+    const reader = await chatWsTransport.openChatStreamReader({
+      res,
+      loc: window.location,
+      sessionId,
+      abortSignal: abortCtrl.signal,
+    });
     const decoder = new TextDecoder();
 
     while (true) {
