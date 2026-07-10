@@ -1038,6 +1038,16 @@ def choose_date(
         trigger = None
     if trigger is None:
         return False
+    # Guard the TRIGGER before opening it. `type_value` routes here before the
+    # heal/boundary guard runs, so a fill selector that now resolves to a submit /
+    # account-create control carrying a calendar marker would otherwise be CLICKED
+    # (activated) by opening the popup. Refuse before the click — the stop-boundary
+    # holds at the trigger, not only at the day cell (Greptile #817).
+    try:
+        if boundary_guard(trigger):
+            return False
+    except Exception:
+        return False
     try:
         trigger.click()  # open the calendar popup
     except Exception:

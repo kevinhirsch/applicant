@@ -188,6 +188,41 @@ class TestChooseDate:
         assert choose_date(page, page.TRIGGER, "whenever") is False
         assert page.clicked_cells == []
 
+    def test_boundary_trigger_is_not_clicked(self):
+        # Greptile #817: type_value routes to choose_date BEFORE the heal/boundary
+        # guard. If the datepicker trigger resolves to a submit/account-create control
+        # (carrying a calendar marker), opening the popup would CLICK/activate it. The
+        # trigger must be boundary-guarded before the open — refuse, never click.
+        class _BoundaryTrigger:
+            def __init__(self, page):
+                self.page = page
+
+            def evaluate(self, _s):
+                return "INPUT"
+
+            def get_attribute(self, name):
+                return {
+                    "type": "submit",  # inherent submit control
+                    "class": "datepicker-input",
+                    "aria-haspopup": "dialog",
+                }.get(name)
+
+            def is_visible(self):
+                return True
+
+            def click(self):
+                self.page.opened = True  # MUST NOT run
+
+        class _P(FakeCalendarPage):
+            def __init__(self):
+                super().__init__()
+                self._trigger = _BoundaryTrigger(self)
+
+        page = _P()
+        assert choose_date(page, page.TRIGGER, "2026-07-07") is False
+        assert page.opened is False  # trigger never clicked
+        assert page.clicked_cells == []
+
     def test_unreachable_month_fails_softly_without_clicking(self):
         # Greptile #817: with no next/prev control the calendar can never leave its
         # start month, so it cannot reach the target. It MUST fail softly (return
