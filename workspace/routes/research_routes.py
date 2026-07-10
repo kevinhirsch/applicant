@@ -1,6 +1,5 @@
 """Research background task routes — /api/research/*."""
 
-import asyncio
 import json
 import logging
 import uuid
@@ -14,6 +13,13 @@ from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import get_current_user
 from core.safe_path import UnsafePathError, safe_join
+# Owner-scope + the progress-event generator live in the dependency-light
+# ``research_stream`` module (the single source of truth for the stream's event
+# shape) so the WebSocket relay can reuse them WITHOUT pulling this module's
+# heavy DB/endpoint imports. Both the SSE route below and the WS relay call
+# these, so the two transports can never drift. (research_stream imports
+# ``_safe_research_path`` back from here lazily — no import cycle at load.)
+from routes.research_stream import research_owns, research_event_payloads
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,7 @@ def _safe_research_path(session_id: str) -> Optional[Path]:
     except UnsafePathError:
         logger.warning("rejecting unsafe research session id: %r", session_id)
         return None
+
 
 # Model-name substrings that are NOT chat/generation models — research must
 # never pick these as its model. An OpenAI-style endpoint often lists
@@ -75,19 +82,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     def _owns_in_memory(session_id: str, user: str) -> bool:
         """Ownership check for an in-flight (in-memory) research task.
-        Falls back to the on-disk JSON if the task has already finished."""
-        entry = research_handler._active_tasks.get(session_id)
-        if entry is not None:
-            return entry.get("owner", "") == user
-        # Task no longer in memory — check the persisted JSON.
-        path = _safe_research_path(session_id)
-        if path is None or not path.exists():
-            return False
-        try:
-            return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
-        except Exception:
-            logger.warning("Bare exception in research_routes.py")
-            return False
+        Falls back to the on-disk JSON if the task has already finished.
+        Delegates to the module-level ``research_owns`` so the SSE route and the
+        WS relay owner-scope identically."""
+        return research_owns(research_handler, session_id, user)
 
     @router.get("/api/research/active")
     async def research_active(request: Request):
@@ -437,25 +435,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         async def _generate():
-            last_progress = None
-            while True:
-                status = research_handler.get_status(session_id)
-                if status is None:
-                    yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
-                    return
-                st = status.get("status", "")
-                progress = status.get("progress", {})
-                if progress != last_progress:
-                    last_progress = progress
-                    yield f"data: {json.dumps({**progress, 'status': st})}\n\n"
-                if st != "running":
-                    final = {'status': st, 'final': True}
-                    task = research_handler._active_tasks.get(session_id, {})
-                    if st == "error" and task.get("result"):
-                        final['error'] = str(task["result"])[:500]
-                    yield f"data: {json.dumps(final)}\n\n"
-                    return
-                await asyncio.sleep(1.5)
+            # Reuse the shared payload generator (single source of the event
+            # shape) and wrap each payload as an SSE `data:` line. The WS relay
+            # (/api/research/ws) wraps the SAME payloads as JSON frames, so the
+            # two transports can never drift.
+            async for payload in research_event_payloads(research_handler, session_id):
+                yield f"data: {json.dumps(payload)}\n\n"
 
         return StreamingResponse(
             _generate(),
