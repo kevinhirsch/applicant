@@ -6,14 +6,17 @@ honest decision for the three general-workspace surfaces the sweep looked at —
 ``emailInbox.js`` (new-mail poll), ``calendar.js`` (events), and
 ``appkitStatusPanel.js`` (status timer):
 
-* ``emailInbox.js`` — the ONE real general-workspace data poll (a 60s unread-count
-  check). It is deliberately LEFT ON — the workspace has no server-side new-mail
-  change signal to relay (stdlib ``imaplib``, no IDLE watcher; the legacy inbound
-  scanner is disabled and browser-silent), so there is nothing to push. Retiring it
-  would need a real IMAP-IDLE relay that does not exist yet. The honesty guard: it
-  must NOT be gated on the applicant realtime channel (``applicant:realtime`` carries
-  the ENGINE's job notifications, not workspace email — gating there retires the poll
-  while no email events arrive = a silent dead UI).
+* ``emailInbox.js`` — the 60s unread-count poll is now a WS-DOWN FALLBACK. A real
+  owner-scoped IMAP-IDLE relay exists (``src/email_events.py`` +
+  ``src/email_idle_watcher.py``, over ``/api/email/events/ws``): a background
+  watcher holds an IMAP IDLE on each owner's IDLE-capable mailbox and pushes
+  ``email:unread-changed`` + a ``live`` heartbeat. The poll is SUPPRESSED only while
+  that push is genuinely live for the owner, and RESTORED on every non-live state
+  (no socket, ``down``, stale heartbeats). So the poll is retained (not deleted) and
+  runs whenever the push isn't live — no silent dead inbox. The honesty guard still
+  holds: it must NOT be gated on the applicant realtime channel (``applicant:realtime``
+  carries the ENGINE's job notifications, not workspace email); the relay is a SEPARATE
+  workspace-native channel.
 
 * ``calendar.js`` — has NO periodic events data poll to retire. Calendar DATA is
   refreshed on-demand (open / navigation) and event-driven via the ``calendar-refresh``
@@ -55,30 +58,39 @@ def appkit_src() -> str:
     return _APPKIT_JS.read_text(encoding="utf-8")
 
 
-# ── emailInbox.js: the real poll stays as the honest fallback ─────────────────
+# ── emailInbox.js: the poll is retained as the WS-down fallback ───────────────
 
 
 def test_email_unread_poll_is_preserved(email_src: str) -> None:
-    # The 60s unread-count poll is the inbox's only new-mail signal; it must NOT be
-    # deleted (there is no server push to replace it).
+    # The 60s unread-count poll must NOT be deleted — it is the honest fallback that
+    # runs whenever the IMAP-IDLE push isn't live. It now lives in _startUnreadPoll.
     assert "setInterval(_refreshUnreadCount, 60000)" in email_src
     assert "_refreshUnreadCount();" in email_src
 
 
-def test_email_poll_retention_is_documented(email_src: str) -> None:
-    # The reason it stays (no server-side new-mail change signal) is written at the
-    # poll site so the next engineer in the poll-retirement sweep doesn't re-investigate.
-    assert "no server-side new-mail change signal" in email_src.lower() \
-        or "no server-side" in email_src.lower()
+def test_email_poll_is_gated_on_the_real_imap_idle_relay(email_src: str) -> None:
+    # The poll retirement is honest ONLY because a real server-side push now exists.
+    # It is documented + wired at the poll site so a future sweep doesn't re-investigate.
     assert "imap-idle relay" in email_src.lower()
+    assert "/api/email/events/ws" in email_src
+    # The relay is connected and can suppress/restore the poll.
+    assert "_connectEmailRelay()" in email_src
+    assert "_stopUnreadPoll" in email_src and "_startUnreadPoll" in email_src
+
+
+def test_email_fallback_restores_the_poll_on_every_non_live_state(email_src: str) -> None:
+    # The absolute honesty invariant: the poll is only suppressed by a genuine `live`
+    # push; a `down` frame and a socket close BOTH restart the poll (no dead inbox).
+    assert "onclose" in email_src and "_startUnreadPoll()" in email_src
+    # `down` maps to resume-poll, `live` to suppress-poll (the gate).
+    assert "'suppress-poll'" in email_src and "'resume-poll'" in email_src
 
 
 def test_email_poll_is_not_wired_to_the_applicant_realtime_channel(email_src: str) -> None:
-    # Honesty guard (the whole point of pinning this): the email poll must never be
-    # gated on the engine's realtime push channel. That channel carries job-search
-    # notifications, not workspace email, so retiring the poll behind it would leave
-    # the inbox silently stale — a dead UI. The literal string may appear in the
-    # rationale COMMENT, so assert against the actual subscription/wiring instead.
+    # Honesty guard (still load-bearing): the email poll must never be gated on the
+    # ENGINE's realtime push channel (`applicant:realtime` carries job-search
+    # notifications, not workspace email). The new relay is a SEPARATE workspace-native
+    # channel; assert the email poll never subscribes to the engine channel/flag.
     assert "addEventListener('applicant:realtime'" not in email_src
     assert "addEventListener('applicant:data-changed'" not in email_src
     assert "__applicantRealtimeLive" not in email_src
