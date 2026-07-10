@@ -199,7 +199,23 @@ function _bindEvents() {
     });
   }
 
-  // Initial unread count check, refresh every 60s
+  // Unread-count poll — the inbox's new-mail signal. Runs once now, then every
+  // 60s against /api/email/list?filter=unread (+ /api/email/urgency-state for the
+  // dot tint). This poll is deliberately RETAINED as the honest mechanism: unlike
+  // the applicant data surfaces (Results/Today/bell, which retire their polls while
+  // the engine's realtime push channel is live), the workspace has NO server-side
+  // new-mail change signal to relay. New inbound mail is discovered ONLY by querying
+  // IMAP — the mail layer is stdlib `imaplib` (no IDLE watcher), and the legacy
+  // inbound-scan poller (routes/email_pollers.py `_auto_summarize_poller`) is
+  // disabled by default and never pushes to the browser. Nothing on the server
+  // knows "new mail arrived" before the browser asks.
+  //
+  // Honesty guard (do NOT "fix" this by wiring it to the applicant realtime
+  // channel): `applicant:realtime` / `applicant:data-changed` carry the ENGINE's
+  // job-search notifications, not workspace email. Gating this poll on that channel
+  // would retire it while no email events ever arrive there — a silent dead UI.
+  // Retiring this poll needs a REAL new-mail push (an owner-scoped IMAP-IDLE relay
+  // over a workspace WS), which does not exist yet; until it does, the poll stays.
   _refreshUnreadCount();
   setInterval(_refreshUnreadCount, 60000);
   prewarmEmailLibrary({ delay: 3000 });
