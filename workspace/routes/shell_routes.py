@@ -663,6 +663,120 @@ async def _generate_win_detached(cmd: str, request: Request):
             pass
 
 
+async def _generate_pipe(cmd: str, timeout: int, request):
+    """Pipe-stream a command's stdout/stderr line-by-line as SSE.
+
+    Extracted verbatim from the ``/api/shell/stream`` route's inline generator so
+    BOTH the SSE route and the WebSocket relay (``routes/shell_ws_routes.py``)
+    emit byte-identical events. ``request`` is any object exposing an async
+    ``is_disconnected()`` — the real ``Request`` on the SSE path, or the
+    WS-backed disconnect probe — so a client drop kills the subprocess on either
+    transport (there is no durable replay buffer here; the run is bound to the
+    live connection, exactly as the SSE path has always been).
+    """
+    proc = None
+    reader_tasks = []
+    try:
+        proc = await _create_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path.home()),
+        )
+
+        q: asyncio.Queue = asyncio.Queue()
+
+        async def _reader(stream, name):
+            """Read chunks, split on \\n or \\r for progress bar support."""
+            try:
+                buf = b""
+                while True:
+                    chunk = await stream.read(4096)
+                    if not chunk:
+                        if buf:
+                            await q.put((name, buf.decode(errors="replace").rstrip("\r\n")))
+                        break
+                    buf += chunk
+                    while True:
+                        idx, sep_len = _find_line_break(buf)
+                        if idx == -1:
+                            break
+                        line = buf[:idx].decode(errors="replace")
+                        buf = buf[idx + sep_len:]
+                        if line:
+                            await q.put((name, line))
+            finally:
+                await q.put((name, None))
+
+        reader_tasks = [
+            asyncio.create_task(_reader(proc.stdout, "stdout")),
+            asyncio.create_task(_reader(proc.stderr, "stderr")),
+        ]
+
+        finished = 0
+        deadline = (asyncio.get_event_loop().time() + timeout) if timeout else None
+        while finished < 2:
+            if deadline:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                wait = min(remaining, 2.0)
+            else:
+                wait = 2.0
+
+            try:
+                name, text = await asyncio.wait_for(q.get(), timeout=wait)
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    if proc:
+                        proc.kill()
+                    return
+                continue
+
+            if text is None:
+                finished += 1
+                continue
+            yield f"data: {json.dumps({'stream': name, 'data': text})}\n\n"
+
+        await proc.wait()
+        yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
+
+    except asyncio.TimeoutError:
+        if proc:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+    finally:
+        for t in reader_tasks:
+            t.cancel()
+
+
+def build_shell_stream(cmd: str, timeout: int, use_pty: bool, use_tmux: bool, request):
+    """Return the async generator of SSE event strings for a shell stream.
+
+    Single dispatch shared by the SSE route (``/api/shell/stream``) and the WS
+    relay (``/api/shell/ws``) so both transports run the SAME command execution
+    and emit the SAME ``data: {...}\\n\\n`` events. ``request`` is any object with
+    an async ``is_disconnected()`` (a ``Request`` or the WS disconnect probe).
+    """
+    if use_tmux:
+        # tmux is POSIX-only; Windows uses a detached-process + logfile tail that
+        # preserves the "survives disconnect" behaviour.
+        return _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
+    if use_pty and not IS_WINDOWS:
+        return _generate_pty(cmd, timeout, request)
+    # Windows has no PTY; falls through to pipe streaming (output still streams
+    # line-by-line, just without live in-place progress-bar redraws).
+    return _generate_pipe(cmd, timeout, request)
+
+
 def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
@@ -700,105 +814,10 @@ def setup_shell_routes() -> APIRouter:
             len(cmd),
         )
 
-        if use_tmux:
-            # tmux is POSIX-only; Windows uses a detached-process + logfile tail
-            # that preserves the "survives disconnect" behaviour.
-            gen = _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
-            return StreamingResponse(gen, media_type="text/event-stream")
-
-        if use_pty and not IS_WINDOWS:
-            return StreamingResponse(
-                _generate_pty(cmd, timeout, request),
-                media_type="text/event-stream",
-            )
-        # Windows has no PTY; fall through to pipe streaming below (output still
-        # streams line-by-line, just without live in-place progress-bar redraws).
-
-        async def generate():
-            proc = None
-            reader_tasks = []
-            try:
-                proc = await _create_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path.home()),
-                )
-
-                q: asyncio.Queue = asyncio.Queue()
-
-                async def _reader(stream, name):
-                    """Read chunks, split on \\n or \\r for progress bar support."""
-                    try:
-                        buf = b""
-                        while True:
-                            chunk = await stream.read(4096)
-                            if not chunk:
-                                if buf:
-                                    await q.put((name, buf.decode(errors="replace").rstrip("\r\n")))
-                                break
-                            buf += chunk
-                            while True:
-                                idx, sep_len = _find_line_break(buf)
-                                if idx == -1:
-                                    break
-                                line = buf[:idx].decode(errors="replace")
-                                buf = buf[idx + sep_len:]
-                                if line:
-                                    await q.put((name, line))
-                    finally:
-                        await q.put((name, None))
-
-                reader_tasks = [
-                    asyncio.create_task(_reader(proc.stdout, "stdout")),
-                    asyncio.create_task(_reader(proc.stderr, "stderr")),
-                ]
-
-                finished = 0
-                deadline = (asyncio.get_event_loop().time() + timeout) if timeout else None
-                while finished < 2:
-                    if deadline:
-                        remaining = deadline - asyncio.get_event_loop().time()
-                        if remaining <= 0:
-                            raise asyncio.TimeoutError()
-                        wait = min(remaining, 2.0)
-                    else:
-                        wait = 2.0
-
-                    try:
-                        name, text = await asyncio.wait_for(q.get(), timeout=wait)
-                    except asyncio.TimeoutError:
-                        if await request.is_disconnected():
-                            if proc:
-                                proc.kill()
-                            return
-                        continue
-
-                    if text is None:
-                        finished += 1
-                        continue
-                    yield f"data: {json.dumps({'stream': name, 'data': text})}\n\n"
-
-                await proc.wait()
-                yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
-
-            except asyncio.TimeoutError:
-                if proc:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
-                yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
-                yield f"data: {json.dumps({'exit_code': -1})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
-                yield f"data: {json.dumps({'exit_code': -1})}\n\n"
-            finally:
-                for t in reader_tasks:
-                    t.cancel()
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        # Same dispatch the WS relay uses, so both transports run the identical
+        # command execution and emit byte-identical SSE events.
+        gen = build_shell_stream(cmd, timeout, use_pty, use_tmux, request)
+        return StreamingResponse(gen, media_type="text/event-stream")
 
     @router.get("/api/cookbook/packages")
     async def list_packages(request: Request, host: str | None = None, ssh_port: str | None = None, venv: str | None = None):

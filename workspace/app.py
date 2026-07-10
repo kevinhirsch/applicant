@@ -854,6 +854,10 @@ app.include_router(setup_calendar_routes())
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+# Shell/download progress over a WebSocket (SSE-parity; SSE kept as fallback)
+from routes.shell_ws_routes import setup_shell_ws_routes
+app.include_router(setup_shell_ws_routes())
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
