@@ -320,8 +320,13 @@ function _connectEmailRelay() {
   const loc = (typeof window !== 'undefined') ? window.location : null;
   if (typeof WebSocket === 'undefined' || !loc) { _startUnreadPoll(); return; }
   const STALE_MS = 65000;   // > the server's 25s heartbeat; stale ⇒ fall back
+  const STABLE_MS = 10000;  // a connection must stay up this long to reset backoff
   const hooks = { refresh: _refreshUnreadCount, startPoll: _startUnreadPoll, stopPoll: _stopUnreadPoll };
   let attempts = 0;
+  let stableTimer = null;
+  const clearStable = () => {
+    if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+  };
 
   const armStale = () => {
     if (_emailRelayStaleTimer) clearTimeout(_emailRelayStaleTimer);
@@ -350,19 +355,29 @@ function _connectEmailRelay() {
     try { ws = new WebSocket(`${scheme}//${loc.host}/api/email/events/ws`); }
     catch { _startUnreadPoll(); scheduleReconnect(); return; }
     _emailRelay = ws;
-    ws.onopen = () => { attempts = 0; };
+    ws.onopen = () => {
+      // Do NOT reset the backoff immediately — a socket that is accepted then
+      // dropped in a flap would otherwise restart reconnects at 500ms and hammer
+      // the server. Only clear the counter once the connection stays up a beat
+      // (or a real heartbeat arrives below, whichever comes first).
+      clearStable();
+      stableTimer = setTimeout(() => { attempts = 0; stableTimer = null; }, STABLE_MS);
+    };
     ws.onmessage = (ev) => {
       let frame;
       try { frame = JSON.parse(ev.data); } catch { return; }
       applyEmailRelayAction(emailRelayAction(frame), hooks);
       // A `live` frame doubles as a heartbeat — (re)arm the staleness watchdog so
-      // that if heartbeats stop we fall back even while the socket stays open.
-      if (frame && frame.type === 'live') armStale();
+      // that if heartbeats stop we fall back even while the socket stays open. A
+      // received heartbeat also proves the connection is healthy, so it's a valid
+      // point to reset the reconnect backoff.
+      if (frame && frame.type === 'live') { attempts = 0; clearStable(); armStale(); }
       else if (frame && frame.type === 'down') clearStale();
     };
     ws.onclose = () => {
       _emailRelay = null;
       clearStale();
+      clearStable();          // a short-lived socket must not later zero the backoff
       _startUnreadPoll();      // socket gone ⇒ resume the honest fallback
       scheduleReconnect();
     };

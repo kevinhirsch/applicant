@@ -103,6 +103,10 @@ async def test_new_mail_pushes_to_the_owning_owner_only():
     qa = hub.attach("alice")
     qb = hub.attach("bob")
     conn = FakeIdle(events=["new"])
+    # The manager declares the expected account set (the liveness denominator)
+    # before starting watchers; mirror that so this account going live marks the
+    # owner live.
+    hub.set_expected_accounts("alice", {"acct-a"})
     watcher = AccountWatcher("alice", "acct-a", hub, lambda o, a: conn)
     watcher.start()
     try:
@@ -186,19 +190,39 @@ def test_hub_publish_is_owner_scoped():
     assert qb.empty()  # bob never sees alice's mail signal
 
 
-def test_hub_liveness_transitions_emit_once_per_owner():
+def test_hub_liveness_requires_every_expected_account_live():
     hub = EmailEventsHub()
     q = hub.attach("alice")
-    # First account up ⇒ a single `live`.
+    # Two accounts are expected (the liveness denominator). The owner is only
+    # poll-suppressible once EVERY one is live — the FE's unread poll is scoped to
+    # the active account, so one live account must not suppress another's fallback.
+    hub.set_expected_accounts("alice", {"a1", "a2"})
     hub.set_account_live("alice", "a1", True)
-    hub.set_account_live("alice", "a2", True)  # still live, no duplicate frame
+    assert hub.is_live("alice") is False   # a2 not live yet ⇒ poll stays on
+    assert q.empty()                       # no premature `live` frame
+    hub.set_account_live("alice", "a2", True)
+    assert hub.is_live("alice") is True
     assert q.get_nowait()["type"] == "live"
     assert q.empty()
-    # Last account down ⇒ a single `down`.
+    # Any account dropping flips the owner down (a single `down`).
     hub.set_account_live("alice", "a1", False)
-    assert q.empty()  # a2 still live
-    hub.set_account_live("alice", "a2", False)
+    assert hub.is_live("alice") is False
     assert q.get_nowait()["type"] == "down"
+    assert q.empty()
+    hub.set_account_live("alice", "a2", False)
+    assert q.empty()  # already down; no duplicate
+
+
+def test_hub_unexpected_account_alone_is_not_live():
+    # Regression for the per-account scoping gap: a live signal from one account
+    # must NOT mark an owner live while another expected account has no watcher.
+    hub = EmailEventsHub()
+    hub.set_expected_accounts("alice", {"a1", "a2"})
+    hub.set_account_live("alice", "a1", True)  # a2 never establishes IDLE
+    assert hub.is_live("alice") is False
+    # Once a2's account is removed from the expected set, a1 alone suffices.
+    hub.set_expected_accounts("alice", {"a1"})
+    assert hub.is_live("alice") is True
 
 
 # --- manager lifecycle: clean shutdown, no leaks ----------------------------
@@ -287,6 +311,7 @@ def test_authenticated_owner_is_greeted_with_liveness():
 
 def test_connect_reports_current_live_level():
     hub = EmailEventsHub()
+    hub.set_expected_accounts("alice", {"a1"})
     hub.set_account_live("alice", "a1", True)  # watcher already live before connect
     app = _make_ws_app(configured=True, tokens={"tok": "alice"}, hub=hub)
     with TestClient(app) as c:
@@ -298,6 +323,7 @@ def test_connect_reports_current_live_level():
 
 def test_two_owners_get_their_own_scoped_liveness():
     hub = EmailEventsHub()
+    hub.set_expected_accounts("alice", {"a1"})
     hub.set_account_live("alice", "a1", True)  # only alice is live
     app = _make_ws_app(configured=True, tokens={"ta": "alice", "tb": "bob"}, hub=hub)
     with TestClient(app) as c:

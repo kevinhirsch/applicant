@@ -382,6 +382,17 @@ class EmailIdleManager:
             accounts = []
         desired = {(o, a) for (o, a) in accounts}
 
+        # Tell the hub the full expected account set per owner (the liveness
+        # denominator) BEFORE starting watchers, so an owner only counts as live
+        # once EVERY enumerated account is live — an account that never establishes
+        # IDLE keeps the poll on. Cover owners that lost all accounts too, so their
+        # expected set is cleared (and a stale "live" flips down).
+        by_owner: dict[str, set[str]] = {}
+        for (o, a) in desired:
+            by_owner.setdefault(o, set()).add(a)
+        for o in {o for (o, _a) in self._watchers.keys()} | set(by_owner.keys()):
+            self._hub.set_expected_accounts(o, by_owner.get(o, set()))
+
         for key in desired:
             if key not in self._watchers:
                 w = AccountWatcher(key[0], key[1], self._hub, self._conn_factory)

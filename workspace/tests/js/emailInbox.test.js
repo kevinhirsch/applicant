@@ -133,10 +133,12 @@ function loadRelayScope() {
       calls, timers,
       connect: _connectEmailRelay,
       socket: () => _emailRelay,
-      driveByFn: (matchName) => {
-        // Fire the most recently scheduled timer whose callback is the named inner
-        // fn (the stale watchdog is an arrow; the reconnect schedules 'open').
-        for (let i = timers.length - 1; i >= 0; i--) { timers[i].fn(); return; }
+      // Fire the most-recently-scheduled timer (the pending stale watchdog, then
+      // after it force-closes, the pending reconnect). Each call site has exactly
+      // one relevant pending timer, so "latest" is unambiguous.
+      driveLatest: () => {
+        if (!timers.length) throw new Error('no pending timer to drive');
+        timers[timers.length - 1].fn();
       },
     };
   `;
@@ -156,13 +158,13 @@ test('_connectEmailRelay: a stale live socket is force-closed AND a reconnect is
 
   // Fire the stale watchdog (heartbeats went silent though the socket never closed).
   const startBefore = scope.calls.start;
-  scope.driveByFn();
+  scope.driveLatest();
   // The honest fallback poll starts...
   assert.equal(scope.calls.start > startBefore, true, 'stale ⇒ fallback poll starts');
   // ...AND the half-dead socket is force-closed so onclose drives the reconnect.
   assert.equal(scope.calls.close >= 1, true, 'stale ⇒ socket force-closed');
 
   // onclose scheduled a reconnect; firing it opens a fresh socket (self-heal).
-  scope.driveByFn();
+  scope.driveLatest();
   assert.equal(scope.calls.wsNew, 2, 'onclose ⇒ reconnect opens a new socket');
 });

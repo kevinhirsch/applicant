@@ -76,6 +76,12 @@ class EmailEventsHub:
         self._subs: dict[str, set[asyncio.Queue]] = {}
         # owner -> set of account_ids currently pushing live (IDLE established)
         self._live_accounts: dict[str, set[str]] = {}
+        # owner -> set of account_ids the watcher manager EXPECTS to cover (every
+        # enabled account, IDLE-capable or not). This is the denominator: an owner
+        # is only poll-suppressible when EVERY expected account is live, so an
+        # account whose server lacks IDLE (or whose watcher failed) — which stays
+        # enumerated but never live — keeps the poll on for the whole owner.
+        self._expected_accounts: dict[str, set[str]] = {}
 
     # -- browser subscribers --------------------------------------------------
 
@@ -108,25 +114,59 @@ class EmailEventsHub:
 
     # -- liveness (driven by the IDLE watcher) --------------------------------
 
+    def _owner_live(self, key: str) -> bool:
+        """An owner is live only when EVERY expected account is currently live.
+
+        The FE's unread poll is scoped to the *active* account, so suppressing it
+        on owner-level "any account live" would starve an active account whose own
+        watcher failed or whose server lacks IDLE while a *different* account keeps
+        emitting live heartbeats. Requiring every enumerated account to be live
+        keeps the poll on whenever any one of them cannot honestly push."""
+        expected = self._expected_accounts.get(key)
+        if not expected:
+            return False
+        live = self._live_accounts.get(key, set())
+        return expected.issubset(live)
+
     def is_live(self, owner: Optional[str]) -> bool:
-        return bool(self._live_accounts.get(_norm_owner(owner)))
+        return self._owner_live(_norm_owner(owner))
+
+    def set_expected_accounts(
+        self, owner: Optional[str], account_ids: "set[str] | list[str] | tuple[str, ...]"
+    ) -> None:
+        """Record the full set of accounts the watcher manager covers for ``owner``
+        (the liveness denominator). Prunes any now-unexpected live account and emits
+        a ``live``/``down`` frame if the owner-level liveness flips as a result."""
+        key = _norm_owner(owner)
+        was_live = self._owner_live(key)
+        new_expected = set(account_ids)
+        if new_expected:
+            self._expected_accounts[key] = new_expected
+        else:
+            self._expected_accounts.pop(key, None)
+        live = self._live_accounts.get(key)
+        if live:
+            live &= new_expected
+            if not live:
+                self._live_accounts.pop(key, None)
+        if self._owner_live(key) != was_live:
+            self.publish(key, live_frame(self._owner_live(key)))
 
     def set_account_live(self, owner: Optional[str], account_id: str, live: bool) -> None:
         """Record whether one account's IDLE watcher is established. Emits a
-        ``live``/``down`` frame to the owner only on an owner-level transition
-        (first account up / last account down)."""
+        ``live``/``down`` frame to the owner only when the owner-level liveness
+        (every expected account live) flips as a result."""
         key = _norm_owner(owner)
+        was_live = self._owner_live(key)
         cur = self._live_accounts.setdefault(key, set())
-        was_live = bool(cur)
         if live:
             cur.add(account_id)
         else:
             cur.discard(account_id)
-        now_live = bool(cur)
         if not cur:
             self._live_accounts.pop(key, None)
-        if now_live != was_live:
-            self.publish(key, live_frame(now_live))
+        if self._owner_live(key) != was_live:
+            self.publish(key, live_frame(self._owner_live(key)))
 
     def heartbeat(self, owner: Optional[str] = None) -> None:
         """Re-emit current liveness so a browser can detect a stale push path.
@@ -137,9 +177,9 @@ class EmailEventsHub:
         if owner is not None:
             owners = [_norm_owner(owner)]
         else:
-            owners = list(self._live_accounts.keys())
+            owners = list(self._expected_accounts.keys())
         for key in owners:
-            if self._live_accounts.get(key):
+            if self._owner_live(key):
                 self.publish(key, live_frame(True))
 
 
