@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import chatWsTransport from './chatWsTransport.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -4345,7 +4346,14 @@ async function _agentSolveNote(id) {
     fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
+        // Transport: prefer the chat WebSocket (same agent_runs replay buffer),
+        // keeping this request's SSE body as the automatic fallback. The returned
+        // reader has the SAME read()/cancel() contract as res.body.getReader().
+        const reader = await chatWsTransport.openChatStreamReader({
+          res,
+          loc: window.location,
+          sessionId: sid,
+        });
         // Drain to completion (server finishes + persists the run).
         while (true) { const { done } = await reader.read(); if (done) break; }
         if (window.sessionModule && window.sessionModule.markStreamComplete) {

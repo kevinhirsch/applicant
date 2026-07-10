@@ -6,6 +6,7 @@ import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
 import presetsModule from '../presets.js';
+import chatWsTransport from '../chatWsTransport.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -90,7 +91,16 @@ async function _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, his
 
     if (spinner) spinner.stop();
     synthBody.innerHTML = '';
-    const reader = streamRes.body.getReader();
+    // Transport: prefer the chat WebSocket (same agent_runs replay buffer),
+    // keeping this request's SSE body as the automatic fallback. The returned
+    // reader has the SAME read()/cancel() contract as streamRes.body.getReader(),
+    // so the loop below is transport-agnostic and byte-for-byte unchanged.
+    const reader = await chatWsTransport.openChatStreamReader({
+      res: streamRes,
+      loc: window.location,
+      sessionId: createData.id,
+      abortSignal: synthAc.signal,
+    });
     const decoder = new TextDecoder();
     let synthText = '';
 
@@ -243,7 +253,16 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const reader = response.body.getReader();
+    // Transport: prefer the chat WebSocket (same agent_runs replay buffer),
+    // keeping this request's SSE body as the automatic fallback. The returned
+    // reader has the SAME read()/cancel() contract as response.body.getReader(),
+    // so the loop below is transport-agnostic and byte-for-byte unchanged.
+    const reader = await chatWsTransport.openChatStreamReader({
+      res: response,
+      loc: window.location,
+      sessionId,
+      abortSignal: ac.signal,
+    });
     const decoder = new TextDecoder();
     let buffer = '';
 
