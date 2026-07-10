@@ -112,3 +112,20 @@ test('_open does NOT reset the reconnect budget on bare onopen (Greptile #808): 
   const onmsgBlock = openBody.slice(onmsgIdx);
   assert.ok(/_attempts\s*=\s*0/.test(onmsgBlock), 'the budget resets on a real server frame (onmessage), not on bare open');
 });
+
+test('reconnect resume offset counts RECEIVED events, not just drained ones (Greptile #808): buffered-but-unread chunks must not replay twice', () => {
+  // `_delivered` only advances on read(); a chunk received into `_queue` but not
+  // yet drained is still client-side, so the server resume offset must include it
+  // (`_delivered + _queue.length`) or the server replays it AND the queued copy
+  // drains — a duplicate. `_open` must resume from `_resumeOffset()`, not `_delivered`.
+  assert.ok(
+    /_resumeOffset\(\)\s*\{[\s\S]*?this\._delivered\s*\+\s*this\._queue\.length/.test(SRC),
+    '_resumeOffset() sums delivered + still-queued (all received events)',
+  );
+  const openIdx = SRC.indexOf('_open() {');
+  const end = SRC.indexOf('waitForOpen', openIdx);
+  const openBody = SRC.slice(openIdx, end === -1 ? openIdx + 1400 : end);
+  assert.ok(/chatWsUrl\([^)]*_resumeOffset\(\)\)/.test(openBody), '_open resumes the URL from _resumeOffset()');
+  assert.ok(/buildChatSubscribeFrame\([^)]*_resumeOffset\(\)\)/.test(openBody), '_open resumes the subscribe frame from _resumeOffset()');
+  assert.ok(!/chatWsUrl\([^)]*this\._delivered\)/.test(openBody), '_open no longer resumes from the drain-only _delivered');
+});

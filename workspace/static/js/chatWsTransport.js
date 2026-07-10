@@ -125,6 +125,17 @@ class _ChatWsReader {
     while (this._waiters.length) this._waiters.shift()({ done: true, value: undefined });
   }
 
+  // The server resume offset on reconnect: every event we've RECEIVED, not just
+  // the ones drained by read(). `_delivered` advances only on drain, so a chunk
+  // buffered in `_queue` (received but not yet read) would otherwise be replayed
+  // by the server AND re-emitted from the queue — a duplicate. Counting the
+  // buffered tail here makes the resume gap-free and dupe-free. The sum is
+  // invariant under a concurrent drain (delivered +1, queue -1), so it is stable
+  // between the URL and the subscribe frame.
+  _resumeOffset() {
+    return this._delivered + this._queue.length;
+  }
+
   // read() — drains queued events first, then awaits the next socket message.
   read() {
     if (this._queue.length) {
@@ -172,7 +183,7 @@ class _ChatWsReader {
     if (this._done) return;
     let ws;
     try {
-      ws = new this._WS(chatWsUrl(this._loc, this._sessionId, this._delivered));
+      ws = new this._WS(chatWsUrl(this._loc, this._sessionId, this._resumeOffset()));
     } catch (_) {
       this._onSocketClose();
       return;
@@ -185,7 +196,7 @@ class _ChatWsReader {
       // never reach the CHAT_WS_MAX_RECONNECTS fallback. The budget is only
       // cleared once a REAL frame arrives (onmessage), which proves the stream works.
       this._status('live');
-      try { ws.send(JSON.stringify(buildChatSubscribeFrame(this._sessionId, this._delivered))); } catch (_) { /* onclose handles it */ }
+      try { ws.send(JSON.stringify(buildChatSubscribeFrame(this._sessionId, this._resumeOffset()))); } catch (_) { /* onclose handles it */ }
     };
     ws.onmessage = (ev) => {
       const msg = parseChatWsMessage(ev && ev.data);
