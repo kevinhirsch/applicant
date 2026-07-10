@@ -1227,8 +1227,29 @@ def build_container(settings: Settings | None = None) -> Container:
     # reset each tick — exactly like ``resume_ledger`` / ``curation_ledger``. Injected
     # into the main prefill_service AND every per-tick / per-request copy below. It only
     # influences PLANNING priors + reflective re-plan; the STOP boundary is untouched.
+    #
+    # Skyvern-parity #2: process-lived made it TICK-safe, but a genuine process restart
+    # (an update.sh deploy / OOM / crash) still wiped every induced routine + its ACE
+    # weights, so #306's "coverage grows itself" did not survive a redeploy. Give it a
+    # restart-durable snapshot store over the SAME app_config table the ladder/resume
+    # ledger use (NO new table or migration). On the real-DB lane the store opens a
+    # FRESH session per write via ``session_factory`` (scheduler-thread-safe — it must
+    # NOT touch the boot Session, CONC-2), exactly like the resume ledger / AuditLog; with
+    # no DB it round-trips through the in-memory config store (nothing survives a restart
+    # there anyway). The snapshot is DATA-ONLY: it serializes op kinds + attribute/document
+    # ids + locators, never a literal user value (the Routine graph has no value field), so
+    # NFR-TRUTH-1 holds through persistence exactly as it does through the planner prior.
+    # ``restore()`` reloads the snapshot at boot, BELOW, once the persister is built.
     from applicant.adapters.routine import InMemoryRoutineStore
-    routine_store = InMemoryRoutineStore()
+    from applicant.adapters.storage.ledger_persistence import ConfigLedgerStore
+    routine_store = InMemoryRoutineStore(
+        persister=ConfigLedgerStore(
+            "agent.routine_store",
+            session_factory=session_factory,
+            memory_store=config_store if session_factory is None else None,
+        )
+    )
+    routine_store.restore()
 
     # Lens 04 #39 / DISC-3: ONE process-lived PrefillDiagnosticsRing for the whole
     # process, exactly like ``routine_store`` above. The scheduler rebuilds a fresh
