@@ -339,7 +339,13 @@ function _connectStreamWs(job) {
   } catch (e) { return false; }
   job._ws = ws;
   let committed = false;
+  // Set when we deliberately hand off to SSE (a server `error` frame). The close
+  // we trigger below re-enters onclose with committed===true; without this flag it
+  // would ALSO schedule _pollFallback, leaving two fallback transports racing for
+  // the same running job. onclose checks this and stands down.
+  let sseHandoff = false;
   const toSse = () => {
+    sseHandoff = true;
     if (job._ws) { try { job._ws.close(); } catch (e) { console.warn("ws close failed", e) } job._ws = null; }
     if (job.status === 'running') _connectStreamSse(job);
   };
@@ -372,6 +378,8 @@ function _connectStreamWs(job) {
     // run is still open (unexpected drop) → resume via the poll fallback (the
     // same recovery the SSE path uses on error). Never a silent dead UI.
     if (job.status !== 'running') return;
+    // toSse() already handed off to a fresh EventSource — don't race a second poll.
+    if (sseHandoff) return;
     if (!committed) { _connectStreamSse(job); return; }
     setTimeout(() => _pollFallback(job), 1500);
   };
