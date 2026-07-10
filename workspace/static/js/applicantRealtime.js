@@ -185,6 +185,59 @@ function agentRefresh(frame) {
   return true;
 }
 
+// ── takeover channel (Phase 4): CDP screen frames down + mouse/keyboard up ────
+
+// Build a `data:` image src from a `takeover/frame` frame (a base64 CDP screencast
+// frame). v1 rides base64-in-`data` so there is ONE envelope path (the tradeoff is
+// bandwidth/latency vs. a separate binary WS frame). Returns '' when the frame has
+// no image payload, so a malformed frame never renders a broken image.
+function takeoverFrameImageSrc(frame) {
+  const d = (frame && frame.data) || {};
+  const b64 = d.data || d.frame || d.image;
+  if (!b64 || typeof b64 !== 'string') return '';
+  const fmt = (d.format === 'png') ? 'png' : 'jpeg';
+  return `data:image/${fmt};base64,${b64}`;
+}
+
+// Build an upstream `takeover/input` frame — ONE raw human mouse/keyboard event for
+// the live browser. PURE TRANSPORT: the engine forwards it to the EXISTING owner-gated
+// takeover surface (over CDP) and ONLY while the user holds control; this only shapes
+// the envelope and adds no authority. It is NEVER an approve/submit — that verb is not
+// enabled on the socket at all, so a human hand-finishes via the existing finish gates.
+function buildTakeoverInputFrame(sessionId, event) {
+  return { chan: 'takeover', type: 'input', seq: 0, data: { session_id: String(sessionId || ''), event: event || {} } };
+}
+
+// Build an upstream `takeover/start` frame — hand live control to the user (the SAME
+// owner-gated takeover the HTTP `/api/remote/.../takeover` uses) and start the screencast.
+function buildTakeoverStartFrame(sessionId) {
+  return { chan: 'takeover', type: 'start', seq: 0, data: { session_id: String(sessionId || '') } };
+}
+
+// Build an upstream `takeover/stop` frame — return control to the engine + stop the
+// screencast (the SAME owner-gated revoke the existing surface uses).
+function buildTakeoverStopFrame(sessionId) {
+  return { chan: 'takeover', type: 'stop', seq: 0, data: { session_id: String(sessionId || '') } };
+}
+
+// A `takeover/frame` (screencast) arrived. Render it into the EXISTING live-takeover
+// viewer (applicantRemote.js's modal) — do NOT rebuild the viewer. Prefer the remote
+// module's own renderer; fall back to a DOM event any mounted surface can consume.
+function takeoverRenderFrame(frame) {
+  try {
+    const mod = (typeof window !== 'undefined') && window.applicantRemoteModule;
+    if (mod && typeof mod.renderTakeoverFrame === 'function') { mod.renderTakeoverFrame(frame); return true; }
+  } catch { /* no-op */ }
+  try {
+    if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      document.dispatchEvent(new CustomEvent('applicant:takeover-frame', {
+        detail: { src: takeoverFrameImageSrc(frame), data: (frame && frame.data) || {} },
+      }));
+    }
+  } catch { /* no-op */ }
+  return false;
+}
+
 // ── connection (browser-only; the JS suite slices the pure helpers above) ─────
 
 const WS_PATH = '/api/applicant/realtime';   // the front-door proxy this consumes
@@ -354,6 +407,9 @@ function mountApplicantRealtime(opts = {}) {
     // Phase 3 push: a running agent recorded a run event. Live-render it through the
     // existing Activity strip (refreshStatus) + a DOM event — no rebuilt UI.
     .onChannel('agent', (frame) => { agentRefresh(frame); })
+    // Phase 4 push: a CDP screencast frame for the live-takeover browser. Render it
+    // into the EXISTING remote/takeover viewer (applicantRemote.js) — no rebuilt UI.
+    .onChannel('takeover', (frame) => { takeoverRenderFrame(frame); })
     .connect();
   return _client;
 }
@@ -391,6 +447,30 @@ function sendAgentApprove(documentId) {
   return _client.send(f.chan, f.type, f.data);
 }
 
+// Owner-gated live-takeover senders over the WS (Phase 4). The upgrade is already
+// owner-authenticated (a non-owner cannot reach the socket), and the ENGINE authorizes
+// each frame against the SAME owner-gated takeover surface the HTTP path uses — these
+// sends add no authority. `input` only drives the browser while the user holds control;
+// NONE of them is an approve/submit (that verb is not enabled on the socket). Each
+// returns false when the socket isn't open (the caller falls back to the HTTP takeover).
+function sendTakeoverStart(sessionId) {
+  if (!_client) return false;
+  const f = buildTakeoverStartFrame(sessionId);
+  return _client.send(f.chan, f.type, f.data);
+}
+
+function sendTakeoverStop(sessionId) {
+  if (!_client) return false;
+  const f = buildTakeoverStopFrame(sessionId);
+  return _client.send(f.chan, f.type, f.data);
+}
+
+function sendTakeoverInput(sessionId, event) {
+  if (!_client) return false;
+  const f = buildTakeoverInputFrame(sessionId, event);
+  return _client.send(f.chan, f.type, f.data);
+}
+
 function _boot() {
   try { mountApplicantRealtime(); } catch { /* no-op: never break the shell */ }
 }
@@ -422,6 +502,14 @@ const applicantRealtimeModule = {
   sendAgentPause,
   sendAgentRedirect,
   sendAgentApprove,
+  takeoverFrameImageSrc,
+  buildTakeoverInputFrame,
+  buildTakeoverStartFrame,
+  buildTakeoverStopFrame,
+  takeoverRenderFrame,
+  sendTakeoverStart,
+  sendTakeoverStop,
+  sendTakeoverInput,
   WS_PATH,
 };
 
@@ -444,6 +532,14 @@ export {
   sendAgentPause,
   sendAgentRedirect,
   sendAgentApprove,
+  takeoverFrameImageSrc,
+  buildTakeoverInputFrame,
+  buildTakeoverStartFrame,
+  buildTakeoverStopFrame,
+  takeoverRenderFrame,
+  sendTakeoverStart,
+  sendTakeoverStop,
+  sendTakeoverInput,
 };
 
 try { window.applicantRealtimeModule = applicantRealtimeModule; } catch { /* no-op */ }

@@ -208,6 +208,67 @@ test('buildAgentApproveFrame shapes an agent/approve envelope carrying the docum
   });
 });
 
+// ── Phase 4 takeover helpers ─────────────────────────────────────────────────
+
+test('takeoverFrameImageSrc builds a base64 data URL and is empty for a payloadless frame', () => {
+  const { takeoverFrameImageSrc } = load('takeoverFrameImageSrc');
+  assert.equal(takeoverFrameImageSrc({ data: { data: 'QUJD' } }), 'data:image/jpeg;base64,QUJD');
+  assert.equal(takeoverFrameImageSrc({ data: { data: 'QUJD', format: 'png' } }), 'data:image/png;base64,QUJD');
+  assert.equal(takeoverFrameImageSrc({ data: {} }), '');
+  assert.equal(takeoverFrameImageSrc(null), '');
+});
+
+test('buildTakeoverInputFrame shapes a takeover/input envelope carrying the session + raw event, never approve', () => {
+  const { buildTakeoverInputFrame } = load('buildTakeoverInputFrame');
+  const f = buildTakeoverInputFrame('sbx-1', { kind: 'mousedown', x: 0.5, y: 0.25, button: 0 });
+  assert.deepEqual(f, {
+    chan: 'takeover', type: 'input', seq: 0,
+    data: { session_id: 'sbx-1', event: { kind: 'mousedown', x: 0.5, y: 0.25, button: 0 } },
+  });
+  // The envelope is never an approve/submit — that verb isn't buildable here.
+  assert.notEqual(f.type, 'approve');
+  assert.notEqual(f.type, 'submit');
+});
+
+test('buildTakeoverStartFrame / buildTakeoverStopFrame shape the session-control envelopes', () => {
+  const { buildTakeoverStartFrame, buildTakeoverStopFrame } = load('buildTakeoverStartFrame', 'buildTakeoverStopFrame');
+  assert.deepEqual(buildTakeoverStartFrame('sbx-1'), { chan: 'takeover', type: 'start', seq: 0, data: { session_id: 'sbx-1' } });
+  assert.deepEqual(buildTakeoverStopFrame('sbx-1'), { chan: 'takeover', type: 'stop', seq: 0, data: { session_id: 'sbx-1' } });
+});
+
+test('takeoverRenderFrame reuses the existing remote viewer (renderTakeoverFrame), not a rebuilt one', () => {
+  const { takeoverRenderFrame } = load('takeoverRenderFrame', 'takeoverFrameImageSrc');
+  const rendered = [];
+  global.window = { applicantRemoteModule: { renderTakeoverFrame: (f) => { rendered.push(f); } } };
+  try {
+    const frame = { chan: 'takeover', type: 'frame', seq: 0, data: { session_id: 'sbx-1', data: 'QUJD' } };
+    assert.equal(takeoverRenderFrame(frame), true);
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0].data.session_id, 'sbx-1');
+  } finally {
+    delete global.window;
+  }
+});
+
+test('takeoverRenderFrame falls back to a DOM event when the remote viewer is absent', () => {
+  const { takeoverRenderFrame, takeoverFrameImageSrc } = load('takeoverRenderFrame', 'takeoverFrameImageSrc');
+  const events = [];
+  global.window = {}; // no applicantRemoteModule mounted
+  global.CustomEvent = class { constructor(type, opts) { this.type = type; this.detail = opts && opts.detail; } };
+  global.document = { dispatchEvent: (e) => { events.push(e); } };
+  try {
+    const frame = { chan: 'takeover', type: 'frame', seq: 0, data: { data: 'QUJD' } };
+    assert.equal(takeoverRenderFrame(frame), false);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'applicant:takeover-frame');
+    assert.equal(events[0].detail.src, 'data:image/jpeg;base64,QUJD');
+  } finally {
+    delete global.window;
+    delete global.document;
+    delete global.CustomEvent;
+  }
+});
+
 test('agentRefresh live-renders through the existing Activity strip (refreshStatus) + a DOM event', () => {
   const { agentRefresh, agentEventSummary } = load('agentRefresh', 'agentEventSummary');
   let refreshed = 0;

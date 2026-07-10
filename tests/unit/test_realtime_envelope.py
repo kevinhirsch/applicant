@@ -55,13 +55,16 @@ def test_consequential_upstream_commands_are_denied_by_default():
     # The whole point of the seam: the socket can NOT self-authorize a submit. Note
     # `agent/approve` is now ENABLED as PURE TRANSPORT to the owner-gated review gate
     # (covered below), but every OTHER submit/authorize/steer verb stays denied.
+    # ``takeover/input`` is likewise ENABLED as of Phase 4 (a human driving the live
+    # browser, pure transport) — what stays denied on that channel is any submit/approve verb.
     for chan, verb in (
         ("agent", "submit"),
         ("agent", "finalize"),
         ("agent", "authorize"),
         ("agent", "confirm"),
         ("agent", "steer"),
-        ("takeover", "input"),
+        ("takeover", "approve"),
+        ("takeover", "submit"),
         ("chat", "message"),
         ("presence", "state"),  # 'state' is server->client only, not an upstream verb
     ):

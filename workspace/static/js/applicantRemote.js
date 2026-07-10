@@ -1115,6 +1115,106 @@ function _fmtTs(ts) {
   return String(ts);
 }
 
+// ── live-takeover screencast over the realtime WS (RT Phase 4) ───────────────
+//
+// When the engine streams CDP screen frames down the `takeover` realtime channel,
+// applicantRealtime.js hands each frame to `renderTakeoverFrame` here, which paints
+// it into an <img> layer over the EXISTING frame area of this same modal (no new
+// viewer). While the screencast is live the user's mouse/keyboard on that layer is
+// forwarded back UP the WS as `takeover/input` frames — but ONLY as raw human input
+// to the EXISTING owner-gated takeover surface: there is no submit/approve path here,
+// so this never bypasses the review-before-submit boundary. The human still finishes
+// through the "I'll submit it myself" / "Submit it for me" controls below, unchanged.
+
+let _takeoverSessionId = '';
+let _takeoverWired = false;
+
+// Local twin of applicantRealtime.js `takeoverFrameImageSrc` (kept here to avoid a
+// static import of the self-booting realtime module). Base64-in-`data`, v1.
+function _takeoverFrameSrc(frame) {
+  const d = (frame && frame.data) || {};
+  const b64 = d.data || d.frame || d.image;
+  if (!b64 || typeof b64 !== 'string') return '';
+  const fmt = (d.format === 'png') ? 'png' : 'jpeg';
+  return `data:image/${fmt};base64,${b64}`;
+}
+
+function _takeoverEls() {
+  const wrap = _modalEl && _modalEl.querySelector('#applicant-remote-frame-wrap');
+  if (!wrap) return { wrap: null, img: null };
+  let img = wrap.querySelector('#applicant-remote-screencast');
+  if (!img) {
+    img = document.createElement('img');
+    img.id = 'applicant-remote-screencast';
+    img.alt = 'Live browser view';
+    img.style.cssText =
+      'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;'
+      + 'display:none;background:#0b0b0b;z-index:2;cursor:crosshair;';
+    img.tabIndex = 0; // focusable so keydowns are captured for forwarding
+    wrap.appendChild(img);
+  }
+  return { wrap, img };
+}
+
+// Translate a browser pointer/keyboard event on the screencast layer into a
+// normalized input payload and forward it UP the WS. Coordinates are sent as ratios
+// (0..1) of the rendered image so the engine's CDP driver can map them to the remote
+// viewport regardless of scaling. NEVER an approve/submit — raw input only.
+function _forwardTakeoverInput(img, kind, ev) {
+  if (!_takeoverSessionId) return;
+  const mod = (typeof window !== 'undefined') && window.applicantRealtimeModule;
+  if (!mod || typeof mod.sendTakeoverInput !== 'function') return;
+  const event = { kind };
+  try {
+    if (ev && typeof ev.clientX === 'number' && img && img.getBoundingClientRect) {
+      const r = img.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        event.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+        event.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+      }
+    }
+    if (ev && typeof ev.button === 'number') event.button = ev.button;
+    if (ev && ev.deltaY != null) event.delta_y = ev.deltaY;
+    if (ev && ev.key != null) { event.key = ev.key; event.code = ev.code; }
+  } catch { /* best-effort normalization */ }
+  mod.sendTakeoverInput(_takeoverSessionId, event);
+}
+
+function _wireTakeoverInput(img) {
+  if (_takeoverWired || !img) return;
+  _takeoverWired = true;
+  const P = (kind) => (ev) => _forwardTakeoverInput(img, kind, ev);
+  img.addEventListener('mousemove', P('mousemove'));
+  img.addEventListener('mousedown', P('mousedown'));
+  img.addEventListener('mouseup', P('mouseup'));
+  img.addEventListener('click', P('click'));
+  img.addEventListener('wheel', P('wheel'), { passive: true });
+  img.addEventListener('keydown', (ev) => { _forwardTakeoverInput(img, 'keydown', ev); });
+  img.addEventListener('keyup', (ev) => { _forwardTakeoverInput(img, 'keyup', ev); });
+}
+
+/** Render one `takeover/frame` screencast frame into the existing viewer. Called by
+ *  applicantRealtime.js's `takeover` channel handler — reuses this modal's frame area
+ *  instead of rebuilding a viewer. Wires input forwarding on first frame. */
+export function renderTakeoverFrame(frame) {
+  const src = _takeoverFrameSrc(frame);
+  if (!src) return false;
+  _ensureModalEl();
+  const { img } = _takeoverEls();
+  if (!img) return false;
+  const d = (frame && frame.data) || {};
+  if (d.session_id) _takeoverSessionId = String(d.session_id);
+  // Screencast takes over from the iframe/empty state while frames are flowing.
+  const iframe = _modalEl && _modalEl.querySelector('#applicant-remote-frame');
+  const empty = _modalEl && _modalEl.querySelector('#applicant-remote-empty');
+  if (iframe) iframe.style.display = 'none';
+  if (empty) empty.style.display = 'none';
+  img.src = src;
+  img.style.display = 'block';
+  _wireTakeoverInput(img);
+  return true;
+}
+
 // ── public surface ──────────────────────────────────────────────────────────
 
 /**
@@ -1190,6 +1290,7 @@ const applicantRemoteModule = {
   submitSelfConfirmMessage,
   fetchSubmissionSnapshot,
   renderSubmissionSnapshot,
+  renderTakeoverFrame,
 };
 
 // The cross-lane portal seam: open the live session for a given application.

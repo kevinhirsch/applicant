@@ -26,6 +26,9 @@ NotifPublisher = Callable[[str, dict[str, Any]], None]
 #: The injected ``agent``-event publisher's type (same shape as ``NotifPublisher``).
 AgentPublisher = Callable[[str, dict[str, Any]], None]
 
+#: The injected ``takeover``-frame publisher's type (same shape as ``NotifPublisher``).
+TakeoverPublisher = Callable[[str, dict[str, Any]], None]
+
 
 def make_notif_publisher() -> NotifPublisher:
     """Build the ``notif`` publisher the notification + pending-action services call.
@@ -60,6 +63,28 @@ def make_agent_publisher() -> AgentPublisher:
     def _publish(mtype: str, data: dict[str, Any]) -> None:
         try:
             get_registry().publish_all("agent", mtype, data)
+        except Exception:  # pragma: no cover - transport must never break the caller
+            pass
+
+    return _publish
+
+
+def make_takeover_publisher() -> TakeoverPublisher:
+    """Build the ``takeover`` publisher the takeover screencast pump calls (Phase 4).
+
+    Fans a downstream ``takeover`` frame (a CDP screencast frame, base64-in-``data``
+    for v1) over the realtime registry so every tab of the operator's session sees
+    the live browser, and a reconnecting tab replays the per-channel buffer then goes
+    live (the SAME replay mechanic lifted from ``agent_runs.py``). This is DOWNSTREAM
+    surfacing ONLY: it never authorizes an upstream command — the ``takeover`` verbs
+    are gated separately at ``authorize_upstream`` (default-deny, no submit/approve).
+    Broadcasts to every live session and never raises — a transport hiccup must never
+    break the screencast pump that emitted the frame.
+    """
+
+    def _publish(mtype: str, data: dict[str, Any]) -> None:
+        try:
+            get_registry().publish_all("takeover", mtype, data)
         except Exception:  # pragma: no cover - transport must never break the caller
             pass
 
