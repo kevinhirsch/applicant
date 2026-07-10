@@ -1706,7 +1706,22 @@ class PlaywrightPageSource:
         # deterministic path. A re-rendered/renamed field would otherwise soft-error;
         # recover it to the INTENDED field, refusing any retarget onto a submit /
         # account-create / final-submit control (the stop-boundary is untouched).
+        _orig_selector = selector
         selector = self._heal_selector(selector, label)
+        if selector != _orig_selector:
+            # A heal can recover a DIFFERENT widget kind than the stale original — e.g.
+            # a date field re-rendered as its readonly calendar trigger, or a select /
+            # listbox button. Re-route so the healed widget is operated correctly
+            # instead of a no-op fill/type on a non-typeable control (Greptile #817).
+            if self._is_datepicker(selector):
+                self._choose_date(selector, value)
+                return
+            if self._is_select(selector):
+                self._select_option(selector, value)
+                return
+            if self._is_listbox_button(selector):
+                self._choose_listbox_option(selector, value)
+                return
         # Apply the per-keystroke cadence (FR-STEALTH-2): the adapter computes a
         # dwell-per-character plan; feed it to Playwright press-by-press instead of
         # the old constant 80ms delay. Fall back to a constant delay only when no

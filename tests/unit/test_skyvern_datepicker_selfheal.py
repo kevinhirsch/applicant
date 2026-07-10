@@ -421,3 +421,37 @@ class TestTypeValueSelfHeal:
         # Boundary intact: no fill/type ever landed on the submit control.
         assert page.filled == {}
         assert page.typed == {}
+
+    def test_heal_to_datepicker_reroutes_to_choose_date(self):
+        # Greptile #817: a stale date field healed to its readonly calendar trigger must
+        # re-route to _choose_date, NOT fill/type on the non-typeable widget.
+        HEALED = '[aria-label="Start Date"]'
+
+        class _HealCalPage(FakeCalendarPage):
+            def __init__(self):
+                super().__init__(start=(2026, 6))
+                self.filled = {}
+                self.typed = {}
+
+            def query_selector(self, sel):
+                if sel == "[name='old_start']":
+                    return None  # stale/broken original
+                if sel == HEALED:
+                    return self._trigger  # heal target = the calendar trigger
+                return super().query_selector(sel)
+
+            def fill(self, sel, val):
+                self.filled[sel] = val  # MUST NOT run for the healed trigger
+
+            def type(self, sel, val, delay=0):
+                self.typed[sel] = val
+
+        page = _HealCalPage()
+        page.TRIGGER = HEALED  # choose_date opens this selector
+        src = self._src(page)
+        src.type_value("[name='old_start']", "2026-07-07", label="Start Date")
+        # Routed to _choose_date: the calendar opened + a day was clicked — the healed
+        # trigger was NEVER fill/type'd as a text field.
+        assert page.opened is True
+        assert len(page.clicked_cells) == 1 and page.clicked_cells[0].day == 7
+        assert HEALED not in page.filled and HEALED not in page.typed
