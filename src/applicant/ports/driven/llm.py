@@ -104,6 +104,15 @@ class ChatMessage:
     # ``tool_call_id`` tags a ``role="tool"`` result message back to its call.
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    # #305 vision lane: optional base64-encoded PNG image parts attached to a user
+    # message so the planner can ground typed ops against the RENDERED page (canvas
+    # / image-map / purely-visual forms the text-DOM misses). Each entry is a bare
+    # base64 string (no ``data:`` prefix — the adapter wraps it). Defaults to empty,
+    # so a plain (role, content) message serializes byte-identically to before and
+    # every existing call site is unchanged. Vision only IMPROVES grounding: the plan
+    # still resolves values from the attribute cloud via the DSL — an image can never
+    # inject a literal value or cross the stop-boundary.
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

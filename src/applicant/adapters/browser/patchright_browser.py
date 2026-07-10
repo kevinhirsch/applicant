@@ -216,6 +216,15 @@ class PatchrightBrowser:
         ensure_action_allowed(StepKind.SCREENSHOT)
         return self._source(application_id).screenshot()
 
+    def screenshot_bytes(self, application_id: ApplicationId) -> bytes | None:
+        """Capture the current page as raw PNG bytes for the #305 vision lane.
+
+        A read-only capture (same ``SCREENSHOT`` step gate as :meth:`screenshot`) —
+        no navigation, no submit — so it stays inside the pre-fill-stop boundary.
+        """
+        ensure_action_allowed(StepKind.SCREENSHOT)
+        return self._source(application_id).screenshot_bytes()
+
     def current_state(self, application_id: ApplicationId) -> PageState:
         """Return the current page state (incl. any detection signals)."""
         return self._source(application_id).current()

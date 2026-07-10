@@ -29,6 +29,14 @@ class PlannerObservation:
     html_summary: str = ""
     detected_fields: list[dict] | None = None
     url: str = ""
+    #: #305 vision lane: an optional base64-encoded PNG screenshot of the RENDERED
+    #: page. When present the planner builds a MULTIMODAL prompt (image + text-DOM)
+    #: so the model can ground its typed ops against canvas / image-map / purely
+    #: visual forms the semantic DOM misses. ``None`` (the default) keeps the
+    #: text-only prompt byte-identical. The screenshot only improves GROUNDING — the
+    #: emitted plan still fills by ``attribute_id`` through the DSL, so vision can
+    #: never inject a literal value or cross the stop-boundary.
+    screenshot: str | None = None
 
 
 @dataclass(frozen=True)

@@ -95,6 +95,18 @@ class BrowserAutomationPort(Protocol):
         """Capture and store a per-page screenshot; return its ref (FR-LOG-2)."""
         ...
 
+    def screenshot_bytes(self, application_id: ApplicationId) -> bytes | None:
+        """Capture the current page as raw PNG bytes for the #305 vision lane.
+
+        Unlike :meth:`screenshot` (which persists a file and returns a ref for the
+        audit log), this returns the raw image the planner attaches to a multimodal
+        prompt so it can ground its typed ops against the rendered page. Returns
+        ``None`` when the driver cannot produce an image (never fabricated). This is
+        a read-only capture — no navigation, no submit — so it stays inside the
+        pre-fill-stop boundary, and it is used ONLY on the planner path (default OFF).
+        """
+        ...
+
     def current_state(self, application_id: ApplicationId) -> PageState:
         """Return the current page state (incl. any detection signals)."""
         ...
