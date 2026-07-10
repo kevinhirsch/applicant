@@ -154,6 +154,41 @@ def test_empty_command_is_rejected(_stub_stream):
             assert m["type"] == "error"
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX /bin/sh")
+def test_pipe_run_is_killed_when_the_consumer_closes_mid_stream(monkeypatch):
+    # Greptile #812: a client drop mid-run makes the consumer call gen.aclose();
+    # the finally must kill the subprocess, not just cancel the reader tasks — else
+    # a live download keeps running with no consumer. Capture the spawned proc,
+    # advance the generator past its first output (proc alive), aclose(), assert dead.
+    import asyncio
+
+    from routes import shell_routes
+
+    captured = {}
+    orig = shell_routes._create_shell
+
+    async def _cap(*a, **k):
+        p = await orig(*a, **k)
+        captured["p"] = p
+        return p
+
+    monkeypatch.setattr(shell_routes, "_create_shell", _cap)
+
+    class _Connected:
+        async def is_disconnected(self):
+            return False
+
+    async def _drive():
+        gen = shell_routes._generate_pipe("echo start; sleep 30", 0, _Connected())
+        first = await gen.__anext__()          # yields the "start" line; proc running
+        assert "start" in first
+        assert captured["p"].returncode is None  # still alive
+        await gen.aclose()                       # consumer drop → finally kills proc
+        assert captured["p"].returncode is not None  # reaped, not orphaned
+
+    asyncio.run(_drive())
+
+
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX /bin/sh echo path")
 def test_real_echo_streams_over_the_socket():
     # Prove the ACTUAL pipe generator (no stub) streams a trivial command over

@@ -754,6 +754,19 @@ async def _generate_pipe(cmd: str, timeout: int, request):
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
     finally:
+        # Kill the subprocess on ANY exit — including a GeneratorExit from the
+        # consumer calling gen.aclose() when the (WS or SSE) client drops mid-run.
+        # Cancelling the reader tasks alone leaves the process running with no
+        # consumer (a live download would keep going); the disconnect-probe branch
+        # above only fires on the idle-timeout path, not when output is flowing.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+            except Exception:  # pragma: no cover - best-effort teardown must not raise
+                pass
         for t in reader_tasks:
             t.cancel()
 
