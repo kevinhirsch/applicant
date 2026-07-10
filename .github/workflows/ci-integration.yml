@@ -221,18 +221,36 @@ jobs:
         run: |
           # Browser tests (FR-PREFILL / FR-STEALTH) need a real X display, and
           # every pytest-xdist worker + the Chromium it spawns must inherit a
-          # DISPLAY that points at a LIVE server. The runner is PERSISTENT, so a
-          # stale /tmp/.X99-lock left by a prior run makes `xvfb-run
-          # --server-num=99` silently fail to bring Xvfb up while pytest still
-          # runs with DISPLAY=:99 pointing at a dead display ("Missing X server
-          # or $DISPLAY" -> patchright TargetClosedError). So manage Xvfb
-          # EXPLICITLY: clear any stale lock/socket, start it on :99, wait for
-          # the socket to exist, run the suite (capturing pytest's real exit
-          # code past the `tee`), then tear Xvfb down.
+          # DISPLAY that points at a LIVE, CONNECTABLE server. The runner is
+          # PERSISTENT, so a stale /tmp/.X99-lock left by a prior run makes
+          # `xvfb-run --server-num=99` silently fail to bring Xvfb up while
+          # pytest still runs with DISPLAY=:99 pointing at a dead display
+          # ("Missing X server or $DISPLAY" -> patchright TargetClosedError). So
+          # manage Xvfb EXPLICITLY: reap any Xvfb still bound to :99 from a
+          # crashed prior run, clear its stale lock/socket, start it on :99, wait
+          # for the socket, run the suite (capturing pytest's real exit code past
+          # the `tee`), then tear Xvfb down.
+          #
+          # `-ac` disables X access control, and is the missing piece the 4
+          # chromium-channel test_real_browser.py tests need. Those tests launch
+          # a HEADFUL real Chrome via launch_persistent_context(), which DOES
+          # receive DISPLAY=:99 (this step exports it AND page_source
+          # launch_kwargs() threads the whole process env into the browser
+          # subprocess, #797). But a bare `Xvfb :99` started WITHOUT `-ac` and
+          # WITHOUT an xauth cookie REFUSES that Chrome's X connection, and
+          # Chrome's ozone layer reports the refusal with the SAME generic
+          # "Missing X server or $DISPLAY" error as a truly-absent display — so
+          # DISPLAY was reaching the browser all along; the display was just
+          # rejecting it. `-ac` lets any local client connect cookie-free;
+          # combined with `-nolisten tcp` the server stays unreachable off-box,
+          # so this exposes nothing. (Camoufox's own virtual-display Xvfb passes
+          # `-ac` for exactly this reason, which is why the camoufox test — not
+          # in the failing set — already connects fine.)
           mkdir -p reports
           export DISPLAY=:99
+          pkill -f 'Xvfb :99 ' 2>/dev/null || true
           rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
-          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb-99.log 2>&1 &
+          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp >/tmp/xvfb-99.log 2>&1 &
           XVFB_PID=$!
           for _ in $(seq 1 40); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.25; done
           if [ ! -S /tmp/.X11-unix/X99 ]; then
