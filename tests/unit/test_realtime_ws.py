@@ -113,9 +113,11 @@ def test_reconnect_with_resume_skips_already_seen_frames(client):
 
 
 def test_denied_upstream_command_is_rejected_without_acting(client):
+    # `agent/submit` is NOT an enabled verb (only pause/redirect/approve are), so it is
+    # refused at the envelope seam and never reaches any handler.
     with client.websocket_connect(_url(_sid())) as ws:
         ws.receive_json()  # hello
-        ws.send_json({"chan": "agent", "type": "approve", "seq": 0, "data": {}})
+        ws.send_json({"chan": "agent", "type": "submit", "seq": 0, "data": {}})
         err = _next(ws, chan="sys", mtype="error")
         assert "not enabled" in err["data"]["reason"]
         assert err["data"]["chan"] == "agent"
@@ -135,15 +137,33 @@ def test_agent_pause_reaches_the_bound_agent_control_dispatcher(client):
         assert "not enabled" not in err["data"]["reason"]
 
 
-def test_agent_approve_is_still_refused_at_the_seam_in_phase_3(client):
-    # The deferred verb stays default-DENIED: it never reaches any handler and the
-    # reason is the envelope seam's "not enabled", proving it cannot self-authorize
-    # a final submit over the socket.
+def test_agent_approve_reaches_the_review_gate_not_the_deny_seam(client):
+    # approve is ENABLED as PURE TRANSPORT: it is NOT refused at the envelope seam — it
+    # is forwarded to the container-bound dispatcher, which calls the SAME owner-gated
+    # MaterialService.approve the HTTP approve router uses. Sending an unknown
+    # document_id proves the dispatcher/review gate (not the deny seam) handled it: the
+    # reason is the review gate's own "no such document", never "not enabled". This is
+    # the socket routing through the identical server-side gate, with no new authority.
     with client.websocket_connect(_url(_sid())) as ws:
         ws.receive_json()  # hello
-        ws.send_json({"chan": "agent", "type": "approve", "seq": 0, "data": {"campaign_id": "x"}})
+        ws.send_json(
+            {"chan": "agent", "type": "approve", "seq": 0, "data": {"document_id": "nope"}}
+        )
         err = _next(ws, chan="sys", mtype="error")
-        assert "not enabled" in err["data"]["reason"]
+        assert "not enabled" not in err["data"]["reason"]
+        assert err["data"]["reason"]  # the review gate's own reason, surfaced to the socket
+
+
+def test_agent_submit_and_finalize_stay_refused_at_the_seam_in_phase_3(client):
+    # The still-deferred submit/authorize verbs stay default-DENIED: they never reach
+    # any handler and the reason is the envelope seam's "not enabled", proving they
+    # cannot self-authorize a final submit over the socket.
+    with client.websocket_connect(_url(_sid())) as ws:
+        ws.receive_json()  # hello
+        for verb in ("submit", "finalize", "authorize", "confirm", "steer"):
+            ws.send_json({"chan": "agent", "type": verb, "seq": 0, "data": {"campaign_id": "x"}})
+            err = _next(ws, chan="sys", mtype="error")
+            assert "not enabled" in err["data"]["reason"], f"agent/{verb} must stay denied"
 
 
 def test_malformed_frame_is_rejected_but_keeps_the_socket_open(client):

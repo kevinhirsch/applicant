@@ -52,9 +52,14 @@ def test_presence_upstream_verbs_are_allowed():
 
 
 def test_consequential_upstream_commands_are_denied_by_default():
-    # The whole point of the seam: the socket can NOT self-authorize a submit.
+    # The whole point of the seam: the socket can NOT self-authorize a submit. Note
+    # `agent/approve` is now ENABLED as PURE TRANSPORT to the owner-gated review gate
+    # (covered below), but every OTHER submit/authorize/steer verb stays denied.
     for chan, verb in (
-        ("agent", "approve"),
+        ("agent", "submit"),
+        ("agent", "finalize"),
+        ("agent", "authorize"),
+        ("agent", "confirm"),
         ("agent", "steer"),
         ("takeover", "input"),
         ("chat", "message"),
@@ -63,6 +68,13 @@ def test_consequential_upstream_commands_are_denied_by_default():
         decision = authorize_upstream(chan, verb)
         assert decision.allowed is False
         assert decision.reason  # a human-readable reason, never silent
+
+
+def test_agent_approve_is_enabled_as_pure_transport_to_the_owner_gated_gate():
+    # `approve` is a HUMAN owner approving over a different transport — enabled at the
+    # seam, but it routes through the SAME server-side review-before-submit gate
+    # (MaterialService.approve); enabling it here adds NO new authority.
+    assert authorize_upstream("agent", "approve").allowed is True
 
 
 def test_control_channel_never_accepts_upstream_commands():

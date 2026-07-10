@@ -156,6 +156,16 @@ function buildAgentRedirectFrame(campaignId, changes) {
   return { chan: 'agent', type: 'redirect', seq: 0, data };
 }
 
+// Build an upstream `agent/approve` frame — the authenticated owner approving a
+// reviewed material by its document id. PURE TRANSPORT: the engine authorizes it
+// server-side against the SAME owner-gated review-before-submit gate the HTTP approve
+// uses (MaterialService.approve) — it adds NO authority and CANNOT self-authorize a
+// final submit. A document whose redline review was never opened is refused
+// server-side (ReviewRequired), exactly as the HTTP approve returns 409.
+function buildAgentApproveFrame(documentId) {
+  return { chan: 'agent', type: 'approve', seq: 0, data: { document_id: String(documentId || '') } };
+}
+
 // An `agent` event arrived (a live run was recorded server-side). Drive the SAME UI
 // the poll updates — the existing Activity strip's intent pill / live dot — via
 // applicantActivity.refreshStatus, and fan a DOM event so any mounted surface can
@@ -368,6 +378,19 @@ function sendAgentRedirect(campaignId, changes) {
   return _client.send(f.chan, f.type, f.data);
 }
 
+// Owner-gated approve of a reviewed material over the WS (Phase 3). The upgrade is
+// already owner-authenticated (a non-owner cannot reach the socket), and the ENGINE
+// authorizes the frame against the SAME owner-gated, review-before-submit gate the
+// HTTP approve uses (MaterialService.approve) — this send adds NO authority and can
+// NEVER self-authorize a final submit; a not-yet-reviewed document is refused
+// server-side. Returns false when the socket isn't open (the caller falls back to the
+// HTTP approve at POST /api/applicant/documents/{id}/approve).
+function sendAgentApprove(documentId) {
+  if (!_client) return false;
+  const f = buildAgentApproveFrame(documentId);
+  return _client.send(f.chan, f.type, f.data);
+}
+
 function _boot() {
   try { mountApplicantRealtime(); } catch { /* no-op: never break the shell */ }
 }
@@ -394,9 +417,11 @@ const applicantRealtimeModule = {
   agentEventSummary,
   buildAgentPauseFrame,
   buildAgentRedirectFrame,
+  buildAgentApproveFrame,
   agentRefresh,
   sendAgentPause,
   sendAgentRedirect,
+  sendAgentApprove,
   WS_PATH,
 };
 
@@ -414,9 +439,11 @@ export {
   agentEventSummary,
   buildAgentPauseFrame,
   buildAgentRedirectFrame,
+  buildAgentApproveFrame,
   agentRefresh,
   sendAgentPause,
   sendAgentRedirect,
+  sendAgentApprove,
 };
 
 try { window.applicantRealtimeModule = applicantRealtimeModule; } catch { /* no-op */ }

@@ -78,7 +78,9 @@ async def test_presence_sync_replaces_the_whole_member_set():
 async def test_denied_upstream_command_mutates_nothing():
     s = RealtimeSession("s1")
     q = s.attach()
-    decision = s.apply_upstream(parse_frame({"chan": "agent", "type": "approve", "data": {}}))
+    # `agent/submit` is NOT an enabled verb (only pause/redirect/approve are), so it is
+    # denied at the seam and the socket never acts.
+    decision = s.apply_upstream(parse_frame({"chan": "agent", "type": "submit", "data": {}}))
     assert decision.allowed is False
     # No frame is published for a denied command — the socket never acted.
     assert _drain(q) == []

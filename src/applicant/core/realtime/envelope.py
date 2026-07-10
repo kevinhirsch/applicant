@@ -45,16 +45,22 @@ _ALLOWED_UPSTREAM: dict[str, frozenset[str]] = {
     # leave, re-syncs its live set on (re)connect, and pings to keep-alive. None
     # of these are consequential actions.
     "presence": frozenset({"join", "leave", "sync", "ping"}),
-    # Phase 3 (SAFE SUBSET): co-steer a running agent. ONLY ``pause`` and
-    # ``redirect`` are enabled, and each is PURE TRANSPORT to an EXISTING
-    # owner-gated ``AgentRunService`` method the HTTP surface already exposes
-    # (``pause`` -> ``set_active(active=False)``, ``redirect`` -> ``configure_run``);
-    # the socket adds NO new authority. ``approve`` — and any submit/authorize
-    # verb — is DELIBERATELY absent: it touches the final-submit authorization
-    # boundary (review-before-submit) and is deferred to a separate, separately-
-    # reviewed pass, so an ``agent/approve`` frame stays default-DENIED here and
-    # can never self-authorize a final submit over the socket.
-    "agent": frozenset({"pause", "redirect"}),
+    # Phase 3 (SAFE SUBSET): co-steer a running agent. ``pause``, ``redirect`` and
+    # ``approve`` are enabled, and EACH is PURE TRANSPORT to an EXISTING owner-gated
+    # service method the HTTP surface already exposes — the socket adds NO new
+    # authority:
+    #   * ``pause``    -> ``AgentRunService.set_active(active=False)``
+    #   * ``redirect`` -> ``AgentRunService.configure_run(...)``
+    #   * ``approve``  -> ``MaterialService.approve(document_id)`` — the SAME
+    #     review-gated method ``POST /api/documents/{id}/approve`` calls. It is a
+    #     HUMAN (the authenticated owner) approving over a different transport, and
+    #     it routes through the IDENTICAL server-side review-before-submit gate
+    #     (``ReviewRequired`` until the redline surface was opened). The engine STILL
+    #     cannot self-authorize a final submit: enabling ``approve`` adds no authority
+    #     the owner did not already have over HTTP, and the stop-boundary is untouched.
+    # Every OTHER submit/authorize/finalize/steer verb stays DELIBERATELY absent and
+    # default-DENIED here, so no such frame can self-authorize anything over the socket.
+    "agent": frozenset({"pause", "redirect", "approve"}),
 }
 
 
@@ -111,13 +117,18 @@ def authorize_upstream(chan: str, mtype: str) -> UpstreamDecision:
     """Decide whether an *upstream* (client→server) command may run — the safety seam.
 
     Default-DENY: only ``(chan, type)`` pairs explicitly enabled for this phase
-    are allowed. Phase 3 enables ONLY the safe ``agent`` co-steer verbs
-    (``pause``/``redirect``); ``agent``/``approve`` (and any submit/authorize
-    verb) and the whole ``takeover``/``input`` channel are still refused here
-    regardless of any payload flag — the review-before-submit stop-boundary and
-    the pre-fill boundary still hold, and the socket can never self-authorize a
-    final submit. Downstream (server-originated) frames are NOT run through this
-    gate; only what a browser sends up is.
+    are allowed. Phase 3 enables the ``agent`` co-steer verbs
+    (``pause``/``redirect``) plus ``approve`` — but ``approve`` is PURE TRANSPORT
+    to the SAME owner-gated, review-before-submit gate the HTTP surface uses
+    (``MaterialService.approve``): it is a human owner approving over a different
+    transport and adds NO new authority, so the engine STILL cannot self-authorize
+    a final submit (the review gate raises ``ReviewRequired`` until the redline
+    surface was opened, exactly as on HTTP). Every OTHER submit/authorize verb
+    (``submit``/``finalize``/``authorize``/``confirm``/``steer``) and the whole
+    ``takeover``/``input`` channel are still refused here regardless of any payload
+    flag — the stop-boundary and the pre-fill boundary hold. Downstream
+    (server-originated) frames are NOT run through this gate; only what a browser
+    sends up is.
     """
     allowed = _ALLOWED_UPSTREAM.get(chan, frozenset())
     if mtype in allowed:
