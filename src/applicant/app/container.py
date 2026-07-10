@@ -1082,10 +1082,19 @@ def build_container(settings: Settings | None = None) -> Container:
     # AgentRunService build so each recorded run fans a downstream ``agent`` event to
     # the operator's live tabs (BE→FE surfacing only — the upstream co-steer verbs are
     # gated separately at ``authorize_upstream``, ``approve`` off).
-    from applicant.app.realtime import make_agent_publisher, make_notif_publisher
+    from applicant.app.realtime import (
+        make_agent_publisher,
+        make_notif_publisher,
+        make_takeover_publisher,
+    )
 
     notif_publisher = make_notif_publisher()
     agent_publisher = make_agent_publisher()
+    # RT Phase 4 ``takeover`` (BE->FE): fans CDP screencast frames down the ``takeover``
+    # channel so every tab of the operator's session sees the live browser. Downstream
+    # surfacing ONLY — the upstream takeover verbs are gated separately at
+    # ``authorize_upstream`` (no submit/approve on this channel at all).
+    takeover_publisher = make_takeover_publisher()
     agent_run_service = AgentRunService(storage, realtime=agent_publisher)
     notification_service = NotificationService(notification, realtime=notif_publisher)
     pending_actions_service = PendingActionsService(storage, realtime=notif_publisher)
@@ -1984,6 +1993,41 @@ def build_container(settings: Settings | None = None) -> Container:
 
     get_registry().bind_agent_control(
         make_agent_control_dispatcher(_agent_control_service, _approval_service)
+    )
+
+    # RT Phase 4 (realtime-websocket.md): the upstream ``takeover`` dispatcher. An
+    # authorized ``takeover/input``/``start``/``stop`` frame is PURE TRANSPORT to the
+    # EXISTING owner-gated takeover surface — the SAME sandbox + remote-view sub-port
+    # the HTTP ``/api/remote`` router uses (``authorize_takeover``/``revoke_takeover``/
+    # ``has_takeover``). The socket adds NO new authority, and NO submit/approve verb
+    # exists on this channel — a human hand-finishes; the engine can never self-authorize
+    # a final submit over it. The screencast pump fans CDP frames DOWN via
+    # ``takeover_publisher`` (BE->FE). The takeover surface is process-lived (it wraps the
+    # process-lived ``sandbox``), so — unlike the per-request AgentRunService — one
+    # ``TakeoverControl`` is built here and the factory hands it back with a no-op close.
+    from applicant.adapters.sandbox.takeover import FakeTakeoverCdpDriver, TakeoverControl
+    from applicant.app.realtime import make_takeover_control_dispatcher
+
+    # The CDP transport is split real-vs-fake like the Proxmox client: the default lane
+    # uses the in-memory fake (records input, scriptable frames) so the channel wiring +
+    # safety seam are hermetic; the real Playwright ``connect_over_cdp`` driver over the
+    # session's EXISTING cdp_endpoint is the integration boundary, selected once live.
+    _takeover_cdp_driver = FakeTakeoverCdpDriver()
+
+    def _takeover_frame_sink(session_id: str, mtype: str, data: dict) -> None:
+        # Adapt the driver's ``(session_id, mtype, data)`` sink to the publisher's
+        # ``(mtype, data)`` shape, tagging the frame with its session id for the FE.
+        takeover_publisher(mtype, {"session_id": session_id, **(data or {})})
+
+    _takeover_control = TakeoverControl(
+        sandbox, _takeover_cdp_driver, frame_sink=_takeover_frame_sink
+    )
+
+    def _takeover_control_service():
+        return _takeover_control, (lambda: None)
+
+    get_registry().bind_takeover_control(
+        make_takeover_control_dispatcher(_takeover_control_service)
     )
 
     # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH

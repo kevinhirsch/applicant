@@ -12,11 +12,13 @@ Both hops of the bridge (browser ⇄ workspace ⇄ engine) speak ONE envelope::
 
 ``authorize_upstream`` is the **safety seam**: every *upstream* command (client →
 server) is classified here from its own ``(chan, type)`` and defaults to DENY.
-Phase 1 only enables the ``presence`` control verbs; the consequential channels
-(``agent``/``takeover``) are not wired yet and are refused, so the socket can
-never become a bypass of the review-before-submit stop-boundary. Later phases
-extend this seam to route each newly-enabled command through the same core rules
-the HTTP path uses — the decision is NEVER taken from a caller-supplied flag.
+Phase 1 enables the ``presence`` control verbs; Phase 3 the safe ``agent``
+co-steer verbs (``pause``/``redirect``); Phase 4 the ``takeover`` verbs
+(``input``/``start``/``stop`` — a human driving the live browser). In every
+case any ``approve``/submit/authorize verb stays refused, so the socket can
+never become a bypass of the review-before-submit stop-boundary. Each enabled
+command routes through the SAME core rules / owner-gated methods the HTTP path
+uses — the decision is NEVER taken from a caller-supplied flag.
 """
 
 from __future__ import annotations
@@ -61,6 +63,19 @@ _ALLOWED_UPSTREAM: dict[str, frozenset[str]] = {
     # Every OTHER submit/authorize/finalize/steer verb stays DELIBERATELY absent and
     # default-DENIED here, so no such frame can self-authorize anything over the socket.
     "agent": frozenset({"pause", "redirect", "approve"}),
+    # Phase 4 (live takeover): a HUMAN drives the live browser. ``input`` carries
+    # raw mouse/keyboard events UP and is PURE TRANSPORT to the EXISTING owner-gated
+    # takeover surface (the same remote-view takeover the HTTP ``/api/remote`` path
+    # exposes); ``start``/``stop`` map one-to-one to the existing
+    # ``authorize_takeover``/``revoke_takeover`` (hand control to / return control
+    # from the user). The socket adds NO new authority. Critically, NO ``approve``/
+    # ``submit``/``authorize`` verb is enabled here: takeover is for the human to
+    # HAND-FINISH, so the engine can never self-authorize a final submit over this
+    # channel and the review-before-submit stop-boundary is untouched — those verbs
+    # stay default-DENIED. (The human's own final submit still goes through the
+    # existing explicit ``submit-self``/``authorize-engine-finish`` HTTP gates, never
+    # a takeover input frame.)
+    "takeover": frozenset({"input", "start", "stop"}),
 }
 
 
@@ -118,17 +133,19 @@ def authorize_upstream(chan: str, mtype: str) -> UpstreamDecision:
 
     Default-DENY: only ``(chan, type)`` pairs explicitly enabled for this phase
     are allowed. Phase 3 enables the ``agent`` co-steer verbs
-    (``pause``/``redirect``) plus ``approve`` — but ``approve`` is PURE TRANSPORT
-    to the SAME owner-gated, review-before-submit gate the HTTP surface uses
-    (``MaterialService.approve``): it is a human owner approving over a different
-    transport and adds NO new authority, so the engine STILL cannot self-authorize
-    a final submit (the review gate raises ``ReviewRequired`` until the redline
-    surface was opened, exactly as on HTTP). Every OTHER submit/authorize verb
-    (``submit``/``finalize``/``authorize``/``confirm``/``steer``) and the whole
-    ``takeover``/``input`` channel are still refused here regardless of any payload
-    flag — the stop-boundary and the pre-fill boundary hold. Downstream
-    (server-originated) frames are NOT run through this gate; only what a browser
-    sends up is.
+    (``pause``/``redirect``) plus ``approve``, and Phase 4 the ``takeover`` verbs
+    (``input``/``start``/``stop`` — a HUMAN driving the live browser, pure
+    transport to the existing owner-gated takeover surface). ``approve`` is
+    likewise PURE TRANSPORT to the SAME owner-gated, review-before-submit gate the
+    HTTP surface uses (``MaterialService.approve``): a human owner approving over a
+    different transport, adding NO new authority, so the engine STILL cannot
+    self-authorize a final submit (the review gate raises ``ReviewRequired`` until
+    the redline surface was opened, exactly as on HTTP). Every OTHER submit/authorize
+    verb (``submit``/``finalize``/``authorize``/``confirm``/``steer``) — and any
+    ``approve``/``submit`` on the ``takeover`` channel — is still refused here
+    regardless of any payload flag; the stop-boundary and the pre-fill boundary hold.
+    Downstream (server-originated) frames are NOT run through this gate; only what a
+    browser sends up is.
     """
     allowed = _ALLOWED_UPSTREAM.get(chan, frozenset())
     if mtype in allowed:

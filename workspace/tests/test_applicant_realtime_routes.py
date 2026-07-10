@@ -268,6 +268,60 @@ def test_browser_agent_pause_is_forwarded_upstream_to_the_engine():
             assert agent_frames[0]["data"] == {"campaign_id": "c-1"}
 
 
+# --- takeover relay + forward over the full bridge (Phase 4) ----------------
+
+
+def test_engine_takeover_frame_relays_down_to_the_browser_tab():
+    # The engine's screencast pump fans a `takeover` frame; the workspace bridge — the
+    # SAME generic relay used for notif/agent — carries it down to the owner's tab so
+    # the FE paints the live browser. No workspace change was needed per channel.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=t1", headers=_cookie("tok")
+        ) as ws:
+            _read_presence_count(ws, 1)  # bridge is up
+            bridge = connector.bridges["admin"]
+            bridge.push_down("takeover", "frame", {"session_id": "sbx-1", "data": "QUJD"})
+            frame = _read_frame(ws, "takeover", "frame")
+            assert frame["data"] == {"session_id": "sbx-1", "data": "QUJD"}
+
+
+def test_browser_takeover_input_is_forwarded_upstream_to_the_engine():
+    # The workspace is thin transport: a browser takeover/input frame is forwarded to
+    # the engine unchanged (the engine authorizes it against the owner-gated takeover
+    # surface). The workspace never authorizes and adds no submit path.
+    connector = FakeConnector()
+    app = _make_app(
+        configured=True, tokens={"tok": "admin"}, admins={"admin"}, connector=connector
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect(
+            "/api/applicant/realtime/ws?tab=t1", headers=_cookie("tok")
+        ) as ws:
+            _read_presence_count(ws, 1)
+            ws.send_json(
+                {
+                    "chan": "takeover",
+                    "type": "input",
+                    "seq": 0,
+                    "data": {"session_id": "sbx-1", "event": {"kind": "click"}},
+                }
+            )
+            # A follow-up presence join whose state echo we read back guarantees the
+            # earlier takeover/input was already forwarded upstream (one ordered task).
+            ws.send_json({"chan": "presence", "type": "join", "seq": 0, "data": {"tab": "t2"}})
+            _read_presence_count(ws, 2)
+            bridge = connector.bridges["admin"]
+            takeover_frames = [f for f in bridge.received if f.get("chan") == "takeover"]
+            assert takeover_frames, "takeover/input was never forwarded upstream"
+            assert takeover_frames[0]["type"] == "input"
+            assert takeover_frames[0]["data"] == {"session_id": "sbx-1", "event": {"kind": "click"}}
+
+
 # --- presence round-trip over the full bridge -------------------------------
 
 

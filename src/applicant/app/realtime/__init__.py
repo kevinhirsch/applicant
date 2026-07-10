@@ -17,13 +17,19 @@ from applicant.app.realtime.agent_control import (
 from applicant.app.realtime.publish import (
     AgentPublisher,
     NotifPublisher,
+    TakeoverPublisher,
     make_agent_publisher,
     make_notif_publisher,
+    make_takeover_publisher,
 )
 from applicant.app.realtime.registry import (
     RealtimeRegistry,
     RealtimeSession,
     get_registry,
+)
+from applicant.app.realtime.takeover_control import (
+    TakeoverControlDispatcher,
+    make_takeover_control_dispatcher,
 )
 
 __all__ = [
@@ -36,4 +42,8 @@ __all__ = [
     "AgentPublisher",
     "make_agent_control_dispatcher",
     "AgentControlDispatcher",
+    "make_takeover_publisher",
+    "TakeoverPublisher",
+    "make_takeover_control_dispatcher",
+    "TakeoverControlDispatcher",
 ]

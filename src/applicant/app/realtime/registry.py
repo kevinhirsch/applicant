@@ -38,9 +38,12 @@ class RealtimeSession:
         "presence",
         "evict_task",
         "agent_control",
+        "takeover_control",
     )
 
-    def __init__(self, session_id: str, agent_control: Any = None) -> None:
+    def __init__(
+        self, session_id: str, agent_control: Any = None, takeover_control: Any = None
+    ) -> None:
         self.session_id = session_id
         # chan -> ordered list of frame dicts; a frame's ``seq`` == its index, so
         # the buffer is both the replay log and the seq authority for the channel.
@@ -55,6 +58,13 @@ class RealtimeSession:
         # never a mutation. It carries NO authority of its own — the safety decision
         # already happened at ``authorize_upstream`` before this is ever consulted.
         self.agent_control = agent_control
+        # Phase 4 ``takeover``: ``(Frame) -> UpstreamDecision`` delegating an
+        # ALREADY-authorized ``input``/``start``/``stop`` to the EXISTING owner-gated
+        # takeover surface (the same remote-view takeover the HTTP ``/api/remote``
+        # path uses). ``None`` (unit context / not bound) => an authorized takeover
+        # command is a clean no-op, never a mutation, and never a submit — there is
+        # no submit/approve verb on this channel at all.
+        self.takeover_control = takeover_control
 
     # -- fan-out -----------------------------------------------------------
 
@@ -120,6 +130,8 @@ class RealtimeSession:
             return decision
         if frame.chan == "agent":
             return self._apply_agent(frame)
+        if frame.chan == "takeover":
+            return self._apply_takeover(frame)
         return decision
 
     def _apply_agent(self, frame: Frame) -> UpstreamDecision:
@@ -139,6 +151,25 @@ class RealtimeSession:
             outcome = handler(frame)
         except Exception:  # pragma: no cover - defensive: a handler slip is not fatal
             return UpstreamDecision(False, "agent control failed")
+        return outcome if outcome is not None else UpstreamDecision(True)
+
+    def _apply_takeover(self, frame: Frame) -> UpstreamDecision:
+        """Delegate an ALREADY-authorized ``takeover`` frame (Phase 4).
+
+        ``authorize_upstream`` has already confirmed the verb is one of the enabled
+        set (``input``/``start``/``stop`` — NEVER a submit/approve verb); this only
+        forwards it to the injected handler, which calls the EXISTING owner-gated
+        takeover surface — pure transport, no new authority. With no handler wired
+        (unit context, or the registry was never bound) an authorized command is a
+        clean no-op rather than a mutation, and never raises into the WS receive loop.
+        """
+        handler = self.takeover_control
+        if handler is None:
+            return UpstreamDecision(True)
+        try:
+            outcome = handler(frame)
+        except Exception:  # pragma: no cover - defensive: a handler slip is not fatal
+            return UpstreamDecision(False, "takeover control failed")
         return outcome if outcome is not None else UpstreamDecision(True)
 
     def _apply_presence(self, frame: Frame) -> None:
@@ -179,6 +210,11 @@ class RealtimeRegistry:
         # session created here shares it. ``None`` (unit context / not bound) keeps an
         # authorized agent command a clean no-op.
         self._agent_control: Any = None
+        # Phase 4 ``takeover`` handler: ``(Frame) -> UpstreamDecision`` delegating an
+        # authorized ``input``/``start``/``stop`` to the EXISTING owner-gated takeover
+        # surface. Bound once at composition time; every session shares it. ``None``
+        # (unit context / not bound) keeps an authorized takeover command a clean no-op.
+        self._takeover_control: Any = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
         """Record the app event loop so off-loop publishers can hop onto it."""
@@ -196,10 +232,26 @@ class RealtimeRegistry:
         for sess in list(self._sessions.values()):
             sess.agent_control = handler
 
+    def bind_takeover_control(self, handler: Any) -> None:
+        """Bind the ``takeover`` handler (Phase 4) onto the registry.
+
+        Refreshes every already-created session too, so binding order never leaves a
+        live session without the handler. The handler is pure transport to the
+        existing owner-gated takeover surface — binding it adds no authority the
+        owner does not already have over HTTP, and no submit/approve path exists.
+        """
+        self._takeover_control = handler
+        for sess in list(self._sessions.values()):
+            sess.takeover_control = handler
+
     def get_or_create(self, session_id: str) -> RealtimeSession:
         sess = self._sessions.get(session_id)
         if sess is None:
-            sess = RealtimeSession(session_id, agent_control=self._agent_control)
+            sess = RealtimeSession(
+                session_id,
+                agent_control=self._agent_control,
+                takeover_control=self._takeover_control,
+            )
             self._sessions[session_id] = sess
         return sess
 
