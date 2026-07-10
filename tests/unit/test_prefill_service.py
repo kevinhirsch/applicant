@@ -575,7 +575,7 @@ class _ScreeningBrowser:
     def detect_fields(self, aid):
         return [self._field]
 
-    def fill_field(self, aid, selector, value):
+    def fill_field(self, aid, selector, value, *, label=None):
         self.filled[selector] = value
 
 
@@ -681,10 +681,10 @@ class TestErrorProducer:
             def __getattr__(self, name):
                 return getattr(self._inner, name)
 
-            def fill_field(self, aid, selector, value):
+            def fill_field(self, aid, selector, value, *, label=None):
                 if selector == "#first-name":
                     raise RuntimeError("element detached")
-                return self._inner.fill_field(aid, selector, value)
+                return self._inner.fill_field(aid, selector, value, label=label)
 
         service = PrefillService(
             storage=storage,
@@ -849,9 +849,9 @@ class TestDetectionSignalForwarding:
                 self._inner.inject_page_signals(aid, body="Please complete the captcha")
                 return state
 
-            def fill_field(self, aid, selector, value):
+            def fill_field(self, aid, selector, value, *, label=None):
                 self._filled = True
-                return self._inner.fill_field(aid, selector, value)
+                return self._inner.fill_field(aid, selector, value, label=label)
 
         browser = _CaptchaAccountBrowser()
         svc = PrefillService(
@@ -1101,10 +1101,10 @@ class TestNotificationUrgencyScoping:
             def __getattr__(self, name):
                 return getattr(self._inner, name)
 
-            def fill_field(self, aid, selector, value):
+            def fill_field(self, aid, selector, value, *, label=None):
                 if selector == "#first-name":
                     raise RuntimeError("element detached")
-                return self._inner.fill_field(aid, selector, value)
+                return self._inner.fill_field(aid, selector, value, label=label)
 
         service = PrefillService(
             storage=storage,

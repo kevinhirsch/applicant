@@ -335,10 +335,10 @@ class TestFinalApprovalShortfall:
             def __getattr__(self, name):
                 return getattr(self._inner, name)
 
-            def fill_field(self, aid, selector, value):
+            def fill_field(self, aid, selector, value, *, label=None):
                 if selector == "#first-name":
                     raise RuntimeError("element detached")
-                return self._inner.fill_field(aid, selector, value)
+                return self._inner.fill_field(aid, selector, value, label=label)
 
         cid = CampaignId(new_id())
         storage = InMemoryStorage()

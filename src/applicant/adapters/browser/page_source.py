@@ -30,7 +30,19 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
-from applicant.core.errors import InvalidInput
+from applicant.adapters.browser.skyvern_enhancements import (
+    AdaptiveWaitConfig as _AdaptiveWaitConfig,
+)
+from applicant.adapters.browser.skyvern_enhancements import (
+    choose_date as _choose_date,
+)
+from applicant.adapters.browser.skyvern_enhancements import (
+    heal_fill_selector as _heal_fill_selector,
+)
+from applicant.adapters.browser.skyvern_enhancements import (
+    is_datepicker_element as _is_datepicker_element,
+)
+from applicant.core.errors import InvalidInput, PrefillBoundaryViolation
 from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
 
@@ -140,12 +152,19 @@ class PageSource(Protocol):
         ...
 
     def type_value(
-        self, selector: str, value: str, *, cadence_ms: list[float] | None = None
+        self,
+        selector: str,
+        value: str,
+        *,
+        cadence_ms: list[float] | None = None,
+        label: str | None = None,
     ) -> None:
         """Type ``value`` into ``selector`` on the current page (human-like).
 
         ``cadence_ms`` is an optional per-character dwell plan (FR-STEALTH-2); when
         provided the real driver uses it instead of a constant keystroke delay.
+        ``label`` is the field's human label — the real driver uses it to self-heal a
+        broken/stale selector (gap #5) back onto the intended field.
         """
         ...
 
@@ -260,10 +279,15 @@ class FakePageSource:
         return list(self._page.fields)
 
     def type_value(
-        self, selector: str, value: str, *, cadence_ms: list[float] | None = None
+        self,
+        selector: str,
+        value: str,
+        *,
+        cadence_ms: list[float] | None = None,
+        label: str | None = None,
     ) -> None:
-        # The fake model records the value; cadence is accepted for protocol parity
-        # (the real driver applies it) and ignored here.
+        # The fake model records the value; cadence/label are accepted for protocol
+        # parity (the real driver applies them) and ignored here.
         self._page.filled[selector] = value
 
     def select_dropdown(
@@ -1651,7 +1675,12 @@ class PlaywrightPageSource:
         return ""
 
     def type_value(
-        self, selector: str, value: str, *, cadence_ms: list[float] | None = None
+        self,
+        selector: str,
+        value: str,
+        *,
+        cadence_ms: list[float] | None = None,
+        label: str | None = None,
     ) -> None:  # pragma: no cover
         # A <select> dropdown cannot be typed into — it must be chosen via
         # select_option (real forms use selects for EEO, work-authorization,
@@ -1660,12 +1689,24 @@ class PlaywrightPageSource:
         if self._is_select(selector):
             self._select_option(selector, value)
             return
+        # Gap #3 (Skyvern parity): a native JS calendar / date-picker widget (Workday /
+        # Greenhouse start-date, DOB) has NO typeable input — it is operated by opening
+        # the calendar and clicking the target day. Detect and route BEFORE the listbox
+        # branch (a date combobox is role=combobox too).
+        if self._is_datepicker(selector):
+            self._choose_date(selector, value)
+            return
         # A Workday custom dropdown (button[aria-haspopup=listbox] / role=combobox) is
         # operated by clicking it open and choosing the matching option — typing into
         # it does nothing.
         if self._is_listbox_button(selector):
             self._choose_listbox_option(selector, value)
             return
+        # Gap #5 (Skyvern parity): self-heal a broken/stale selector on the DEFAULT
+        # deterministic path. A re-rendered/renamed field would otherwise soft-error;
+        # recover it to the INTENDED field, refusing any retarget onto a submit /
+        # account-create / final-submit control (the stop-boundary is untouched).
+        selector = self._heal_selector(selector, label)
         # Apply the per-keystroke cadence (FR-STEALTH-2): the adapter computes a
         # dwell-per-character plan; feed it to Playwright press-by-press instead of
         # the old constant 80ms delay. Fall back to a constant delay only when no
@@ -1677,6 +1718,55 @@ class PlaywrightPageSource:
                 locator.press_sequentially(ch, delay=max(0.0, float(delay)))
         else:
             self._page.type(selector, value, delay=80)
+
+    #: Short adaptive-wait budget for the self-heal path (gap #5). A stale selector is
+    #: declared broken quickly (~<1s) so the pre-fill walk never blocks on the default
+    #: multi-second ladder; late-loading fields were just detected on this page.
+    _HEAL_WAIT_CONFIG = _AdaptiveWaitConfig(
+        initial_timeout_s=0.5,
+        max_timeout_s=2.0,
+        poll_interval_s=0.1,
+        max_adaptations=1,
+        adapt_multiplier=2.0,
+    )
+
+    def _is_datepicker(self, selector: str) -> bool:  # pragma: no cover
+        """True if ``selector`` is a native JS calendar / date-picker (gap #3)."""
+        try:
+            el = self._page.query_selector(selector)
+        except Exception:
+            return False
+        return _is_datepicker_element(el)
+
+    def _choose_date(self, selector: str, value: str) -> None:  # pragma: no cover
+        """Open the calendar at ``selector`` and click the day cell for ``value`` (gap #3).
+
+        The day-cell click is stop-boundary guarded (never a submit/account-create
+        control). Raises so the caller's soft-error path records an unfillable field
+        when the date cannot be picked."""
+        if not _choose_date(self._page, selector, value):
+            raise ValueError(f"could not pick date {value!r} on calendar {selector!r}")
+
+    def _heal_selector(self, selector: str, label: str | None = None) -> str:  # pragma: no cover
+        """Return a safe, intended fill selector, self-healing a broken/stale one (gap #5).
+
+        Returns the original when it still resolves, a recovered alternative when it
+        does not, and RAISES :class:`PrefillBoundaryViolation` if recovery would land
+        on a submit / account-create / final-submit control — the caller's soft-error
+        path then records the field as unfilled (the boundary is never crossed)."""
+        result = _heal_fill_selector(
+            self._page, selector, label, wait_config=self._HEAL_WAIT_CONFIG
+        )
+        if result.refused:
+            raise PrefillBoundaryViolation(
+                f"self-heal refused: {result.reason}"
+            )
+        if result.healed and result.selector:
+            log.info(
+                "self-heal: %r -> %r (%s)", selector, result.selector, result.reason
+            )
+            return result.selector
+        return result.selector or selector
 
     def set_input_files(self, selector: str, file_path: str) -> None:  # pragma: no cover
         # Attach the rendered base résumé to the file input (FR-RESUME-4). Playwright's

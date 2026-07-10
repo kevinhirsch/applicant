@@ -81,7 +81,7 @@ class _SimpleBrowser:
     def detect_fields(self, aid):
         return self._pages[self._index].get("fields", [])
 
-    def fill_field(self, aid, selector, value):
+    def fill_field(self, aid, selector, value, *, label=None):
         self._filled[selector] = value
 
     def click(self, aid, selector):

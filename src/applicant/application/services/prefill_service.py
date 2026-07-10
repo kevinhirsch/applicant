@@ -1771,7 +1771,12 @@ class PrefillService:
                 continue  # optional field with no value → skip.
 
             try:
-                self._browser.fill_field(aid, fld.selector, resolved.value)
+                # Thread the field label so the driver can self-heal a broken/stale
+                # selector back onto THIS intended field (Skyvern parity gap #5) —
+                # never onto a submit/account-create control (the stop-boundary holds).
+                self._browser.fill_field(
+                    aid, fld.selector, resolved.value, label=fld.label
+                )
             except Exception as exc:  # noqa: BLE001 — soft failure, never crash the loop
                 # FR-UI-3: an error / soft-failure during fill materializes an
                 # ``error`` pending action so it surfaces in the portal (it does not
