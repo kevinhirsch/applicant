@@ -924,6 +924,11 @@ app.include_router(setup_note_routes(task_scheduler))
 from routes.email_routes import setup_email_routes
 app.include_router(setup_email_routes())
 
+# Email-events push (owner-scoped IMAP-IDLE → browser relay). Lets the inbox's
+# unread poll retire to a WS-down fallback while the live push is genuinely up.
+from routes.email_events_ws_routes import setup_email_events_ws_routes
+app.include_router(setup_email_events_ws_routes())
+
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
@@ -1303,6 +1308,20 @@ async def startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
+    # Owner-scoped IMAP-IDLE → browser relay. Watches each owner's IDLE-capable
+    # mailbox for new mail and pushes a nudge over /api/email/events/ws so the
+    # inbox can retire its 60s unread poll while the push is live. Non-blocking:
+    # the watchers connect in the background; any failure is non-fatal (the FE
+    # simply keeps polling — no silent dead inbox).
+    try:
+        from src.email_events import get_email_events_hub
+        from src.email_idle_watcher import EmailIdleManager
+        _email_hub = get_email_events_hub(app)
+        app.state.email_idle_manager = EmailIdleManager(_email_hub)
+        _startup_tasks.append(asyncio.create_task(app.state.email_idle_manager.start()))
+    except Exception as _e:
+        logger.warning("Failed to start email IDLE relay (non-critical): %s", _e)
+
     # Pre-warm the RAG tool index off the request path. Loading the local
     # embedding model + opening ChromaDB + indexing the built-in tools is a
     # one-time ~1-3s cost that otherwise lands on the user's FIRST message
@@ -1504,6 +1523,14 @@ async def shutdown_event():
             await upload_cleanup_task
         except asyncio.CancelledError:
             pass
+    # Stop the email IDLE relay — every watcher stops and closes its IMAP
+    # connection so no sockets/threads leak on shutdown.
+    _email_mgr = getattr(app.state, "email_idle_manager", None)
+    if _email_mgr is not None:
+        try:
+            await _email_mgr.stop()
+        except Exception as e:
+            logger.warning(f"Email IDLE manager shutdown error: {e}")
     # Stop task scheduler (no-op if it never started under the gate)
     try:
         await task_scheduler.stop()

@@ -78,6 +78,11 @@ let _loading = false;
 let _expanded = false;
 let _docModule = null;
 let _listSpinner = null;
+// Unread-poll + IMAP-IDLE relay state (the poll is a WS-down fallback; see the
+// long comment in _bindEvents). The poll runs UNLESS the relay is confirmed live.
+let _unreadPollTimer = null;
+let _emailRelay = null;
+let _emailRelayStaleTimer = null;
 let _senderFilter = null;       // email address (lowercased) to filter by, or null
 let _senderFilterLabel = null;  // display label for the active filter chip
 
@@ -199,25 +204,35 @@ function _bindEvents() {
     });
   }
 
-  // Unread-count poll — the inbox's new-mail signal. Runs once now, then every
-  // 60s against /api/email/list?filter=unread (+ /api/email/urgency-state for the
-  // dot tint). This poll is deliberately RETAINED as the honest mechanism: unlike
-  // the applicant data surfaces (Results/Today/bell, which retire their polls while
-  // the engine's realtime push channel is live), the workspace has NO server-side
-  // new-mail change signal to relay. New inbound mail is discovered ONLY by querying
-  // IMAP — the mail layer is stdlib `imaplib` (no IDLE watcher), and the legacy
-  // inbound-scan poller (routes/email_pollers.py `_auto_summarize_poller`) is
-  // disabled by default and never pushes to the browser. Nothing on the server
-  // knows "new mail arrived" before the browser asks.
+  // Unread-count poll — the inbox's new-mail signal, now a WS-DOWN FALLBACK.
+  // Runs once now, then every 60s against /api/email/list?filter=unread (+
+  // /api/email/urgency-state for the dot tint).
+  //
+  // There is now a REAL server-side new-mail push: an owner-scoped IMAP-IDLE
+  // relay (workspace-native, /api/email/events/ws — see src/email_events.py +
+  // src/email_idle_watcher.py). A background watcher holds an IMAP IDLE on
+  // each owner's IDLE-capable mailbox and pushes `email:unread-changed` when new
+  // mail arrives, plus a `live` heartbeat. When we are ACTIVELY receiving that
+  // live push we suppress this poll and refresh on the push instead.
+  //
+  // ABSOLUTE honesty invariant (the whole point): the poll may only turn off
+  // while the push is genuinely live for THIS owner. Any state that isn't a
+  // confirmed live push keeps the poll running:
+  //   - no socket / socket closed / reconnecting,
+  //   - `down` (no account has an established IDLE watcher — e.g. auth failed or
+  //     the server has no IDLE capability),
+  //   - `live` heartbeats stopped arriving (staleness watchdog).
+  // So an account/owner without a live IDLE signal NEVER goes dark — it keeps
+  // polling. No silent dead inbox.
   //
   // Honesty guard (do NOT "fix" this by wiring it to the applicant realtime
   // channel): `applicant:realtime` / `applicant:data-changed` carry the ENGINE's
-  // job-search notifications, not workspace email. Gating this poll on that channel
-  // would retire it while no email events ever arrive there — a silent dead UI.
-  // Retiring this poll needs a REAL new-mail push (an owner-scoped IMAP-IDLE relay
-  // over a workspace WS), which does not exist yet; until it does, the poll stays.
+  // job-search notifications, not workspace email. This relay is a SEPARATE
+  // workspace-native channel; gating on the engine channel would retire the poll
+  // while no email events ever arrive there — a silent dead UI.
   _refreshUnreadCount();
-  setInterval(_refreshUnreadCount, 60000);
+  _startUnreadPoll();
+  _connectEmailRelay();
   prewarmEmailLibrary({ delay: 3000 });
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card
@@ -242,6 +257,134 @@ function _urgencyColor(score) {
   if (score >= 3) return 'var(--color-error, #e06c75)';   // red — urgent now
   if (score === 2) return '#f0ad4e';                       // orange — reply soon
   return '';                                                // default (blue / theme)
+}
+
+// ── IMAP-IDLE relay gating (the unread poll is a WS-down fallback) ────────────
+// These small helpers are unit-tested headlessly by the JS suite (which slices
+// the function bodies out of this source), so the honesty gate is pinned:
+// the poll is only ever suppressed by a genuine `live` push.
+
+// Whether the unread poll should run given the relay's current live flag. The
+// poll runs UNLESS the relay is actively pushing — every non-live state keeps it
+// on, so an owner without a live IDLE signal never has a silently dead inbox.
+function shouldPollUnread(relayLive) {
+  return !relayLive;
+}
+
+// Classify an incoming relay frame into the action the inbox should take:
+//   'refresh'       — new mail was detected; re-hit the unread endpoint.
+//   'suppress-poll' — the push is live for this owner; stop the 60s poll.
+//   'resume-poll'   — the push is NOT live (down); (re)start the poll.
+//   'none'          — a frame with no bearing on the poll (e.g. hello).
+function emailRelayAction(frame) {
+  const t = frame && frame.type;
+  if (t === 'email:unread-changed') return 'refresh';
+  if (t === 'live') return 'suppress-poll';
+  if (t === 'down') return 'resume-poll';
+  return 'none';
+}
+
+// Apply a relay action via injected poll/refresh hooks (so it's testable without
+// the DOM). This is the single honesty gate: 'suppress-poll' fires ONLY from a
+// genuine 'live' push; a 'down'/resume also refreshes once so the count is fresh
+// the moment we fall back. Returns the action taken.
+function applyEmailRelayAction(action, hooks) {
+  const h = hooks || {};
+  if (action === 'refresh') { if (h.refresh) h.refresh(); return 'refresh'; }
+  if (action === 'suppress-poll') { if (h.stopPoll) h.stopPoll(); return 'suppress-poll'; }
+  if (action === 'resume-poll') {
+    if (h.startPoll) h.startPoll();
+    if (h.refresh) h.refresh();
+    return 'resume-poll';
+  }
+  return 'none';
+}
+
+// Start the 60s unread-count fallback poll (idempotent). This is the honest
+// mechanism that runs whenever the live relay is NOT confirmed pushing.
+function _startUnreadPoll() {
+  if (_unreadPollTimer) return;
+  _unreadPollTimer = setInterval(_refreshUnreadCount, 60000);
+}
+
+// Stop the fallback poll — called only when the relay is confirmed live.
+function _stopUnreadPoll() {
+  if (_unreadPollTimer) { clearInterval(_unreadPollTimer); _unreadPollTimer = null; }
+}
+
+// Connect the owner-scoped IMAP-IDLE relay socket. On every non-live state (no
+// WebSocket support, socket close/error, `down`, or heartbeats going stale) the
+// poll is (re)started — never a silent dead inbox. Reconnects with capped
+// exponential backoff.
+function _connectEmailRelay() {
+  const loc = (typeof window !== 'undefined') ? window.location : null;
+  if (typeof WebSocket === 'undefined' || !loc) { _startUnreadPoll(); return; }
+  const STALE_MS = 65000;   // > the server's 25s heartbeat; stale ⇒ fall back
+  const STABLE_MS = 10000;  // a connection must stay up this long to reset backoff
+  const hooks = { refresh: _refreshUnreadCount, startPoll: _startUnreadPoll, stopPoll: _stopUnreadPoll };
+  let attempts = 0;
+  let stableTimer = null;
+  const clearStable = () => {
+    if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+  };
+
+  const armStale = () => {
+    if (_emailRelayStaleTimer) clearTimeout(_emailRelayStaleTimer);
+    _emailRelayStaleTimer = setTimeout(() => {
+      _startUnreadPoll();
+      // Heartbeats stopped though the socket never reported a close — force it
+      // shut so the onclose handler drives a real reconnect/backoff. Without this
+      // a half-dead socket (heartbeats silently gone, no TCP error) leaves the
+      // live push permanently dead until a manual page reload.
+      if (_emailRelay) { try { _emailRelay.close(); } catch { /* no-op */ } }
+    }, STALE_MS);
+  };
+  const clearStale = () => {
+    if (_emailRelayStaleTimer) { clearTimeout(_emailRelayStaleTimer); _emailRelayStaleTimer = null; }
+  };
+
+  const scheduleReconnect = () => {
+    attempts += 1;
+    const delay = Math.min(30000, 500 * Math.pow(2, Math.max(0, attempts - 1)));
+    setTimeout(open, delay);
+  };
+
+  function open() {
+    let ws;
+    const scheme = (loc.protocol === 'https:') ? 'wss:' : 'ws:';
+    try { ws = new WebSocket(`${scheme}//${loc.host}/api/email/events/ws`); }
+    catch { _startUnreadPoll(); scheduleReconnect(); return; }
+    _emailRelay = ws;
+    ws.onopen = () => {
+      // Do NOT reset the backoff immediately — a socket that is accepted then
+      // dropped in a flap would otherwise restart reconnects at 500ms and hammer
+      // the server. Only clear the counter once the connection stays up a beat
+      // (or a real heartbeat arrives below, whichever comes first).
+      clearStable();
+      stableTimer = setTimeout(() => { attempts = 0; stableTimer = null; }, STABLE_MS);
+    };
+    ws.onmessage = (ev) => {
+      let frame;
+      try { frame = JSON.parse(ev.data); } catch { return; }
+      applyEmailRelayAction(emailRelayAction(frame), hooks);
+      // A `live` frame doubles as a heartbeat — (re)arm the staleness watchdog so
+      // that if heartbeats stop we fall back even while the socket stays open. A
+      // received heartbeat also proves the connection is healthy, so it's a valid
+      // point to reset the reconnect backoff.
+      if (frame && frame.type === 'live') { attempts = 0; clearStable(); armStale(); }
+      else if (frame && frame.type === 'down') clearStale();
+    };
+    ws.onclose = () => {
+      _emailRelay = null;
+      clearStale();
+      clearStable();          // a short-lived socket must not later zero the backoff
+      _startUnreadPoll();      // socket gone ⇒ resume the honest fallback
+      scheduleReconnect();
+    };
+    ws.onerror = () => { try { ws.close(); } catch { /* no-op */ } };
+  }
+
+  open();
 }
 
 async function _refreshUnreadCount() {
