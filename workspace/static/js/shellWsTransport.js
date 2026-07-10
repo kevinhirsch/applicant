@@ -52,6 +52,10 @@ function parseShellWsMessage(raw) {
     return { kind: 'ignore' };
   }
   if (!obj || typeof obj !== 'object') return { kind: 'ignore' };
+  // The server's "run accepted, about to execute" ack — the FE commits to the WS
+  // on this so a quiet command never lets the connect-timeout fire an SSE fallback
+  // that would run the command twice. It carries no output.
+  if (obj.type === 'ack') return { kind: 'ack' };
   if (obj.type === 'chunk' && typeof obj.data === 'string') {
     return { kind: 'chunk', data: obj.data };
   }

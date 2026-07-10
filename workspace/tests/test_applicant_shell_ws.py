@@ -122,6 +122,9 @@ def test_admin_receives_relayed_events_then_end(_stub_stream):
     with TestClient(app) as c:
         with c.websocket_connect("/api/shell/ws", headers=_cookie("tok")) as ws:
             ws.send_json({"type": "run", "command": "download something"})
+            # The server acks the accepted run BEFORE executing, so the FE commits
+            # to the WS and a quiet command never triggers an SSE-fallback double-run.
+            assert ws.receive_json() == {"type": "ack"}
             got = []
             while True:
                 m = ws.receive_json()
@@ -159,6 +162,7 @@ def test_real_echo_streams_over_the_socket():
     with TestClient(app) as c:
         with c.websocket_connect("/api/shell/ws", headers=_cookie("tok")) as ws:
             ws.send_json({"type": "run", "command": "echo cookbook-ws-ok", "timeout": 15})
+            assert ws.receive_json() == {"type": "ack"}  # ack precedes execution
             saw_line = saw_exit = saw_end = False
             for _ in range(50):
                 m = ws.receive_json()

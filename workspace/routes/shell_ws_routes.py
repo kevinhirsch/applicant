@@ -179,6 +179,17 @@ def setup_shell_ws_routes() -> APIRouter:
         use_pty = bool(first.get("use_pty"))
         use_tmux = bool(first.get("use_tmux"))
 
+        # Acknowledge the accepted run BEFORE the command starts, so the FE commits
+        # to the WS immediately. Otherwise a valid command that produces no output
+        # for a while would let the FE's connect-timeout fire and issue the SSE
+        # fallback POST — running the SAME command a SECOND time. The ack is the
+        # server's "I've got it, I'm about to run it" so the FE never falls back.
+        try:
+            await ws.send_json({"type": "ack"})
+        except Exception:
+            await ws.close()
+            return
+
         probe = _WsDisconnectProbe()
         watcher = asyncio.create_task(_watch_ws_close(ws, probe))
         gen = build_shell_stream(cmd, timeout, use_pty, use_tmux, probe)
