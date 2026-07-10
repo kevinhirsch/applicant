@@ -123,6 +123,26 @@ function notifRefresh() {
   return false;
 }
 
+// A `notif` frame arrived and MAY reflect a change on a surface that reads its OWN
+// feed (the Results funnel, the Today deck, the Tracker board) rather than the
+// Portal badge — e.g. the engine's `notif`/`tracker` push on a recorded outcome.
+// Fan a lightweight document event those surfaces subscribe to so each refetches
+// through its EXISTING _load and can RETIRE its own poll while the WS is live
+// (restoring it on loss — no silent dead UI). Kept SEPARATE from notifRefresh
+// (which drives the Portal/bell badge) so both fire on one frame without either
+// rebuilding the other. Carries only the frame's type so a listener can scope its
+// refetch; it never carries the payload and adds no authority.
+function dataChangedRefresh(frame) {
+  try {
+    if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      const type = (frame && frame.type) ? String(frame.type) : '';
+      document.dispatchEvent(new CustomEvent('applicant:data-changed', { detail: { type } }));
+      return true;
+    }
+  } catch { /* no-op */ }
+  return false;
+}
+
 // ── agent channel (Phase 3 co-steer): live run events down + pause/redirect up ──
 
 // Summarize an `agent` event frame into a short, plain-language, white-label label
@@ -400,10 +420,12 @@ function mountApplicantRealtime(opts = {}) {
       el.hidden = false;
       el.textContent = presenceLabel(count);
     })
-    // Phase 2 push: a notification/pending-action changed server-side. Drive the
-    // same refresh the poll did — bell/rail/Portal update through their existing
-    // listeners; the poll is retired while live and restored on loss (fallback).
-    .onChannel('notif', () => { notifRefresh(); })
+    // Phase 2 push: a notification/pending-action/outcome changed server-side. Drive
+    // the same refresh the poll did — bell/rail/Portal update through notifRefresh's
+    // existing listeners, and the data surfaces that read their OWN feed (Results/
+    // Today/Tracker) refetch off dataChangedRefresh's `applicant:data-changed` event.
+    // Each surface's poll is retired while live and restored on loss (fallback).
+    .onChannel('notif', (frame) => { notifRefresh(); dataChangedRefresh(frame); })
     // Phase 3 push: a running agent recorded a run event. Live-render it through the
     // existing Activity strip (refreshStatus) + a DOM event — no rebuilt UI.
     .onChannel('agent', (frame) => { agentRefresh(frame); })
@@ -494,6 +516,7 @@ const applicantRealtimeModule = {
   connectionStateLabel,
   realtimeLiveDetail,
   notifRefresh,
+  dataChangedRefresh,
   agentEventSummary,
   buildAgentPauseFrame,
   buildAgentRedirectFrame,
@@ -524,6 +547,7 @@ export {
   connectionStateLabel,
   realtimeLiveDetail,
   notifRefresh,
+  dataChangedRefresh,
   agentEventSummary,
   buildAgentPauseFrame,
   buildAgentRedirectFrame,

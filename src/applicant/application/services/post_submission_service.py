@@ -84,9 +84,21 @@ class PostSubmissionService:
         workspace=None,
         pending_actions=None,
         followup=None,
+        realtime=None,
     ):
         self._storage = storage
         self._notification = notification_service
+        # RT Phase 2 (realtime-websocket.md): an optional ``(mtype, data) -> None``
+        # ``notif`` publisher injected by the container (main + per-tick + per-request).
+        # Recording an outcome mutates BOTH the Tracker board (``list_tracker_rows``)
+        # and the owner's Results funnel/learning data, so this fans a downstream
+        # ``notif``/``tracker`` frame at that seam and the front-door Results/Today
+        # surfaces refetch off the push instead of a poll (the poll stays the WS-down
+        # fallback -- an honesty invariant: no silent dead UI). BE->FE surfacing ONLY:
+        # it carries no action verb and authorizes nothing (the ``notif`` channel is
+        # upstream-denied at ``authorize_upstream``). ``None`` (unit tests / legacy
+        # construction) => a no-op, byte-identical behavior.
+        self._realtime = realtime
         # Optional (design-audit Top-25 #5 nice-to-have): when supplied, a
         # positive post-submission outcome (interview/offer) folds a positive
         # taste signal the same way DigestService._learn_from_approval does for
@@ -1021,7 +1033,32 @@ class PostSubmissionService:
             # one method -- one celebratory notification, one place it can fire.
             self._notify_positive_outcome(application, event)
             self._learn_from_positive_outcome(application)
+        # RT Phase 2: every recorded outcome (interview/offer/rejected/ghosted/...)
+        # is a Tracker-board + Results-funnel mutation, so fan a downstream
+        # ``notif``/``tracker`` frame here -- the ONE seam every outcome path funnels
+        # through -- and the front-door Results/Today surfaces refetch off the push
+        # (the poll stays as the WS-down fallback). A positive outcome ALSO pushes via
+        # the celebratory notification above; a duplicate push is harmless (the FE just
+        # refetches once more), but rejected/ghosted have no notification of their own,
+        # so without this those tracker changes would be push-invisible.
+        self._emit_tracker_changed(outcome_type)
         return event
+
+    def _emit_tracker_changed(self, event_type: str) -> None:
+        """Fan a ``notif``/``tracker`` frame that results/tracker data changed (RT Phase 2).
+
+        Best-effort and never raises -- a transport hiccup must NEVER break outcome
+        recording (mirrors ``PendingActionsService._emit_changed``). BE->FE surfacing
+        only: the payload is a minimal poke (``event`` = the recorded outcome type); it
+        never carries the outcome's contents and authorizes nothing (the ``notif``
+        channel is upstream-denied). ``None`` publisher (unit / legacy) => a no-op.
+        """
+        if self._realtime is None:
+            return
+        try:
+            self._realtime("tracker", {"event": event_type})
+        except Exception:  # pragma: no cover - push must never break the caller
+            pass
 
     def _learn_from_positive_outcome(self, application):
         """Up-weight the source/role signature for a positive outcome (#5, nice-to-have).

@@ -38,6 +38,11 @@ const MAX_DROPDOWN_ROWS = 8;
 let _mounted = false;
 let _pollStop = null;
 let _open = false;
+// Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2): true while the
+// WS push channel is live, so the 45s fallback poll is RETIRED (pushes reach the bell
+// via `applicant:pending-changed`) and RESTORED on WS loss so the badge never silently
+// goes stale (an honesty invariant: no silent dead UI).
+let _realtimeLive = false;
 
 // ── Pure helpers (unit-tested headlessly via the JS harness) ─────────────────
 
@@ -216,17 +221,42 @@ export function mountApplicantBell() {
   // The shared cross-surface signal: a resolve anywhere re-reads the one feed.
   document.addEventListener(PENDING_CHANGED_EVENT, () => { _refresh(); });
 
-  // Slow, visibility-aware poll so a backgrounded tab doesn't hammer the proxy.
+  // Slow, visibility-aware poll so a backgrounded tab doesn't hammer the proxy. It is
+  // the WS-DOWN FALLBACK: while the realtime push channel is live the bell already
+  // re-reads on every `applicant:pending-changed` push, so `start()` is gated on
+  // `!_realtimeLive` to RETIRE the poll, and `applyLive(false)` RESTORES it on WS loss.
   if (_pollStop) _pollStop();
   let timer = null;
   const tick = () => { _refresh(); };
-  const start = () => { if (timer == null) timer = setInterval(tick, POLL_MS); };
+  const start = () => { if (timer == null && !_realtimeLive) timer = setInterval(tick, POLL_MS); };
   const stop = () => { if (timer != null) { clearInterval(timer); timer = null; } };
   const onVis = () => { if (document.visibilityState === 'visible') { tick(); start(); } else stop(); };
   document.addEventListener('visibilitychange', onVis);
+  // Retire the poll while the push channel is live; restore it (with one immediate
+  // catch-up) on WS loss. applicantRealtime.js emits `applicant:realtime` with { live }
+  // on every connection-state change.
+  const applyLive = (live) => {
+    _realtimeLive = !!live;
+    if (_realtimeLive) {
+      stop();          // push drives refreshes now — no redundant poll
+      tick();          // one immediate catch-up so nothing is missed at the edge
+    } else if (document.visibilityState === 'visible') {
+      tick();
+      start();         // WS down — restore the fallback poll
+    }
+  };
+  const onRealtime = (e) => applyLive(!!(e && e.detail && e.detail.live));
+  document.addEventListener('applicant:realtime', onRealtime);
   tick();
   if (document.visibilityState === 'visible') start();
-  _pollStop = () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+  // The `applicant:realtime` event is one-shot per state change, so reconcile the
+  // current live level now in case the socket opened before this listener existed.
+  try { if (typeof window !== 'undefined' && window.__applicantRealtimeLive) applyLive(true); } catch { /* no-op */ }
+  _pollStop = () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVis);
+    document.removeEventListener('applicant:realtime', onRealtime);
+  };
 }
 
 function _boot() {
