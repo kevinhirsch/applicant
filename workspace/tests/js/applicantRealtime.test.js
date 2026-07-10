@@ -191,8 +191,21 @@ test('buildAgentRedirectFrame carries only the provided run-config fields, never
   assert.deepEqual(buildAgentRedirectFrame('c-2', {}), {
     chan: 'agent', type: 'redirect', seq: 0, data: { campaign_id: 'c-2' },
   });
-  // The envelope is never an approve/submit — that verb isn't buildable here.
+  // A REDIRECT envelope is never an approve/submit — that verb isn't buildable here.
   assert.notEqual(full.type, 'approve');
+});
+
+test('buildAgentApproveFrame shapes an agent/approve envelope carrying the document id', () => {
+  const { buildAgentApproveFrame } = load('buildAgentApproveFrame');
+  // PURE TRANSPORT: it only names the document to approve. The engine authorizes it
+  // against the SAME owner-gated review-before-submit gate the HTTP approve uses.
+  assert.deepEqual(buildAgentApproveFrame('d-1'), {
+    chan: 'agent', type: 'approve', seq: 0, data: { document_id: 'd-1' },
+  });
+  // Defensive coercion: a missing id becomes an empty string (engine refuses it), never a throw.
+  assert.deepEqual(buildAgentApproveFrame(), {
+    chan: 'agent', type: 'approve', seq: 0, data: { document_id: '' },
+  });
 });
 
 test('agentRefresh live-renders through the existing Activity strip (refreshStatus) + a DOM event', () => {

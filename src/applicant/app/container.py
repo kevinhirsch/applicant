@@ -1932,12 +1932,14 @@ def build_container(settings: Settings | None = None) -> Container:
             return services
 
     # RT Phase 3 (realtime-websocket.md): the upstream ``agent`` co-steer dispatcher.
-    # An authorized ``agent/pause``/``agent/redirect`` frame is PURE TRANSPORT to the
-    # EXISTING owner-gated ``AgentRunService`` (the SAME methods the HTTP surface uses:
-    # ``set_active`` for pause, ``configure_run`` for redirect) — the socket adds NO new
-    # authority, and ``approve``/submit verbs never reach here (default-denied at the
+    # An authorized ``agent/pause``/``agent/redirect``/``agent/approve`` frame is PURE
+    # TRANSPORT to an EXISTING owner-gated service (the SAME methods the HTTP surface
+    # uses: ``set_active`` for pause, ``configure_run`` for redirect, and
+    # ``MaterialService.approve`` for approve — the identical review-before-submit gate
+    # ``POST /api/documents/{id}/approve`` calls). The socket adds NO new authority, and
+    # every OTHER submit/authorize verb never reaches here (default-denied at the
     # envelope seam). The WS handler runs on the app loop, so each command gets a FRESH,
-    # session-isolated AgentRunService (never the request/boot Session) exactly like the
+    # session-isolated service (never the request/boot Session) exactly like the
     # per-request factory above; the no-DB lane falls back to the shared singleton.
     from applicant.app.realtime import get_registry, make_agent_control_dispatcher
 
@@ -1958,8 +1960,30 @@ def build_container(settings: Settings | None = None) -> Container:
         # In-memory / no-DB lane: no Session to isolate, reuse the shared service.
         return agent_run_service, (lambda: None)
 
+    def _approval_service():
+        # ``agent/approve`` delegates to the EXISTING owner-gated review gate,
+        # ``MaterialService.approve`` — the SAME method the HTTP approve router calls.
+        # Reuse the per-request services factory so the MaterialService is wired
+        # (and Session-isolated) identically to a normal request; the no-DB lane
+        # falls back to the shared singleton. Never a NEW authority: it can only do
+        # what ``POST /api/documents/{id}/approve`` already does, review gate included.
+        if request_services_factory is not None:
+            services = request_services_factory()
+            mat = services["material_service"]
+            req_session = services.get("_session")
+
+            def _close() -> None:
+                try:
+                    if req_session is not None:
+                        req_session.close()
+                except Exception:  # pragma: no cover - defensive: close never raises
+                    pass
+
+            return mat, _close
+        return material_service, (lambda: None)
+
     get_registry().bind_agent_control(
-        make_agent_control_dispatcher(_agent_control_service)
+        make_agent_control_dispatcher(_agent_control_service, _approval_service)
     )
 
     # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH
