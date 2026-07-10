@@ -45,6 +45,12 @@ let _modalA11yCleanup = null;
 let _statusPollStop = null;
 let _runsLoading = false;
 let _pauseBusy = false;
+// Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2): true while the
+// WS push channel is live, so the STATUS_POLL_MS fallback poll is RETIRED (the running
+// agent's events already reach the strip via `applicant:data-changed`) and RESTORED on
+// WS loss so the strip never silently goes stale (an honesty invariant: no silent dead
+// UI). Mirrors the guard in applicantBell.js / applicantResults.js.
+let _realtimeLive = false;
 
 
 
@@ -746,6 +752,40 @@ function _wireLaunchers() {
   }
 }
 
+// ── Realtime push ⇄ poll coordination (realtime-websocket.md Phase 2) ─────────
+//
+// The always-visible strip's STATUS_POLL_MS poll is the WS-DOWN FALLBACK, never the
+// primary path once the push channel is live. While live, the running agent's events
+// reach the strip via applicantRealtime.js's `applicant:data-changed` push (and its
+// `agent` channel already pokes refreshStatus directly), so the poll is RETIRED — no
+// redundant fetches. On WS loss it is RESTORED so the strip is never a silent dead UI
+// (an honesty invariant). Gated at the CALLER level here; the shared pollVisible helper
+// is untouched. Same shape as applicantBell.js / applicantResults.js.
+
+// Start the visibility-aware fallback poll only when it's needed: the push channel is
+// NOT live AND no poll is already running. pollVisible fires once immediately, so it
+// also seeds the strip.
+function _startStatusPollIfNeeded() {
+  if (_realtimeLive || _statusPollStop) return;
+  _statusPollStop = pollVisible(refreshStatus, STATUS_POLL_MS);
+}
+
+function _applyRealtimeLive(live) {
+  const next = !!live;
+  if (next === _realtimeLive) return;
+  _realtimeLive = next;
+  if (next) {
+    // Live: the push channel drives the strip now — retire the poll, but seed once so
+    // anything that changed between the last poll and going live shows right away.
+    if (_statusPollStop) { _statusPollStop(); _statusPollStop = null; }
+    refreshStatus();
+  } else {
+    // Lost the push channel: fall back to the visibility-aware poll (refresh once now).
+    refreshStatus();
+    _startStatusPollIfNeeded();
+  }
+}
+
 function _boot() {
   _wireLaunchers();
   // The rail/strip may be (re)rendered after boot; retry briefly so the launchers
@@ -758,11 +798,25 @@ function _boot() {
     const stripWired = _stripEl()?._applicantActivityWired;
     if ((railWired && stripWired) || tries > 20) clearInterval(iv);
   }, 500);
-  // Keep the strip fresh on a slow poll — but only while the tab is visible, so a
-  // backgrounded tab doesn't keep hitting the proxy (quick-wins #1). pollVisible
-  // fires once immediately, so it also seeds the strip.
-  if (_statusPollStop) _statusPollStop();
-  _statusPollStop = pollVisible(refreshStatus, STATUS_POLL_MS);
+  // Keep the strip fresh on a slow, visibility-aware poll — but only as the WS-DOWN
+  // FALLBACK. Reconcile the current live level first (the socket may have opened before
+  // this listener existed — level, not just edge), then start the poll only when the
+  // push channel is NOT live. When it IS live, seed once here since pollVisible (which
+  // normally seeds) is retired; pushes keep the strip fresh thereafter.
+  if (_statusPollStop) { _statusPollStop(); _statusPollStop = null; }
+  try {
+    if (typeof window !== 'undefined' && window.__applicantRealtimeLive) _realtimeLive = true;
+  } catch { /* no-op */ }
+  if (_realtimeLive) refreshStatus();
+  else _startStatusPollIfNeeded();
+  // Retire the fallback poll while the realtime push channel is live and restore it on
+  // WS loss. applicantRealtime.js emits `applicant:realtime` with { live } on every
+  // connection-state change, and `applicant:data-changed` when a push says the owner's
+  // data moved — refresh the strip through the EXISTING refreshStatus on that push.
+  document.addEventListener('applicant:realtime', (e) => {
+    _applyRealtimeLive(!!(e && e.detail && e.detail.live));
+  });
+  document.addEventListener('applicant:data-changed', () => { refreshStatus(); });
 }
 
 if (document.readyState === 'loading') {

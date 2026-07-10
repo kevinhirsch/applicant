@@ -27,6 +27,7 @@ _REALTIME_JS = _JS_DIR / "applicantRealtime.js"
 _RESULTS_JS = _JS_DIR / "applicantResults.js"
 _TODAY_JS = _JS_DIR / "applicantToday.js"
 _BELL_JS = _JS_DIR / "applicantBell.js"
+_ACTIVITY_JS = _JS_DIR / "applicantActivity.js"
 
 
 @pytest.fixture(scope="module")
@@ -47,6 +48,11 @@ def today_src() -> str:
 @pytest.fixture(scope="module")
 def bell_src() -> str:
     return _BELL_JS.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def activity_src() -> str:
+    return _ACTIVITY_JS.read_text(encoding="utf-8")
 
 
 # ── applicantRealtime.js: the push → data-surface fan-out ─────────────────────
@@ -130,3 +136,28 @@ def test_bell_retires_its_fallback_poll_while_live_and_restores_on_loss(bell_src
     # Teardown removes the realtime listener too (no leak on remount).
     assert "removeEventListener('applicant:realtime', onRealtime)" in bell_src
     assert "window.__applicantRealtimeLive" in bell_src
+
+
+# ── applicantActivity.js: retire the status-strip poll while live, restore on loss ─
+
+
+def test_activity_retires_its_status_poll_while_live_and_restores_on_loss(activity_src: str) -> None:
+    assert "let _realtimeLive = false;" in activity_src
+    # A live push channel retires the poll; WS loss restores it (the fallback).
+    assert "function _applyRealtimeLive(live)" in activity_src
+    assert "function _startStatusPollIfNeeded()" in activity_src
+    # The poll starts only when NOT live (retired while pushing) and none is running.
+    assert "if (_realtimeLive || _statusPollStop) return;" in activity_src
+    # The literal fallback poll call is preserved (also pinned by the wave-1 polling test).
+    assert "pollVisible(refreshStatus, STATUS_POLL_MS)" in activity_src
+    # Retire-on-live tears the running poll down.
+    assert "if (_statusPollStop) { _statusPollStop(); _statusPollStop = null; }" in activity_src
+
+
+def test_activity_listens_for_the_realtime_and_data_changed_signals(activity_src: str) -> None:
+    assert "addEventListener('applicant:realtime'" in activity_src
+    assert "addEventListener('applicant:data-changed'" in activity_src
+    # Refresh on a push goes through the EXISTING refreshStatus.
+    assert "document.addEventListener('applicant:data-changed', () => { refreshStatus(); });" in activity_src
+    # Reconcile a socket that opened before this listener existed (level, not just edge).
+    assert "window.__applicantRealtimeLive" in activity_src
