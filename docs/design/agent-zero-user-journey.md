@@ -201,7 +201,26 @@ as a product feature, which it is. The optional `takeover-desktop` service (remo
 CDP) remains the engine-side sandbox variant; FR-CUA desktop assist ships present-but-grayed
 until its driver is baked in, exactly as today.
 
-## 8. Open questions this blueprint raises (tracked, not resolved here)
+## 8. Every feature teaches itself — the instructions gate
+
+**No feature ships without workable end-user instructions.** For every surface in this blueprint,
+the user must be able to answer "how do I make this work?" without leaving the product:
+
+- **In place:** every plugin panel carries a help affordance — plain-language, step-by-step
+  ("To connect Discord notifications: 1. … 2. … Send a test."), tooltips on every control, no
+  spec jargon. This is parity, not new doctrine: the current front-door's per-surface help is
+  pinned by tests (the lens-12 help suite), and the port carries that bar.
+- **Workable means verified by following them:** a story's instructions are done when someone
+  (the playtest agent, then the owner) completes the feature's task using *only* the on-surface
+  instructions — a first-run walkthrough check in the adapted playtest protocol, not a copy
+  review.
+- **Honest instructions:** help copy obeys H5 — it describes what the feature actually does in
+  this deployment (if TeX isn't installed, the résumé help says the docx path is active), and
+  setup steps name their real prerequisites (app passwords for Gmail, invite scopes for Discord).
+- **The assistant is the fallback manual:** "how do I …?" in chat answers from the same help
+  content and can deep-link the surface — one source of truth, two doors.
+
+## 9. Open questions this blueprint raises (tracked, not resolved here)
 
 | # | Question | Where tracked |
 |---|---|---|

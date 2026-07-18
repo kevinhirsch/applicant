@@ -64,6 +64,8 @@ Closure is **all** of the following, verified on the A0-shelled product:
       plane map); zero agent-zero identifiers on the shipped surface.
 - [ ] **Updateability proof**: `scripts/vendor-sync.sh` pulls a newer upstream agent-zero with
       zero conflicts in Applicant-owned paths; gates re-run green.
+- [ ] **Instructions gate**: every feature carries workable on-surface instructions, verified by
+      completing each feature's task using only them (journey blueprint §8).
 - [ ] **PAG-1 re-run** (owner dogfood on the new shell) — the final bar, exactly as in Phase 1.5.
 
 ## 2. Target architecture (refines the plane map)
@@ -232,6 +234,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ3-4 | Vault, Easy Apply, screening-answer library, interview prep, save-a-job, Today lens, switcher/shortcuts/demo/export/audit/update/debug | L | eng | — |
 | AZ3-5 | Dormant-surface preservation (desktop assist, aggressiveness) as present-but-grayed | S | eng | — |
 | AZ3-6 | Integrations settings: lane credentials re-home (email/calendar → companion) + Connections guidance (MCP plane vs lane plane, journey §5) | M | eng | — |
+| AZ3-7 | Per-surface help system: help affordance + plain-language instructions on every plugin panel, chat "how do I…?" answering from the same content, lens-12-style tests pinning it | L | eng | — |
 | **Phase AZ-4 — Companion services** | | | | |
 | AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | — |
 | AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | — |
@@ -250,10 +253,12 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 Spine: `AZ0-* → AZ1-* → AZ2-* → {AZ3-*, AZ4-*} → AZ5-* → AZ6-*` (AZ0-6 is the go/no-go proof;
 nothing past Phase 1 starts until it passes).
 
-Per-story DoR/DoD follow the universal lists; stories above L-size get split at pickup. Two
+Per-story DoR/DoD follow the universal lists; stories above L-size get split at pickup. Three
 port-wide DoD additions on every story: **(a)** no upstream agent-zero file edited (CI-checkable:
 `git diff` of the subtree vs upstream tag is empty), **(b)** any new user-visible claim passes the
-H5 overclaim denylist.
+H5 overclaim denylist, **(c)** the feature ships **workable end-user instructions** — an
+on-surface help affordance with plain-language steps, verified by completing the task using only
+those instructions (journey blueprint §8; lens-12 help parity).
 
 ## 5. Open decisions (owner input shapes the build)
 
