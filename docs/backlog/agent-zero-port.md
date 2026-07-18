@@ -214,11 +214,17 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 
 ## 4. Phases & stories (index)
 
-**Canonical issues per story:** AZ0-1→6: #823 #824 #825 #826 #827 #828 · AZ1-1→4: #829 #830
-#831 #832 · AZ2-1→6: #833 #834 #835 #836 #837 #838 · AZ3-1→7: #839 #840 #841 #842 #843 #844
-#845 · AZR-1→3: #846 #847 #848 · AZ4-1→2: #849 #850 (AZ4-3 superseded by #861) · AZ5-1→3:
-#851 #852 #853 · AZ6: #854 #855 #856 #857 · **AZ6-5 = #671** (the existing PAG-1 gate,
-re-scoped — deliberately not duplicated) · #858 #859 · AZ7-1→4: #860 #861 #862 #863.
+**Canonical issues per story:**
+
+- AZ0-1→6: #823 #824 #825 #826 #827 #828
+- AZ1-1→4: #829 #830 #831 #832
+- AZ2-1→6: #833 #834 #835 #836 #837 #838
+- AZ3-1→7: #839 #840 #841 #842 #843 #844 #845
+- AZR-1→3: #846 #847 #848
+- AZ4-1→2: #849 #850 (AZ4-3 superseded by #861)
+- AZ5-1→3: #851 #852 #853
+- AZ6-1→4: #854 #855 #856 #857 · **AZ6-5 = #671** (the existing PAG-1 gate, re-scoped — deliberately not duplicated) · AZ6-6/7: #858 #859
+- AZ7-1→4: #860 #861 #862 #863
 
 | ID | Story | Effort | Owner | Status |
 |---|---|---|---|---|
