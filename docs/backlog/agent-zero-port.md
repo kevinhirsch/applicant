@@ -86,11 +86,12 @@ internal service for lanes A–D; no public port) · `postgres` · `searxng` · 
 | Background cadence | A0's cron scheduler (`helpers/task_scheduler.py`) only for *shell-side* refresh; the 24/7 apply loop **stays in the engine's durable scheduler** |
 | Branding | build-time overlay: swap `webui/public/*` assets + `<title>`/`manifest.json` name; fail-closed artifact check in CI |
 
-**D6 (recommended): the plugin lives out-of-tree** at `a0-applicant/` in the repo root and is
-`COPY`-ed into the image at `/a0/usr/plugins/applicant` by the Docker build. The subtree then
-stays 100 % pristine (even stricter than the plane map's namespaced-additions sketch — supersedes
-it if accepted); alternative (a): commit under `agent-zero/plugins/applicant/` (still additive,
-slightly simpler dev loop, subtree no longer byte-pristine).
+**D6 — DECIDED: both Applicant-owned artifacts live out-of-tree.** `a0-applicant/` (the plugin
+bundle) is `COPY`-ed into the image at `/a0/usr/plugins/applicant`, and `a0-webui/` (the bespoke
+UI, a managed fork of `webui/` per D1) is applied over the pristine tree in the same build step.
+The subtree stays 100 % byte-pristine — framework pulls stay trivially clean; upstream UI changes
+are cherry-picked into `a0-webui/` with clear provenance. (Supersedes the plane map's
+in-subtree-additions sketch.)
 
 ## 3. Parity matrix — every surface, its target home
 
@@ -235,6 +236,10 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ3-5 | Dormant-surface preservation (desktop assist, aggressiveness) as present-but-grayed | S | eng | — |
 | AZ3-6 | Integrations settings: lane credentials re-home (email/calendar → companion) + Connections guidance (MCP plane vs lane plane, journey §5) | M | eng | — |
 | AZ3-7 | Per-surface help system: help affordance + plain-language instructions on every plugin panel, chat "how do I…?" answering from the same content, lens-12-style tests pinning it | L | eng | — |
+| **Phase AZ-R — Bespoke UI redesign (D1; parallel workstream, starts after AZ-2)** | | | | |
+| AZR-1 | Fork `webui/` into `a0-webui/` + build-step application + documented cherry-pick workflow | M | eng | — |
+| AZR-2 | Applicant visual design system + redesign execution across shipped surfaces (incl. the D12 power-tools curation) | L | both | — |
+| AZR-3 | Upstream-UI cherry-pick drill: pull newer upstream, port one UI change into the fork, gates green | S | eng | — |
 | **Phase AZ-4 — Companion services** | | | | |
 | AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | — |
 | AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | — |
@@ -249,6 +254,11 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ6-3 | Traceability + delivery-status update: reachability column re-pointed at A0 surfaces | M | eng | — |
 | AZ6-4 | Front-door retirement decision + execution (D7) | M | both | — |
 | AZ6-5 | **PAG-1 re-run on the new shell** (owner dogfood) | L | you | — |
+| **Phase AZ-7 — Lane convergence onto MCP (committed follow-on, post-closure)** | | | | |
+| AZ7-1 | Engine-side MCP-provider adapter: lanes A–C consume MCP servers (calendar/email/research) behind the existing callback contract | L | eng | — |
+| AZ7-2 | Email lane cutover (MCP provider or A0 `_email_integration`) + parity tests vs AZ4-2 baseline | L | eng | — |
+| AZ7-3 | Calendar lane cutover (interview read + write-back over an MCP calendar provider) | M | eng | — |
+| AZ7-4 | Credentials collapse into Connections (one place to connect Google/mail); companion retirement once all lanes are cut over | M | both | — |
 
 Spine: `AZ0-* → AZ1-* → AZ2-* → {AZ3-*, AZ4-*} → AZ5-* → AZ6-*` (AZ0-6 is the go/no-go proof;
 nothing past Phase 1 starts until it passes).
@@ -260,22 +270,22 @@ H5 overclaim denylist, **(c)** the feature ships **workable end-user instruction
 on-surface help affordance with plain-language steps, verified by completing the task using only
 those instructions (journey blueprint §8; lens-12 help parity).
 
-## 5. Open decisions (owner input shapes the build)
+## 5. Decisions — **all DECIDED by the owner, 2026-07-18** (the spec is unambiguous)
 
 | ID | Decision | Recommendation |
 |---|---|---|
 | D1 | UI bespoke-ness: branding-only (cheap updates) vs redesign (edits upstream UI = forfeits clean pulls) | **DECIDED (owner, 2026-07-18): bespoke redesign.** Mitigation: the Python framework subtree stays pristine (pulls stay clean); the bespoke UI is a **managed fork of `webui/`** maintained out-of-tree and applied over the pristine tree at build — upstream UI changes become deliberate cherry-picks. UI-layer updateability: managed, not free. Phasing: land Phases 0–2 on branding-only chrome first, then execute the redesign as its own workstream so the daily loop isn't blocked on visual design |
-| D2 | Model-config source of truth: A0's settings feed the engine, or the plugin drives both | **A0 collects, plugin syncs to engine**; the tier *ladder* stays engine-side |
-| D3 | Lanes A–D long-term: keep companion forever vs port (A0 `_email_integration`, plugin calendar) | **Companion now**; port email only if maintenance cost demands it |
-| D4 | Auth: accept single-user A0 login (drop workspace multi-user) | **Accept** — engine was always single-tenant |
-| D5 | Outbound notifications: engine's Apprise ladder stays authoritative | **Yes** — only the in-app center moves to A0 |
-| D6 | Plugin location: out-of-tree `a0-applicant/` (pristine subtree) vs in-subtree additive dir | **Out-of-tree** (supersedes plane-map sketch) |
-| D7 | Front-door retirement: retire at AZ6-4 vs keep dual-shell for a transition window | Decide at AZ6 with PAG-1 evidence; **lean retire** (companion keeps the lanes, not the UI) |
-| D8 | Chat: A0 chat as THE product chat vs a separate embedded job-chat panel | **A0 chat + applicant profile** — it's the point of the shell swap |
-| D9 | Integrations posture: lanes stay on companion IMAP/CalDAV vs converge onto MCP providers (e.g. Google MCP feeding lanes via an adapter) | **Companion first** (exists, tested); revisit convergence after AZ4-2 |
-| D10 | Phone push / PWA distribution: wire the stack's `ntfy` (and/or PWA push) as an opt-in channel | Decide at AZ3-1; low cost, high dogfood value |
-| D11 | Model-connect forks: keep/hide/curate A0's OAuth provider accounts for the Applicant audience | **Keep all three forks**, curate copy only |
-| D12 | Desktop/canvas exposure: full A0 general-agent surface vs curated subset for job seekers | **Full surface, labeled** (journey §7's two-browser framing); revisit with PAG-1 feedback |
+| D2 | Model-config source of truth: A0's settings feed the engine, or the plugin drives both | **DECIDED (owner, 2026-07-18): A0 collects, plugin syncs to engine** (`POST /setup/llm` mirrored from A0's model config); the tier *ladder* stays engine-side, edited via a plugin settings panel |
+| D3 | Lanes A–D long-term: keep companion forever vs port (A0 `_email_integration`, plugin calendar) | **DECIDED (owner, 2026-07-18): companion now + committed MCP migration** — lanes ship on the companion (zero regression), and Phase **AZ-7** commits the follow-on migration to MCP providers |
+| D4 | Auth: accept single-user A0 login (drop workspace multi-user) | **DECIDED (owner, 2026-07-18): single-user + login** (installer enables `AUTH_LOGIN`; engine single-tenancy unchanged; multi-user workspace auth not carried) |
+| D5 | Outbound notifications: engine's Apprise ladder stays authoritative | **DECIDED (owner, 2026-07-18): yes** — engine is the single notification authority; only the in-app center moves to A0 |
+| D6 | Code layout: where Applicant-owned A0 code lives | **DECIDED (owner, 2026-07-18): both out-of-tree** — `a0-applicant/` (plugin bundle) and `a0-webui/` (bespoke UI fork) at repo root, COPY'd over the byte-pristine subtree at build (supersedes the plane-map sketch) |
+| D7 | Front-door retirement: retire at AZ6-4 vs keep dual-shell for a transition window | **DECIDED (owner, 2026-07-18): retire at the ship gate** — the A0 shell becomes the only public UI once AZ-6 passes (golden path + PAG-1); no dual-UI window; companion stays headless for lanes until AZ-7 |
+| D8 | Chat: A0 chat as THE product chat vs a separate embedded job-chat panel | **DECIDED (owner, 2026-07-18): one unified chat** — A0's chat with the applicant profile: job-action chips, criteria edits via the confirmation gate, receipts-based answers, general assistance in the same thread |
+| D9 | Integrations posture: lanes stay on companion IMAP/CalDAV vs converge onto MCP providers (e.g. Google MCP feeding lanes via an adapter) | **DECIDED (owner, 2026-07-18): converge — committed as Phase AZ-7** (engine-side MCP-provider adapter; credentials collapse into Connections; companion retires when lanes cut over) |
+| D10 | Phone push / PWA distribution: wire the stack's `ntfy` (and/or PWA push) as an opt-in channel | **DECIDED (owner, 2026-07-18): ntfy ships as an opt-in phone-push channel in the ladder** (setup instructions in the Notifications panel); PWA push deferred |
+| D11 | Model-connect forks: keep/hide/curate A0's OAuth provider accounts for the Applicant audience | **DECIDED (owner, 2026-07-18): keep all three forks** (cloud key / provider account / local), copy curated for job-seekers; zero upstream edits |
+| D12 | Desktop/canvas exposure: full A0 general-agent surface vs curated subset for job seekers | **DECIDED (owner, 2026-07-18): curated default + power toggle** — job-search surfaces front and center; desktop/canvas/plugin-hub behind a "power tools" toggle (additive config, baked into the D1 redesign); the two-browser labeling from journey §7 applies whenever the desktop is visible |
 
 ## 6. Top risks
 

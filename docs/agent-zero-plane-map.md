@@ -56,9 +56,10 @@ a future merge conflict on `subtree pull`. So the whole strategy is built to avo
    A conflict on a namespaced path is therefore always a red flag to investigate, never auto-resolve.
 3. **Apply white-label branding at build time, not in git.** Logo/name/string swaps run in the Docker
    build or entrypoint against the pristine tree — so the *shipped* UI is white-labeled while the *tracked*
-   subtree stays pristine and pulls clean. This is what lets you keep updateability **and** white-label at
-   once; the price you pay is that the UI stays agent-zero's UX (branded), not a from-scratch redesign.
-   Going bespoke means editing UI files = giving up cheap updates. **That is the one decision to make.**
+   subtree stays pristine and pulls clean. **Decision (D1, owner): the UI goes bespoke** — implemented as a
+   managed out-of-tree fork of `webui/` applied over the pristine tree at build, so the *framework* subtree
+   still pulls clean while upstream **UI** changes become deliberate cherry-picks (UI updateability:
+   managed, not free). The build-time overlay mechanism above remains the delivery vehicle.
 
 ## The load-bearing decision: the safety line, restated for a general agent
 
@@ -89,11 +90,12 @@ caller can't reach around them. Co-location in one repo must not become co-locat
 
 ```text
 kevinhirsch/applicant  (the monorepo)
-├── agent-zero/           # PRISTINE git-subtree of upstream — never edit existing files
-│   ├── …upstream tree…   #   (agent.py, webui/, prompts/, …) left untouched → clean pulls
-│   ├── tools/applicant_*.py      # ADDED: engine capabilities as agent-zero tools (new files)
-│   ├── plugins/applicant/        # ADDED: Applicant plugin(s)          (new dir)
-│   └── prompts/_overlay/         # ADDED: white-label + role prompt overlays (new dir)
+├── agent-zero/           # PRISTINE git-subtree of upstream — NEVER edited (D6): byte-identical,
+│   └── …upstream tree…   #   (agent.py, webui/, prompts/, …) → framework pulls stay clean
+├── a0-applicant/         # Applicant plugin bundle (tools/api/prompts/extensions/webui panels) —
+│                         #   COPY'd into the image at /a0/usr/plugins/applicant (D6)
+├── a0-webui/             # bespoke UI — managed fork of webui/, applied over the subtree at build
+│                         #   (D1/D6; upstream UI changes are deliberate cherry-picks)
 ├── src/applicant/        # UNCHANGED engine — the called, gated capability
 ├── workspace/            # existing front-door — keep during transition; retire per plane 1
 ├── branding/             # white-label overlay (assets + string map) applied at BUILD time

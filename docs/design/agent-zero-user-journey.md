@@ -32,9 +32,13 @@ white-label check.
 | What stays untouched | internal code paths, upstream docs inside the subtree, license headers (MIT © Agent Zero, s.r.o. — attribution preserved in `THIRD_PARTY_LICENSES.md` / `ACKNOWLEDGMENTS`) | shipped-surface check scopes to the built artifact |
 | Copy discipline | every new user-facing string passes the H5 overclaim denylist (no guarantees, no coverage overclaims); capability claims derive from the engine's health report | AZ5-3 |
 
-**Depth of rebrand = D1 (branding-only recommended).** The UI keeps A0's layout and interaction
-patterns under Applicant's name and marks; a visual redesign would mean editing upstream UI files
-and forfeiting cheap updates.
+**Depth of rebrand = D1 — DECIDED (owner): bespoke redesign.** The shipped UI becomes Applicant's
+own look and layout, not just A0's chrome renamed. Execution keeps updateability "to the extent
+possible": the Python framework subtree stays pristine (pulls stay clean), while the bespoke UI is
+a **managed fork of `webui/`** maintained out-of-tree and applied over the pristine tree at build —
+upstream UI changes are cherry-picked deliberately. Phasing: the daily loop lands on branded chrome
+first (Phases 0–2); the redesign runs as its own workstream so product function is never blocked on
+visual design.
 
 ## 3. First run — the guided setup, screen by screen
 
@@ -142,10 +146,10 @@ never become a path around the engine — a Google MCP can read your calendar, b
 filling, and submitting remain exclusively the engine's guarded lane (AZ5-1's negative test
 covers third-party-tool bypasses too).
 
-**Later convergence (open, D9):** lanes could migrate from IMAP/CalDAV to MCP-based providers
-(e.g. a Google MCP feeding lane A/C through an engine-side adapter), collapsing the two planes'
-credential setup into one. Not phase-1 work; the companion path ships first because it exists and
-is tested.
+**Convergence — DECIDED (D9 → Phase AZ-7):** the lanes migrate from IMAP/CalDAV to MCP providers
+(an engine-side adapter feeds lanes A–C from e.g. a Google MCP), the two planes' credential setup
+collapses into Connections, and the companion retires after cutover. The companion path still
+ships first because it exists and is tested.
 
 ## 6. Notifications — fully formed
 
@@ -180,7 +184,9 @@ watch streamed reasoning and per-step progress in the chat's process groups; app
 answer from the Portal. A global pause/kill-switch stays one click away in the status strip.
 Voice in/out rides A0's native speech settings.
 
-**2 · The Canvas + the agent's desktop — the general co-work surface.** A0's right-canvas is
+**2 · The Canvas + the agent's desktop — the general co-work surface** *(per D12: curated by
+default — job-search surfaces lead, and the desktop/canvas/plugin-hub sit behind a "power tools"
+toggle the redesign bakes in)*. A0's right-canvas is
 where you *work alongside* the assistant: Applicant's panels (documents & redline, gallery,
 tracker, results) mount as canvas tabs, so a tailored résumé opens next to the chat that's
 discussing it — edits round-trip through the engine's redline review, provenance flags inline
@@ -227,12 +233,12 @@ the user must be able to answer "how do I make this work?" without leaving the p
 - **The assistant is the fallback manual:** "how do I …?" in chat answers from the same help
   content and can deep-link the surface — one source of truth, two doors.
 
-## 9. Open questions this blueprint raises (tracked, not resolved here)
+## 9. Decisions raised by this blueprint — **all resolved** (full table: backlog §5)
 
-| # | Question | Where tracked |
+| # | Decision | Outcome |
 |---|---|---|
-| 1 | Integrations posture: keep lanes on companion IMAP/CalDAV vs converge onto MCP providers | **D9** (backlog §5) |
-| 2 | Depth of rebrand beyond names/marks (welcome layout, iconography language) | D1 |
-| 3 | Does the PWA identity (installable app, notifications) become a first-class distribution channel? | D10 |
-| 4 | OAuth "provider account" forks (Codex/Copilot/Gemini/Grok) — keep, hide, or curate for the Applicant audience? | D11 |
-| 5 | How much of the raw agent desktop/canvas to expose vs curate for a job-seeker audience | D12 |
+| 1 | Integrations posture (D9) | **Converge onto MCP providers — committed as Phase AZ-7**; companion ships first |
+| 2 | Depth of rebrand (D1) | **Bespoke redesign** — managed `a0-webui/` fork, framework subtree pristine |
+| 3 | Phone push / PWA (D10) | **ntfy ships as an opt-in ladder channel**; PWA push deferred |
+| 4 | Model-connect forks (D11) | **Keep all three** (cloud key / provider account / local), job-seeker copy |
+| 5 | Desktop/canvas exposure (D12) | **Curated default + "power tools" toggle**; two-browser labeling applies when visible |
