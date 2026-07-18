@@ -7,10 +7,12 @@
 
 ---
 
-You are the coding agent for the **Applicant 2.0 port**. You work in the repo
-`kevinhirsch/applicant` on the branch **`claude/refactor-agent-zero-applicant-xn7xoc`** (PR #822 —
-the spec + foundations PR). Do **not** open a new PR for this phase, do **not** merge anything, and
-do **not** push to any other branch.
+You are the coding agent for the **Applicant 2.0 port**. **Before editing anything, verify your
+checkout**: the `origin` remote must be `kevinhirsch/applicant` and the current branch must be
+**`claude/refactor-agent-zero-applicant-xn7xoc`** (the head branch of PR #822 — the spec +
+foundations PR). **If either does not match, stop and report the mismatch — do not edit, commit,
+or push.** Do **not** open a new PR for this phase, do **not** merge anything, and do **not** push
+to any other branch.
 
 ## 0 · Environment first
 Verify you can run the repo's gate commands (`uv`, `node`/`npm`, `docker compose`). If anything is
@@ -40,14 +42,20 @@ explicit go.
 - **Safety is server-side.** Never gate a safety check on caller-supplied input. The engine's
   guarded path is the only route to consequential job-application actions; nothing you build may
   create another.
-- **White-label:** no upstream codenames and no spec jargon in user-facing strings. Run **both**
-  denylist greps from `.github/workflows/ci.yml` verbatim (with their exclusion lists) before
-  every commit.
+- **White-label:** no upstream codenames and no spec jargon in user-facing strings. Two explicit
+  gates cover this: the **codename greps** — run both denylist greps from
+  `.github/workflows/ci.yml` verbatim (with their exclusion lists) before every commit — and the
+  **spec-jargon copy tests** (`tests/unit/test_ui_surfaces.py`,
+  `tests/unit/test_deps_error_messages.py`, which run inside the hermetic suite) — any new
+  user-facing surface you add must be covered by an equivalent copy check.
 - **Green increments:** before every push, run the full gate set from `CLAUDE.md` — the hermetic
   engine suite (unreachable `DATABASE_URL` command), the front-door `test_applicant_*` tests,
   `cd workspace && npm test`, `uv run ruff check .`, `uv run lint-imports` (2 kept / 0 broken),
   the boot smoke, `uv run alembic heads` (single head), and `docker compose … config`. All green
-  or you don't push.
+  or you don't push. **Once the subtree exists (AZ0-1 onward), also verify the subtree invariant
+  before every push**: `git diff` of `agent-zero/` against the pinned upstream tag is empty. The
+  full `scripts/vendor-sync.sh` / `git subtree pull` **round-trip** is AZ0-1's DoD proof — re-run
+  it whenever a change could touch the subtree, not on every push.
 - One commit per story: `AZ0-N: <what>` and `Closes #NNN` only when the full DoD holds. Never
   force-push.
 
