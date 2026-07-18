@@ -110,7 +110,7 @@ Update flow: `scripts/vendor-sync.sh` → `git subtree pull --prefix=agent-zero 
 |---|-------|-------|--------------------------------------------------|--------|----------|
 | 1 | **UI / presentation** | **agent-zero** `webui/` (Alpine, no build) | branding via the build-time overlay; **add** Applicant's operator surfaces (Portal/pending-actions, digest review, redline) as agent-zero components/plugins, not core edits | **L** | If review/approval surfaces aren't reachable in the new UI, the safety boundary is **unoperable** (reachability = done). |
 | 2 | **General-agent / reasoning** | **agent-zero** `agent.py` + subordinate agents + `prompts/` (overlaid) | adopt as-is; steer via prompt **overlays**, not core edits | adopt | Must stay a **caller** of the vertical, never the authority over its gates. |
-| 3 | **Job-application capability** | **Applicant engine — called, not rebuilt** | (a) existing MCP server `/mcp/tools` registered in agent-zero; (b) `ports/driving/*` wrapped as `agent-zero/tools/applicant_*`; (c) `/api/applicant/*` + the ~130-method `applicant_engine.py` bridge | **S–M** | *"Call existing code where it makes sense."* Keep the moat: `prefill_service`, resume tailoring, discovery, fabrication guard, vault. |
+| 3 | **Job-application capability** | **Applicant engine — called, not rebuilt** | (a) the engine's MCP surface registered in agent-zero over a real MCP transport (SSE `/mcp`, needs the optional `mcp` extra in the image — the `/mcp/tools` JSON routes are discovery aids, not a transport); (b) `ports/driving/*` wrapped as `agent-zero/tools/applicant_*`; (c) `/api/applicant/*` + the ~130-method `applicant_engine.py` bridge | **S–M** | *"Call existing code where it makes sense."* Keep the moat: `prefill_service`, resume tailoring, discovery, fabrication guard, vault. |
 | 4 | **Safety / policy** *(cross-cutting)* | **Applicant** `core/rules/*` — server-side | enforced regardless of caller; consequential actions default-deny (`mcp.py` already) | keep + extend | **THE LINE.** Never migrate into prompts; never gate on caller input. |
 | 5 | **Orchestration / scheduling** | **split** | Applicant durable orchestration + 24/7 scheduler for the **vertical**; agent-zero's loop for **interactive** work | keep both | Don't let agent-zero's ephemeral session own durable scheduling. |
 | 6 | **Execution / sandbox / browser** | **split** | engine's camoufox/patchright + ATS state machine + stop-boundary for the **vertical**; agent-zero's Docker desktop + browser for **general compute** | keep both | **Sharp:** agent-zero's own browser/computer-use must NOT do a real application around the engine. Build on `core/rules/computer_use.py`. |
@@ -150,7 +150,7 @@ updateability — the one thing the owner explicitly asked to preserve — for n
 2. **Vendor the subtree** at `agent-zero/`; add a stub `scripts/vendor-sync.sh` and prove one clean
    `subtree pull` round-trips.
 3. **Prove the seam (smallest end-to-end test of the thesis):** stand up agent-zero, register the
-   engine's `/mcp/tools` as an MCP server, confirm the agent can list campaigns / pending-actions **and
+   engine's MCP surface (SSE `/mcp`, `mcp` extra installed) as an MCP server, confirm the agent can list campaigns / pending-actions **and
    that a submit attempt is refused server-side.**
 4. **Build-time branding overlay + denylist carve-out** for `agent-zero/**`; assert white-label on the
    shipped surface.

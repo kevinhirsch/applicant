@@ -12,6 +12,10 @@
 > **Owner's DoD:** an Agent Zero + Applicant **monorepo**; the product **feels like Applicant out
 > of the box** (core functions present, OOBE gathers the same mandatory information); upstream
 > agent-zero stays **update-able**.
+>
+> The fully-formed product experience (rebrand spec, guided setup screen-by-screen, daily
+> journeys, notifications, integrations, interactability/desktop) is
+> [`../design/agent-zero-user-journey.md`](../design/agent-zero-user-journey.md).
 
 ## 0. What it takes — the honest answer up front
 
@@ -75,7 +79,7 @@ internal service for lanes A–D; no public port) · `postgres` · `searxng` · 
 | Piece | Mechanism (file-grounded) |
 |---|---|
 | OOBE + all UI panels | one plugin (`applicant`) — `plugin.yaml`, `api/`, `webui/`, `extensions/webui/<breakpoint>/` into the ~60 `x-extension` points (sidebar, welcome cards, chat top, right-canvas panels, settings subsections via `settings_sections`) |
-| Engine access | plugin `api/` handlers proxying the engine (server-side, owner/internal-token pattern) + the engine's `/mcp/tools` registered as an MCP server in A0's `mcp_servers` setting (agent-visible, default-deny on consequential) |
+| Engine access | plugin `api/` handlers proxying the engine (server-side, owner/internal-token pattern) + the engine registered in A0's `mcp_servers` setting **over a real MCP transport**: the engine's SSE endpoint at `/mcp` — which mounts only with the optional `mcp` extra (`fastapi_mcp`), so **baking `uv sync --extra mcp` into the engine image becomes a deploy prerequisite of AZ0-6** — or a thin `stdio` adapter bridging A0's client to the native JSON `/mcp/tools` surface. (`/mcp/tools` alone is plain JSON, not an MCP transport; A0's client speaks `stdio`/`sse`.) Default-deny on consequential actions holds on every transport — it is enforced in the engine's tool handlers, not the transport layer |
 | Agent behavior | agent profile `agents/applicant/agent.yaml` + prompt overlays (job-search role, hard "never apply directly — use the engine capability" instructions; **guidance only** — enforcement stays server-side) |
 | Background cadence | A0's cron scheduler (`helpers/task_scheduler.py`) only for *shell-side* refresh; the 24/7 apply loop **stays in the engine's durable scheduler** |
 | Branding | build-time overlay: swap `webui/public/*` assets + `<title>`/`manifest.json` name; fail-closed artifact check in CI |
@@ -186,6 +190,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | 2 | Email inbox (lane C recent-emails scan; lane D digest UI host) | companion → plugin | IMAP pool + idle watcher stay in companion for the scan lane; the digest UI itself moves to the plugin (3.3 #1) — the *lane* and the *panel* decouple. A0's `_email_integration` plugin is a candidate replacement later (D3) | 4 |
 | 3 | Deep research (lane B) | companion | research handler + SearXNG stay; A0's own browser/knowledge is NOT wired into engine research initially (scope discipline) | 4 |
 | 4 | Fonts service, model-discovery plumbing, toast host, DOM anchors | plugin / A0-native | engine `/api/fonts` covers fonts (3.1 #7); A0 model config covers discovery (D2); A0 toasts/notification center replace `ui.js showToast`; DOM anchors die with the old shell | 1–3 |
+| 5 | Companion lane **configuration UI** (the mailbox/calendar credentials the lanes read — today configured in the retiring workspace Settings) | plugin | Settings → "Email & Calendar for your job search" subsection writes companion config; honest copy about what the lanes do with it (journey blueprint §5) | 3 |
 
 ### 3.9 General surfaces NOT carried (and why that's safe)
 
@@ -207,7 +212,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ0-3 | License/attribution ledger (Agent Zero s.r.o. MIT) + THIRD_PARTY/ACKNOWLEDGMENTS rows | S | eng | — |
 | AZ0-4 | Branding overlay (assets + name strings) + fail-closed branded-artifact CI check + denylist carve-out | M | eng | — |
 | AZ0-5 | Plugin skeleton (`a0-applicant/`) + build-time mount + hello-world panel via `x-extension` | M | eng | — |
-| AZ0-6 | **Seam proof**: engine MCP registered in A0; agent lists campaigns/pending; submit attempt refused server-side | M | eng | — |
+| AZ0-6 | **Seam proof**: engine MCP (SSE `/mcp`, `mcp` extra baked into the image — or `stdio` adapter) registered in A0; agent lists campaigns/pending; submit attempt refused server-side | M | eng | — |
 | **Phase AZ-1 — OOBE parity** | | | | |
 | AZ1-1 | Model-connect bridge: A0 model gate/onboarding → engine `POST /setup/llm` (D2) | M | both | — |
 | AZ1-2 | Applicant OOBE plugin: welcome + 12-section resumable intake, `apply_missing[]` honest completion | L | eng | — |
@@ -226,6 +231,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ3-3 | Mind panel + curation approvals (kept separate from A0 `_memory`) | M | eng | — |
 | AZ3-4 | Vault, Easy Apply, screening-answer library, interview prep, save-a-job, Today lens, switcher/shortcuts/demo/export/audit/update/debug | L | eng | — |
 | AZ3-5 | Dormant-surface preservation (desktop assist, aggressiveness) as present-but-grayed | S | eng | — |
+| AZ3-6 | Integrations settings: lane credentials re-home (email/calendar → companion) + Connections guidance (MCP plane vs lane plane, journey §5) | M | eng | — |
 | **Phase AZ-4 — Companion services** | | | | |
 | AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | — |
 | AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | — |
@@ -261,6 +267,10 @@ H5 overclaim denylist.
 | D6 | Plugin location: out-of-tree `a0-applicant/` (pristine subtree) vs in-subtree additive dir | **Out-of-tree** (supersedes plane-map sketch) |
 | D7 | Front-door retirement: retire at AZ6-4 vs keep dual-shell for a transition window | Decide at AZ6 with PAG-1 evidence; **lean retire** (companion keeps the lanes, not the UI) |
 | D8 | Chat: A0 chat as THE product chat vs a separate embedded job-chat panel | **A0 chat + applicant profile** — it's the point of the shell swap |
+| D9 | Integrations posture: lanes stay on companion IMAP/CalDAV vs converge onto MCP providers (e.g. Google MCP feeding lanes via an adapter) | **Companion first** (exists, tested); revisit convergence after AZ4-2 |
+| D10 | Phone push / PWA distribution: wire the stack's `ntfy` (and/or PWA push) as an opt-in channel | Decide at AZ3-1; low cost, high dogfood value |
+| D11 | Model-connect forks: keep/hide/curate A0's OAuth provider accounts for the Applicant audience | **Keep all three forks**, curate copy only |
+| D12 | Desktop/canvas exposure: full A0 general-agent surface vs curated subset for job seekers | **Full surface, labeled** (journey §7's two-browser framing); revisit with PAG-1 feedback |
 
 ## 6. Top risks
 
