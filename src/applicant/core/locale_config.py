@@ -119,7 +119,7 @@ class LocaleConfig:
         if any(marker in low for marker in self.sensitive_eeo_markers):
             return True
         word_re = re.compile(
-            r"(?:" + "|".join(re.escape(m) for m in self.sensitive_word_markers) + r")"
+            r"\b(?:" + "|".join(re.escape(m) for m in self.sensitive_word_markers) + r")\b"
         )
         return bool(word_re.search(low))
 
