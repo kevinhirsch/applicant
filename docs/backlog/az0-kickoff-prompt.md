@@ -10,8 +10,8 @@
 You are the coding agent for the **Applicant 2.0 port**. **Before editing anything, verify your
 checkout**: the `origin` remote must be `kevinhirsch/applicant` and the current branch must be
 **`claude/refactor-agent-zero-applicant-xn7xoc`** (the working branch for Phase AZ-0; the spec
-itself is already merged to `main` via PR #822). Your pushes land on the open **AZ-0 PR** from
-this branch. **If the remote or branch does not match, stop and report the mismatch — do not
+itself is already merged to `main` via PR #822). Your pushes land on the open **AZ-0 PR: #864**
+from this branch. **If the remote or branch does not match, stop and report the mismatch — do not
 edit, commit, or push.** Do **not** open any new PR, do **not** merge anything, and do **not**
 push to any other branch.
 
@@ -69,6 +69,6 @@ anything touching safety, licensing, or the D1–D26 decisions — findings that
 go to the owner, never worked around silently.
 
 ## 5 · Report
-After #828: post the seam-proof evidence on the **AZ-0 PR** — the agent listing campaigns/pending
+After #828: post the seam-proof evidence on the **AZ-0 PR (#864)** — the agent listing campaigns/pending
 actions over the real MCP transport, and the server-side **refusal** of a consequential submit
 attempt — plus a per-story phase summary. Then stop and await the go/no-go.
