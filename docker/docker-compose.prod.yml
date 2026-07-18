@@ -1,26 +1,58 @@
-# Applicant — PRODUCTION stack (FR-INSTALL-1/2/3, NFR-ZEROCLI-1).
+# Applicant — PRODUCTION stack (FR-INSTALL-1/2/3, NFR-ZEROCLI-1, AZ0-2).
 #
 # NEW production variant — do NOT edit the base docker-compose.yml. Differences
 # vs the base: secrets come from the environment (no hard-coded passwords),
 # pinned restart policies, a named volume for DB backups (used by update.sh
 # rollback), internal-only searxng (not published), and a healthcheck on the api.
 #
-# Stage 1 front-door topology: the vendored Applicant UI app (built from
-# ``../workspace``) is the public entry on ${APP_PORT:-8000} -> container 7000.
-# The Applicant ENGINE (``api``) is kept running but INTERNAL only — other
-# services and the UI reach it at http://api:8000 (no host publish). The UI app
-# brings its own ``chromadb`` and ``ntfy`` (copied from the workspace compose)
-# and REUSES the existing internal ``searxng`` below (not duplicated).
+# AZ-0 topology: the Agent Zero UI shell (``a0``) is the public entry on
+# ${APP_PORT:-8000} -> container 80. The Applicant ENGINE (``api``) is kept running
+# but INTERNAL only — services reach it at http://api:8000 (no host publish). The
+# former front-door UI is demoted to the headless ``companion`` service
+# (internal, at http://companion:7000) providing lanes A–D (calendar, email
+# inbox scan, deep research) to the engine via the internal callback channel.
 #
 # Validate with: docker compose -f docker/docker-compose.prod.yml config
 # Bring up with:  scripts/install.sh --apply
 services:
   # ---------------------------------------------------------------------------
-  # Front-door UI (public entry). Built from the vendored workspace app's own
-  # Dockerfile (serves uvicorn app:app on container port 7000). This is the host
-  # port the user opens.
+  # Agent Zero UI shell (public entry). The white-labeled general-agent + UI
+  # front-door. Applications are proxied to the engine (api) at http://api:8000.
   # ---------------------------------------------------------------------------
-  applicant-ui:
+  a0:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.a0
+    image: applicant/a0:latest
+    # Build locally; never try to PULL this name from a registry (not published).
+    pull_policy: build
+    # Optional so `docker compose config` validates before the first install
+    # writes the repo-root .env (install.sh persists DB creds + APP_URL there).
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # In-network service wiring: reach the Applicant ENGINE at http://api:8000.
+      ENGINE_URL: ${ENGINE_URL:-http://api:8000}
+    volumes:
+      # Persist Agent Zero user data (settings, chats, memory, skills, plugins).
+      - a0-data:/a0/usr
+    ports:
+      # Public front door: take over the main host port -> A0 container 80.
+      - "${APP_PORT:-8000}:80"
+    depends_on:
+      # Wait for the engine to report a REAL healthy /healthz before serving.
+      api:
+        condition: service_healthy
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # Companion (headless internal service). The former vendored workspace UI app,
+  # demoted to a headless internal service providing lanes A–D (calendar, email
+  # inbox scan, deep research) to the engine via its internal callback channel.
+  # No public port — reachable in-network at http://companion:7000.
+  # ---------------------------------------------------------------------------
+  companion:
     build:
       context: ../workspace
       dockerfile: Dockerfile
@@ -28,7 +60,7 @@ services:
         # Faster Debian mirror when deb.debian.org's CDN node is slow for this host
         # (set APT_MIRROR via install.sh's APPLICANT_APT_MIRROR; default = official CDN).
         APT_MIRROR: ${APT_MIRROR:-deb.debian.org}
-    image: applicant/ui:latest
+    image: applicant/companion:latest
     # Build locally; never try to PULL this name from a registry (not published).
     pull_policy: build
     # Optional so `docker compose config` validates before the first install
@@ -41,7 +73,7 @@ services:
       SEARXNG_INSTANCE: ${SEARXNG_INSTANCE:-http://searxng:8080}
       CHROMADB_HOST: ${CHROMADB_HOST:-chromadb}
       CHROMADB_PORT: ${CHROMADB_PORT:-8000}
-      # Stage-2 bridge: where the front-door UI reaches the Applicant ENGINE
+      # Stage-2 bridge: where the companion UI reaches the Applicant ENGINE
       # (the internal ``api`` service). The UI's engine client + feature layer
       # read this; default matches the in-network address exposed below.
       ENGINE_URL: ${ENGINE_URL:-http://api:8000}
@@ -51,8 +83,8 @@ services:
       # so BOTH containers (here + api) read the same value. Empty => the internal
       # channel is DISABLED on this side (every callback rejected).
       APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
-      # Stage 1: the UI app keeps its OWN sqlite, persisted on the data volume
-      # below (separate from the engine's Postgres). A later stage may converge.
+      # Stage 1: the companion app keeps its OWN sqlite, persisted on the data
+      # volume below (separate from the engine's Postgres and the a0 shell's data).
       DATABASE_URL: ${UI_DATABASE_URL:-sqlite:///./data/app.db}
       # User/group the container drops to (it chowns the bind/named data + logs).
       PUID: ${PUID:-1000}
@@ -64,9 +96,6 @@ services:
       # Lets the container reach local services on the Docker host (e.g. a host
       # Ollama at http://host.docker.internal:11434).
       - "host.docker.internal:host-gateway"
-    ports:
-      # Public front door: take over the main host port -> UI container 7000.
-      - "${APP_PORT:-8000}:7000"
     depends_on:
       searxng:
         condition: service_healthy
@@ -75,13 +104,12 @@ services:
       # RAG client retries an unready vector store rather than failing (issue #23).
       chromadb:
         condition: service_started
-      # Wait for the engine to report a REAL healthy /healthz (DB reachable) before
-      # the public front door starts serving — closes the window where the UI is up
-      # but the engine it proxies to is not yet ready.
+      # Wait for the engine to report a REAL healthy /healthz before serving.
       api:
         condition: service_healthy
+    # Headless internal service: no host ports published.
     healthcheck:
-      # Auth-exempt liveness endpoint on the UI app (returns {"status":"healthy"}).
+      # Auth-exempt liveness endpoint on the companion app.
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/api/health', timeout=5).status==200 else 1)\""]
       interval: 10s
       timeout: 6s
@@ -160,7 +188,8 @@ services:
       # presents. Same token as applicant-ui above; generated/persisted by
       # scripts/install.sh. Empty token => the engine's WorkspacePort.available()
       # is False and callers degrade gracefully (no callback attempted).
-      WORKSPACE_URL: http://applicant-ui:7000
+      # WORKSPACE_URL now points at the headless companion service for lanes A–D.
+      WORKSPACE_URL: http://companion:7000
       APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
       # Assistant learning & memory substrate (docs/spec/agent-intelligence.md).
       # The code default (config.py) is the self-contained in-process trio, kept
@@ -442,6 +471,7 @@ services:
   #   restart: always
 
 volumes:
+  a0-data:      # Agent Zero user data (usr/ — settings, chats, memory, skills, plugins)
   pgdata:
   pgbackups:  # DB backups for update.sh rollback (FR-INSTALL-2)
   checkpoints:  # durable shim checkpoint/mailbox state (FR-INSTALL-3/FR-DUR-3)

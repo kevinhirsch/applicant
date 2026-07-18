@@ -1,0 +1,33 @@
+FROM python:3.12-slim
+
+WORKDIR /a0
+
+# Copy vendored agent-zero subtree
+COPY agent-zero/ ./
+
+# Copy a0-applicant plugin bundle (built separately, mounted at runtime)
+# Copy a0-webui bespoke UI (built separately, mounted at runtime)
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt -r requirements2.txt
+
+# Create runtime directories
+RUN mkdir -p /a0/usr /a0/tmp
+
+# Expose ports
+EXPOSE 80 9000-9009
+
+# Set environment variables
+ENV FLASK_RUN_PORT=80
+ENV TF_CPP_MIN_LOG_LEVEL=3
+
+# Initialize and run
+CMD ["python", "run_ui.py"]
