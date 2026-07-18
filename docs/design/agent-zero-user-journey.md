@@ -91,7 +91,7 @@ applying yet?", the agent answers from setup-status — receipts, not vibes (H1)
 | Chat + general assistant | model connected |
 | Portal, digest, documents/review, tracker, results | profile complete (`apply_ready`) |
 | Email digest delivery | notification channels configured (Settings, optional) |
-| Live takeover / remote view | sandbox available (auto in the default stack) |
+| Live takeover / remote view | **health-derived**: the four-state gating reads the engine's sandbox/dormant registry; if the deployment lacks a takeover-capable sandbox (e.g. the optional `takeover-desktop` service is absent), the surface shows **locked with the reason**, never a dead button |
 | Desktop assist, aggressiveness control | ship present-but-grayed (dormant registry) |
 
 ## 4. Daily use — the five journeys
@@ -198,8 +198,9 @@ rules. The agent's own browser/desktop never touches a real application (AZ5-1's
 the engine's browser is never used for general browsing. The UI labels them differently —
 *"Assistant's workspace"* vs *"Live application session — guarded"* — so the safety split reads
 as a product feature, which it is. The optional `takeover-desktop` service (remote Chrome over
-CDP) remains the engine-side sandbox variant; FR-CUA desktop assist ships present-but-grayed
-until its driver is baked in, exactly as today.
+CDP) remains the engine-side sandbox variant; when it is absent, the takeover surface reports
+itself unavailable through the same health-derived gating (§3 Stage 4) rather than pretending.
+FR-CUA desktop assist ships present-but-grayed until its driver is baked in, exactly as today.
 
 ## 8. Every feature teaches itself — the instructions gate
 
