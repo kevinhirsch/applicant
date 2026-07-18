@@ -70,6 +70,7 @@ _ALLOWED_FILES = {
     # Fixture-shaped, fake key exercising the redaction/censor logic itself —
     # not a real, live credential.
     "tests/unit/test_observability.py",
+    "tests/unit/test_logging.py",
 }
 
 
