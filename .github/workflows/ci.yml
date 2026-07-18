@@ -131,6 +131,14 @@ jobs:
             exit 1
           fi
           echo 'branded artifact: clean'
+      # AZ0-5: a0-applicant plugin gates
+      - name: a0-applicant plugin syntax check
+        run: |
+          set -euo pipefail
+          python3 -c "import ast; ast.parse(open('a0-applicant/api/hello.py').read()); print('PYTHON SYNTAX OK')"
+          for f in a0-applicant/webui/*.html; do
+            [ -s "$f" ] && echo "$f exists" || { echo "::error::$f is empty"; exit 1; }
+          done
 
       # --- Secret scanning (P1-0, #651) ------------------------------------------
       # Dependency-free (no external action/binary download) so it works whether
