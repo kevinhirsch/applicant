@@ -164,4 +164,6 @@ updateability — the one thing the owner explicitly asked to preserve — for n
    tripwire is the agent's *own* browser/shell: prove a general-agent computer-use session cannot
    complete ATS login, form fill, upload, or submission around the engine (the attempt is blocked and
    surfaced, not silently completed), alongside the positive listing + MCP-refusal checks from step 3.
-7. **Then** decide how much of the existing front-door migrates — not before steps 3 and 5 prove the shape.
+7. **Then** execute the decided front-door path (D7/D15, backlog §5): full workspace-data migration
+   into the new shell, and the old front-door UI **retires at the ship gate** — no dual-UI window;
+   the companion keeps the data lanes until the AZ-7 cutover.
