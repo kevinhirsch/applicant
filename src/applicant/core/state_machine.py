@@ -151,6 +151,8 @@ def transition(frm: ApplicationState, to: ApplicationState) -> ApplicationState:
 
     Returns the new state on success; raises ``IllegalStateTransition`` otherwise.
     """
+    if frm is None or to is None:
+        raise IllegalStateTransition(frm, to)
     if not can_transition(frm, to):
         raise IllegalStateTransition(frm, to)
     return to
