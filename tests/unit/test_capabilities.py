@@ -36,6 +36,11 @@ class TestTexStatus:
 class TestLibreofficeWriterPresent:
     """Checks whether the Writer component is installed alongside soffice."""
 
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        _libreoffice_writer_present.cache_clear()
+
+
     def test_swriter_on_path(self):
         with patch("applicant.observability.capabilities.shutil.which") as mock_which:
             mock_which.side_effect = lambda name: f"/usr/bin/{name}" if name == "swriter" else None
@@ -77,6 +82,10 @@ class TestLibreofficeWriterPresent:
 
 class TestLibreofficeStatus:
     """Detects soffice/libreoffice and checks Writer component."""
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        _libreoffice_writer_present.cache_clear()
 
     def test_not_found(self):
         with patch("applicant.observability.capabilities.shutil.which", return_value=None):
