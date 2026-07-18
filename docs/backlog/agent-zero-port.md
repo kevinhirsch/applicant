@@ -16,6 +16,13 @@
 > The fully-formed product experience (rebrand spec, guided setup screen-by-screen, daily
 > journeys, notifications, integrations, interactability/desktop) is
 > [`../design/agent-zero-user-journey.md`](../design/agent-zero-user-journey.md).
+>
+> **Backlog governance (unified, 2026-07-18):** GitHub issues are the **canonical per-item
+> tracker** — every story here is one issue carrying the full story format with **explicit DoR
+> and DoD** (labels `az-port` + `az-<phase>`); this doc is the spec narrative + index, and the
+> §4 index links every issue. **Status lives on the issue.** The same contract covers the
+> road-to-market stories (already issue-mirrored, DoR/DoD backfilled 2026-07-18). No item exists
+> in only one place; no item ships without a DoR and a DoD.
 
 ## 0. What it takes — the honest answer up front
 
@@ -207,6 +214,12 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 
 ## 4. Phases & stories (index)
 
+**Canonical issues per story:** AZ0-1→6: #823 #824 #825 #826 #827 #828 · AZ1-1→4: #829 #830
+#831 #832 · AZ2-1→6: #833 #834 #835 #836 #837 #838 · AZ3-1→7: #839 #840 #841 #842 #843 #844
+#845 · AZR-1→3: #846 #847 #848 · AZ4-1→2: #849 #850 (AZ4-3 superseded by #861) · AZ5-1→3:
+#851 #852 #853 · AZ6: #854 #855 #856 #857 · **AZ6-5 = #671** (the existing PAG-1 gate,
+re-scoped — deliberately not duplicated) · #858 #859 · AZ7-1→4: #860 #861 #862 #863.
+
 | ID | Story | Effort | Owner | Status |
 |---|---|---|---|---|
 | **Phase AZ-0 — Foundations** | | | | |
@@ -243,7 +256,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | **Phase AZ-4 — Companion services** | | | | |
 | AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | — |
 | AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | — |
-| AZ4-3 | (Optional, later) replace email lane with A0 `_email_integration` (D3) | L | both | — |
+| AZ4-3 | ~~Replace email lane with the shell's email integration~~ | — | — | **SUPERSEDED by AZ7-2 (#861)** — the committed email-lane cutover |
 | **Phase AZ-5 — Safety & honesty proofs** | | | | |
 | AZ5-1 | Bypass negative test: A0 browser/shell cannot complete ATS login/fill/upload/submit around the engine | L | eng | — |
 | AZ5-2 | Prompt-overlay hardening + prompt-injection review of agent-visible surfaces | M | eng | — |
