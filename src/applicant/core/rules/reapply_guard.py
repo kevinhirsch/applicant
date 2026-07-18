@@ -48,6 +48,12 @@ def is_duplicate_application(
         if days_ago is None:
             # No age information → treat as a recent duplicate (fail-safe).
             return True
+        # Negative days_ago is data corruption (future timestamp); skip it.
+        try:
+            if float(days_ago) < 0:
+                continue
+        except (TypeError, ValueError):
+            return True
         try:
             if float(days_ago) <= cooldown_days:
                 return True
