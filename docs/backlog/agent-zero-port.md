@@ -253,7 +253,9 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ6-2 | Golden path G1–G9 on the new shell + two-window concurrency checks | L | eng | — |
 | AZ6-3 | Traceability + delivery-status update: reachability column re-pointed at A0 surfaces | M | eng | — |
 | AZ6-4 | Front-door retirement decision + execution (D7) | M | both | — |
-| AZ6-5 | **PAG-1 re-run on the new shell** (owner dogfood) | L | you | — |
+| AZ6-5 | **PAG-1 re-run on the new shell** (owner dogfood; **starts living in the shell from AZ-2** per D20) | L | you | — |
+| AZ6-6 | Full workspace-data migration (D15): chats→A0 history, notes/docs→canvas files, memory/skills→A0 memory — **runs before AZ6-4 retirement**; per-slice fidelity checks | L | eng | — |
+| AZ6-7 | Applicant 2.0 release engineering (D21): VERSION → 2.0.0, changelog, docs relaunch, P4 GTM refresh | M | both | — |
 | **Phase AZ-7 — Lane convergence onto MCP (committed follow-on, post-closure)** | | | | |
 | AZ7-1 | Engine-side MCP-provider adapter: lanes A–C consume MCP servers (calendar/email/research) behind the existing callback contract | L | eng | — |
 | AZ7-2 | Email lane cutover (MCP provider or A0 `_email_integration`) + parity tests vs AZ4-2 baseline | L | eng | — |
@@ -286,6 +288,16 @@ those instructions (journey blueprint §8; lens-12 help parity).
 | D10 | Phone push / PWA distribution: wire the stack's `ntfy` (and/or PWA push) as an opt-in channel | **DECIDED (owner, 2026-07-18): ntfy ships as an opt-in phone-push channel in the ladder** (setup instructions in the Notifications panel); PWA push deferred |
 | D11 | Model-connect forks: keep/hide/curate A0's OAuth provider accounts for the Applicant audience | **DECIDED (owner, 2026-07-18): keep all three forks** (cloud key / provider account / local), copy curated for job-seekers; zero upstream edits |
 | D12 | Desktop/canvas exposure: full A0 general-agent surface vs curated subset for job seekers | **DECIDED (owner, 2026-07-18): curated default + power toggle** — job-search surfaces front and center; desktop/canvas/plugin-hub behind a "power tools" toggle (additive config, baked into the D1 redesign); the two-browser labeling from journey §7 applies whenever the desktop is visible |
+| D13 | Visual identity source for the bespoke redesign | **DECIDED (owner, 2026-07-18): new identity, designed in AZ-R and proposed for owner approval** (mockups first; placeholder marks until blessed) |
+| D14 | Assistant persona & voice | **DECIDED (owner, 2026-07-18): "Applicant", warm-professional** — one name everywhere; H5-calibrated claims baked into the voice |
+| D15 | Workspace-data continuity at cutover | **DECIDED (owner, 2026-07-18): full migration** — everything portable moves into the new shell before retirement (chats→A0 history, notes/docs→canvas files, memory/skills→A0 memory; calendar/email stay live via companion until AZ-7). New story AZ6-6, sequenced before AZ6-4 |
+| D16 | Deployment resource posture (A0 desktop weight) | **DECIDED (owner, 2026-07-18): VM grows as needed** — Proxmox provisioning defaults bumped; requirements docs updated honestly (H5) |
+| D17 | General-agent autonomy defaults (outside the job lane) | **DECIDED (owner, 2026-07-18): A0 stock defaults**, incl. subordinate-agent spawning — the job lane's server-side gates and the AZ5-1 bypass test are unaffected |
+| D18 | Discord channel status | **DECIDED (owner, 2026-07-18): first-class** — ladder is in-app → Discord/ntfy → email, all opt-in |
+| D19 | Memory routing for user-stated "remember this" | **DECIDED (owner, 2026-07-18): route by content** — job-search facts → engine mind via curation approval; general preferences → A0 memory instantly; the assistant names where each item landed (H1) |
+| D20 | PAG-1 dogfood timing | **DECIDED (owner, 2026-07-18): owner dogfoods from AZ-2** (daily loop) — feedback steers AZ-3/AZ-R; PAG-1 formally passes at AZ-6 |
+| D21 | Release identity | **DECIDED (owner, 2026-07-18): Applicant 2.0** — VERSION → 2.0.0 at the ship gate; changelog/docs relaunch; P4 GTM items refresh in AZ-6. New story AZ6-7 |
+| D22 | Process for PR #822 + build | **DECIDED (owner, 2026-07-18): hold #822 open through AZ-0** — the spec PR absorbs the foundations (vendor, skeleton, seam proof); learnings fold into the docs; spec + foundations merge together once AZ0-6 validates the architecture |
 
 ## 6. Top risks
 
@@ -301,6 +313,8 @@ those instructions (journey blueprint §8; lens-12 help parity).
 
 ## 7. Suggested next increment
 
-**AZ0-1 + AZ0-5 + AZ0-6 as the first PR series** — vendor, skeleton, seam proof. AZ0-6 is the
-cheapest possible falsification of the whole strategy: if the agent can list campaigns over MCP
-and a submit attempt is refused server-side, every later phase builds on proven ground.
+**AZ0-1 + AZ0-5 + AZ0-6, landed on the spec PR itself** (per D22: #822 stays open through AZ-0 and
+merges spec + foundations together once the seam proof passes). AZ0-6 is the cheapest possible
+falsification of the whole strategy: if the agent can list campaigns over MCP and a submit attempt
+is refused server-side, every later phase builds on proven ground. From AZ-1 on, each increment is
+its own focused PR.

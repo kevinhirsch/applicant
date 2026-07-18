@@ -28,7 +28,8 @@ white-label check.
 | App name | `<title>` in `webui/index.html`; `name`/`short_name` in `webui/js/manifest.json` (PWA); `webui/login.html` brand | string overlay at build |
 | Marks | `webui/public/`: `favicon.svg`, `favicon_round.svg`, `icon.svg`, `icon-maskable.svg`, `a0-collapsed.svg`, `a0-fullDark.svg`, `darkSymbol.svg`, `splash.jpg` → Applicant marks | asset overlay at build |
 | Welcome & sidebar copy | welcome-screen hero + sidebar labels read as Applicant | string overlay + plugin `x-extension` cards (plugin copy is Applicant-native from the start) |
-| Agent identity | the assistant introduces itself as **Applicant**; role, tone, and job-search specialty defined in the `agents/applicant/` profile + prompt overlays; selected as default via `A0_SET_agent_profile` | additive files, no upstream edits |
+| Agent identity | the assistant introduces itself as **Applicant** in a **warm-professional voice** (D14 — competent career partner, one name everywhere); role, tone, and job-search specialty defined in the `agents/applicant/` profile + prompt overlays; selected as default via `A0_SET_agent_profile` | additive files, no upstream edits |
+| Identity source | a **new visual identity** (wordmark, icon, palette, type) is designed in AZ-R and proposed for owner approval (D13); placeholder marks carry the build until blessed | asset overlay at build |
 | What stays untouched | internal code paths, upstream docs inside the subtree, license headers (MIT © Agent Zero, s.r.o. — attribution preserved in `THIRD_PARTY_LICENSES.md` / `ACKNOWLEDGMENTS`) | shipped-surface check scopes to the built artifact |
 | Copy discipline | every new user-facing string passes the H5 overclaim denylist (no guarantees, no coverage overclaims); capability claims derive from the engine's health report | AZ5-3 |
 
