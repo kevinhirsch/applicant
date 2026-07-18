@@ -45,9 +45,15 @@ a future merge conflict on `subtree pull`. So the whole strategy is built to avo
 1. **Vendor agent-zero pristine** as a `git subtree` at `agent-zero/` (code physically in the monorepo →
    satisfies the DoD; `git subtree pull` keeps it update-able). Submodule is the lighter alternative but
    weaker for a "monorepo" DoD and awkward once you add files under its `tools/`.
-2. **Never edit upstream files.** All Applicant behavior goes into agent-zero's *native extension points*
-   as **new files** (new paths merge cleanly; edits to existing files do not): `tools/applicant_*`,
-   `plugins/`, prompt **overlays** in `prompts/`, MCP-server config, agent profiles, model presets.
+2. **Never edit upstream files.** Precisely: `agent-zero/` is an **upstream subtree with additive-only
+   local extensions** — "pristine" means every *upstream-tracked* file stays byte-identical, while
+   Applicant behavior goes into agent-zero's *native extension points* as **new files** (new paths merge
+   cleanly; edits to existing files do not): `tools/applicant_*`, `plugins/applicant/`, prompt
+   **overlays** in `prompts/_overlay/`, MCP-server config, agent profiles, model presets.
+   **Collision rule:** every local addition is namespaced (`applicant_*` file prefix or an
+   `applicant`/`_overlay` directory) so upstream can never legitimately introduce the same path; on
+   `subtree pull`, upstream changes touch only upstream paths and local additions ride along untouched.
+   A conflict on a namespaced path is therefore always a red flag to investigate, never auto-resolve.
 3. **Apply white-label branding at build time, not in git.** Logo/name/string swaps run in the Docker
    build or entrypoint against the pristine tree — so the *shipped* UI is white-labeled while the *tracked*
    subtree stays pristine and pulls clean. This is what lets you keep updateability **and** white-label at
@@ -81,7 +87,7 @@ caller can't reach around them. Co-location in one repo must not become co-locat
 
 ## Proposed monorepo layout
 
-```
+```text
 kevinhirsch/applicant  (the monorepo)
 ├── agent-zero/           # PRISTINE git-subtree of upstream — never edit existing files
 │   ├── …upstream tree…   #   (agent.py, webui/, prompts/, …) left untouched → clean pulls
@@ -115,9 +121,15 @@ Update flow: `scripts/vendor-sync.sh` → `git subtree pull --prefix=agent-zero 
 The vendored `agent-zero/` tree legitimately contains "Agent Zero" / `A0` / `agent0ai` in its *own*
 code and docs. The existing denylist (two greps, each with its own `:!` exclusion list — CLAUDE.md
 principle #3) would fail on it. Resolution, mirroring the Hermes/Nous model-family carve-out already in
-CI: **exclude `agent-zero/**` from the codename greps**, and instead assert white-label on the *shipped
-surface* — the build-time-branded UI output — so upstream self-references don't red-wall CI while the
-product surface stays clean. This is a real design task, not a one-liner.
+CI: **exclude `agent-zero/**` from the codename greps** (that exclusion covers *upstream-tracked content
+only*), and instead assert white-label on the *shipped surface* via a **fail-closed branded-artifact
+check**: the branding step must produce a concrete staging artifact (e.g. `dist/branded-ui/` — the
+overlay applied to `agent-zero/webui/` exactly as the Docker build ships it), and CI must (a) **run the
+branding step itself**, (b) **fail if the artifact is missing or the step errors** — an absent artifact
+must never pass as a clean scan — and (c) grep the artifact for the agent-zero identifier set
+(`Agent Zero`, `agent0ai`, `A0` word-bounded) with any hit failing the build. Otherwise upstream
+identifiers copied at build time would ship undetected precisely *because* of the repo-grep exclusion.
+This is a real design task, not a one-liner.
 
 ## Recommended shape
 
@@ -145,5 +157,9 @@ updateability — the one thing the owner explicitly asked to preserve — for n
 5. **Operator-surface parity:** bring Portal/pending-actions + digest/redline review into the Alpine UI
    as added components, so the safety boundary stays operable.
 6. **Boundary enforcement:** constrain agent-zero's general browser/computer-use from consequential
-   job-application actions (extend `core/rules/computer_use.py` + `prompt_injection.py`).
+   job-application actions (extend `core/rules/computer_use.py` + `prompt_injection.py`). **DoD includes
+   a negative end-to-end test of the bypass path** — step 3 proves only MCP refusal, but the real
+   tripwire is the agent's *own* browser/shell: prove a general-agent computer-use session cannot
+   complete ATS login, form fill, upload, or submission around the engine (the attempt is blocked and
+   surfaced, not silently completed), alongside the positive listing + MCP-refusal checks from step 3.
 7. **Then** decide how much of the existing front-door migrates — not before steps 3 and 5 prove the shape.
