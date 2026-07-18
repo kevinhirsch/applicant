@@ -316,7 +316,7 @@ those instructions (journey blueprint §8; lens-12 help parity).
 | D19 | Memory routing for user-stated "remember this" | **DECIDED (owner, 2026-07-18): route by content** — job-search facts → engine mind via curation approval; general preferences → A0 memory instantly; the assistant names where each item landed (H1) |
 | D20 | PAG-1 dogfood timing | **DECIDED (owner, 2026-07-18): owner dogfoods from AZ-2** (daily loop) — feedback steers AZ-3/AZ-R; PAG-1 formally passes at AZ-6 |
 | D21 | Release identity | **DECIDED (owner, 2026-07-18): Applicant 2.0** — VERSION → 2.0.0 at the ship gate; changelog/docs relaunch; P4 GTM items refresh in AZ-6. New story AZ6-7 |
-| D22 | Process for PR #822 + build | **DECIDED (owner, 2026-07-18): hold #822 open through AZ-0** — the spec PR absorbs the foundations (vendor, skeleton, seam proof); learnings fold into the docs; spec + foundations merge together once AZ0-6 validates the architecture |
+| D22 | Process for the spec + build | **REVISED (owner, 2026-07-18): spec merged first** — #822 landed the locked spec in `main` (squash `910b281`) after all bot findings were resolved, so it stands immutable while the external coding agent builds. AZ-0 proceeds on the restarted working branch under a dedicated **AZ-0 PR**; from AZ-1 on, each increment is its own focused PR. (Original hold-open plan superseded by the owner at merge time) |
 | D23 | Shell-side secret storage (model keys in A0 `usr/settings.json`, plaintext at rest) | **DECIDED (owner, 2026-07-18): accept A0's posture** — self-hosted, single-user disk-trust; the encrypted-at-rest relaxation for shell-side secrets is **documented honestly** (H5) in security docs + settings help copy. Engine vault posture unchanged for engine-side credentials |
 | D24 | Language support at 2.0 | **DECIDED (owner, 2026-07-18): English-only** — all new UI/help strings built i18n-ready (no hardcoded strings) so locales can land post-2.0 without rework |
 | D25 | General-agent spend guardrails | **DECIDED (owner, 2026-07-18): soft daily budget + alert** — user-configurable, sensible default; crossing it notifies via the ladder and asks before continuing heavy work, never hard-kills mid-task; honest usage counters in settings. Engine's job-lane cost rules unchanged |
@@ -343,8 +343,8 @@ by the new shell via the adapted playtest harness — asserted at AZ6-1.
 
 ## 7. Suggested next increment
 
-**AZ0-1 + AZ0-5 + AZ0-6, landed on the spec PR itself** (per D22: #822 stays open through AZ-0 and
-merges spec + foundations together once the seam proof passes). AZ0-6 is the cheapest possible
+**AZ0-1 + AZ0-5 + AZ0-6, landed on the dedicated AZ-0 PR** (per revised D22: the spec merged first
+via #822; the foundations build on the restarted working branch). AZ0-6 is the cheapest possible
 falsification of the whole strategy: if the agent can list campaigns over MCP and a submit attempt
 is refused server-side, every later phase builds on proven ground. From AZ-1 on, each increment is
 its own focused PR.
