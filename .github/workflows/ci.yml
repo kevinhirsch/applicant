@@ -61,6 +61,14 @@ jobs:
       #   • docs/spec/agent-intelligence.md            — FR-MIND attribution (Hermes guts)
       #   • docs/adr/0005-computer-use-cua-driver.md   — ADR attribution
       #   • docs/adr/0006-agent-intelligence-port.md   — ADR attribution
+      #
+      # Vendor subtree carve-out (AZ0-1, D6, 2026-07-18): agent-zero/ is a byte-pristine
+      # vendored subtree of agent0ai/agent-zero. Its upstream code legitimately contains
+      # codenames (Agent Zero / A0 / agent0ai) in its own source and docs. Agent-zero/**
+      # is excluded from the repo greps because white-label enforcement on the *shipped
+      # surface* is asserted separately by the build-time branded-artifact check (AZ0-4),
+      # which scans the branding staging artifact after the overlay is applied — not the
+      # pristine vendored tree.
       - name: White-label codename denylist
         run: |
           # docs/design/hig/color-wells.md is a genuine false positive: Apple's own API
@@ -72,10 +80,11 @@ jobs:
           # reuse this exact check as a page-specific regression guard on
           # landing.html — the pattern's own source text trips the repo-wide grep.
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
-               -- ':!.github' ':!*.lock' ':!uv.lock' \
+               -- ':!.github' ':!*.lock' ':!uv.lock' ':!agent-zero/**' \
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
                ':!docs/design/hig/color-wells.md' \
                ':!workspace/tests/test_landing_page_content.py' \
+               ':!scripts/vendor-sync.sh' \
                ':!workspace/tests/test_applicant_activation_funnel_09.py' \
                ':!workspace/tests/test_applicant_mind_help_lens12.py' \
                ':!workspace/tests/test_applicant_remote_help_lens12.py' \
@@ -87,7 +96,7 @@ jobs:
             exit 1
           fi
           if git grep -I -i -F 'hermes-agent' \
-               -- ':!.github' ':!*.lock' ':!uv.lock' \
+               -- ':!.github' ':!*.lock' ':!uv.lock' ':!agent-zero/**' \
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
                ':!workspace/services/memory/skill_format.py' \
                ':!docs/spec/master-spec.md' \
@@ -101,7 +110,8 @@ jobs:
                ':!workspace/tests/test_applicant_remote_help_lens12.py' \
                ':!workspace/tests/test_applicant_gallery_intro_lens12.py' \
                ':!workspace/tests/test_applicant_copy_digest_lens02.py' \
-               ':!workspace/tests/test_applicant_chat_polish_lens0102.py'; then
+               ':!workspace/tests/test_applicant_chat_polish_lens0102.py' \
+               ':!scripts/vendor-sync.sh'; then
             echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi
