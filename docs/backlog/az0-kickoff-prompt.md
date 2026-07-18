@@ -53,9 +53,12 @@ explicit go.
   `cd workspace && npm test`, `uv run ruff check .`, `uv run lint-imports` (2 kept / 0 broken),
   the boot smoke, `uv run alembic heads` (single head), and `docker compose … config`. All green
   or you don't push. **Once the subtree exists (AZ0-1 onward), also verify the subtree invariant
-  before every push**: `git diff` of `agent-zero/` against the pinned upstream tag is empty. The
-  full `scripts/vendor-sync.sh` / `git subtree pull` **round-trip** is AZ0-1's DoD proof — re-run
-  it whenever a change could touch the subtree, not on every push.
+  before every push — both halves**: (a) the tracked tree matches the pinned upstream tag
+  (`git diff` of `agent-zero/` vs the tag is empty), **and** (b) nothing untracked or ignored has
+  landed under it (`git status --ignored --porcelain -- agent-zero/` prints nothing) — a plain
+  diff alone cannot prove byte identity. The full `scripts/vendor-sync.sh` / `git subtree pull`
+  **round-trip** is AZ0-1's DoD proof — re-run it whenever a change could touch the subtree, not
+  on every push.
 - One commit per story: `AZ0-N: <what>` and `Closes #NNN` only when the full DoD holds. Never
   force-push.
 
