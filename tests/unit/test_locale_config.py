@@ -57,3 +57,85 @@ class TestNormalizePhone:
         # "   " → no digits → ""
         result = DEFAULT_LOCALE.normalize_phone("   ")
         assert result == ""
+
+
+class TestIsPhoneField:
+    """Cover is_phone_field: case-insensitive substring match against
+    phone_field_markers."""
+
+    def test_none_returns_false(self):
+        assert DEFAULT_LOCALE.is_phone_field(None) is False
+
+    def test_empty_string_returns_false(self):
+        assert DEFAULT_LOCALE.is_phone_field("") is False
+
+    def test_exact_marker_matches(self):
+        assert DEFAULT_LOCALE.is_phone_field("phone") is True
+        assert DEFAULT_LOCALE.is_phone_field("mobile") is True
+        assert DEFAULT_LOCALE.is_phone_field("telephone") is True
+        assert DEFAULT_LOCALE.is_phone_field("fax") is True
+
+    def test_case_insensitive(self):
+        assert DEFAULT_LOCALE.is_phone_field("PHONE") is True
+        assert DEFAULT_LOCALE.is_phone_field("Phone") is True
+        assert DEFAULT_LOCALE.is_phone_field("MoBiLe") is True
+
+    def test_substring_in_composite_name(self):
+        assert DEFAULT_LOCALE.is_phone_field("phone_number") is True
+        assert DEFAULT_LOCALE.is_phone_field("mobile_phone") is True
+        assert DEFAULT_LOCALE.is_phone_field("home_telephone") is True
+
+    def test_non_phone_field_returns_false(self):
+        assert DEFAULT_LOCALE.is_phone_field("email") is False
+        assert DEFAULT_LOCALE.is_phone_field("name") is False
+        assert DEFAULT_LOCALE.is_phone_field("address") is False
+
+
+class TestIsSensitiveField:
+    """Cover is_sensitive_field: substring match on sensitive_eeo_markers
+    plus word-boundary match on sensitive_word_markers."""
+
+    def test_none_returns_false(self):
+        assert DEFAULT_LOCALE.is_sensitive_field(None) is False
+
+    def test_empty_string_returns_false(self):
+        assert DEFAULT_LOCALE.is_sensitive_field("") is False
+
+    def test_substring_eo_markers_match(self):
+        assert DEFAULT_LOCALE.is_sensitive_field("ethnicity") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("gender") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("disability status") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("veteran status") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("sexual orientation") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("religion") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("marital status") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("date of birth") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("diversity") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("hispanic") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("latino") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("military service") is True
+
+    def test_word_boundary_markers_match(self):
+        assert DEFAULT_LOCALE.is_sensitive_field("race") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("sex") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("age") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("dob") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("eeo-1") is True
+
+    def test_case_insensitive(self):
+        assert DEFAULT_LOCALE.is_sensitive_field("GENDER") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("Race") is True
+        assert DEFAULT_LOCALE.is_sensitive_field("AGE") is True
+
+    def test_non_sensitive_field_returns_false(self):
+        assert DEFAULT_LOCALE.is_sensitive_field("name") is False
+        assert DEFAULT_LOCALE.is_sensitive_field("email address") is False
+        assert DEFAULT_LOCALE.is_sensitive_field("job title") is False
+        assert DEFAULT_LOCALE.is_sensitive_field("experience") is False
+
+    def test_word_boundary_prevents_false_positives(self):
+        # "race" inside a word shouldn't match via substring, but it does
+        # because "race" is in sensitive_word_markers with word boundaries.
+        # However, "ra" or "ce" alone shouldn't match.
+        assert DEFAULT_LOCALE.is_sensitive_field("preference") is False
+        assert DEFAULT_LOCALE.is_sensitive_field("sexiness") is False
