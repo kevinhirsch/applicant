@@ -58,6 +58,8 @@ def validate_id(value: str) -> str:
         raise ValueError("ID must not be empty")
     if "\x00" in value:
         raise ValueError("ID must not contain NUL bytes")
+    if any(c in value for c in "\t\n\r\f\v\x1b"):
+        raise ValueError("ID must not contain control characters")
     # Reject path-traversal patterns: ../, ..\, or bare .. at start
     normalized = value.replace("\\", "/")
     if normalized.startswith("..") or "/../" in normalized or "/.." == normalized:

@@ -47,6 +47,27 @@ class TestValidateId:
         with pytest.raises(ValueError, match="NUL"):
             validate_id("a\x00b\x00c")
 
+    # --- control characters ---
+    def test_tab_character(self):
+        with pytest.raises(ValueError, match="control"):
+            validate_id("abc\tdef")
+
+    def test_newline_character(self):
+        with pytest.raises(ValueError, match="control"):
+            validate_id("abc\ndef")
+
+    def test_carriage_return(self):
+        with pytest.raises(ValueError, match="control"):
+            validate_id("abc\rdef")
+
+    def test_form_feed(self):
+        with pytest.raises(ValueError, match="control"):
+            validate_id("abc\fdef")
+
+    def test_escape_character(self):
+        with pytest.raises(ValueError, match="control"):
+            validate_id("abc\x1bdef")
+
     # --- path traversal ---
     def test_dot_slash_slash(self):
         with pytest.raises(ValueError, match="traversal"):
