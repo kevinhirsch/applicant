@@ -165,3 +165,5 @@ The project would not exist without them — credit where credit is due:
 - **Claude** (Anthropic)
 - **Codex** (OpenAI)
 - Friends, for helping me debug.
+
+- **[Agent Zero](https://github.com/agent0ai/agent-zero)** by **Agent Zero, s.r.o.** — the general-purpose prompt-driven agent framework. Copyright (c) 2025 Agent Zero, s.r.o. **MIT License.** Vendored as byte-pristine git subtree at `agent-zero/` (tag v1.3). License at `agent-zero/LICENSE` and `workspaces/licenses/agent-zero-MIT-LICENSE.txt`.
