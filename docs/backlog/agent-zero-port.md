@@ -298,6 +298,17 @@ those instructions (journey blueprint §8; lens-12 help parity).
 | D20 | PAG-1 dogfood timing | **DECIDED (owner, 2026-07-18): owner dogfoods from AZ-2** (daily loop) — feedback steers AZ-3/AZ-R; PAG-1 formally passes at AZ-6 |
 | D21 | Release identity | **DECIDED (owner, 2026-07-18): Applicant 2.0** — VERSION → 2.0.0 at the ship gate; changelog/docs relaunch; P4 GTM items refresh in AZ-6. New story AZ6-7 |
 | D22 | Process for PR #822 + build | **DECIDED (owner, 2026-07-18): hold #822 open through AZ-0** — the spec PR absorbs the foundations (vendor, skeleton, seam proof); learnings fold into the docs; spec + foundations merge together once AZ0-6 validates the architecture |
+| D23 | Shell-side secret storage (model keys in A0 `usr/settings.json`, plaintext at rest) | **DECIDED (owner, 2026-07-18): accept A0's posture** — self-hosted, single-user disk-trust; the encrypted-at-rest relaxation for shell-side secrets is **documented honestly** (H5) in security docs + settings help copy. Engine vault posture unchanged for engine-side credentials |
+| D24 | Language support at 2.0 | **DECIDED (owner, 2026-07-18): English-only** — all new UI/help strings built i18n-ready (no hardcoded strings) so locales can land post-2.0 without rework |
+| D25 | General-agent spend guardrails | **DECIDED (owner, 2026-07-18): soft daily budget + alert** — user-configurable, sensible default; crossing it notifies via the ladder and asks before continuing heavy work, never hard-kills mid-task; honest usage counters in settings. Engine's job-lane cost rules unchanged |
+| D26 | Upstream tracking policy | **DECIDED (owner, 2026-07-18): agent0ai/agent-zero release tags, direct, on-demand** — vendor-sync PRs proposed deliberately on valuable/security releases; the owner's fork is not in the loop |
+
+**Eng-folded specifications** (decided by engineering with the obvious answer; recorded so they're testable):
+backup scope extends to all stateful volumes (A0 `usr/`, companion data) in `update.sh`/restore —
+lands with AZ0-2; local-only mode (`LLM_LOCAL_ONLY`) hides the cloud/OAuth model-connect forks —
+lands with AZ1-1; `a0-applicant/` + `a0-webui/` get their own CI gates (lint + tests + `node
+--check`-equivalent) — lands with AZ0-5; the mobile (375×812) and accessibility bars are inherited
+by the new shell via the adapted playtest harness — asserted at AZ6-1.
 
 ## 6. Top risks
 
