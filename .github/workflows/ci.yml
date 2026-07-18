@@ -117,6 +117,21 @@ jobs:
           fi
           echo "white-label clean"
 
+      # AZ0-4: Branded-artifact fail-closed check
+      - name: Branded-artifact check
+        run: |
+          set -euo pipefail
+          DIR="${RUNNER_TEMP}/branded-check"
+          rm -rf "$DIR" || true
+          cp -r agent-zero "$DIR"
+          bash scripts/apply-branding.sh "$DIR" || { echo '::error::Branding step errored'; exit 1; }
+          [ -f "$DIR/webui/index.html" ] || { echo '::error::Artifact missing'; exit 1; }
+          if grep -rn -i -E 'Agent Zero|agent0ai' "$DIR/webui" --include='*.html' --include='*.json' 2>&1 | grep -v node_modules/ | head -5; then
+            echo '::error::Upstream identifier in branded artifact'
+            exit 1
+          fi
+          echo 'branded artifact: clean'
+
       # --- Secret scanning (P1-0, #651) ------------------------------------------
       # Dependency-free (no external action/binary download) so it works whether
       # or not the runner has outbound network. Fails the build on anything that
