@@ -254,7 +254,7 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 | AZ6-3 | Traceability + delivery-status update: reachability column re-pointed at A0 surfaces | M | eng | — |
 | AZ6-4 | Front-door retirement decision + execution (D7) | M | both | — |
 | AZ6-5 | **PAG-1 re-run on the new shell** (owner dogfood; **starts living in the shell from AZ-2** per D20) | L | you | — |
-| AZ6-6 | Full workspace-data migration (D15): chats→A0 history, notes/docs→canvas files, memory/skills→A0 memory — **runs before AZ6-4 retirement**; per-slice fidelity checks | L | eng | — |
+| AZ6-6 | Full workspace-data migration (D15) via a **per-entity migration matrix** — rule 1: **engine-owned state never migrates** (applications, documents/redlines, provenance, curation state, attributes — their truth stays in Postgres; the shell renders it). Migrating slices: general chats→A0 history; general notes/personal docs→canvas files; general memory/skills→A0 memory; **job-search-relevant workspace memories→engine mind via a curation-gated import (D19)**. Per-slice fidelity checks (source/target counts + content spot-checks) prevent duplication or orphaning. **Runs before AZ6-4 retirement** | L | eng | — |
 | AZ6-7 | Applicant 2.0 release engineering (D21): VERSION → 2.0.0, changelog, docs relaunch, P4 GTM refresh | M | both | — |
 | **Phase AZ-7 — Lane convergence onto MCP (committed follow-on, post-closure)** | | | | |
 | AZ7-1 | Engine-side MCP-provider adapter: lanes A–C consume MCP servers (calendar/email/research) behind the existing callback contract | L | eng | — |
