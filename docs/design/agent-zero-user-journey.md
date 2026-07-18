@@ -194,8 +194,11 @@ engine's Postgres, not in these files** — snapshots never roll back applicatio
 application happens in a visually distinct panel — the embed of the **engine's** sandboxed
 browser (view → click-to-take-over → resume 2FA/account steps → the stop boundary's two submit
 affordances). It is deliberately **not** the A0 desktop: two different browsers with different
-rules. The agent's own browser/desktop never touches a real application (AZ5-1's negative test);
-the engine's browser is never used for general browsing. The UI labels them differently —
+rules. The agent's own browser/desktop **may** drive real GUI apps and ordinary websites for
+general work — the prohibition is precise: it never opens **live job-application flows** (ATS
+logins, application forms, uploads) and never performs an **application submission**; those exist
+only in the engine's guarded lane (AZ5-1's negative test). The engine's browser is never used for
+general browsing. The UI labels them differently —
 *"Assistant's workspace"* vs *"Live application session — guarded"* — so the safety split reads
 as a product feature, which it is. The optional `takeover-desktop` service (remote Chrome over
 CDP) remains the engine-side sandbox variant; when it is absent, the takeover surface reports
@@ -207,10 +210,13 @@ FR-CUA desktop assist ships present-but-grayed until its driver is baked in, exa
 **No feature ships without workable end-user instructions.** For every surface in this blueprint,
 the user must be able to answer "how do I make this work?" without leaving the product:
 
-- **In place:** every plugin panel carries a help affordance — plain-language, step-by-step
-  ("To connect Discord notifications: 1. … 2. … Send a test."), tooltips on every control, no
-  spec jargon. This is parity, not new doctrine: the current front-door's per-surface help is
-  pinned by tests (the lens-12 help suite), and the port carries that bar.
+- **In place:** every **user-facing surface** carries a help affordance — plugin panels, the
+  Portal, settings and model setup, the embedded live-application (takeover) view, and the
+  native A0 surfaces the product ships (chat, canvas/files, scheduler, Connections) alike —
+  plain-language, step-by-step ("To connect Discord notifications: 1. … 2. … Send a test."),
+  tooltips on every control, no spec jargon. No surface class is exempt. This is parity, not new
+  doctrine: the current front-door's per-surface help is pinned by tests (the lens-12 help
+  suite), and the port carries that bar.
 - **Workable means verified by following them:** a story's instructions are done when someone
   (the playtest agent, then the owner) completes the feature's task using *only* the on-surface
   instructions — a first-run walkthrough check in the adapted playtest protocol, not a copy

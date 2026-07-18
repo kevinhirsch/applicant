@@ -264,7 +264,7 @@ those instructions (journey blueprint §8; lens-12 help parity).
 
 | ID | Decision | Recommendation |
 |---|---|---|
-| D1 | UI bespoke-ness: branding-only (cheap updates) vs redesign (edits upstream UI = forfeits clean pulls) | **Branding-only** through Phase 6; revisit after PAG-1 |
+| D1 | UI bespoke-ness: branding-only (cheap updates) vs redesign (edits upstream UI = forfeits clean pulls) | **DECIDED (owner, 2026-07-18): bespoke redesign.** Mitigation: the Python framework subtree stays pristine (pulls stay clean); the bespoke UI is a **managed fork of `webui/`** maintained out-of-tree and applied over the pristine tree at build — upstream UI changes become deliberate cherry-picks. UI-layer updateability: managed, not free. Phasing: land Phases 0–2 on branding-only chrome first, then execute the redesign as its own workstream so the daily loop isn't blocked on visual design |
 | D2 | Model-config source of truth: A0's settings feed the engine, or the plugin drives both | **A0 collects, plugin syncs to engine**; the tier *ladder* stays engine-side |
 | D3 | Lanes A–D long-term: keep companion forever vs port (A0 `_email_integration`, plugin calendar) | **Companion now**; port email only if maintenance cost demands it |
 | D4 | Auth: accept single-user A0 login (drop workspace multi-user) | **Accept** — engine was always single-tenant |
