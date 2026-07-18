@@ -45,15 +45,15 @@ a future merge conflict on `subtree pull`. So the whole strategy is built to avo
 1. **Vendor agent-zero pristine** as a `git subtree` at `agent-zero/` (code physically in the monorepo →
    satisfies the DoD; `git subtree pull` keeps it update-able). Submodule is the lighter alternative but
    weaker for a "monorepo" DoD and awkward once you add files under its `tools/`.
-2. **Never edit upstream files.** Precisely: `agent-zero/` is an **upstream subtree with additive-only
-   local extensions** — "pristine" means every *upstream-tracked* file stays byte-identical, while
-   Applicant behavior goes into agent-zero's *native extension points* as **new files** (new paths merge
-   cleanly; edits to existing files do not): `tools/applicant_*`, `plugins/applicant/`, prompt
-   **overlays** in `prompts/_overlay/`, MCP-server config, agent profiles, model presets.
-   **Collision rule:** every local addition is namespaced (`applicant_*` file prefix or an
-   `applicant`/`_overlay` directory) so upstream can never legitimately introduce the same path; on
-   `subtree pull`, upstream changes touch only upstream paths and local additions ride along untouched.
-   A conflict on a namespaced path is therefore always a red flag to investigate, never auto-resolve.
+2. **Never touch the subtree at all (D6).** In git, `agent-zero/` is **100 % byte-pristine** — no
+   edits *and no additions*. All Applicant-owned code lives **out-of-tree** at `a0-applicant/` (the
+   plugin bundle), `a0-webui/` (the bespoke UI fork, D1), and `branding/`, and is applied over the
+   pristine tree **at Docker-build time** (the plugin lands at `/a0/usr/plugins/applicant`). The
+   framework's *native extension points* — plugin `api/`/`tools/`/`prompts/`/`extensions/`, agent
+   profiles, MCP-server config — are still exactly what the plugin plugs into, but at **runtime in
+   the image**, never as files committed inside the subtree. Enforcement is two-sided and
+   CI-checkable: empty tracked diff vs the pinned upstream tag AND nothing untracked/ignored under
+   `agent-zero/`. Any subtree change from any source is a red flag to investigate, never auto-resolve.
 3. **Apply white-label branding at build time, not in git.** Logo/name/string swaps run in the Docker
    build or entrypoint against the pristine tree — so the *shipped* UI is white-labeled while the *tracked*
    subtree stays pristine and pulls clean. **Decision (D1, owner): the UI goes bespoke** — implemented as a
@@ -112,7 +112,7 @@ Update flow: `scripts/vendor-sync.sh` → `git subtree pull --prefix=agent-zero 
 |---|-------|-------|--------------------------------------------------|--------|----------|
 | 1 | **UI / presentation** | **agent-zero** `webui/` (Alpine, no build) | branding via the build-time overlay; **add** Applicant's operator surfaces (Portal/pending-actions, digest review, redline) as agent-zero components/plugins, not core edits | **L** | If review/approval surfaces aren't reachable in the new UI, the safety boundary is **unoperable** (reachability = done). |
 | 2 | **General-agent / reasoning** | **agent-zero** `agent.py` + subordinate agents + `prompts/` (overlaid) | adopt as-is; steer via prompt **overlays**, not core edits | adopt | Must stay a **caller** of the vertical, never the authority over its gates. |
-| 3 | **Job-application capability** | **Applicant engine — called, not rebuilt** | (a) the engine's MCP surface registered in agent-zero over a real MCP transport (SSE `/mcp`, needs the optional `mcp` extra in the image — the `/mcp/tools` JSON routes are discovery aids, not a transport); (b) `ports/driving/*` wrapped as `agent-zero/tools/applicant_*`; (c) `/api/applicant/*` + the ~130-method `applicant_engine.py` bridge | **S–M** | *"Call existing code where it makes sense."* Keep the moat: `prefill_service`, resume tailoring, discovery, fabrication guard, vault. |
+| 3 | **Job-application capability** | **Applicant engine — called, not rebuilt** | (a) the engine's MCP surface registered in agent-zero over a real MCP transport (SSE `/mcp`, needs the optional `mcp` extra in the image — the `/mcp/tools` JSON routes are discovery aids, not a transport); (b) `ports/driving/*` wrapped as plugin tools in `a0-applicant/tools/` (mounted into the image at build, D6); (c) `/api/applicant/*` + the ~130-method `applicant_engine.py` bridge | **S–M** | *"Call existing code where it makes sense."* Keep the moat: `prefill_service`, resume tailoring, discovery, fabrication guard, vault. |
 | 4 | **Safety / policy** *(cross-cutting)* | **Applicant** `core/rules/*` — server-side | enforced regardless of caller; consequential actions default-deny (`mcp.py` already) | keep + extend | **THE LINE.** Never migrate into prompts; never gate on caller input. |
 | 5 | **Orchestration / scheduling** | **split** | Applicant durable orchestration + 24/7 scheduler for the **vertical**; agent-zero's loop for **interactive** work | keep both | Don't let agent-zero's ephemeral session own durable scheduling. |
 | 6 | **Execution / sandbox / browser** | **split** | engine's camoufox/patchright + ATS state machine + stop-boundary for the **vertical**; agent-zero's Docker desktop + browser for **general compute** | keep both | **Sharp:** agent-zero's own browser/computer-use must NOT do a real application around the engine. Build on `core/rules/computer_use.py`. |
