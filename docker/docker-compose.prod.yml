@@ -34,6 +34,14 @@ services:
     environment:
       # In-network service wiring: reach the Applicant ENGINE at http://api:8000.
       ENGINE_URL: ${ENGINE_URL:-http://api:8000}
+      # AZ0-6 / #828 seam: pre-register the engine's MCP surface as an A0 mcp_server so a
+      # fresh install discovers the engine's tools automatically (no manual Settings step).
+      # A0 seeds this default via get_default_value("mcp_servers", ...) -> A0_SET_MCP_SERVERS
+      # (helpers/settings.py + helpers/dotenv.py os.getenv). The engine mounts SSE at /mcp
+      # (src/applicant/app/mcp_server.py); consequential actions (submit) are refused
+      # server-side through the guarded review/stop-boundary services. Live seam-proof
+      # (tools discovered + submit refused end-to-end) is the separate #828 go/no-go.
+      A0_SET_MCP_SERVERS: '{"mcpServers": {"applicant-engine": {"url": "${ENGINE_URL:-http://api:8000}/mcp", "type": "sse", "disabled": false}}}'
     volumes:
       # Persist Agent Zero user data (settings, chats, memory, skills, plugins).
       - a0-data:/a0/usr
