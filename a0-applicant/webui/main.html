@@ -26,6 +26,7 @@
   .aoobe .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
   .aoobe .btn:disabled{opacity:.5;cursor:not-allowed}
   .aoobe .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aoobe .success-box{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
   .aoobe .done-box{text-align:center;padding:10px}
   .aoobe .done-box .material-symbols-outlined{font-size:52px}
   .aoobe .missing{text-align:left;background:var(--color-panel,#f2f5f7);border-radius:8px;padding:12px 14px;margin-top:1rem}
@@ -92,6 +93,54 @@
         </div>
       </template>
 
+      <!-- base_resume section template -->
+      <template x-if="current && current.id === 'base_resume'">
+        <div class="card">
+          <h2 x-text="current.title"></h2>
+          <p class="hint" x-text="current.hint"></p>
+          
+          <div style="margin:1rem 0">
+            <input type="file" id="resumeFile" accept=".pdf,.docx,.doc,.txt,.md" style="display:block;margin-bottom:.5rem">
+            <button class="btn primary" @click="uploadResume()" :disabled="uploading">
+              <span x-text="uploading ? 'Parsing…' : 'Upload & parse'"></span>
+            </button>
+          </div>
+          
+          <template x-if="resumeResult">
+            <div>
+              <div :class="resumeResult.ok ? 'success-box' : 'err'">
+                <template x-if="resumeResult.ok">
+                  <p><strong>I read <span x-text="resumeResult.data.parsed_field_count"></span> details from your résumé</strong></p>
+                </template>
+                <template x-if="!resumeResult.ok">
+                  <p x-text="'Error: ' + (resumeResult.error || 'Unknown error')"></p>
+                </template>
+              </div>
+              <template x-if="resumeResult.ok && resumeResult.data.health && resumeResult.data.health.verdict">
+                <p class="muted">Health: <span x-text="resumeResult.data.health.verdict"></span></p>
+              </template>
+              <template x-if="resumeResult.ok && resumeResult.data.conflicts && resumeResult.data.conflicts.length > 0">
+                <div style="margin-top:.75rem;padding:.5rem;background:var(--color-warning-bg,#fff3cd);border-radius:8px">
+                  <p style="font-weight:600;font-size:.85rem">Please confirm these items:</p>
+                  <template x-for="c in resumeResult.data.conflicts" :key="c.field">
+                    <p style="font-size:.82rem;margin:.2rem 0" x-text="c.field + ': ' + (c.parsed || '') + ' (currently: ' + (c.current || 'not set') + ')'"></p>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="row">
+            <button class="btn" @click="prev()" :disabled="step===0">Back</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn primary" @click="save()" :disabled="saving">
+                <span x-text="saving ? 'Saving…' : 'Save & continue'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- ready to finish -->
       <template x-if="!finished && !current">
         <div class="card done-box">
@@ -128,9 +177,10 @@
 </div>
 
 <script type="module">
-  import { callJsonApi } from "/js/api.js";
+  import { callJsonApi, getCsrfToken } from "/js/api.js";
 
   const SECTIONS = [
+    { id:"base_resume", title:"Your Résumé", hint:"Upload your résumé and I'll parse it — you confirm what I find." },
     { id:"identity", title:"Identity", hint:"How employers reach you. Parsed from your résumé later, but you can set it now.",
       fields:[{k:"full_name",label:"Full legal name"},{k:"email",label:"Email"},{k:"phone",label:"Phone"}] },
     { id:"work_authorization", title:"Work authorization", hint:"Used only to filter roles you're eligible for — never AI-answered on applications.",
@@ -167,6 +217,7 @@
     window.Alpine.data("applicantOnboarding", () => ({
       SECTIONS,
       loading: true, fatalError: "", sectionError: "", saving: false,
+      uploading: false, resumeResult: null,
       state: { sections_complete: [] }, step: 0, form: {}, finished: false,
       readyState: { apply_ready: false, apply_missing: [] },
 
@@ -212,6 +263,34 @@
         this.saving = false; await this.refresh(); this.next();
       },
       next() { if (this.step < this.SECTIONS.length) this.step++; this.loadForm(); },
+
+      async uploadResume() {
+        const el = document.getElementById('resumeFile');
+        if (!el || !el.files || !el.files[0]) { this.sectionError = 'Please select a file first.'; return; }
+        this.uploading = true; this.sectionError = ''; this.resumeResult = null;
+        try {
+          const fd = new FormData();
+          fd.append('file', el.files[0]);
+          const token = await getCsrfToken();
+          const r = await fetch('/api/a0-applicant/base_resume', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': token },
+            body: fd,
+          });
+          const resp = await r.json();
+          if (resp && resp.ok) {
+            this.resumeResult = { ok: true, data: resp.data };
+            this.form = { resume_parsed: true, parsed_data: resp.data };
+          } else {
+            this.resumeResult = { ok: false, error: (resp && resp.error) || 'Engine rejected the file' };
+          }
+        } catch (e) {
+          this.resumeResult = { ok: false, error: e.message || 'Upload failed' };
+        } finally {
+          this.uploading = false;
+        }
+      },
 
       async finish() {
         this.saving = true;
