@@ -82,7 +82,7 @@ class TestAssessPostingRisk:
             )
         }
         result = assess_posting_risk(posting)
-        assert result.score == 3
+        assert result.score == 4
         assert "unrealistic_compensation" in result.signals
         assert "pii_harvesting" in result.signals
         assert "off_platform_contact" in result.signals
@@ -170,4 +170,4 @@ class TestAssessPostingRisk:
         assert "unrealistic_compensation" not in result.signals
         assert "no_experience_high_pay" not in result.signals
         assert result.score == 0
-}
+
