@@ -183,26 +183,61 @@ def _tool_health_check(app_state) -> dict:
     }
 
 
-def mount_mcp(app: FastAPI) -> None:
-    """Mount the MCP server surface on the FastAPI app (#308).
+def _make_tool_route(tool_name: str):
+    """Build a read-only GET route handler for one MCP tool, reusing the guarded
+    application helpers. Tagged ``mcp-tool`` so fastapi_mcp auto-exposes it as an
+    MCP tool over SSE (route-based — fastapi_mcp derives tools from FastAPI routes;
+    it has no ``.tool()`` decorator, #872)."""
+    async def _route(request: Request):
+        storage = _container_storage(request.app.state)
+        if tool_name == "list_campaigns":
+            return _tool_list_campaigns(storage) if storage else []
+        if tool_name == "get_attributes":
+            return _tool_get_attributes(storage) if storage else []
+        if tool_name == "get_applications":
+            return _tool_get_applications(storage) if storage else []
+        if tool_name == "get_pending_actions":
+            return _tool_get_pending_actions(storage) if storage else []
+        if tool_name == "health":
+            return _tool_health_check(request.app.state)
+        return {"error": f"unknown tool {tool_name}"}
 
-    The native ``/mcp/tools`` + ``/mcp/tools/call`` JSON surface is ALWAYS
-    mounted (no optional dependency) so the engine advertises its capabilities
-    as MCP tools out of the box. When ``fastapi_mcp`` is also installed it
-    additionally mounts the SSE transport for streaming MCP clients.
+    _route.__name__ = f"mcp_tool_{tool_name}"
+    return _route
+
+
+def mount_mcp(app: FastAPI) -> None:
+    """Mount the MCP server surface on the FastAPI app (#308, #872).
+
+    Two surfaces: (1) the dependency-free native ``/mcp/tools`` + ``/mcp/tools/call``
+    JSON surface (always mounted); (2) per-tool GET routes tagged ``mcp-tool`` that
+    fastapi_mcp — when installed — exposes as MCP tools over the SSE transport at
+    ``/mcp``. Consequential actions (final submit) are never exposed: the
+    ``/mcp/tools/call`` dispatcher default-denies anything outside the read-only set,
+    keeping the human review / stop-boundary gate intact (the same boundary as HTTP).
+
+    #872: the previous implementation used FastMCP's API (``FastApiMCP(mount_path=...)``
+    + ``@mcp_server.tool()``), which fastapi_mcp does not have — the SSE transport never
+    mounted. fastapi_mcp is route-based, so tools are FastAPI routes here.
     """
-    # Always mount the dependency-free native MCP tool surface. Register the
-    # routes directly on the app (not via include_router) so they appear as flat
-    # APIRoutes with a ``/mcp`` path — discoverable by clients and reachability
-    # checks alike.
     if not any("/mcp/tools" in getattr(r, "path", "") for r in app.routes):
-        # Gate the surface the same way every other router in this codebase does
-        # (FR-UI-5) — unauthenticated/pre-setup requests get a 409, not real data.
+        # FR-UI-5 gate: pre-setup requests get a 409, not real data.
         mcp_deps = [Depends(require_llm_configured)]
         app.add_api_route("/mcp/tools", mcp_tools_list, methods=["GET"], tags=["mcp"], dependencies=mcp_deps)
         app.add_api_route("/mcp/tools/list", mcp_tools_list, methods=["POST"], tags=["mcp"], dependencies=mcp_deps)
         app.add_api_route("/mcp/tools/call", mcp_tools_call, methods=["POST"], tags=["mcp"], dependencies=mcp_deps)
-        logger.info("Native MCP tool surface mounted at /mcp/tools")
+        # Per-tool read-only routes, tagged for fastapi_mcp route-based exposure.
+        for spec in _NATIVE_TOOL_SPECS:
+            app.add_api_route(
+                f"/mcp/tool/{spec['name']}",
+                _make_tool_route(spec["name"]),
+                methods=["GET"],
+                tags=["mcp-tool"],
+                operation_id=f"mcp_tool_{spec['name']}",
+                summary=spec["description"],
+                dependencies=mcp_deps,
+            )
+        logger.info("Native MCP tool surface mounted at /mcp/tools + 5 per-tool routes")
 
     if not _fastapi_mcp_available:
         logger.info(
@@ -215,66 +250,17 @@ def mount_mcp(app: FastAPI) -> None:
     try:
         mcp_server = FastApiMCP(
             app,
-            mount_path="/mcp",
             name="Applicant Engine",
-            description="Autonomous job-application agent — MCP interface for "
-                        "external agents to discover and invoke guarded "
-                        "application services.",
+            description=(
+                "Autonomous job-application agent — MCP interface for external "
+                "agents to discover and invoke guarded, read-only application services."
+            ),
+            include_tags=["mcp-tool"],
         )
-
-        @mcp_server.tool()
-        async def list_campaigns() -> list[dict]:
-            """List all campaigns."""
-            container = getattr(app.state, "container", None)
-            if container is None:
-                return []
-            storage = getattr(container, "storage", None)
-            if storage is None:
-                return []
-            return _tool_list_campaigns(storage)
-
-        @mcp_server.tool()
-        async def get_attributes() -> list[dict]:
-            """List the attribute cloud (stored applicant facts)."""
-            container = getattr(app.state, "container", None)
-            if container is None:
-                return []
-            storage = getattr(container, "storage", None)
-            if storage is None:
-                return []
-            return _tool_get_attributes(storage)
-
-        @mcp_server.tool()
-        async def get_applications() -> list[dict]:
-            """List all applications and their states."""
-            container = getattr(app.state, "container", None)
-            if container is None:
-                return []
-            storage = getattr(container, "storage", None)
-            if storage is None:
-                return []
-            return _tool_get_applications(storage)
-
-        @mcp_server.tool()
-        async def get_pending_actions() -> list[dict]:
-            """List all open pending actions."""
-            container = getattr(app.state, "container", None)
-            if container is None:
-                return []
-            storage = getattr(container, "storage", None)
-            if storage is None:
-                return []
-            return _tool_get_pending_actions(storage)
-
-        @mcp_server.tool()
-        async def health() -> dict:
-            """Check the engine's health status."""
-            return _tool_health_check(app.state)
-
-        logger.info("MCP server surface mounted at /mcp")
-
+        mcp_server.mount_sse(app, mount_path="/mcp")
+        logger.info("MCP SSE transport mounted at /mcp (fastapi_mcp route-based, 5 tools)")
     except Exception as exc:
-        logger.warning("Failed to mount MCP surface: %s", exc)
+        logger.warning("Failed to mount MCP SSE surface: %s", exc)
 
 
 def wire_mcp_tools(container) -> list[dict[str, Any]]:
