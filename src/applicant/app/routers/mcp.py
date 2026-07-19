@@ -114,18 +114,24 @@ async def mcp_tools_call(request: Request, payload: dict) -> dict:
 def _tool_list_campaigns(storage) -> list[dict]:
     """List all campaigns in the system.
 
-    Returns basic campaign metadata (id, name, status, job_title).
+    Returns basic campaign metadata (id, name, active, run_mode, throughput).
+    (#872 follow-up: the Campaign entity has no ``status``/``job_title`` fields —
+    the previous handler referenced stale attributes and 500'd on any real campaign.)
     """
     campaigns = storage.campaigns.list()
-    return [
-        {
-            "id": str(c.id),
-            "name": c.name,
-            "status": c.status.value if hasattr(c.status, "value") else str(c.status),
-            "job_title": c.job_title,
-        }
-        for c in campaigns
-    ]
+    out = []
+    for c in campaigns:
+        run_mode = getattr(c, "run_mode", None)
+        out.append(
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "active": bool(getattr(c, "active", True)),
+                "run_mode": run_mode.value if hasattr(run_mode, "value") else str(run_mode or ""),
+                "throughput_target": getattr(c, "throughput_target", None),
+            }
+        )
+    return out
 
 
 def _tool_get_attributes(storage) -> list[dict]:
