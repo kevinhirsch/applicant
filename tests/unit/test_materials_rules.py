@@ -1,8 +1,9 @@
 """Unit tests for the pure material-generation rules (Phase 3 part B).
 
 Covers the cover-letter on-demand decision (FR-RESUME-10), the screening
-factual/essay/sensitive classifier (FR-ANSWER-1), and the aggressiveness dial
-clamp/directive (FR-RESUME-9, dormant per FR-UI-2).
+factual/essay/sensitive classifier (FR-ANSWER-1), the aggressiveness dial
+clamp/directive (FR-RESUME-9, dormant per FR-UI-2), and the screening
+question normalisation (product-gaps #20).
 """
 
 from __future__ import annotations
@@ -17,8 +18,16 @@ from applicant.core.rules.materials import (
     aggressiveness_directive,
     clamp_aggressiveness,
     classify_screening_question,
+    normalize_screening_question,
     should_generate_cover_letter,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_cache() -> None:
+    """Parallel-execution safety: clear any module-level cache (none yet, but
+    prepares for xdist)."""
+    pass
 
 
 # === cover letters on demand (FR-RESUME-10) ================================
@@ -121,6 +130,57 @@ def test_ambiguous_long_question_defaults_to_essay():
     )
 
 
+# === screening question normalisation (product-gaps #20) ===================
+@pytest.mark.unit
+def test_normalize_trailing_punctuation():
+    """Collapse trailing ?.! and whitespace."""
+    assert normalize_screening_question("Why this company?") == "why this company"
+    assert normalize_screening_question("Why this company??") == "why this company"
+    assert normalize_screening_question("Why this company!") == "why this company"
+    assert normalize_screening_question("Why this company.") == "why this company"
+
+
+@pytest.mark.unit
+def test_normalize_internal_whitespace():
+    """Collapse multiple internal spaces into one."""
+    assert (
+        normalize_screening_question("Why  do  you  want   this  job?")
+        == "why do you want this job"
+    )
+
+
+@pytest.mark.unit
+def test_normalize_case_insensitive():
+    """Lowercase the text."""
+    assert normalize_screening_question("WHY THIS COMPANY?") == "why this company"
+    assert normalize_screening_question("Why This Company?") == "why this company"
+
+
+@pytest.mark.unit
+def test_normalize_blank_is_empty():
+    """Blank/whitespace-only input returns empty string."""
+    assert normalize_screening_question("") == ""
+    assert normalize_screening_question("   ") == ""
+    assert normalize_screening_question(None) == ""
+
+
+@pytest.mark.unit
+def test_normalize_returns_deterministic_key():
+    """Same question with/without trailing punctuation yields same key."""
+    assert normalize_screening_question("Why this company?") == normalize_screening_question(
+        "why this company"
+    )
+
+
+@pytest.mark.unit
+def test_normalize_preserves_internal_punctuation():
+    """Internal punctuation like hyphens or apostrophes is preserved."""
+    result = normalize_screening_question("What's your approach to C++?")
+    assert "what" in result
+    assert "approach" in result
+    assert result == "what's your approach to c++"
+
+
 # === aggressiveness dial (FR-RESUME-9, dormant per FR-UI-2) ================
 @pytest.mark.unit
 def test_clamp_aggressiveness_bounds_and_default():
@@ -136,3 +196,14 @@ def test_aggressiveness_directive_never_licenses_fabrication():
     for v in (0, 20, 50, 80, 100):
         directive = aggressiveness_directive(v)
         assert "not in the source" in directive  # truthfulness preserved at every level
+
+
+@pytest.mark.unit
+def test_aggressiveness_directive_thresholds():
+    """High (>=67) assertive, low (<=33) measured, middle balanced."""
+    high = aggressiveness_directive(67)
+    assert "assertively" in high
+    low = aggressiveness_directive(33)
+    assert "understated" in low
+    mid = aggressiveness_directive(50)
+    assert "balanced" in mid
