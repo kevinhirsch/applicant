@@ -133,6 +133,12 @@ class TestForward:
 
         mock_build.assert_called_once_with(b"pdf-bytes", "my_resume.pdf")
 
+    def test_default_timeout_at_least_120(self, mod):
+        import inspect
+        sig = inspect.signature(mod.forward)
+        default_timeout = sig.parameters["timeout"].default
+        assert default_timeout >= 120, f"timeout default is {default_timeout}, expected >= 120"
+
 
 # ── helpers for the fake responses ──────────────────────────────────────────
 

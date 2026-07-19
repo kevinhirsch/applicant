@@ -37,7 +37,7 @@ def build_multipart_body(file_bytes: bytes, filename: str, field_name: str = "fi
     return body, f"multipart/form-data; boundary={boundary}"
 
 
-def forward(cid: str, file_bytes: bytes, filename: str, timeout: int = 30) -> dict:
+def forward(cid: str, file_bytes: bytes, filename: str, timeout: int = 120) -> dict:
     """POST a multipart base-resume file to the engine; return normalized envelope."""
     body, content_type = build_multipart_body(file_bytes, filename)
     headers = {"Content-Type": content_type}
@@ -57,6 +57,7 @@ def forward(cid: str, file_bytes: bytes, filename: str, timeout: int = 30) -> di
 
 class BaseResume(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
+        """Extract file, then forward to engine with a 120 s timeout to accommodate the LLM parse-verify+fallback."""
         cid = str((input or {}).get("campaign_id") or "__system__").strip() or "__system__"
 
         # Try Flask-style file upload from the request object
@@ -73,4 +74,4 @@ class BaseResume(ApiHandler):
             else:
                 return {"ok": False, "status": 400, "error": "no file provided"}
 
-        return forward(cid, file_bytes, filename)
+        return forward(cid, file_bytes, filename, timeout=120)
