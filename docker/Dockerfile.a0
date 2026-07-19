@@ -14,8 +14,12 @@ FROM agent0ai/agent-zero:v2.4
 # (see docker/docker-compose.prod.yml, AZ0-6/#828): a0 seeds its mcp_servers default
 # from that env var, pre-registering the Applicant engine's SSE /mcp surface.
 
-# TODO(AZ0-5 build-mount gap): overlay the a0-applicant/ plugin bundle into the
-# a0-data volume. A straight `COPY a0-applicant/ /a0/usr/plugins/applicant/` is
-# masked by the named `a0-data:/a0/usr` volume on first boot, so the overlay must
-# be seeded via the framework's usr-init (or the volume pre-populated). Deferred:
-# not required for the #828 seam-proof (engine registration is env-driven).
+# AZ0-5 build-mount: overlay the Applicant plugin bundle so the shell loads it.
+# It goes in /a0/plugins (the framework's BUILT-IN plugin root — helpers/plugins.py
+# get_plugin_roots() scans both usr/plugins and plugins/), NOT /a0/usr/plugins:
+# the a0-data:/a0/usr named volume MASKS image content under /a0/usr on first boot,
+# so a shipped plugin placed there is hidden (and would never update with a release).
+# /a0/plugins is image content, unmasked, and refreshed on every image update — the
+# right home for a shipped-immutable product plugin (per-user config still lives in
+# the /a0/usr volume). The subtree stays byte-pristine (additive overlay, D6).
+COPY a0-applicant/ /a0/plugins/applicant/
