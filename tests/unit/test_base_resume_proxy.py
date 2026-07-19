@@ -123,6 +123,16 @@ class TestForward:
         assert r["status"] == 0
         assert "refused" in r["error"]
 
+    def test_forward_calls_build_multipart_body_with_correct_args(self, mod):
+        fake_resp = FakeResponse(200, json.dumps({"status": "ok"}))
+
+        with patch.object(mod, "build_multipart_body") as mock_build:
+            mock_build.return_value = (b"--body--", "multipart/xyz")
+            with patch("urllib.request.urlopen", return_value=fake_resp):
+                mod.forward("c1", b"pdf-bytes", "my_resume.pdf")
+
+        mock_build.assert_called_once_with(b"pdf-bytes", "my_resume.pdf")
+
 
 # ── helpers for the fake responses ──────────────────────────────────────────
 
