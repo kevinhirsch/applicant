@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Lazy imports — fastapi_mcp is optional
 _fastapi_mcp_available = False
 try:
-    from fastapi_mcp import FastApiMcp
+    from fastapi_mcp import FastApiMCP
     _fastapi_mcp_available = True
 except ImportError:
     _fastapi_mcp_available = False
@@ -32,7 +32,7 @@ except ImportError:
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 """FastAPI router for MCP endpoints.
 
-The actual MCP tool listing (/mcp) is handled by FastApiMcp mounting.
+The actual MCP tool listing (/mcp) is handled by FastApiMCP mounting.
 This router serves as a namespace marker.
 """
 
@@ -213,7 +213,7 @@ def mount_mcp(app: FastAPI) -> None:
         return
 
     try:
-        mcp_server = FastApiMcp(
+        mcp_server = FastApiMCP(
             app,
             mount_path="/mcp",
             name="Applicant Engine",

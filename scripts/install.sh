@@ -837,13 +837,13 @@ fi
 # verbosely (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
 phase "Building the local images (front-door UI + engine api)"
 ui_step "Streaming build output below (this is the long part — texlive + browsers)…"
-run_retry "Image build" dc -f "${COMPOSE_FILE}" build applicant-ui api
+run_retry "Image build" dc -f "${COMPOSE_FILE}" build a0 api
 
 # --- Phase 4: migrate the schema BEFORE the api serves ----------------------
 # The engine queries app_config AS IT BOOTS, so the schema must exist first. Bring
 # up only Postgres, then run alembic in a throwaway api container (env.py imports
 # model metadata only). A full `up -d` here would crash-loop the api on the missing
-# table and, because applicant-ui depends_on api: service_healthy, abort the up.
+# table and, because a0 depends_on api: service_healthy, abort the up.
 phase "Migrating the schema (alembic upgrade head) BEFORE the api serves"
 run dc -f "${COMPOSE_FILE}" up -d postgres
 # Snapshot the DB into the pgbackups volume BEFORE migrating so a bad migration is
@@ -879,7 +879,7 @@ if [[ "${APPLY}" -eq 1 ]]; then
     ui_warn "Stack not green yet — attempting self-heal (repair /data volume ownership)…"
     dc -f "${COMPOSE_FILE}" run --rm --user 0:0 --no-deps --entrypoint sh api \
         -c 'chown -R 10001:10001 /data /control 2>/dev/null || true' >/dev/null 2>&1 || true
-    dc -f "${COMPOSE_FILE}" up -d --force-recreate api applicant-ui >/dev/null 2>&1 || true
+    dc -f "${COMPOSE_FILE}" up -d --force-recreate api a0 >/dev/null 2>&1 || true
     if monitor_health "${APP_PORT}"; then
       ui_ok "Self-heal succeeded — the stack is green."
     else

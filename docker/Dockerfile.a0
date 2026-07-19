@@ -1,33 +1,21 @@
-FROM python:3.12-slim
+# Applicant V2 shell image.
+#
+# Build ON the pristine published upstream Agent Zero image (D6 / D26: the vendored
+# agent-zero/ subtree is byte-identical to the agent0ai/agent-zero v2.4 release, so
+# the image already has a fully dependency-resolved runtime). The previous stub
+# rebuilt the framework from python:3.12-slim with a naive
+#   pip install -r requirements.txt -r requirements2.txt
+# which hits a hard, deterministic conflict (requirements.txt vs requirements2.txt:
+# openai==1.99.5 / litellm ResolutionImpossible). Building FROM the release image
+# avoids re-resolving deps entirely and matches what actually runs in production.
+FROM agent0ai/agent-zero:v2.4
 
-WORKDIR /a0
+# Engine MCP registration is injected at runtime via A0_SET_MCP_SERVERS
+# (see docker/docker-compose.prod.yml, AZ0-6/#828): a0 seeds its mcp_servers default
+# from that env var, pre-registering the Applicant engine's SSE /mcp surface.
 
-# Copy vendored agent-zero subtree
-COPY agent-zero/ ./
-
-# Copy a0-applicant plugin bundle (built separately, mounted at runtime)
-# Copy a0-webui bespoke UI (built separately, mounted at runtime)
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    ca-certificates \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt -r requirements2.txt
-
-# Create runtime directories
-RUN mkdir -p /a0/usr /a0/tmp
-
-# Expose ports
-EXPOSE 80 9000-9009
-
-# Set environment variables
-ENV FLASK_RUN_PORT=80
-ENV TF_CPP_MIN_LOG_LEVEL=3
-
-# Initialize and run
-CMD ["python", "run_ui.py"]
+# TODO(AZ0-5 build-mount gap): overlay the a0-applicant/ plugin bundle into the
+# a0-data volume. A straight `COPY a0-applicant/ /a0/usr/plugins/applicant/` is
+# masked by the named `a0-data:/a0/usr` volume on first boot, so the overlay must
+# be seeded via the framework's usr-init (or the volume pre-populated). Deferred:
+# not required for the #828 seam-proof (engine registration is env-driven).
