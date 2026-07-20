@@ -145,3 +145,9 @@ class TestSidebarLauncher:
 
     def test_has_documents_label(self, html):
         assert "Documents" in html
+
+    def test_opens_takeover_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/takeover.html')" in html
+
+    def test_has_takeover_label(self, html):
+        assert "Live session" in html

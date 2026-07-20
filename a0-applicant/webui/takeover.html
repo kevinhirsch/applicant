@@ -1,0 +1,215 @@
+<!-- AZ2 takeover (#836) — live session monitoring and operator controls. -->
+<style>
+  .atakeover{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .atakeover h1{font-size:1.5rem;margin:0 0 .25rem}
+  .atakeover .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .atakeover .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .atakeover .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .atakeover .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .atakeover .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .atakeover .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .atakeover .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .atakeover .btn.success{background:var(--color-success,#28a745);color:#fff;border-color:var(--color-success,#28a745)}
+  .atakeover .btn.danger{background:var(--color-danger-text,#9b1c1c);color:#fff;border-color:var(--color-danger-text,#9b1c1c)}
+  .atakeover .btn.warning{background:var(--color-warning-text,#856404);color:#fff;border-color:var(--color-warning-border,#ffeeba)}
+  .atakeover .btn:disabled{opacity:.5;cursor:not-allowed}
+  .atakeover .btn.small{padding:4px 10px;font-size:.75rem}
+  .atakeover .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .atakeover .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:atakeover-spin .6s linear infinite}
+  @keyframes atakeover-spin{to{transform:rotate(360deg)}}
+  .atakeover .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .atakeover .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .atakeover .section{margin-bottom:1.5rem}
+  .atakeover .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .atakeover .section h3{font-size:1rem;margin:.75rem 0 .4rem}
+  .atakeover .iframe-wrap{border:1px solid var(--color-border,#d8e0e6);border-radius:8px;overflow:hidden;margin-bottom:.75rem}
+  .atakeover .iframe-wrap iframe{width:100%;height:400px;border:none}
+  .atakeover .actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:.75rem}
+  .atakeover .app-id-input{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .atakeover .app-id-input input{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .atakeover .app-id-input label{font-weight:600;font-size:.85rem}
+</style>
+
+<div class="atakeover" x-data="takeoverPanel()">
+  <h1>📺 Live Takeover</h1>
+  <p class="sub">Monitor live sessions and control operator-assisted applications.</p>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <!-- Session picker -->
+    <div class="picker">
+      <label>Live session</label>
+      <select x-model="selectedSessionId" @change="onSessionSelect()">
+        <option value="">Select a session…</option>
+        <template x-for="s in sessions" :key="s.id || s.session_id">
+          <option x-bind:value="s.id || s.session_id" x-text="(s.id || s.session_id) + ' — ' + (s.label || s.status || '')"></option>
+        </template>
+      </select>
+    </div>
+
+    <div class="empty" x-show="sessions.length === 0 && !loading">
+      <h2>No live sessions</h2>
+      <p>No live sessions available.</p>
+    </div>
+
+    <div x-show="selectedSessionId">
+      <!-- Watch live section -->
+      <div class="section">
+        <h2>👁️ Watch live</h2>
+
+        <div x-show="viewUrlLoading"><div class="spinner"></div> Loading view URL…</div>
+
+        <div class="iframe-wrap" x-show="viewUrl && !viewUrlLoading">
+          <iframe x-bind:src="viewUrl" allow="camera;microphone;fullscreen"></iframe>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" @click="loadViewUrl()" :disabled="viewUrlLoading">🔗 View URL</button>
+          <button class="btn success" @click="doTakeover()" :disabled="takeoverLoading">🖥️ Take over</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operator-assist controls -->
+    <div class="section">
+      <h2>🎮 Operator controls</h2>
+
+      <div class="app-id-input">
+        <label>Application ID</label>
+        <input type="text" x-model="applicationId" placeholder="Enter application ID…" />
+      </div>
+
+      <div class="actions" x-show="applicationId">
+        <button class="btn" @click="doResume2FA()" :disabled="actionLoading">Enter 2FA / continue</button>
+        <button class="btn" @click="doResumeAccount()" :disabled="actionLoading">Resume account step</button>
+        <button class="btn" @click="doResumeDetection()" :disabled="actionLoading">Resume detection step</button>
+        <button class="btn warning" @click="doHandoff()" :disabled="actionLoading">Emergency handoff</button>
+      </div>
+
+      <div class="actions" x-show="applicationId" style="margin-top: 12px">
+        <button class="btn danger" @click="doFinalApproval()" :disabled="actionLoading" style="font-weight: 700">
+          ✅ Approve final submission (human)
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("takeoverPanel", () => ({
+      sessions: [],
+      selectedSessionId: "",
+      viewUrl: null,
+      viewUrlLoading: false,
+      takeoverLoading: false,
+      applicationId: "",
+      actionLoading: false,
+      fatalError: "",
+      loading: true,
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "sessions" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the takeover engine.";
+          this.sessions = [];
+        } else {
+          const items = (r.data && r.data.sessions) || (r.data && r.data.items) || [];
+          this.sessions = Array.isArray(items) ? items : (items ? [items] : []);
+        }
+        this.loading = false;
+      },
+
+      onSessionSelect() {
+        this.fatalError = "";
+        this.viewUrl = null;
+      },
+
+      async loadViewUrl() {
+        if (!this.selectedSessionId) return;
+        this.viewUrlLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "view_url", session_id: this.selectedSessionId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to get view URL.";
+        } else {
+          this.viewUrl = (r.data && (r.data.url || r.data.view_url)) || "";
+        }
+        this.viewUrlLoading = false;
+      },
+
+      async doTakeover() {
+        if (!this.selectedSessionId) return;
+        this.takeoverLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "takeover", session_id: this.selectedSessionId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Takeover request failed.";
+        }
+        this.takeoverLoading = false;
+      },
+
+      async doResume2FA() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "resume_2fa", application_id: this.applicationId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to resume 2FA.";
+        }
+        this.actionLoading = false;
+      },
+
+      async doResumeAccount() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "resume_account", application_id: this.applicationId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to resume account step.";
+        }
+        this.actionLoading = false;
+      },
+
+      async doResumeDetection() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "resume_detection", application_id: this.applicationId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to resume detection step.";
+        }
+        this.actionLoading = false;
+      },
+
+      async doHandoff() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "handoff", application_id: this.applicationId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Handoff request failed.";
+        }
+        this.actionLoading = false;
+      },
+
+      async doFinalApproval() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Final approval request failed.";
+        }
+        this.actionLoading = false;
+      }
+    }));
+  });
+</script>
