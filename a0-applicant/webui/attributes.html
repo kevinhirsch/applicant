@@ -1,0 +1,128 @@
+<!-- AZ2 Profile — CRUD panel for profile attributes. Driven by the engine via the
+a0-applicant attributes proxy (action=list|add|delete). -->
+<style>
+  .aattrs{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aattrs h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aattrs .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aattrs .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aattrs .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aattrs .empty svg{width:48px;height:48px;opacity:.4;margin-bottom:8px}
+  .aattrs .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aattrs .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aattrs .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aattrs .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aattrs .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aattrs .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .aattrs .item .info{flex:1;min-width:0}
+  .aattrs .item .info .title{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .aattrs .item .info .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .aattrs .item .actions{display:flex;gap:6px;flex-shrink:0}
+  .aattrs .item .actions .btn{font-size:.75rem;padding:4px 10px}
+  .aattrs .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aattrs .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aattrs-spin .6s linear infinite}
+  @keyframes aattrs-spin{to{transform:rotate(360deg)}}
+  .aattrs .new-form{display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:flex-end}
+  .aattrs .new-form input{flex:1 1 180px;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;min-width:0}
+  .aattrs .new-form label{display:flex;align-items:center;gap:4px;font-size:.82rem;color:var(--color-text-secondary,#6b7683);cursor:pointer}
+  .aattrs .new-form label input[type="checkbox"]{accent-color:var(--color-primary,#2d7ff9)}
+  .aattrs .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .aattrs .badge.sensitive{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);font-weight:600}
+</style>
+
+<div class="aattrs" x-data="attributesPanel()">
+  <h1>📋 Profile</h1>
+  <div class="sub" x-text="`${attributes.length} attribute${attributes.length===1?'':'s'}`" x-show="!loading && !fatalError && attributes.length > 0"></div>
+
+  <div class="new-form" x-show="!loading && !fatalError">
+    <input type="text" x-model="name" placeholder="Attribute name…" @keyup.enter="addAttribute()">
+    <input type="text" x-model="value" placeholder="Value…" @keyup.enter="addAttribute()">
+    <label><input type="checkbox" x-model="isSensitive"> Sensitive</label>
+    <button class="btn primary" @click="addAttribute()" :disabled="!name.trim() || !value.trim() || busy">+ Add</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading attributes…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-for="a in attributes" :key="a.id">
+    <div class="item">
+      <div class="info">
+        <div class="title" x-text="a.name"></div>
+        <div class="meta">
+          <span x-text="a.value"></span>
+          <span class="badge sensitive" x-show="a.is_sensitive">🔒 Sensitive</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" @click="deleteAttribute(a.id)" :disabled="busy">Delete</button>
+      </div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && attributes.length === 0">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <h2>No profile attributes yet</h2>
+    <p>Add your first attribute above to build your profile.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("attributesPanel", () => ({
+      attributes: [],
+      loading: true,
+      fatalError: "",
+      busy: false,
+      name: "",
+      value: "",
+      isSensitive: false,
+
+      async init() {
+        await this.loadAttributes();
+      },
+
+      async loadAttributes() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("attributes", {
+          action: "list",
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the attributes engine.";
+          this.attributes = [];
+        } else {
+          // Engine returns {campaign_id, items: [{id, name, value, is_sensitive, ...}]}
+          this.attributes = (r.data && r.data.items) || [];
+        }
+        this.loading = false;
+      },
+
+      async addAttribute() {
+        const name = this.name.trim();
+        const value = this.value.trim();
+        if (!name || !value) return;
+        this.busy = true;
+        await callJsonApi("attributes", {
+          action: "add",
+          name: name,
+          value: value,
+          is_sensitive: this.isSensitive
+        });
+        this.name = "";
+        this.value = "";
+        this.isSensitive = false;
+        this.busy = false;
+        await this.loadAttributes();
+      },
+
+      async deleteAttribute(attributeId) {
+        this.busy = true;
+        await callJsonApi("attributes", { action: "delete", attribute_id: attributeId });
+        this.busy = false;
+        await this.loadAttributes();
+      }
+    }));
+  });
+</script>

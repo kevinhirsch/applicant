@@ -55,3 +55,9 @@ class TestSidebarLauncher:
 
     def test_has_activity_label(self, html):
         assert "Activity" in html
+
+    def test_opens_attributes_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/attributes.html')" in html
+
+    def test_has_profile_label(self, html):
+        assert "Profile" in html
