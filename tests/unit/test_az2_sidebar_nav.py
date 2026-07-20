@@ -73,3 +73,9 @@ class TestSidebarLauncher:
 
     def test_has_digest_label(self, html):
         assert "Digest" in html
+
+    def test_opens_health_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/health.html')" in html
+
+    def test_has_health_label(self, html):
+        assert "Health" in html

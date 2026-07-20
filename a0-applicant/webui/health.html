@@ -1,0 +1,148 @@
+<!-- AZ2 Health — capabilities panel with global pause/resume from campaigns. -->
+<style>
+  .ahealth{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .ahealth h1{font-size:1.5rem;margin:0 0 .25rem}
+  .ahealth h2{font-size:1.1rem;margin:1rem 0 .25rem}
+  .ahealth .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .ahealth .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .ahealth .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .ahealth .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .ahealth .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .ahealth .btn.warning{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-color:var(--color-danger-text,#9b1c1c)}
+  .ahealth .btn:disabled{opacity:.5;cursor:not-allowed}
+  .ahealth .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .ahealth .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:ahealth-spin .6s linear infinite}
+  @keyframes ahealth-spin{to{transform:rotate(360deg)}}
+  .ahealth .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .ahealth .item .info{min-width:0}
+  .ahealth .item .info .title{font-weight:600;font-size:.92rem}
+  .ahealth .item .info .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .ahealth .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .ahealth .badge.ok{background:#d4edda;color:#155724}
+  .ahealth .badge.degraded{background:#fff3cd;color:#856404}
+  .ahealth .badge.load-bearing{background:#cce5ff;color:#004085}
+  .ahealth .fix-copy{background:var(--color-panel,#f2f5f7);border-left:3px solid var(--color-danger-text,#9b1c1c);padding:8px 12px;margin:4px 0;font-size:.8rem;border-radius:4px}
+  .ahealth .global-section{border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px;margin-top:1rem;background:var(--color-panel,#f8f9fa)}
+  .ahealth .global-section .results{margin-top:8px;max-height:200px;overflow-y:auto;font-size:.82rem}
+  .ahealth .global-section .results .r-item{padding:4px 8px;border-radius:4px;margin:2px 0}
+  .ahealth .global-section .results .r-item.ok{background:#d4edda}
+  .ahealth .global-section .results .r-item.fail{background:#fdecea}
+</style>
+
+<div class="ahealth" x-data="healthPanel()">
+  <h1>❤️ Engine Health</h1>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading capabilities…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-if="!loading && !fatalError">
+    <div>
+      <template x-for="c in capabilities" :key="c.name || c.label || c.id">
+        <div class="item">
+          <div class="info">
+            <div class="title" x-text="c.label || c.name || '(unknown)'"></div>
+            <div class="meta">
+              <span class="badge" x-bind:class="c.status === 'live' ? 'ok' : 'degraded'" x-text="c.status || 'unknown'"></span>
+              <span x-show="c.load_bearing" class="badge load-bearing">load-bearing</span>
+              <span x-show="c.version" x-text="'v' + c.version"></span>
+            </div>
+            <div x-show="c.fix_copy || c['fix copy'] || c.fix_copy_required" class="fix-copy" x-text="c.fix_copy || c['fix copy'] || c.fix_copy_required"></div>
+          </div>
+        </div>
+      </template>
+
+      <div class="empty" x-show="capabilities.length === 0">
+        <h2>No capabilities reported</h2>
+      </div>
+
+      <div class="global-section">
+        <h2>🌍 Global Pause / Resume</h2>
+        <div class="toolbar">
+          <button class="btn warning" @click="pauseAll()" :disabled="globalBusy">Pause all automated work</button>
+          <button class="btn primary" @click="resumeAll()" :disabled="globalBusy">Resume all</button>
+        </div>
+        <div x-show="globalBusy" class="loading"><div class="spinner"></div><br>Working…</div>
+        <div class="results" x-show="globalResults.length > 0">
+          <template x-for="r in globalResults" :key="r.campaign + '-' + r.action">
+            <div class="r-item" x-bind:class="r.ok ? 'ok' : 'fail'">
+              <span x-text="r.campaign + ': ' + (r.action || '?') + ' → ' + (r.status || r.ok ? 'OK' : 'FAIL')"></span>
+              <span x-show="r.error" x-text="' (' + r.error + ')'"></span>
+            </div>
+          </template>
+          <div x-show="globalResults.length > 0" style="margin-top:6px;font-weight:600">
+            <span x-text="globalSummary.ok + ' succeeded, ' + globalSummary.fail + ' failed'"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("healthPanel", () => ({
+      capabilities: [],
+      loading: true,
+      fatalError: "",
+      globalBusy: false,
+      globalResults: [],
+      globalSummary: { ok: 0, fail: 0 },
+
+      async init() {
+        await this.loadCapabilities();
+      },
+
+      async loadCapabilities() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("health", { action: "capabilities" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the health engine.";
+          this.capabilities = [];
+        } else {
+          this.capabilities = (r.data && r.data.capabilities) || (r.data && r.data.items) || (r.data && Array.isArray(r.data) ? r.data : []) || [];
+        }
+        this.loading = false;
+      },
+
+      async doGlobal(action) {
+        this.globalBusy = true;
+        this.globalResults = [];
+        this.globalSummary = { ok: 0, fail: 0 };
+
+        const listR = await callJsonApi("campaigns", { action: "list" });
+        const campaigns = (listR && listR.ok && listR.data && listR.data.campaigns) || [];
+
+        const results = [];
+        for (const c of campaigns) {
+          const rr = await callJsonApi("agent_runs", { action: action, campaign_id: c.id });
+          results.push({
+            campaign: c.name || c.id,
+            action: action,
+            ok: !!(rr && rr.ok),
+            status: (rr && rr.ok) ? "OK" : "FAIL",
+            error: (!rr || !rr.ok) ? ((rr && rr.error) || "request failed") : null
+          });
+        }
+
+        this.globalResults = results;
+        this.globalSummary = {
+          ok: results.filter(r => r.ok).length,
+          fail: results.filter(r => !r.ok).length
+        };
+        this.globalBusy = false;
+      },
+
+      async pauseAll() {
+        await this.doGlobal("pause");
+      },
+
+      async resumeAll() {
+        await this.doGlobal("resume");
+      }
+    }));
+  });
+</script>
