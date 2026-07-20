@@ -1,6 +1,15 @@
 <div data-extension-id="applicant-hello-world">
-    <button class="sidebar-action" @click="$store.app.showPanel('applicant')">
+    <div class="sidebar-group-label">Applicant</div>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/main.html')">
         <span class="material-symbols-outlined">work</span>
-        <span class="label">Applicant</span>
+        <span class="label">Setup</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/today.html')">
+        <span class="material-symbols-outlined">checklist</span>
+        <span class="label">Today</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/update.html')">
+        <span class="material-symbols-outlined">system_update_alt</span>
+        <span class="label">Update</span>
     </button>
 </div>
