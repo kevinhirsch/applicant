@@ -147,6 +147,9 @@ def test_locked_gate_false(feats):
         "channels_configured": False,
     }
     dormant_data = [
+        {"key": "redline_surface", "status": "live"},
+        {"key": "attribute_editor", "status": "live"},
+        {"key": "criteria_editor", "status": "live"},
         {"key": "chatbot", "status": "live"},
         {"key": "digest_in_app", "status": "live"},
     ]
