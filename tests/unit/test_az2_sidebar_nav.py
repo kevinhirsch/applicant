@@ -85,3 +85,9 @@ class TestSidebarLauncher:
 
     def test_has_mind_label(self, html):
         assert "Mind" in html
+
+    def test_opens_gallery_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/gallery.html')" in html
+
+    def test_has_gallery_label(self, html):
+        assert "Gallery" in html
