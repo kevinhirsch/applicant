@@ -1,8 +1,8 @@
 """AZ3 (#842) — Ops proxy: tool toggles + observability (history/detections/logs) per campaign.
 
 The Ops console UI is served by the a0 shell, but the Applicant engine is internal-only
-("api:8000"). This handler forwards the UI's calls to the engine's "/api/auth/tools",
-"/api/auth/history/{cid}", "/api/auth/detections/{cid}", and "/api/auth/logs" APIs,
+("api:8000"). This handler forwards the UI's calls to the engine's "/api/admin/tools",
+"/api/admin/history/{cid}", "/api/admin/detections/{cid}", and "/api/admin/logs" APIs,
 keeping the engine the single source of truth for ops state.
 Five actions dispatched by "action": "tools" (GET), "set_tool" (POST),
 "history" (GET), "detections" (GET), "logs" (GET).
@@ -20,7 +20,7 @@ from helpers.api import ApiHandler
 from flask import Request
 
 
-ENGINE_PREFIX = "/api/auth"
+ENGINE_PREFIX = "/api/admin"
 
 
 def _engine() -> str:

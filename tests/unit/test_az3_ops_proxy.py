@@ -50,7 +50,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "tools"})
         assert seen["method"] == "GET"
-        assert seen["path"] == "/api/auth/tools"
+        assert seen["path"] == "/api/admin/tools"
 
     def test_set_tool_forwards_post_with_body(self, mod):
         seen = {}
@@ -62,7 +62,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "set_tool", "tool_key": "search", "enabled": True})
         assert seen["method"] == "POST"
-        assert seen["path"] == "/api/auth/tools/search?enabled=true"
+        assert seen["path"] == "/api/admin/tools/search?enabled=true"
 
     def test_set_tool_missing_tool_key_400(self, mod):
         r = mod.dispatch({"action": "set_tool"})
@@ -80,7 +80,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "history", "campaign_id": "camp1"})
         assert seen["method"] == "GET"
-        assert seen["path"] == "/api/auth/history/camp1"
+        assert seen["path"] == "/api/admin/history/camp1"
 
     def test_detections_forwards_get(self, mod):
         seen = {}
@@ -92,7 +92,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "detections", "campaign_id": "camp1"})
         assert seen["method"] == "GET"
-        assert seen["path"] == "/api/auth/detections/camp1"
+        assert seen["path"] == "/api/admin/detections/camp1"
 
     def test_logs_forwards_get(self, mod):
         seen = {}
@@ -104,7 +104,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "logs"})
         assert seen["method"] == "GET"
-        assert seen["path"] == "/api/auth/logs"
+        assert seen["path"] == "/api/admin/logs"
 
     def test_default_action_is_tools(self, mod):
         seen = {}
@@ -116,7 +116,7 @@ class TestOpsProxy:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": ""})
         assert seen["method"] == "GET"
-        assert seen["path"] == "/api/auth/tools"
+        assert seen["path"] == "/api/admin/tools"
 
     def test_unknown_action_rejected(self, mod):
         r = mod.dispatch({"action": "nuke"})
