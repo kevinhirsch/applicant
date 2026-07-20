@@ -1,0 +1,123 @@
+<!-- AZ2 Campaigns — CRUD panel for advertising campaigns. Driven by the engine via the
+     a0-applicant campaigns proxy (action=list|create|clone|update). -->
+<style>
+  .acampaigns{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acampaigns h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acampaigns .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acampaigns .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acampaigns .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acampaigns .empty svg{width:48px;height:48px;opacity:.4;margin-bottom:8px}
+  .acampaigns .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acampaigns .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acampaigns .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acampaigns .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acampaigns .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acampaigns .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .acampaigns .item .info{flex:1;min-width:0}
+  .acampaigns .item .info .title{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .acampaigns .item .info .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .acampaigns .item .actions{display:flex;gap:6px;flex-shrink:0}
+  .acampaigns .item .actions .btn{font-size:.75rem;padding:4px 10px}
+  .acampaigns .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acampaigns .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acampaigns-spin .6s linear infinite}
+  @keyframes acampaigns-spin{to{transform:rotate(360deg)}}
+  .acampaigns .new-form{display:flex;gap:8px;margin-bottom:1rem}
+  .acampaigns .new-form input{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .acampaigns .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .acampaigns .badge.active{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724)}
+  .acampaigns .badge.inactive{background:var(--color-panel,#e9edf1);color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="acampaigns" x-data="campaignsPanel()">
+  <h1>📢 Campaigns</h1>
+  <div class="sub" x-text="`${campaigns.length} campaign${campaigns.length===1?'':'s'}`" x-show="!loading && !fatalError && campaigns.length > 0"></div>
+
+  <div class="new-form" x-show="!loading && !fatalError">
+    <input type="text" x-model="newName" placeholder="New campaign name…" @keyup.enter="createCampaign()">
+    <button class="btn primary" @click="createCampaign()" :disabled="!newName.trim() || busy">+ New</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading campaigns…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-for="c in campaigns" :key="c.id">
+    <div class="item">
+      <div class="info">
+        <div class="title" x-text="c.name"></div>
+        <div class="meta">
+          <span class="badge" x-bind:class="c.active ? 'active' : 'inactive'" x-text="c.active ? 'Active' : 'Inactive'"></span>
+          <span x-text="c.run_mode || ''"></span>
+          <span x-show="c.throughput_target" x-text="'Target: ' + c.throughput_target"></span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" @click="cloneCampaign(c.id)" :disabled="busy">Clone</button>
+        <button class="btn" @click="toggleActive(c)" :disabled="busy" x-text="c.active ? 'Deactivate' : 'Activate'"></button>
+      </div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && campaigns.length === 0">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <h2>No campaigns yet</h2>
+    <p>Create your first campaign above to get started.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("campaignsPanel", () => ({
+      campaigns: [],
+      loading: true,
+      fatalError: "",
+      busy: false,
+      newName: "",
+
+      async init() {
+        await this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          this.campaigns = (r.data && r.data.campaigns) || [];
+        }
+        this.loading = false;
+      },
+
+      async createCampaign() {
+        const name = this.newName.trim();
+        if (!name) return;
+        this.busy = true;
+        await callJsonApi("campaigns", { action: "create", name: name });
+        this.newName = "";
+        this.busy = false;
+        await this.loadCampaigns();
+      },
+
+      async cloneCampaign(campaignId) {
+        this.busy = true;
+        await callJsonApi("campaigns", { action: "clone", campaign_id: campaignId });
+        this.busy = false;
+        await this.loadCampaigns();
+      },
+
+      async toggleActive(c) {
+        this.busy = true;
+        await callJsonApi("campaigns", { action: "update", campaign_id: c.id, active: !c.active });
+        this.busy = false;
+        await this.loadCampaigns();
+      },
+    }));
+  });
+</script>
