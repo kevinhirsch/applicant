@@ -1,0 +1,137 @@
+<!-- AZ2 (#841) — One-click updater panel. Driven by the engine via the
+     a0-applicant update_panel proxy (action=status|trigger). The engine is the
+     source of truth: updater heartbeat, state, log, and trigger result come from
+     the engine (never client-derived). -->
+<style>
+  .aupdate{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aupdate h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aupdate .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aupdate .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aupdate .info-box{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+  .aupdate .info-box .row{display:flex;justify-content:space-between;align-items:center;padding:4px 0}
+  .aupdate .info-box .row .label{font-size:.85rem;color:var(--color-text-secondary,#6b7683)}
+  .aupdate .info-box .row .value{font-size:.85rem;font-weight:600}
+  .aupdate .info-box .row .value.idle{color:var(--color-text-secondary,#6b7683)}
+  .aupdate .info-box .row .value.running{color:var(--color-primary,#2d7ff9)}
+  .aupdate .info-box .row .value.done{color:var(--color-success-text,#157347)}
+  .aupdate .info-box .row .value.error{color:var(--color-danger-text,#9b1c1c)}
+  .aupdate .log-box{background:var(--color-panel,#f2f5f7);border-radius:8px;padding:10px 12px;font-family:monospace;font-size:.78rem;white-space:pre-wrap;max-height:240px;overflow-y:auto;margin-top:8px;line-height:1.4}
+  .aupdate .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aupdate .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aupdate .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aupdate .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aupdate .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aupdate-spin .6s linear infinite}
+  @keyframes aupdate-spin{to{transform:rotate(360deg)}}
+  .aupdate .message{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#157347);border-radius:8px;padding:10px 12px;font-size:.85rem;margin-top:.75rem}
+  .aupdate .not-deployed{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border-radius:8px;padding:10px 12px;font-size:.85rem;margin-top:.75rem}
+</style>
+
+<div class="aupdate" x-data="updatePanel()">
+  <h1>🔄 Update</h1>
+  <div class="sub" x-text="statusSubtitle"></div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Checking updater status…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-if="!loading && !fatalError">
+    <div>
+      <div class="info-box">
+        <div class="row">
+          <span class="label">State</span>
+          <span class="value" x-text="state" :class="state"></span>
+        </div>
+        <div class="row">
+          <span class="label">Updater</span>
+          <span class="value" x-text="updaterAvailable ? 'Running' : 'Not deployed'"></span>
+        </div>
+        <div class="row" x-show="message">
+          <span class="label">Message</span>
+          <span class="value" x-text="message"></span>
+        </div>
+      </div>
+
+      <div class="not-deployed" x-show="!updaterAvailable && !loading" x-text="notDeployedMsg"></div>
+
+      <div class="message" x-show="triggerMessage" x-text="triggerMessage"></div>
+
+      <button class="btn primary" @click="triggerUpdate()" :disabled="busy || !updaterAvailable || state === 'running'" x-show="!loading">
+        <span x-text="busy ? 'Updating…' : 'Update now'"></span>
+      </button>
+
+      <div class="log-box" x-show="logTail.length > 0">
+        <template x-for="line in logTail" x-text="line"></template>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("updatePanel", () => ({
+      state: "idle",
+      message: "",
+      updaterAvailable: false,
+      logTail: [],
+      triggerMessage: "",
+      notDeployedMsg: "The one-click updater isn't running. Update once the normal way (scripts/update.sh --apply on the host) to deploy it.",
+      loading: true,
+      fatalError: "",
+      busy: false,
+      timerId: null,
+
+      get statusSubtitle() {
+        if (this.loading) return "";
+        return `State: ${this.state}${this.updaterAvailable ? " · Updater active" : " · Updater not deployed"}`;
+      },
+
+      async init() {
+        await this.fetchStatus();
+        // Poll every 10s while the updater is running
+        this.timerId = setInterval(() => {
+          if (this.state === "running") this.fetchStatus();
+        }, 10000);
+      },
+
+      destroy() {
+        if (this.timerId) {
+          clearInterval(this.timerId);
+          this.timerId = null;
+        }
+      },
+
+      async fetchStatus() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("update_panel", { action: "status" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the update engine.";
+        } else if (r.data) {
+          this.state = r.data.state || "idle";
+          this.message = r.data.message || "";
+          this.updaterAvailable = r.data.updater_available === true;
+          this.logTail = r.data.log_tail || [];
+        }
+        this.loading = false;
+      },
+
+      async triggerUpdate() {
+        this.busy = true;
+        this.triggerMessage = "";
+        this.fatalError = "";
+        const r = await callJsonApi("update_panel", { action: "trigger" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't request an update.";
+        } else if (r.data) {
+          this.triggerMessage = r.data.message || "";
+          this.state = "running";
+          // Refresh status to pick up new state
+          await this.fetchStatus();
+        }
+        this.busy = false;
+      },
+    }));
+  });
+</script>
