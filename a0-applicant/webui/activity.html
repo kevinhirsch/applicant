@@ -1,0 +1,192 @@
+<!-- AZ2 Activity / Agent-Runs — live status (running/paused), scheduler heartbeat,
+     today's count, latest intent, run/pause/resume controls. Driven by the engine
+     via the a0-applicant agent_runs proxy (action=status|intent|list|run|pause|resume). -->
+<style>
+  .aactivity{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aactivity h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aactivity .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aactivity .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aactivity .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aactivity .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aactivity .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aactivity .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aactivity .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aactivity .btn.success{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724);border-color:var(--color-success-text,#155724)}
+  .aactivity .btn.warning{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border-color:var(--color-warning-text,#856404)}
+  .aactivity .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aactivity .stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:1rem}
+  .aactivity .stat-card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;text-align:center}
+  .aactivity .stat-card .value{font-size:1.8rem;font-weight:700;line-height:1.2}
+  .aactivity .stat-card .label{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .aactivity .stat-card .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+  .aactivity .stat-card .status-dot.running{background:var(--color-success-text,#155724)}
+  .aactivity .stat-card .status-dot.paused{background:var(--color-warning-text,#856404)}
+  .aactivity .section-title{font-weight:600;font-size:.95rem;margin:1rem 0 .5rem}
+  .aactivity .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .aactivity .item .intent-text{font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .aactivity .item .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .aactivity .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aactivity .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aactivity-spin .6s linear infinite}
+  @keyframes aactivity-spin{to{transform:rotate(360deg)}}
+  .aactivity .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .aactivity .badge.running{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724)}
+  .aactivity .badge.paused{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404)}
+  .aactivity .badge.idle{background:var(--color-panel,#e9edf1);color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="aactivity" x-data="activityPanel()">
+  <h1>🤖 Activity</h1>
+  <div class="sub" x-show="!loading && !fatalError">Live agent status &amp; controls</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading agent status…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-if="!loading && !fatalError">
+    <div>
+      <!-- Status + controls toolbar -->
+      <div class="toolbar">
+        <span class="badge" x-bind:class="stateClass" x-text="statusLabel"></span>
+        <button class="btn primary" @click="runNow()" :disabled="busy">▶ Run now</button>
+        <button class="btn warning" @click="pauseAgent()" :disabled="busy || !isRunning">⏸ Pause</button>
+        <button class="btn success" @click="resumeAgent()" :disabled="busy || isRunning">▶ Resume</button>
+      </div>
+
+      <!-- Scheduler heartbeat, today's count, latest intent -->
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value" x-text="todayCount"></div>
+          <div class="label">Today's runs</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" x-text="nextTick || '—'"></div>
+          <div class="label">Next scheduler tick</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" x-text="lastTick || '—'"></div>
+          <div class="label">Last scheduler tick</div>
+        </div>
+      </div>
+
+      <!-- Latest intent -->
+      <div class="section-title">Current intent</div>
+      <div class="item" x-show="latestIntent">
+        <div class="intent-text" x-text="latestIntent"></div>
+        <div class="meta">Intent from latest agent run</div>
+      </div>
+      <div class="item" x-show="!latestIntent">
+        <div class="meta">No intent recorded yet.</div>
+      </div>
+
+      <!-- Recent runs list -->
+      <div class="section-title">Recent runs</div>
+      <template x-for="run in runs" :key="run.id || run.run_id">
+        <div class="item">
+          <div class="intent-text" x-text="run.intent || run.status || '—'"></div>
+          <div class="meta">
+            <span x-show="run.started_at" x-text="'Started: ' + run.started_at"></span>
+            <span x-show="run.status" x-text="run.status"></span>
+          </div>
+        </div>
+      </template>
+      <div class="item" x-show="runs.length === 0">
+        <div class="meta">No recent runs found.</div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("activityPanel", () => ({
+      status: {},
+      intent: "",
+      runs: [],
+      loading: true,
+      fatalError: "",
+      busy: false,
+
+      get isRunning() {
+        return this.status.running === true;
+      },
+
+      get statusLabel() {
+        if (!this.status || Object.keys(this.status).length === 0) return "Unknown";
+        return this.status.running ? "Running" : this.status.paused ? "Paused" : "Idle";
+      },
+
+      get stateClass() {
+        if (!this.status || Object.keys(this.status).length === 0) return "idle";
+        return this.status.running ? "running" : this.status.paused ? "paused" : "idle";
+      },
+
+      get todayCount() {
+        return this.status.today_count != null ? this.status.today_count : "—";
+      },
+
+      get lastTick() {
+        return (this.status.scheduler && this.status.scheduler.last_tick) || "—";
+      },
+
+      get nextTick() {
+        return (this.status.scheduler && this.status.scheduler.next_tick) || "—";
+      },
+
+      get latestIntent() {
+        return this.intent || (this.status.latest_intent) || "";
+      },
+
+      async init() {
+        await this.loadAll();
+      },
+
+      async loadAll() {
+        this.loading = true;
+        this.fatalError = "";
+
+        const statusR = await callJsonApi("agent_runs", { action: "status" });
+        if (!statusR || !statusR.ok) {
+          this.fatalError = (statusR && statusR.error) || "Couldn't reach the agent-runs engine.";
+          this.loading = false;
+          return;
+        }
+        this.status = statusR.data || {};
+
+        const intentR = await callJsonApi("agent_runs", { action: "intent" });
+        if (intentR && intentR.ok) {
+          this.intent = (intentR.data && intentR.data.intent) || "";
+        }
+
+        const listR = await callJsonApi("agent_runs", { action: "list" });
+        if (listR && listR.ok) {
+          this.runs = (listR.data && listR.data.runs) || [];
+        }
+
+        this.loading = false;
+      },
+
+      async runNow() {
+        this.busy = true;
+        await callJsonApi("agent_runs", { action: "run" });
+        this.busy = false;
+        await this.loadAll();
+      },
+
+      async pauseAgent() {
+        this.busy = true;
+        await callJsonApi("agent_runs", { action: "pause" });
+        this.busy = false;
+        await this.loadAll();
+      },
+
+      async resumeAgent() {
+        this.busy = true;
+        await callJsonApi("agent_runs", { action: "resume" });
+        this.busy = false;
+        await this.loadAll();
+      },
+    }));
+  });
+</script>

@@ -49,3 +49,9 @@ class TestSidebarLauncher:
 
     def test_has_campaigns_label(self, html):
         assert "Campaigns" in html
+
+    def test_opens_activity_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/activity.html')" in html
+
+    def test_has_activity_label(self, html):
+        assert "Activity" in html
