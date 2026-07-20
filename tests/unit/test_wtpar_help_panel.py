@@ -2,7 +2,7 @@ import unittest
 import os
 
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '../..'))
-HELP_HTML = os.path.join(PROJECT_ROOT, 'webui', 'help.html')
+HELP_HTML = os.path.join(PROJECT_ROOT, 'a0-applicant', 'webui', 'help.html')
 
 class TestWtparHelpPanel(unittest.TestCase):
     @classmethod
