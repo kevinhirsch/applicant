@@ -1,0 +1,103 @@
+<!-- AZ2 (#842) Audit-Log panel -- view audit logs per campaign/application. Driven by the engine via the a0-applicant audit proxy (action=log|application_log). -->
+<style>
+  .aaudit{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aaudit h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aaudit .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aaudit .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aaudit .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aaudit .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aaudit .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aaudit .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aaudit .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aaudit .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aaudit .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aaudit .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aaudit-spin .6s linear infinite}
+  @keyframes aaudit-spin{to{transform:rotate(360deg)}}
+  .aaudit .entry{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .aaudit .entry .action{font-weight:600;font-size:.92rem}
+  .aaudit .entry .detail{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:4px}
+  .aaudit .entry .meta{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .aaudit .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+</style>
+
+<div class="aaudit" x-data="auditPanel()">
+  <h1>* Audit Log</h1>
+  <div class="sub" x-text="`${entries.length} entr${entries.length===1?'y':'ies'}`" x-show="!loading && !fatalError && entries.length > 0"></div>
+
+  <div class="toolbar">
+    <select x-model="selectedCampaign" @change="loadLog()">
+      <option value="">Loading campaigns...</option>
+      <template x-for="c in campaigns" :key="c.id">
+        <option x-bind:value="c.id" x-text="c.name"></option>
+      </template>
+    </select>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading audit entries...</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-for="entry in entries" :key="entry.id || entry.timestamp">
+    <div class="entry">
+      <div class="action" x-text="entry.action || entry.event"></div>
+      <div class="detail" x-text="entry.detail || entry.description || ''"></div>
+      <div class="meta">
+        <span class="badge" x-text="entry.category || entry.level || ''"></span>
+        <span x-text="entry.timestamp || ''"></span>
+      </div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && entries.length === 0">
+    <h2>No audit entries yet</h2>
+    <p>Select a campaign to view its audit log.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("auditPanel", () => ({
+      campaigns: [],
+      selectedCampaign: "",
+      entries: [],
+      loading: true,
+      fatalError: "",
+
+      async init() {
+        await this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (r && r.ok && r.data && r.data.campaigns) {
+          this.campaigns = r.data.campaigns;
+          if (this.campaigns.length > 0) {
+            this.selectedCampaign = this.campaigns[0].id;
+          }
+        }
+        await this.loadLog();
+      },
+
+      async loadLog() {
+        this.loading = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaign || "__system__";
+        const r = await callJsonApi("audit", {
+          action: "log",
+          campaign_id: cid,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the audit engine.";
+          this.entries = [];
+        } else {
+          this.entries = (r.data && r.data.entries) || (r.data && r.data.items) || [];
+        }
+        this.loading = false;
+      },
+    }));
+  });
+</script>

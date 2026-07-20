@@ -1,0 +1,199 @@
+<!-- AZ2 (#842) Conversion-engine panel — view engine state, preview LaTeX conversion, accept/reject. Driven by the engine via the a0-applicant conversion proxy (action=engine|preview|accept|reject). -->
+<style>
+  .aconversion{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aconversion h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aconversion .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aconversion .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aconversion .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aconversion .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aconversion .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aconversion .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aconversion .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aconversion .btn.success{background:#28a745;color:#fff;border-color:#28a745}
+  .aconversion .btn.danger{background:#dc3545;color:#fff;border-color:#dc3545}
+  .aconversion .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aconversion .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aconversion .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aconversion-spin .6s linear infinite}
+  @keyframes aconversion-spin{to{transform:rotate(360deg)}}
+  .aconversion .card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px;margin-bottom:12px}
+  .aconversion .card h2{font-size:1rem;margin:0 0 6px}
+  .aconversion .card p{margin:0;font-size:.85rem;color:var(--color-text-secondary,#6b7683)}
+  .aconversion .engine-badge{font-size:.85rem;padding:4px 10px;border-radius:12px;display:inline-block;font-weight:600;margin:6px 0}
+  .aconversion .engine-badge.latex{background:#e8f5e9;color:#2e7d32}
+  .aconversion .engine-badge.docx{background:#fff3e0;color:#e65100}
+  .aconversion .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .aconversion .preview-info{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:8px;line-height:1.5}
+  .aconversion .preview-info span{display:inline-block;margin-right:12px}
+</style>
+
+<div class="aconversion" x-data="conversionPanel()">
+  <h1>⚡ Conversion Engine</h1>
+  <div class="sub" x-text="engineLabel" x-show="!loading && !fatalError && engine != ''"></div>
+
+  <div class="toolbar">
+    <select x-model="selectedCampaign" @change="loadEngine()">
+      <option value="">Loading campaigns…</option>
+      <template x-for="c in campaigns" :key="c.id">
+        <option x-bind:value="c.id" x-text="c.name"></option>
+      </template>
+    </select>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading conversion engine…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError && selectedCampaign">
+    <div class="card">
+      <h2>Current engine</h2>
+      <div class="engine-badge" :class="engine === 'latex' ? 'latex' : 'docx'" x-text="engineLabel"></div>
+      <p x-text="engine === 'latex' ? 'LaTeX is the active conversion engine for this campaign.' : 'DOCX is the active conversion engine for this campaign.'"></p>
+    </div>
+
+    <div class="card">
+      <h2>Preview LaTeX conversion</h2>
+      <p>Compile a LaTeX conversion of the base resume to evaluate quality before accepting.</p>
+      <div class="actions">
+        <button class="btn primary" @click="preview()" :disabled="busy">Build preview</button>
+      </div>
+      <div class="preview-info" x-show="previewResult" x-html="previewResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>Accept / Reject</h2>
+      <p>Accept to set LaTeX as the campaign's primary engine, or reject to fall back to DOCX.</p>
+      <div class="actions">
+        <button class="btn success" @click="accept()" :disabled="busy || engine === 'latex'">Accept LaTeX</button>
+        <button class="btn danger" @click="reject()" :disabled="busy || engine === 'docx'">Reject (fall back to DOCX)</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty" x-show="!loading && !fatalError && !selectedCampaign">
+    <h2>No campaign selected</h2>
+    <p>Select a campaign above to view and manage its conversion engine.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("conversionPanel", () => ({
+      campaigns: [],
+      selectedCampaign: "",
+      engine: "",
+      loading: true,
+      fatalError: "",
+      busy: false,
+      previewResult: "",
+
+      get engineLabel() {
+        if (!this.engine) return "";
+        if (this.engine === "latex") return "Engine: LaTeX";
+        if (this.engine === "docx") return "Engine: DOCX";
+        return `Engine: ${this.engine}`;
+      },
+
+      async init() {
+        await this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (r && r.ok && r.data && r.data.campaigns) {
+          this.campaigns = r.data.campaigns;
+          if (this.campaigns.length > 0) {
+            this.selectedCampaign = this.campaigns[0].id;
+          }
+        }
+        if (this.selectedCampaign) {
+          await this.loadEngine();
+        } else {
+          this.loading = false;
+        }
+      },
+
+      async loadEngine() {
+        this.loading = true;
+        this.fatalError = "";
+        this.previewResult = "";
+        const cid = this.selectedCampaign;
+        if (!cid) {
+          this.loading = false;
+          return;
+        }
+        const r = await callJsonApi("conversion", {
+          action: "engine",
+          campaign_id: cid,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the conversion engine.";
+          this.engine = "";
+        } else {
+          this.engine = (r.data && r.data.engine) || "";
+        }
+        this.loading = false;
+      },
+
+      async preview() {
+        this.busy = true;
+        this.fatalError = "";
+        this.previewResult = "";
+        const r = await callJsonApi("conversion", {
+          action: "preview",
+          campaign_id: this.selectedCampaign,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to build preview.";
+        } else {
+          const d = r.data || {};
+          let html = "";
+          if (d.artifact_available) {
+            html += `<span>📄 Artifact available</span>`;
+            if (d.page_count != null) html += `<span>📏 ${d.page_count} pages</span>`;
+            if (d.fidelity_ok) html += `<span>✅ Fidelity check passed</span>`;
+            else html += `<span>⚠️ Fidelity check failed</span>`;
+          } else {
+            html += `<span>⏳ No artifact yet — preview may be compiling</span>`;
+          }
+          if (d.notes) html += `<div style="margin-top:4px">📝 ${d.notes}</div>`;
+          this.previewResult = html;
+        }
+        this.busy = false;
+      },
+
+      async accept() {
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("conversion", {
+          action: "accept",
+          campaign_id: this.selectedCampaign,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to accept LaTeX engine.";
+        } else {
+          this.engine = (r.data && r.data.engine) || "";
+        }
+        this.busy = false;
+      },
+
+      async reject() {
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("conversion", {
+          action: "reject",
+          campaign_id: this.selectedCampaign,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to reject LaTeX engine.";
+        } else {
+          this.engine = (r.data && r.data.engine) || "";
+        }
+        this.busy = false;
+      },
+    }));
+  });
+</script>

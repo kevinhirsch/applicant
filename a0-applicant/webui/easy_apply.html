@@ -1,0 +1,129 @@
+<!-- AZ2 (#842) Easy Apply panel — view assisted-mode status for a posting. Driven by the engine via the a0-applicant easy-apply proxy (action=status). -->
+<style>
+  .aeasy-apply{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aeasy-apply h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aeasy-apply .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aeasy-apply .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aeasy-apply .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aeasy-apply .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aeasy-apply .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aeasy-apply .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aeasy-apply .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aeasy-apply .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aeasy-apply .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aeasy-apply .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aeasy-apply-spin .6s linear infinite}
+  @keyframes aeasy-apply-spin{to{transform:rotate(360deg)}}
+  .aeasy-apply .status-card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .aeasy-apply .status-card .title{font-weight:600;font-size:.92rem}
+  .aeasy-apply .status-card .company{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:4px}
+  .aeasy-apply .status-card .meta{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .aeasy-apply .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .aeasy-apply .field-group{margin-bottom:12px}
+  .aeasy-apply .field-group label{font-size:.82rem;font-weight:600;display:block;margin-bottom:4px}
+  .aeasy-apply .field-group input{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;box-sizing:border-box}
+</style>
+
+<div class="aeasy-apply" x-data="easyApplyPanel()">
+  <h1>⚡ Easy Apply</h1>
+  <div class="sub" x-text="statusText" x-show="!loading && !fatalError && data"></div>
+
+  <div class="toolbar">
+    <select x-model="selectedCampaign" @change="lookupStatus()">
+      <option value="">Loading campaigns…</option>
+      <template x-for="c in campaigns" :key="c.id">
+        <option x-bind:value="c.id" x-text="c.name"></option>
+      </template>
+    </select>
+    <div class="field-group" style="margin-bottom:0;flex:1;min-width:140px">
+      <input type="text" x-model="postingId" placeholder="Posting ID…" @keyup.enter="lookupStatus()">
+    </div>
+    <button class="btn primary" @click="lookupStatus()" :disabled="loading || !postingId.trim()">Status</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Looking up easy-apply status…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-if="data">
+    <div class="status-card">
+      <div class="title" x-text="data.title || 'Untitled Posting'"></div>
+      <div class="company" x-text="data.company || ''"></div>
+      <div class="meta">
+        <span class="badge" x-text="data.consent_given_at ? 'Consent given' : 'No consent'"></span>
+        <span x-text="data.checklist ? data.checklist.length + ' checklist items' : ''"></span>
+      </div>
+      <template x-if="data.deep_link">
+        <p><a x-bind:href="data.deep_link" target="_blank" rel="noopener">Open posting →</a></p>
+      </template>
+      <template x-if="data.checklist && data.checklist.length > 0">
+        <div>
+          <p style="font-weight:600;font-size:.85rem;margin:.75rem 0 .25rem">Checklist:</p>
+          <ol style="font-size:.82rem;padding-left:1.25rem">
+            <template x-for="item in data.checklist" :key="item">
+              <li x-text="item"></li>
+            </template>
+          </ol>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && !data">
+    <h2>No easy-apply data yet</h2>
+    <p>Select a campaign and enter a posting ID to look up the easy-apply assisted-mode status.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("easyApplyPanel", () => ({
+      campaigns: [],
+      selectedCampaign: "",
+      postingId: "",
+      data: null,
+      statusText: "",
+      loading: false,
+      fatalError: "",
+
+      async init() {
+        await this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (r && r.ok && r.data && r.data.campaigns) {
+          this.campaigns = r.data.campaigns;
+          if (this.campaigns.length > 0) {
+            this.selectedCampaign = this.campaigns[0].id;
+          }
+        }
+      },
+
+      async lookupStatus() {
+        if (!this.postingId.trim()) return;
+        this.loading = true;
+        this.fatalError = "";
+        this.data = null;
+        this.statusText = "";
+        const cid = this.selectedCampaign || "__system__";
+        const r = await callJsonApi("easy_apply", {
+          action: "status",
+          campaign_id: cid,
+          posting_id: this.postingId.trim(),
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the easy-apply engine.";
+          this.data = null;
+        } else {
+          this.data = r.data || {};
+          this.statusText = "Status loaded";
+        }
+        this.loading = false;
+      },
+    }));
+  });
+</script>

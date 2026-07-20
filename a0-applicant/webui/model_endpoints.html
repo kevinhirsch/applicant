@@ -1,0 +1,220 @@
+<!-- Model-endpoints panel — configure endpoint sources + live-model list. Driven by the engine via the a0-applicant model_endpoints proxy (action=list|add|test|remove|models). -->
+<style>
+  .amodel-endpoints{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .amodel-endpoints h1{font-size:1.5rem;margin:0 0 .25rem}
+  .amodel-endpoints .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .amodel-endpoints .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .amodel-endpoints .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .amodel-endpoints .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .amodel-endpoints .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .amodel-endpoints .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .amodel-endpoints .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .amodel-endpoints .btn.danger{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-color:var(--color-danger-border,#e8b4b4)}
+  .amodel-endpoints .btn:disabled{opacity:.5;cursor:not-allowed}
+  .amodel-endpoints .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .amodel-endpoints .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:amodel-spin .6s linear infinite}
+  @keyframes amodel-spin{to{transform:rotate(360deg)}}
+  .amodel-endpoints .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .amodel-endpoints .item .info{min-width:0}
+  .amodel-endpoints .item .info .name{font-weight:600;font-size:.92rem}
+  .amodel-endpoints .item .info .url{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:4px}
+  .amodel-endpoints .item .info .meta{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .amodel-endpoints .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .amodel-endpoints .add-form{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px;margin-bottom:12px}
+  .amodel-endpoints .add-form label{font-size:.82rem;font-weight:600;display:block;margin-bottom:4px}
+  .amodel-endpoints .add-form input,.amodel-endpoints .add-form select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;box-sizing:border-box;margin-bottom:8px}
+  .amodel-endpoints .add-form .form-row{display:flex;gap:8px}
+  .amodel-endpoints .add-form .form-row input{flex:1}
+  .amodel-endpoints .item-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .amodel-endpoints .models-list{margin-top:8px;padding:8px;background:var(--color-panel,#f2f5f7);border-radius:6px;font-size:.82rem}
+  .amodel-endpoints .models-list .model-item{padding:2px 0}
+</style>
+
+<div class="amodel-endpoints" x-data="modelEndpointsPanel()">
+  <h1>Model Endpoints</h1>
+  <div class="sub" x-text="`${items.length} endpoint${items.length===1?'':'s'}`" x-show="!loading && !fatalError && items.length > 0"></div>
+
+  <div class="toolbar">
+    <select x-model="selectedCampaign" @change="loadEndpoints()">
+      <option value="">Loading campaigns…</option>
+      <template x-for="c in campaigns" :key="c.id">
+        <option x-bind:value="c.id" x-text="c.name"></option>
+      </template>
+    </select>
+  </div>
+
+  <div class="add-form" x-show="!loading && !fatalError">
+    <div class="form-row">
+      <input type="text" x-model="formBaseUrl" placeholder="Base URL (e.g. http://localhost:11434)…">
+      <input type="password" x-model="formApiKey" placeholder="API key (optional)…">
+    </div>
+    <div class="form-row">
+      <input type="text" x-model="formName" placeholder="Name…">
+      <select x-model="formModelType">
+        <option value="llm">LLM</option>
+        <option value="embedding">Embedding</option>
+        <option value="image">Image</option>
+        <option value="rerank">Rerank</option>
+        <option value="stt">STT</option>
+        <option value="tts">TTS</option>
+      </select>
+    </div>
+    <button class="btn primary" @click="addEndpoint()" :disabled="busy || !formBaseUrl.trim()">Add endpoint</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading model endpoints…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-for="item in items" :key="item.id">
+    <div class="item">
+      <div class="info">
+        <div class="name" x-text="item.name || 'Unnamed'"></div>
+        <div class="url" x-text="item.base_url"></div>
+        <div class="meta">
+          <span class="badge" x-text="item.model_type || 'llm'"></span>
+          <span class="badge" x-text="item.enabled ? 'Enabled' : 'Disabled'"></span>
+        </div>
+      </div>
+      <div class="item-actions">
+        <button class="btn" @click="testEndpoint(item)" :disabled="busy">Test</button>
+        <button class="btn" @click="loadModels(item)" :disabled="busy">Models</button>
+        <button class="btn danger" @click="removeEndpoint(item)" :disabled="busy">Remove</button>
+      </div>
+      <div class="models-list" x-show="item._showModels && item._models" x-html="item._modelsHtml || ''"></div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && items.length === 0">
+    <h2>No endpoints yet</h2>
+    <p>Add a model endpoint above to get started.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("modelEndpointsPanel", () => ({
+      campaigns: [],
+      selectedCampaign: "",
+      items: [],
+      loading: true,
+      fatalError: "",
+      busy: false,
+      formBaseUrl: "",
+      formApiKey: "",
+      formName: "",
+      formModelType: "llm",
+
+      async init() {
+        await this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (r && r.ok && r.data && r.data.campaigns) {
+          this.campaigns = r.data.campaigns;
+          if (this.campaigns.length > 0) {
+            this.selectedCampaign = this.campaigns[0].id;
+          }
+        }
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
+        }
+        await this.loadEndpoints();
+      },
+
+      async loadEndpoints() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("model_endpoints", {
+          action: "list",
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
+          this.items = [];
+        } else {
+          this.items = (r.data && r.data.endpoints) || r.data || [];
+        }
+        this.loading = false;
+      },
+
+      async addEndpoint() {
+        if (!this.formBaseUrl.trim()) return;
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("model_endpoints", {
+          action: "add",
+          base_url: this.formBaseUrl.trim(),
+          api_key: this.formApiKey,
+          name: this.formName.trim() || "",
+          model_type: this.formModelType,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to add endpoint.";
+        } else {
+          this.formBaseUrl = "";
+          this.formApiKey = "";
+          this.formName = "";
+          this.formModelType = "llm";
+          await this.loadEndpoints();
+        }
+        this.busy = false;
+      },
+
+      async testEndpoint(item) {
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("model_endpoints", {
+          action: "test",
+          base_url: item.base_url,
+          api_key: item.api_key || "",
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Endpoint test failed.";
+        }
+        this.busy = false;
+      },
+
+      async removeEndpoint(item) {
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("model_endpoints", {
+          action: "remove",
+          endpoint_id: item.id,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to remove endpoint.";
+        }
+        await this.loadEndpoints();
+        this.busy = false;
+      },
+
+      async loadModels(item) {
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("model_endpoints", {
+          action: "models",
+          endpoint_id: item.id,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to load models.";
+          item._showModels = false;
+        } else {
+          item._showModels = !item._showModels;
+          const models = r.data && r.data.models ? r.data.models : [];
+          if (models.length === 0) {
+            item._modelsHtml = "<em>No models found.</em>";
+          } else {
+            item._modelsHtml = models.map(m => `<div class="model-item">${m.name || m.id || m}</div>`).join("");
+          }
+          item._models = models.length > 0;
+        }
+        this.busy = false;
+      },
+    }));
+  });
+</script>

@@ -1,0 +1,196 @@
+<!-- AZ2 Vault — credential management panel. Driven by the engine via the
+     a0-applicant vault proxy (action=list|add|delete|account|bank_account|rotate_key).
+     SECURITY: secrets pass straight through; NEVER log or print them. -->
+<style>
+  .avault{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .avault h1{font-size:1.5rem;margin:0 0 .25rem}
+  .avault .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .avault .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .avault .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .avault .empty svg{width:48px;height:48px;opacity:.4;margin-bottom:8px}
+  .avault .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .avault .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .avault .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .avault .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .avault .btn.danger{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-color:var(--color-danger-bg,#fdecea)}
+  .avault .btn:disabled{opacity:.5;cursor:not-allowed}
+  .avault .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .avault .item .info{flex:1;min-width:0}
+  .avault .item .info .title{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .avault .item .info .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .avault .item .actions{display:flex;gap:6px;flex-shrink:0}
+  .avault .item .actions .btn{font-size:.75rem;padding:4px 10px}
+  .avault .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .avault .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:avault-spin .6s linear infinite}
+  @keyframes avault-spin{to{transform:rotate(360deg)}}
+  .avault .add-form{background:var(--color-panel,#f2f5f7);border-radius:10px;padding:12px;margin-bottom:1rem;display:flex;flex-direction:column;gap:8px}
+  .avault .add-form .fields{display:flex;gap:8px;flex-wrap:wrap}
+  .avault .add-form input,.avault .add-form select{flex:1;min-width:120px;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .avault .add-form .row{display:flex;gap:8px;align-items:center}
+  .avault .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+</style>
+
+<div class="avault" x-data="vaultPanel()">
+  <h1>🔐 Vault</h1>
+  <div class="sub" x-text="`${tenants.length} saved sign-in${tenants.length===1?'':'s'} for ${selectedCampaign || '(no campaign)'}`" x-show="!loading && !fatalError && selectedCampaign"></div>
+
+  <!-- Campaign picker -->
+  <div class="toolbar" x-show="!loading && !fatalError">
+    <select x-model="selectedCampaign" @change="loadTenants()">
+      <option value="">Select a campaign…</option>
+      <template x-for="c in campaigns" :key="c.id">
+        <option x-bind:value="c.id" x-text="c.name"></option>
+      </template>
+    </select>
+    <button class="btn" @click="refreshCampaigns()" :disabled="busy">↻ Refresh</button>
+  </div>
+
+  <!-- Loading spinner -->
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Accessing vault…</div>
+
+  <!-- Error line -->
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <!-- Add credential form (only when campaign selected) -->
+  <div class="add-form" x-show="!loading && !fatalError && selectedCampaign">
+    <div class="fields">
+      <input type="text" x-model="tenantKey" placeholder="Tenant key (e.g., google)" @keyup.enter="addCredential()">
+      <input type="text" x-model="credUsername" placeholder="Username/email" @keyup.enter="addCredential()">
+      <input type="password" x-model="credSecret" placeholder="Password/secret" @keyup.enter="addCredential()">
+    </div>
+    <div class="row">
+      <button class="btn primary" @click="addCredential()" :disabled="!tenantKey.trim() || !credUsername.trim() || !credSecret.trim() || busy">+ Add Credential</button>
+    </div>
+  </div>
+
+  <!-- Tenant list -->
+  <template x-for="t in tenants" :key="t">
+    <div class="item">
+      <div class="info">
+        <div class="title" x-text="t"></div>
+        <div class="meta">Credential stored</div>
+      </div>
+      <div class="actions">
+        <button class="btn danger" @click="deleteCredential(t)" :disabled="busy">Delete</button>
+      </div>
+    </div>
+  </template>
+
+  <!-- Empty state -->
+  <div class="empty" x-show="!loading && !fatalError && selectedCampaign && tenants.length === 0">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    <h2>No saved sign-ins</h2>
+    <p>Add a credential above for this campaign.</p>
+  </div>
+
+  <!-- No campaign selected hint -->
+  <div class="empty" x-show="!loading && !fatalError && !selectedCampaign && campaigns.length > 0">
+    <h2>Select a campaign</h2>
+    <p>Choose a campaign above to manage its credentials.</p>
+  </div>
+
+  <!-- No campaigns available -->
+  <div class="empty" x-show="!loading && !fatalError && !selectedCampaign && campaigns.length === 0">
+    <h2>No campaigns yet</h2>
+    <p>Create a campaign first to start storing credentials.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("vaultPanel", () => ({
+      campaigns: [],
+      tenants: [],
+      selectedCampaign: "",
+      loading: true,
+      fatalError: "",
+      busy: false,
+      tenantKey: "",
+      credUsername: "",
+      credSecret: "",
+
+      async init() {
+        await this.refreshCampaigns();
+      },
+
+      async refreshCampaigns() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", {
+          action: "list",
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the vault";
+          this.campaigns = [];
+        } else {
+          this.campaigns = (r.data && r.data.campaigns) || [];
+        }
+        this.loading = false;
+        if (this.selectedCampaign) {
+          await this.loadTenants();
+        }
+      },
+
+      async loadTenants() {
+        if (!this.selectedCampaign) return;
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("vault", {
+          action: "list",
+          campaign_id: this.selectedCampaign,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the vault";
+          this.tenants = [];
+        } else {
+          this.tenants = (r.data && r.data.tenants) || [];
+        }
+        this.loading = false;
+      },
+
+      async addCredential() {
+        const key = this.tenantKey.trim();
+        const user = this.credUsername.trim();
+        const secret = this.credSecret.trim();
+        if (!key || !user || !secret || !this.selectedCampaign) return;
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("vault", {
+          action: "add",
+          campaign_id: this.selectedCampaign,
+          tenant_key: key,
+          username: user,
+          secret: secret,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the vault";
+        } else {
+          this.tenantKey = "";
+          this.credUsername = "";
+          this.credSecret = "";
+          await this.loadTenants();
+        }
+        this.busy = false;
+      },
+
+      async deleteCredential(tenantKey) {
+        if (!this.selectedCampaign || !tenantKey) return;
+        this.busy = true;
+        this.fatalError = "";
+        const r = await callJsonApi("vault", {
+          action: "delete",
+          campaign_id: this.selectedCampaign,
+          tenant_key: tenantKey,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the vault";
+        } else {
+          await this.loadTenants();
+        }
+        this.busy = false;
+      },
+    }));
+  });
+</script>
