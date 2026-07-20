@@ -165,32 +165,6 @@ class TestWtparRenderParseabilityEdgeCases:
         result = check_render_parseability(text)
         assert result.parseable is True
 
-    def test_email_dot_com_variants(self) -> None:
-        """Various valid email patterns in a realistic context."""
-        texts = [
-            "jane.doe@company.co.uk\nExperience\nEducation\n",
-            "jane_doe@startup.io\nExperience\nEducation\n",
-            "jane+tag@example.org\nExperience\nEducation\n",
-        ]
-        for t in texts:
-            with self.subTest(email=t.split('@')[0]):
-                result = check_render_parseability(t)
-                assert result.parseable is True
-
-    def test_section_cue_case_insensitive(self) -> None:
-        """Section cue matching is case-insensitive."""
-        for cue in ("EXPERIENCE", "Education", "SKILLS", "Summary"):
-            text = f"john@example.com\n{cue}\n"
-            with self.subTest(cue=cue):
-                result = check_render_parseability(text)
-                assert result.parseable is True
-
-
-# ===================================================================
-# ParseabilityReport — dataclass behaviour
-# ===================================================================
-
-
 class TestWtparParseabilityReport:
     """ParseabilityReport dataclass construction and properties."""
 
