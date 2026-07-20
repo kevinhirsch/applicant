@@ -133,3 +133,9 @@ class TestSidebarLauncher:
 
     def test_has_feedback_label(self, html):
         assert "Feedback" in html
+
+    def test_opens_chat_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/chat.html')" in html
+
+    def test_has_chat_label(self, html):
+        assert "Chat" in html

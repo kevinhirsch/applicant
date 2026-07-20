@@ -1,0 +1,190 @@
+<!-- AZ2 (#837) Chat — converse with the applicant assistant per campaign. -->
+<style>
+  .achat{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .achat h1{font-size:1.5rem;margin:0 0 .25rem}
+  .achat .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .achat .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .achat .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .achat .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .achat .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .achat .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .achat .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .achat .btn:disabled{opacity:.5;cursor:not-allowed}
+  .achat .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .achat .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:achat-spin .6s linear infinite}
+  @keyframes achat-spin{to{transform:rotate(360deg)}}
+  .achat .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .achat .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .achat .conversation{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem;max-height:400px;overflow-y:auto;padding:8px;background:var(--color-panel,#f2f5f7);border-radius:10px;border:1px solid var(--color-border,#d8e0e6)}
+  .achat .msg{padding:10px 14px;border-radius:10px;max-width:80%;word-break:break-word;font-size:.88rem;line-height:1.4}
+  .achat .msg.user{background:var(--color-primary,#2d7ff9);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+  .achat .msg.assistant{background:var(--color-background,#fff);color:var(--color-text);align-self:flex-start;border:1px solid var(--color-border,#d8e0e6);border-bottom-left-radius:4px}
+  .achat .msg.pending{opacity:.6}
+  .achat .input-row{display:flex;gap:8px;align-items:stretch}
+  .achat .input-row input{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .achat .confirm-banner{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border:1px solid var(--color-warning-border,#ffeeba);border-radius:8px;padding:10px 12px;margin-bottom:.75rem;font-size:.85rem}
+  .achat .confirm-banner .actions{display:flex;gap:8px;margin-top:6px}
+  .achat .confirm-banner .btn.confirm{background:var(--color-primary,#2d7ff9);color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:.8rem}
+  .achat .confirm-banner .btn.reject{background:transparent;color:var(--color-text);border:1px solid var(--color-border,#d8e0e6);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem}
+</style>
+
+<div class="achat" x-data="chatPanel()">
+  <h1>Chat</h1>
+  <p class="sub">Converse with the applicant assistant per campaign.</p>
+
+  <div class="picker">
+    <label>Campaign</label>
+    <select x-model="selectedCampaignId" @change="onCampaignSelect()">
+      <template x-for="c in campaigns" :key="c.id || c.name">
+        <option :value="c.id || c.name" x-text="c.name || c.id"></option>
+      </template>
+    </select>
+  </div>
+
+  <template x-if="fatalError">
+    <div class="err" x-text="fatalError"></div>
+  </template>
+
+  <template x-if="!fatalError && !loading">
+    <div>
+      <template x-if="conversation.length === 0">
+        <div class="empty">
+          <h2>Start a conversation</h2>
+          <p>Type a message below to begin chatting with the assistant.</p>
+        </div>
+      </template>
+
+      <div class="conversation" x-show="conversation.length > 0">
+        <template x-for="(item, idx) in conversation" :key="idx">
+          <div class="msg" :class="item.role + (item.pending ? ' pending' : '')" x-text="item.text"></div>
+        </template>
+      </div>
+
+      <!-- Confirmation banner for pending attribute change -->
+      <template x-if="pendingConfirm">
+        <div class="confirm-banner">
+          <span x-text="pendingConfirm.message"></span>
+          <div class="actions">
+            <button class="btn confirm" @click="confirmChange()">Confirm</button>
+            <button class="btn reject" @click="pendingConfirm = null">Reject</button>
+          </div>
+        </div>
+      </template>
+
+      <div class="input-row">
+        <input type="text" x-model="inputText" placeholder="Type a message..." @keydown.enter="sendMessage()" :disabled="sending" />
+        <button class="btn primary" @click="sendMessage()" :disabled="sending || !inputText.trim()">Send</button>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="loading">
+    <div class="loading">
+      <span class="spinner"></span>
+      <p>Loading chat…</p>
+    </div>
+  </template>
+</div>
+
+<script type="module">
+  window.Alpine.data("chatPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "__system__",
+    fatalError: "",
+    loading: true,
+
+    conversation: [],
+    inputText: "",
+    sending: false,
+    pendingConfirm: null,
+
+    async init() {
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+        } else {
+          this.selectedCampaignId = "__system__";
+        }
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadConversation();
+      }
+    },
+
+    async onCampaignSelect() {
+      this.fatalError = "";
+      await this.loadConversation();
+    },
+
+    async loadConversation() {
+      this.fatalError = "";
+      this.conversation = [];
+      const cid = this.selectedCampaignId || "__system__";
+
+      const r = await callJsonApi("chat", { action: "history", campaign_id: cid });
+      if (!r || !r.ok) {
+        if (r && r.status === 404) {
+          this.conversation = [];
+        } else {
+          this.fatalError = (r && r.error) || "Couldn't load chat history.";
+          this.conversation = [];
+        }
+      } else {
+        const data = r.data || {};
+        const items = data.items || data.messages || data.messages_history || [];
+        this.conversation = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+    },
+
+    async sendMessage() {
+      if (!this.inputText.trim() || !this.selectedCampaignId) return;
+      const text = this.inputText.trim();
+      this.inputText = "";
+      this.sending = true;
+      this.fatalError = "";
+
+      // Optimistic add user message
+      this.conversation.push({ role: "user", text: text });
+
+      // Add pending assistant placeholder
+      const pendingIdx = this.conversation.length;
+      this.conversation.push({ role: "assistant", text: "", pending: true });
+
+      const r = await callJsonApi("chat", {
+        action: "send",
+        campaign_id: this.selectedCampaignId,
+        text: text,
+      });
+
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to send message.";
+        this.conversation.splice(pendingIdx, 1);
+      } else {
+        const data = r.data || {};
+        const reply = data.reply || data.text || data.message || "";
+        if (reply) {
+          this.conversation[pendingIdx] = { role: "assistant", text: reply };
+        } else {
+          this.conversation.splice(pendingIdx, 1);
+        }
+        // Check for pending attribute change
+        if (data.pending_change) {
+          this.pendingConfirm = data.pending_change;
+        }
+      }
+      this.sending = false;
+    },
+
+    confirmChange() {
+      if (!this.pendingConfirm) return;
+      this.pendingConfirm = null;
+    }
+  }));
+</script>
