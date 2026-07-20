@@ -91,3 +91,9 @@ class TestSidebarLauncher:
 
     def test_has_gallery_label(self, html):
         assert "Gallery" in html
+
+    def test_opens_criteria_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/criteria.html')" in html
+
+    def test_has_criteria_label(self, html):
+        assert "Criteria" in html
