@@ -1,0 +1,128 @@
+<!-- AZ2 (#833-#838) — Pending-actions daily-review panel. Driven by the engine via the
+     a0-applicant pending proxy (action=list|count|resolve|snooze|resolve_bulk). The engine
+     is the source of truth: items, count, priority, aging, urgency, and snooze come from
+     the engine (never client-derived, H1). -->
+<style>
+  .atoday{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .atoday h1{font-size:1.5rem;margin:0 0 .25rem}
+  .atoday .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .atoday .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .atoday .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .atoday .empty svg{width:48px;height:48px;opacity:.4;margin-bottom:8px}
+  .atoday .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .atoday .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .atoday .toolbar label{font-size:.85rem;display:flex;align-items:center;gap:4px;cursor:pointer}
+  .atoday .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .atoday .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .atoday .btn.danger{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-color:var(--color-danger-bg,#fdecea)}
+  .atoday .btn:disabled{opacity:.5;cursor:not-allowed}
+  .atoday .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .atoday .item .info{flex:1;min-width:0}
+  .atoday .item .info .title{font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .atoday .item .info .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
+  .atoday .item .info .meta .kind{background:var(--color-panel,#e9edf1);padding:1px 6px;border-radius:4px}
+  .atoday .item .info .meta .urgency{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);padding:1px 6px;border-radius:4px;font-weight:600}
+  .atoday .item .actions{display:flex;gap:6px;flex-shrink:0}
+  .atoday .item .actions .btn{font-size:.75rem;padding:4px 10px}
+  .atoday .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .atoday .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:atoday-spin .6s linear infinite}
+  @keyframes atoday-spin{to{transform:rotate(360deg)}}
+</style>
+
+<div class="atoday" x-data="todayPanel()">
+  <h1>🗂️ Today</h1>
+  <div class="sub" x-text="`${count} pending action${count===1?'':'s'}`" x-show="!loading && count > 0"></div>
+
+  <div class="toolbar" x-show="!loading && !fatalError">
+    <label><input type="checkbox" x-model="showSnoozed" @change="loadItems()"> Include snoozed</label>
+    <button class="btn primary" @click="resolveAll()" x-show="items.length > 0" :disabled="busy">✓ Resolve all</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading pending actions…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-for="item in items" :key="item.id">
+    <div class="item">
+      <div class="info">
+        <div class="title" x-text="item.title"></div>
+        <div class="meta">
+          <span class="kind" x-text="item.kind"></span>
+          <span x-text="item.created_at ? item.created_at.slice(0,10) : ''"></span>
+          <span class="urgency" x-show="item.metadata && item.metadata.urgency" x-text="item.metadata.urgency"></span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" @click="resolveItem(item.id)" :disabled="busy">Resolve</button>
+        <button class="btn" @click="snoozeItem(item.id)" :disabled="busy">Snooze</button>
+      </div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && items.length === 0">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <h2>You're all caught up!</h2>
+    <p>All pending items have been handled.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("todayPanel", () => ({
+      items: [],
+      count: 0,
+      loading: true,
+      fatalError: "",
+      busy: false,
+      showSnoozed: false,
+      campaignId: "__system__",
+
+      async init() {
+        await this.loadItems();
+      },
+
+      async loadItems() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("pending", {
+          action: "list",
+          campaign_id: this.campaignId,
+          include_snoozed: this.showSnoozed,
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the pending-actions engine.";
+          this.items = [];
+          this.count = 0;
+        } else {
+          this.items = (r.data && r.data.items) || [];
+          this.count = (r.data && r.data.count) || 0;
+        }
+        this.loading = false;
+      },
+
+      async resolveItem(actionId) {
+        this.busy = true;
+        await callJsonApi("pending", { action: "resolve", action_id: actionId });
+        this.busy = false;
+        await this.loadItems();
+      },
+
+      async snoozeItem(actionId, hours = 24) {
+        this.busy = true;
+        await callJsonApi("pending", { action: "snooze", action_id: actionId, hours });
+        this.busy = false;
+        await this.loadItems();
+      },
+
+      async resolveAll() {
+        this.busy = true;
+        const ids = this.items.map(i => i.id);
+        await callJsonApi("pending", { action: "resolve_bulk", campaign_id: this.campaignId, action_ids: ids });
+        this.busy = false;
+        await this.loadItems();
+      },
+    }));
+  });
+</script>
