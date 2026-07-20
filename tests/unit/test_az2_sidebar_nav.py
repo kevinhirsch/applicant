@@ -103,3 +103,9 @@ class TestSidebarLauncher:
 
     def test_has_compare_label(self, html):
         assert "Compare" in html
+
+    def test_opens_fonts_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/fonts.html')" in html
+
+    def test_has_fonts_label(self, html):
+        assert "Fonts" in html

@@ -1,0 +1,170 @@
+<!-- AZ3 (#839) Fonts — installed fonts / detect / install for résumé rendering. -->
+<style>
+  .afonts{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .afonts h1{font-size:1.5rem;margin:0 0 .25rem}
+  .afonts .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .afonts .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .afonts .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .afonts .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .afonts .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .afonts .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .afonts .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .afonts .btn:disabled{opacity:.5;cursor:not-allowed}
+  .afonts .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .afonts .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:afonts-spin .6s linear infinite}
+  @keyframes afonts-spin{to{transform:rotate(360deg)}}
+  .afonts .list{display:flex;flex-direction:column;gap:6px;margin-bottom:1.5rem}
+  .afonts .font-entry{padding:8px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);font-size:.85rem}
+  .afonts .font-entry .fname{font-weight:600}
+  .afonts .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .afonts .section h2{font-size:1.15rem;margin:0 0 .5rem}
+  .afonts .form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .afonts .form-row input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:140px}
+  .afonts .form-row input::placeholder{color:var(--color-text-secondary,#6b7683)}
+  .afonts .detect-result{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+</style>
+
+<div class="afonts" x-data="window.Alpine.data('afonts')">
+  <h1>Fonts</h1>
+  <p class="sub">Installed fonts for résumé rendering</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading fonts...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <div class="toolbar">
+        <button class="btn primary" @click="detectFonts()" :disabled="detecting">
+          <span x-text="detecting ? 'Detecting...' : 'Detect fonts'"></span>
+        </button>
+        <span style="font-size:.82rem;color:var(--color-text-secondary,#6b7683)" x-text="installedCount()"></span>
+      </div>
+
+      <div x-show="detectMessage" class="detect-result" x-text="detectMessage"></div>
+
+      <div class="list" x-show="fonts.length">
+        <template x-for="f in fonts" :key="f">
+          <div class="font-entry">
+            <span class="fname" x-text="f"></span>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="!fonts.length" class="empty">
+        <h2>No fonts installed</h2>
+        <p>Install a font below to make it available for résumé rendering.</p>
+      </div>
+
+      <div class="section">
+        <h2>Install font</h2>
+        <div class="form-row">
+          <input type="text" x-model="installName" placeholder="Font name (e.g. Lato)" @keyup.enter="installFont()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="installFile" placeholder="Font file path (optional)" @keyup.enter="installFont()" />
+        </div>
+        <button class="btn" @click="installFont()" :disabled="installing || !installName.trim()">
+          <span x-text="installing ? 'Installing...' : 'Install font'"></span>
+        </button>
+        <div x-show="installError" class="err" x-text="installError"></div>
+        <div x-show="installMessage" class="detect-result" x-text="installMessage"></div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    window.Alpine.data('afonts', () => ({
+      fonts: [],
+      loading: false,
+      error: '',
+      detecting: false,
+      detectMessage: '',
+      installName: '',
+      installFile: '',
+      installing: false,
+      installError: '',
+      installMessage: '',
+
+      async init() {
+        this.loadFonts();
+      },
+
+      installedCount() {
+        const n = this.fonts.length;
+        return n + ' font' + (n === 1 ? '' : 's') + ' installed';
+      },
+
+      async loadFonts() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('fonts', { action: 'list' });
+          if (res.ok) {
+            this.fonts = (res.data && res.data.installed) || [];
+          } else {
+            this.error = res.error || 'Failed to load fonts';
+          }
+        } catch(e) {
+          this.error = 'Network error loading fonts';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async detectFonts() {
+        this.detecting = true;
+        this.detectMessage = '';
+        this.error = '';
+        try {
+          const res = await callJsonApi('fonts', { action: 'detect' });
+          if (res.ok) {
+            const d = res.data || {};
+            const required = d.required || [];
+            const missing = d.missing || [];
+            this.detectMessage = 'Detected ' + required.length + ' required font' + (required.length === 1 ? '' : 's') + ', ' + missing.length + ' missing';
+            await this.loadFonts();
+          } else {
+            this.error = res.error || 'Font detection failed';
+          }
+        } catch(e) {
+          this.error = 'Network error during detection';
+        } finally {
+          this.detecting = false;
+        }
+      },
+
+      async installFont() {
+        const name = this.installName.trim();
+        if (!name) return;
+        this.installing = true;
+        this.installError = '';
+        this.installMessage = '';
+        try {
+          const payload = { action: 'install', name: name };
+          const file = this.installFile.trim();
+          if (file) {
+            payload.file = file;
+          }
+          const res = await callJsonApi('fonts', payload);
+          if (res.ok) {
+            this.installMessage = 'Font "' + name + '" installed' + (res.data && res.data.confirmed ? ' and confirmed' : '') + '.';
+            this.installName = '';
+            this.installFile = '';
+            await this.loadFonts();
+          } else {
+            this.installError = res.error || 'Failed to install font';
+          }
+        } catch(e) {
+          this.installError = 'Network error installing font';
+        } finally {
+          this.installing = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
