@@ -1,0 +1,136 @@
+<!-- AZ2 Digest — daily review panel for candidate applications. Driven by the engine via the a0-applicant digest proxy (action=get|approve|decline|recap). -->
+<style>
+  .adigest{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .adigest h1{font-size:1.5rem;margin:0 0 .25rem}
+  .adigest .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .adigest .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adigest .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .adigest .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .adigest .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .adigest .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .adigest .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .adigest .btn:disabled{opacity:.5;cursor:not-allowed}
+  .adigest .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .adigest .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:adigest-spin .6s linear infinite}
+  @keyframes adigest-spin{to{transform:rotate(360deg)}}
+  .adigest .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px}
+  .adigest .item .info{flex:1;min-width:0}
+  .adigest .item .info .title{font-weight:600;font-size:.92rem}
+  .adigest .item .info .role{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .adigest .item .info .score{display:inline-block;font-size:.78rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);margin-top:4px}
+  .adigest .item .info .why{font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-top:4px;line-height:1.3}
+  .adigest .item .actions{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:flex-start}
+  .adigest .item .actions .btn{font-size:.75rem;padding:4px 10px}
+  .adigest .item .decline-row{display:flex;gap:4px;align-items:center;margin-top:4px}
+  .adigest .item .decline-row input{width:100px;padding:3px 6px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.75rem}
+  .adigest .recap-box{background:var(--color-panel,#f2f5f7);border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:.85rem;line-height:1.4;white-space:pre-wrap}
+</style>
+
+<div class="adigest" x-data="digestPanel()">
+  <h1>📋 Daily Digest</h1>
+  <div class="sub" x-show="!loading && !fatalError && rows.length > 0" x-text="`${rows.length} application${rows.length===1?'':'s'} to review`"></div>
+
+  <div class="toolbar">
+    <button class="btn primary" @click="refresh()" :disabled="busy">↻ Refresh</button>
+    <button class="btn" @click="recap()" :disabled="busy">📊 Weekly recap</button>
+  </div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading digest…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div class="recap-box" x-show="recapMessage" x-text="recapMessage"></div>
+
+  <template x-for="row in rows" :key="row.application_id">
+    <div class="item">
+      <div class="info">
+        <div class="title" x-text="row.title"></div>
+        <div class="role" x-show="row.role" x-text="row.role"></div>
+        <div class="score" x-show="row.score !== undefined && row.score !== null" x-text="'Score: ' + row.score"></div>
+        <div class="why" x-show="row.why" x-text="row.why"></div>
+      </div>
+      <div class="actions">
+        <button class="btn" @click="approve(row.application_id)" :disabled="busy">Approve</button>
+        <div class="decline-row">
+          <input type="text" x-model="declineReasons[row.application_id]" placeholder="Reason…" @keyup.enter="decline(row.application_id)">
+          <button class="btn" @click="decline(row.application_id)" :disabled="busy || !(declineReasons[row.application_id] || '').trim()">Pass</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <div class="empty" x-show="!loading && !fatalError && rows.length === 0 && !recapMessage">
+    <h2>No roles today</h2>
+    <p>Check back later for new candidate applications to review.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("digestPanel", () => ({
+      rows: [],
+      loading: true,
+      fatalError: "",
+      busy: false,
+      recapMessage: "",
+      declineReasons: {},
+
+      async init() {
+        await this.load();
+      },
+
+      async load() {
+        this.loading = true;
+        this.fatalError = "";
+        this.recapMessage = "";
+        const r = await callJsonApi("digest", { action: "get" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the digest engine.";
+          this.rows = [];
+        } else {
+          this.rows = (r.data && r.data.rows) || [];
+          if (r.data && r.data.empty_day_note) {
+            this.rows = [];
+          }
+        }
+        this.loading = false;
+      },
+
+      async refresh() {
+        await this.load();
+      },
+
+      async approve(applicationId) {
+        this.busy = true;
+        await callJsonApi("digest", { action: "approve", application_id: applicationId });
+        this.busy = false;
+        await this.load();
+      },
+
+      async decline(applicationId) {
+        const reason = (this.declineReasons[applicationId] || "").trim();
+        if (!reason) return;
+        this.busy = true;
+        await callJsonApi("digest", { action: "decline", application_id: applicationId, reason: reason });
+        this.declineReasons[applicationId] = "";
+        this.busy = false;
+        await this.load();
+      },
+
+      async recap() {
+        this.busy = true;
+        this.fatalError = "";
+        this.recapMessage = "";
+        const r = await callJsonApi("digest", { action: "recap" });
+        if (r && r.ok && r.data) {
+          this.recapMessage = r.data.recap || r.data.message || JSON.stringify(r.data);
+        } else {
+          this.fatalError = (r && r.error) || "Weekly recap failed.";
+        }
+        this.busy = false;
+      }
+    }));
+  });
+</script>
