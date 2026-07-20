@@ -1,0 +1,269 @@
+<!-- AZ3 (#840) Criteria — match criteria + learned converting signature per campaign. -->
+<style>
+  .acriteria{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acriteria h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acriteria .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acriteria .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acriteria .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acriteria .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acriteria .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acriteria .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acriteria .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acriteria-spin .6s linear infinite}
+  @keyframes acriteria-spin{to{transform:rotate(360deg)}}
+  .acriteria .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .acriteria .section{margin-bottom:1.5rem}
+  .acriteria .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .acriteria .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .acriteria .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:10px;overflow:hidden}
+  .acriteria .item .preview{font-size:.78rem;color:var(--color-text-secondary,#6b7683);word-break:break-all}
+  .acriteria .item .title{font-weight:600;font-size:.85rem;margin-bottom:4px;word-break:break-word}
+  .acriteria .item .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .acriteria table{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem}
+  .acriteria table th{text-align:left;font-weight:600;padding:6px 8px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .acriteria table td{padding:6px 8px;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .acriteria .hr-text{font-size:.82rem;line-height:1.5;margin-bottom:.75rem;color:var(--color-text)}
+  .acriteria textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;resize:vertical;min-height:60px;box-sizing:border-box}
+  .acriteria input[type="text"]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;box-sizing:border-box}
+  .acriteria .field-group{margin-bottom:.75rem}
+  .acriteria .field-group label{display:block;font-weight:600;font-size:.82rem;margin-bottom:4px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .signature-facet{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:10px}
+  .acriteria .signature-facet h3{font-size:.95rem;margin:0 0 4px;display:flex;align-items:center;gap:6px}
+  .acriteria .signature-facet .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="acriteria" x-data="criteriaPanel()">
+  <h1>🎯 Criteria</h1>
+  <div class="sub">Match criteria + learned converting signature</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <div class="picker">
+      <select x-model="selectedCampaignId" @change="loadCriteriaAndSignature()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+      <button class="btn" @click="loadCriteriaAndSignature()" :disabled="!selectedCampaignId">↻ Refresh</button>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <!-- Section 1: Criteria -->
+      <div class="section">
+        <h2>📋 Criteria</h2>
+
+        <div x-show="!criteriaData">
+          <div class="empty">
+            <p>No criteria configured for this campaign.</p>
+          </div>
+        </div>
+
+        <div x-show="criteriaData">
+          <div class="hr-text" x-show="criteriaData.human_readable" x-text="criteriaData.human_readable"></div>
+
+          <div x-show="criteriaData.titles && criteriaData.titles.length > 0">
+            <h2>📌 Job Titles <span class="count" x-text="'(' + criteriaData.titles.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Title</th></tr></thead>
+              <tbody>
+                <template x-for="t in criteriaData.titles" :key="t">
+                  <tr><td x-text="t"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.locations && criteriaData.locations.length > 0">
+            <h2>📍 Locations <span class="count" x-text="'(' + criteriaData.locations.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Location</th></tr></thead>
+              <tbody>
+                <template x-for="loc in criteriaData.locations" :key="loc">
+                  <tr><td x-text="loc"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.work_modes && criteriaData.work_modes.length > 0">
+            <h2>💼 Work Modes <span class="count" x-text="'(' + criteriaData.work_modes.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Mode</th></tr></thead>
+              <tbody>
+                <template x-for="wm in criteriaData.work_modes" :key="wm">
+                  <tr><td x-text="wm"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.keywords && criteriaData.keywords.length > 0">
+            <h2>🔑 Keywords <span class="count" x-text="'(' + criteriaData.keywords.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Keyword</th></tr></thead>
+              <tbody>
+                <template x-for="kw in criteriaData.keywords" :key="kw">
+                  <tr><td x-text="kw"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.salary_floor !== undefined && criteriaData.salary_floor !== null">
+            <h2>💰 Salary Floor</h2>
+            <p class="hr-text" x-text="criteriaData.salary_floor"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Learned Signature -->
+      <div class="section">
+        <h2>🖊️ Learned Signature</h2>
+
+        <div class="empty" x-show="!signatureData || !signatureData.facets || Object.keys(signatureData.facets).length === 0">
+          <p>No converting-role signature data yet.</p>
+        </div>
+
+        <div x-show="signatureData && signatureData.facets && Object.keys(signatureData.facets).length > 0">
+          <template x-for="(facet, roleName) in signatureData.facets" :key="roleName">
+            <div class="signature-facet">
+              <h3 x-text="roleName"></h3>
+              <div class="hr-text" x-show="facet.signature" x-text="facet.signature"></div>
+              <div class="meta">
+                <span x-show="facet.samples_count !== undefined">📄 <span x-text="facet.samples_count"></span> samples</span>
+                <span x-show="facet.exploration_budget !== undefined">&nbsp;·&nbsp;🔬 budget: <span x-text="facet.exploration_budget"></span></span>
+              </div>
+            </div>
+          </template>
+          <div class="meta" x-show="signatureData.samples_total !== undefined" style="margin-top:8px">
+            Total samples: <span x-text="signatureData.samples_total"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Apply Learned Adjustment -->
+      <div class="section">
+        <h2>🧪 Apply Learned Adjustment</h2>
+        <div class="field-group">
+          <label for="adjustment-input">Adjustment (JSON dict)</label>
+          <textarea id="adjustment-input" x-model="adjustment" placeholder='e.g. {"keywords": ["python", "rust"], "salary_floor": 120000}'></textarea>
+        </div>
+        <div class="field-group">
+          <label for="rationale-input">Rationale</label>
+          <input type="text" id="rationale-input" x-model="rationale" placeholder="Why this adjustment?">
+        </div>
+        <button class="btn primary" @click="applyLearnedAdjustment()" :disabled="adjusting || !adjustment.trim()">
+          <span x-show="!adjusting">Submit Adjustment</span>
+          <span x-show="adjusting">Applying…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("criteriaPanel", () => ({
+      campaigns: [],
+      selectedCampaignId: "",
+      criteriaData: null,
+      signatureData: null,
+      loading: true,
+      fatalError: "",
+      adjusting: false,
+      adjustment: "",
+      rationale: "",
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          const items = (r.data && r.data.campaigns) || [];
+          this.campaigns = items;
+          if (items.length > 0) {
+            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+          } else {
+            this.selectedCampaignId = "__system__";
+          }
+        }
+        this.loading = false;
+        if (this.selectedCampaignId) {
+          await this.loadCriteriaAndSignature();
+        }
+      },
+
+      async loadCriteriaAndSignature() {
+        this.loading = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaignId || "__system__";
+
+        const [criteriaRes, sigRes] = await Promise.all([
+          callJsonApi("criteria", { action: "view", campaign_id: cid }),
+          callJsonApi("criteria", { action: "signature", campaign_id: cid })
+        ]);
+
+        if (!criteriaRes || !criteriaRes.ok) {
+          this.fatalError = (criteriaRes && criteriaRes.error) || "Couldn't reach the criteria engine.";
+          this.criteriaData = null;
+        } else {
+          this.criteriaData = criteriaRes.data || null;
+        }
+
+        if (sigRes && sigRes.ok) {
+          this.signatureData = sigRes.data || null;
+        } else {
+          this.signatureData = null;
+        }
+
+        this.loading = false;
+      },
+
+      async applyLearnedAdjustment() {
+        this.adjusting = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaignId || "__system__";
+        let adjDict;
+        try {
+          adjDict = JSON.parse(this.adjustment);
+        } catch (e) {
+          this.fatalError = "Invalid JSON in adjustment field.";
+          this.adjusting = false;
+          return;
+        }
+        const r = await callJsonApi("criteria", {
+          action: "apply_learned",
+          campaign_id: cid,
+          adjustment: adjDict,
+          rationale: this.rationale
+        });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to apply adjustment.";
+        } else {
+          this.adjustment = "";
+          this.rationale = "";
+          await this.loadCriteriaAndSignature();
+        }
+        this.adjusting = false;
+      }
+    }));
+  });
+</script>
