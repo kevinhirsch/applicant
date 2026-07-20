@@ -121,3 +121,9 @@ class TestSidebarLauncher:
 
     def test_has_tracker_label(self, html):
         assert "Tracker" in html
+
+    def test_opens_research_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/research.html')" in html
+
+    def test_has_research_label(self, html):
+        assert "Research" in html
