@@ -151,3 +151,9 @@ class TestSidebarLauncher:
 
     def test_has_takeover_label(self, html):
         assert "Live session" in html
+
+    def test_opens_ops_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/ops.html')" in html
+
+    def test_has_ops_label(self, html):
+        assert "Ops" in html
