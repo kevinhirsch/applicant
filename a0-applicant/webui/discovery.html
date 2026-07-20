@@ -1,0 +1,149 @@
+<!-- AZ3 (#844) Discovery — discovery-source toggles per campaign. -->
+<style>
+  .acriteria{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acriteria h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acriteria .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acriteria .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acriteria .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acriteria .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acriteria .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acriteria .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acriteria .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acriteria-spin .6s linear infinite}
+  @keyframes acriteria-spin{to{transform:rotate(360deg)}}
+  .acriteria .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .acriteria .section{margin-bottom:1.5rem}
+  .acriteria .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .acriteria .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .acriteria .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:10px;overflow:hidden}
+  .acriteria .item .preview{font-size:.78rem;color:var(--color-text-secondary,#6b7683);word-break:break-all}
+  .acriteria .item .title{font-weight:600;font-size:.85rem;margin-bottom:4px;word-break:break-word}
+  .acriteria .item .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .acriteria table{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem}
+  .acriteria table th{text-align:left;font-weight:600;padding:6px 8px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .acriteria table td{padding:6px 8px;border-bottom:1px solid var(--color-border,#d8e0e6)}
+</style>
+
+<div class="acriteria" x-data="discoveryPanel()">
+  <h1>🌐 Discovery Sources</h1>
+  <div class="sub">Enable or disable discovery sources per campaign</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <div class="picker">
+      <select x-model="selectedCampaignId" @change="loadSources()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+      <button class="btn" @click="loadSources()" :disabled="!selectedCampaignId">↻ Refresh</button>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <div class="section">
+        <h2>📡 Sources</h2>
+
+        <div class="empty" x-show="sources.length === 0">
+          <p>No discovery sources</p>
+        </div>
+
+        <div class="grid" x-show="sources.length > 0">
+          <template x-for="s in sources" :key="s.source_key">
+            <div class="item">
+              <div class="title" x-text="s.source_key"></div>
+              <div class="meta">
+                <span x-show="s.enabled" style="color:var(--color-primary,#2d7ff9);font-weight:600">● on</span>
+                <span x-show="!s.enabled" style="color:var(--color-text-secondary,#6b7683)">○ off</span>
+              </div>
+              <div style="margin-top:8px">
+                <button class="btn" @click="toggleSource(s)" :disabled="toggling">
+                  <span x-show="!s.enabled">Enable</span>
+                  <span x-show="s.enabled">Disable</span>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("discoveryPanel", () => ({
+      campaigns: [],
+      selectedCampaignId: "",
+      sources: [],
+      loading: true,
+      fatalError: "",
+      toggling: false,
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          const items = (r.data && r.data.campaigns) || [];
+          this.campaigns = items;
+          if (items.length > 0) {
+            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+          } else {
+            this.selectedCampaignId = "__system__";
+          }
+        }
+        this.loading = false;
+        if (this.selectedCampaignId) {
+          await this.loadSources();
+        }
+      },
+
+      async loadSources() {
+        this.loading = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaignId || "__system__";
+        const r = await callJsonApi("discovery", { action: "list", campaign_id: cid });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the discovery engine.";
+          this.sources = [];
+        } else {
+          this.sources = r.data || [];
+        }
+        this.loading = false;
+      },
+
+      async toggleSource(s) {
+        this.toggling = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaignId || "__system__";
+        const sk = s.source_key;
+        const enabled = !s.enabled;
+        const r = await callJsonApi("discovery", { action: "set", campaign_id: cid, source_key: sk, enabled: enabled });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to toggle source.";
+        } else {
+          await this.loadSources();
+        }
+        this.toggling = false;
+      }
+    }));
+  });
+</script>
