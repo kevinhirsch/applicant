@@ -127,3 +127,9 @@ class TestSidebarLauncher:
 
     def test_has_research_label(self, html):
         assert "Research" in html
+
+    def test_opens_feedback_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/feedback.html')" in html
+
+    def test_has_feedback_label(self, html):
+        assert "Feedback" in html

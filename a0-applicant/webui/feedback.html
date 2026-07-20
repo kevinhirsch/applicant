@@ -1,0 +1,241 @@
+<!-- AZ3 Feedback — submit freetext or guided survey feedback, view history per campaign. -->
+<style>
+  .afeedback{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .afeedback h1{font-size:1.5rem;margin:0 0 .25rem}
+  .afeedback .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .afeedback .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .afeedback .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .afeedback .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .afeedback .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .afeedback .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .afeedback .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .afeedback .btn:disabled{opacity:.5;cursor:not-allowed}
+  .afeedback .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .afeedback .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:afeedback-spin .6s linear infinite}
+  @keyframes afeedback-spin{to{transform:rotate(360deg)}}
+  .afeedback .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .afeedback .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .afeedback .section{margin-bottom:1.5rem}
+  .afeedback .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .afeedback .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .afeedback .field{display:flex;flex-direction:column;gap:6px;margin-bottom:.75rem}
+  .afeedback .field label{font-weight:600;font-size:.82rem;color:var(--color-text-secondary,#6b7683)}
+  .afeedback .field input,.afeedback .field textarea{padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .afeedback .field textarea{min-height:60px;resize:vertical}
+  .afeedback .run-box{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:1.25rem}
+  .afeedback .run-box h3{margin:0 0 .75rem;font-size:.95rem}
+  .afeedback .result-card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:.75rem;overflow:hidden}
+  .afeedback .result-card .title{font-weight:600;font-size:.9rem;margin-bottom:4px;word-break:break-word}
+  .afeedback .result-card .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="afeedback" x-data="feedbackPanel()">
+  <h1>Feedback</h1>
+  <p class="sub">Submit freetext or guided survey feedback per campaign and review the history.</p>
+
+  <div class="picker">
+    <label>Campaign</label>
+    <select x-model="selectedCampaignId" @change="onCampaignSelect()">
+      <template x-for="c in campaigns" :key="c.id || c.name">
+        <option :value="c.id || c.name" x-text="c.name || c.id"></option>
+      </template>
+    </select>
+  </div>
+
+  <template x-if="fatalError">
+    <div class="err" x-text="fatalError"></div>
+  </template>
+
+  <!-- Freetext Feedback Form -->
+  <div class="run-box">
+    <h3>Freetext Feedback</h3>
+    <div class="field">
+      <label>Feedback</label>
+      <textarea x-model="freetextText" placeholder="Write your feedback here..."></textarea>
+    </div>
+    <div class="field">
+      <label>Criteria Delta (optional, JSON)</label>
+      <input type="text" x-model="freetextCriteriaDelta" placeholder='{"score": 5}' />
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" @click="submitFreetext()" :disabled="submitting || !freetextText.trim()">Submit Freetext</button>
+      <template x-if="submitting">
+        <span class="spinner"></span>
+      </template>
+    </div>
+  </div>
+
+  <!-- Guided Survey Form -->
+  <div class="run-box">
+    <h3>Guided Survey</h3>
+    <div class="field">
+      <label>Survey Answers (JSON key-value)</label>
+      <textarea x-model="surveyAnswersText" placeholder='{"quality": "high", "speed": 4}'></textarea>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" @click="submitSurvey()" :disabled="submitting || !surveyAnswersText.trim()">Submit Survey</button>
+      <template x-if="submitting">
+        <span class="spinner"></span>
+      </template>
+    </div>
+  </div>
+
+  <!-- Feedback History -->
+  <div class="section">
+    <h2>History <span class="count" x-text="(historyItems.length) + ' entries'"></span></h2>
+
+    <template x-if="historyLoading">
+      <div class="loading">
+        <span class="spinner"></span>
+        <p>Loading feedback history…</p>
+      </div>
+    </template>
+
+    <template x-if="!historyLoading">
+      <div>
+        <template x-if="historyItems.length === 0">
+          <div class="empty">
+            <h2>No feedback yet</h2>
+            <p>Submit freetext or survey feedback to see it here.</p>
+          </div>
+        </template>
+
+        <template x-for="item in historyItems" :key="item.id || item.ts">
+          <div class="result-card">
+            <div class="title" x-text="item.text || item.action || 'Survey entry'"></div>
+            <div class="meta">
+              <span x-text="item.action || 'unknown'"></span>
+              <template x-if="item.ts">
+                <span> · <span x-text="item.ts"></span></span>
+              </template>
+              <template x-if="item.campaign_id">
+                <span> · <span x-text="item.campaign_id"></span></span>
+              </template>
+            </div>
+            <template x-if="item.answers">
+              <div style="margin-top:6px;font-size:.82rem;white-space:pre-wrap;" x-text="JSON.stringify(item.answers, null, 2)"></div>
+            </template>
+            <template x-if="item.criteria_delta">
+              <div style="margin-top:4px;font-size:.78rem;color:var(--color-text-secondary,#6b7683);" x-text="item.criteria_delta"></div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script type="module">
+  window.Alpine.data("feedbackPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "__system__",
+    fatalError: "",
+    loading: true,
+
+    freetextText: "",
+    freetextCriteriaDelta: "",
+    surveyAnswersText: "",
+    submitting: false,
+
+    historyLoading: false,
+    historyItems: [],
+
+    async init() {
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+        } else {
+          this.selectedCampaignId = "__system__";
+        }
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadHistory();
+      }
+    },
+
+    async onCampaignSelect() {
+      this.fatalError = "";
+      await this.loadHistory();
+    },
+
+    async loadHistory() {
+      this.fatalError = "";
+      this.historyLoading = true;
+      this.historyItems = [];
+      const cid = this.selectedCampaignId || "__system__";
+
+      const r = await callJsonApi("feedback", { action: "history", campaign_id: cid });
+      if (!r || !r.ok) {
+        if (r && r.status === 404) {
+          this.historyItems = [];
+        } else {
+          this.fatalError = (r && r.error) || "Couldn't load feedback history.";
+          this.historyItems = [];
+        }
+      } else {
+        const data = r.data || {};
+        const items = data.items || data.entries || data.feedback || [];
+        this.historyItems = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.historyLoading = false;
+    },
+
+    async submitFreetext() {
+      if (!this.freetextText.trim() || !this.selectedCampaignId) return;
+      this.submitting = true;
+      this.fatalError = "";
+      const payload = {
+        action: "freetext",
+        campaign_id: this.selectedCampaignId,
+        text: this.freetextText.trim(),
+      };
+      if (this.freetextCriteriaDelta.trim()) {
+        payload.criteria_delta = this.freetextCriteriaDelta.trim();
+      }
+
+      const r = await callJsonApi("feedback", payload);
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Freetext feedback submission failed.";
+      } else {
+        this.freetextText = "";
+        this.freetextCriteriaDelta = "";
+        await this.loadHistory();
+      }
+      this.submitting = false;
+    },
+
+    async submitSurvey() {
+      if (!this.surveyAnswersText.trim() || !this.selectedCampaignId) return;
+      this.submitting = true;
+      this.fatalError = "";
+      let answers;
+      try {
+        answers = JSON.parse(this.surveyAnswersText.trim());
+      } catch (e) {
+        this.fatalError = "Invalid JSON in survey answers.";
+        this.submitting = false;
+        return;
+      }
+
+      const r = await callJsonApi("feedback", {
+        action: "survey",
+        campaign_id: this.selectedCampaignId,
+        answers: answers,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Survey feedback submission failed.";
+      } else {
+        this.surveyAnswersText = "";
+        await this.loadHistory();
+      }
+      this.submitting = false;
+    }
+  }));
+</script>
