@@ -1,0 +1,187 @@
+<!-- AZ3 (#840) Compare — cross-entity comparison for applications and postings. -->
+<style>
+  .acompare{max-width:800px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acompare h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acompare .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acompare .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acompare .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acompare .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acompare .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acompare .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acompare .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acompare .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acompare .btn.active{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acompare .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acompare .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acompare-spin .6s linear infinite}
+  @keyframes acompare-spin{to{transform:rotate(360deg)}}
+  .acompare .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acompare .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .acompare .field-group{margin-bottom:.75rem}
+  .acompare .field-group label{display:block;font-weight:600;font-size:.82rem;margin-bottom:4px;color:var(--color-text-secondary,#6b7683)}
+  .acompare textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;resize:vertical;min-height:80px;box-sizing:border-box}
+  .acompare .mode-toggle{display:flex;gap:4px;margin-bottom:1rem}
+  .acompare .mode-toggle .btn{flex:1;text-align:center}
+  .acompare table{width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:.75rem}
+  .acompare table th{text-align:left;font-weight:600;padding:8px 10px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .acompare table td{padding:8px 10px;border-bottom:1px solid var(--color-border,#d8e0e6);vertical-align:top}
+  .acompare table tr.diff{background:var(--color-danger-bg,#fff4f4)}
+  .acompare .diff-badge{display:inline-block;background:var(--color-danger,#e74c3c);color:#fff;font-size:.65rem;padding:1px 6px;border-radius:4px;font-weight:700;margin-left:4px}
+  .acompare .summary{margin-top:1rem;padding:12px;background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;font-size:.85rem;line-height:1.5}
+  .acompare .summary h3{font-size:.9rem;margin:0 0 .3rem;font-weight:600}
+</style>
+
+<div class="acompare" x-data="comparePanel()">
+  <h1>🔍 Compare</h1>
+  <div class="sub">Compare applications or postings side-by-side</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <!-- Mode toggle -->
+    <div class="mode-toggle">
+      <button class="btn" :class="{ 'active': mode === 'applications' }" @click="mode = 'applications'">
+        <span class="material-symbols-outlined" style="font-size:1.1rem;vertical-align:middle">description</span>
+        Applications
+      </button>
+      <button class="btn" :class="{ 'active': mode === 'postings' }" @click="mode = 'postings'">
+        <span class="material-symbols-outlined" style="font-size:1.1rem;vertical-align:middle">work</span>
+        Postings
+      </button>
+    </div>
+
+    <!-- Campaign picker -->
+    <div class="picker">
+      <select x-model="selectedCampaignId">
+        <option value="">No campaign</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+    </div>
+
+    <!-- IDs input -->
+    <div class="field-group">
+      <label for="compare-ids-input">
+        <span x-text="mode === 'applications' ? 'Application IDs' : 'Posting IDs'"></span>
+        (comma- or newline-separated, 2+ required)
+      </label>
+      <textarea id="compare-ids-input" x-model="idsText" placeholder="e.g. a123, a456, a789"></textarea>
+    </div>
+
+    <button class="btn primary" @click="doCompare()" :disabled="comparing || !hasEnoughIds()">
+      <span x-show="!comparing">Compare</span>
+      <span x-show="comparing">Comparing…</span>
+    </button>
+
+    <!-- Results -->
+    <div x-show="result !== null" style="margin-top:1rem">
+      <template x-if="result && result.dimensions && result.dimensions.length > 0">
+        <div>
+          <table>
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <template x-for="(label, idx) in (result.entity_labels || [])" :key="idx">
+                  <th x-text="label"></th>
+                </template>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="dim in result.dimensions" :key="dim.key">
+                <tr :class="{ 'diff': dim.diff }">
+                  <td><strong x-text="dim.label"></strong></td>
+                  <template x-for="(val, vIdx) in (dim.values || [])" :key="vIdx">
+                    <td>
+                      <span x-text="val != null ? val : '—'"></span>
+                    </td>
+                  </template>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <div class="summary" x-show="result && result.summary" x-text="result.summary">
+      </div>
+
+      <div class="empty" x-show="result && (!result.dimensions || result.dimensions.length === 0)">
+        <h2>No comparison data</h2>
+        <p>The engine returned no dimensions for the selected entities.</p>
+      </div>
+    </div>
+
+    <!-- Empty state before first compare -->
+    <div class="empty" x-show="result === null && !loading && !fatalError">
+      <h2>Ready to compare</h2>
+      <p>Select a mode, enter at least two IDs, and click Compare.</p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("comparePanel", () => ({
+      mode: "applications",
+      idsText: "",
+      selectedCampaignId: "",
+      campaigns: [],
+      result: null,
+      loading: true,
+      fatalError: "",
+      comparing: false,
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          this.campaigns = (r.data && r.data.campaigns) || [];
+        }
+        this.loading = false;
+      },
+
+      hasEnoughIds() {
+        return this.parseIds().length >= 2;
+      },
+
+      parseIds() {
+        return this.idsText
+          .split(/[,\n]/)
+          .map(s => s.trim())
+          .filter(s => s.length > 0);
+      },
+
+      async doCompare() {
+        const ids = this.parseIds();
+        if (ids.length < 2) {
+          this.fatalError = "Enter at least two IDs.";
+          return;
+        }
+        this.comparing = true;
+        this.fatalError = "";
+        this.result = null;
+        const payload = {
+          action: this.mode,
+          ids: ids,
+          campaign_id: this.selectedCampaignId || ""
+        };
+        const r = await callJsonApi("compare", payload);
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Compare request failed.";
+          this.result = null;
+        } else {
+          this.result = r.data || {};
+        }
+        this.comparing = false;
+      }
+    }));
+  });
+</script>

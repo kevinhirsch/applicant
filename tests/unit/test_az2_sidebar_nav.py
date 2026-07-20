@@ -97,3 +97,9 @@ class TestSidebarLauncher:
 
     def test_has_criteria_label(self, html):
         assert "Criteria" in html
+
+    def test_opens_compare_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/compare.html')" in html
+
+    def test_has_compare_label(self, html):
+        assert "Compare" in html
