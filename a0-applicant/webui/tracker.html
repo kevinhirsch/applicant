@@ -1,0 +1,167 @@
+<!-- AZ3 (#840) Tracker — board + attention per campaign. -->
+<style>
+  .acriteria{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acriteria h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acriteria .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acriteria .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acriteria .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acriteria .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acriteria .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acriteria .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acriteria .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acriteria-spin .6s linear infinite}
+  @keyframes acriteria-spin{to{transform:rotate(360deg)}}
+  .acriteria .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .acriteria .section{margin-bottom:1.5rem}
+  .acriteria .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .acriteria .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .acriteria table{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem}
+  .acriteria table th{text-align:left;font-weight:600;padding:6px 8px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .acriteria table td{padding:6px 8px;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .acriteria .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:10px;overflow:hidden}
+  .acriteria .item .title{font-weight:600;font-size:.85rem;margin-bottom:4px;word-break:break-word}
+  .acriteria .item .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .ghosted{opacity:.5;text-decoration:line-through}
+  .acriteria .followup{background:var(--color-warning-bg,#fff3cd);border-left:3px solid var(--color-warning,#ffc107);padding:4px 8px;border-radius:4px;font-size:.8rem;margin-top:4px}
+</style>
+
+<div class="acriteria" x-data="trackerPanel()">
+  <h1>📋 Application Tracker</h1>
+  <div class="sub">Board and attention items per campaign</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <div class="picker">
+      <select x-model="selectedCampaignId" @change="loadBoard()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+      <button class="btn" @click="loadBoard()" :disabled="!selectedCampaignId">↻ Refresh</button>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <div class="section">
+        <h2>📊 Board</h2>
+
+        <div class="empty" x-show="boardApplications.length === 0">
+          <h2>No applications yet</h2>
+          <p>No applications for this campaign.</p>
+        </div>
+
+        <table x-show="boardApplications.length > 0">
+          <thead>
+            <tr>
+              <th>Role / Company</th>
+              <th>Stage / Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="app in boardApplications" :key="app.id || app.application_id">
+              <tr>
+                <td><strong x-text="app.role || app.position || '—'"></strong><br><span class="meta" x-text="app.company || app.organization || ''"></span></td>
+                <td x-text="app.stage || app.status || '—'"></td>
+                <td x-text="app.updated_at || app.updated || '—'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>⚡ Attention</h2>
+
+        <div class="empty" x-show="attentionItems.length === 0">
+          <h2>Nothing needs attention</h2>
+          <p>No attention items for this campaign.</p>
+        </div>
+
+        <div x-show="attentionItems.length > 0">
+          <template x-for="item in attentionItems" :key="item.id || item.application_id">
+            <div class="item" x-bind:class="{ ghosted: item.ghosted }">
+              <div class="title" x-text="item.role || item.position || item.title || '—'"></div>
+              <div class="meta" x-text="item.company || item.organization || ''"></div>
+              <div class="followup" x-show="item.followups_due" x-text="item.followups_due"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("trackerPanel", () => ({
+      campaigns: [],
+      selectedCampaignId: "",
+      boardApplications: [],
+      attentionItems: [],
+      loading: true,
+      fatalError: "",
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          const items = (r.data && r.data.campaigns) || [];
+          this.campaigns = items;
+          if (items.length > 0) {
+            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+          } else {
+            this.selectedCampaignId = "__system__";
+          }
+        }
+        this.loading = false;
+        if (this.selectedCampaignId) {
+          await this.loadBoard();
+        }
+      },
+
+      async loadBoard() {
+        this.loading = true;
+        this.fatalError = "";
+        const cid = this.selectedCampaignId || "__system__";
+
+        const boardR = await callJsonApi("tracker", { action: "board", campaign_id: cid });
+        if (!boardR || !boardR.ok) {
+          this.fatalError = (boardR && boardR.error) || "Couldn't reach the tracker engine.";
+          this.boardApplications = [];
+        } else {
+          this.boardApplications = boardR.data || [];
+        }
+
+        if (!this.fatalError) {
+          const attnR = await callJsonApi("tracker", { action: "attention", campaign_id: cid });
+          if (!attnR || !attnR.ok) {
+            this.fatalError = (attnR && attnR.error) || "Couldn't reach the tracker attention engine.";
+            this.attentionItems = [];
+          } else {
+            this.attentionItems = attnR.data || [];
+          }
+        }
+
+        this.loading = false;
+      }
+    }));
+  });
+</script>
