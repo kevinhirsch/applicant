@@ -419,11 +419,11 @@ class ScoringService:
         jd_block = "\n".join(
             line
             for line in [
-                f"Title: {posting.title}",
-                f"Company: {posting.company}" if posting.company else "",
-                f"Work mode: {posting.work_mode}" if posting.work_mode else "",
-                f"Location: {posting.location}" if posting.location else "",
-                f"Salary: {posting.salary}" if posting.salary else "",
+                f"Title: {neutralize_untrusted_text(posting.title or '')}",
+                f"Company: {neutralize_untrusted_text(posting.company or '')}" if posting.company else "",
+                f"Work mode: {neutralize_untrusted_text(posting.work_mode or '')}" if posting.work_mode else "",
+                f"Location: {neutralize_untrusted_text(posting.location or '')}" if posting.location else "",
+                f"Salary: {neutralize_untrusted_text(posting.salary or '')}" if posting.salary else "",
                 f"Description: {safe_description}" if posting.description else "",
             ]
             if line

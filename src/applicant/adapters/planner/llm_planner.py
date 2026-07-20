@@ -33,6 +33,7 @@ from applicant.core.entities.plan import (
 )
 from applicant.ports.driven.llm import ChatMessage
 from applicant.ports.driving.planner import PlannerInput, PlannerObservation
+from applicant.core.rules.prompt_injection import neutralize_untrusted_text
 
 log = logging.getLogger(__name__)
 
@@ -125,11 +126,11 @@ class LLMPlanner:
 
     def _build_prompt(self, input_: PlannerInput) -> str:
         parts = [_DSL_SCHEMA_DESCRIPTION]
-        parts.append(f"\nGOAL: {input_.goal}")
+        parts.append(f"\nGOAL: {neutralize_untrusted_text(input_.goal)}")
         if input_.observation:
             obs = input_.observation
-            parts.append(f"\nCURRENT URL: {obs.url}")
-            parts.append(f"\nDOM SNAPSHOT ({obs.snapshot_tokens} tokens):\n{obs.html_summary}")
+            parts.append(f"\nCURRENT URL: {neutralize_untrusted_text(obs.url)}")
+            parts.append(f"\nDOM SNAPSHOT ({obs.snapshot_tokens} tokens):\n{neutralize_untrusted_text(obs.html_summary)}")
             # #305 vision lane: tell the model a rendered screenshot is attached so it
             # grounds ops against the pixels (canvas / image-map / visual-only forms)
             # AND the text-DOM. The op set is unchanged — it still fills by attribute_id.
