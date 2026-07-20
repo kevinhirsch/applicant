@@ -1,0 +1,89 @@
+<!-- WT (#w1) Dormant surfaces panel — list all dormant surfaces and their live_phase/status from the engine. -->
+<style>
+  .adormant{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .adormant h1{font-size:1.5rem;margin:0 0 .25rem}
+  .adormant .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .adormant .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adormant .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .adormant .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .adormant .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .adormant .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:adormant-spin .6s linear infinite}
+  @keyframes adormant-spin{to{transform:rotate(360deg)}}
+  .adormant .card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px;margin-bottom:12px}
+  .adormant .card h2{font-size:1rem;margin:0 0 6px}
+  .adormant .card p{margin:0;font-size:.85rem;color:var(--color-text-secondary,#6b7683)}
+  .adormant table{width:100%;border-collapse:collapse;font-size:.85rem}
+  .adormant th{text-align:left;padding:8px 6px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-weight:600}
+  .adormant td{padding:8px 6px;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .adormant .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
+  .adormant .badge.live{background:#e8f5e9;color:#2e7d32}
+  .adormant .badge.dormant{background:#fff3e0;color:#e65100}
+  .adormant .badge.unknown{background:#f5f5f5;color:#666}
+  .adormant .phase{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="adormant" x-data="dormantPanel()">
+  <h1>💤 Dormant Surfaces</h1>
+  <div class="sub">Engine-registered surfaces and their current lifecycle status</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading dormant surfaces…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <table x-show="surfaces.length > 0">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Live Phase</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="s in surfaces" :key="s.key">
+          <tr>
+            <td><code x-text="s.key"></code></td>
+            <td x-text="s.name"></td>
+            <td><span class="badge" :class="s.status === 'live' ? 'live' : s.status === 'dormant' ? 'dormant' : 'unknown'" x-text="s.status || 'unknown'"></span></td>
+            <td class="phase" x-text="s.live_phase || '—'"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+
+    <div class="empty" x-show="surfaces.length === 0">
+      <h2>No dormant surfaces</h2>
+      <p>The engine has no registered dormant surfaces.</p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    Alpine.data("dormantPanel", () => ({
+      surfaces: [],
+      loading: true,
+      fatalError: "",
+
+      init() {
+        this.load();
+      },
+
+      async load() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("dormant", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the dormant surfaces.";
+          this.surfaces = [];
+        } else {
+          this.surfaces = Array.isArray(r.data) ? r.data : [];
+        }
+        this.loading = false;
+      },
+    }));
+  });
+</script>

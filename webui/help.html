@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Help — Applications</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
+    .surface { border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+    .surface-header {
+      cursor: pointer; padding: 0.6rem 1rem; background: #f3f4f6;
+      font-weight: 600; font-size: 0.9rem; user-select: none;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .surface-header:hover { background: #e5e7eb; }
+    .surface-content { padding: 0.6rem 1rem; font-size: 0.85rem; line-height: 1.5; border-top: 1px solid #d1d5db; }
+    ul { margin: 0.25rem 0 0.25rem 1.2rem; padding: 0; }
+    li { margin-bottom: 0.2rem; }
+    .toggle { transition: transform 0.2s ease; }
+    .open .toggle { transform: rotate(180deg); }
+  </style>
+</head>
+<body x-data="{ open: null }" x-cloak>
+  <h1>Help &amp; Instructions</h1>
+  <p style="margin-bottom:1rem;font-size:0.85rem;color:#4b5563;">
+    Select a surface below for quick guidance.
+  </p>
+
+  <!-- Today -->
+  <div class="surface" :class="{ open: open === 'today' }">
+    <div class="surface-header" @click="open = open === 'today' ? null : 'today'">
+      <span>Today</span>
+      <span class="toggle" x-text="open === 'today' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'today'" x-collapse>
+      <p>Your daily at-a-glance dashboard. Shows:</p>
+      <ul>
+        <li>Upcoming deadlines and overdue items</li>
+        <li>Recent activity from your applications</li>
+        <li>Quick-action shortcuts for common tasks</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Digest -->
+  <div class="surface" :class="{ open: open === 'digest' }">
+    <div class="surface-header" @click="open = open === 'digest' ? null : 'digest'">
+      <span>Digest</span>
+      <span class="toggle" x-text="open === 'digest' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'digest'" x-collapse>
+      <p>Curated summary of notable updates. Use it to:</p>
+      <ul>
+        <li>Review daily/weekly digest of changes</li>
+        <li>Filter by surface or time period</li>
+        <li>Mark items as read or actionable</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Documents -->
+  <div class="surface" :class="{ open: open === 'documents' }">
+    <div class="surface-header" @click="open = open === 'documents' ? null : 'documents'">
+      <span>Documents</span>
+      <span class="toggle" x-text="open === 'documents' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'documents'" x-collapse>
+      <p>Manage and view application-related documents. Supports:</p>
+      <ul>
+        <li>Upload, preview, and download files</li>
+        <li>Organize documents by category</li>
+        <li>Search within document contents</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Campaigns -->
+  <div class="surface" :class="{ open: open === 'campaigns' }">
+    <div class="surface-header" @click="open = open === 'campaigns' ? null : 'campaigns'">
+      <span>Campaigns</span>
+      <span class="toggle" x-text="open === 'campaigns' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'campaigns'" x-collapse>
+      <p>Create and monitor outreach campaigns. Features:</p>
+      <ul>
+        <li>Campaign templates and scheduling</li>
+        <li>Recipient list management</li>
+        <li>Performance tracking and analytics</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Activity -->
+  <div class="surface" :class="{ open: open === 'activity' }">
+    <div class="surface-header" @click="open = open === 'activity' ? null : 'activity'">
+      <span>Activity</span>
+      <span class="toggle" x-text="open === 'activity' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'activity'" x-collapse>
+      <p>Real-time log of all actions across surfaces. Use to:</p>
+      <ul>
+        <li>Track changes and user interactions</li>
+        <li>Filter by surface, date, or user</li>
+        <li>Export activity logs for auditing</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div class="surface" :class="{ open: open === 'chat' }">
+    <div class="surface-header" @click="open = open === 'chat' ? null : 'chat'">
+      <span>Chat</span>
+      <span class="toggle" x-text="open === 'chat' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'chat'" x-collapse>
+      <p>AI-assisted messaging interface. You can:</p>
+      <ul>
+        <li>Ask questions about your applications</li>
+        <li>Request document generation or summarisation</li>
+        <li>Issue commands to automate workflows</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Live session -->
+  <div class="surface" :class="{ open: open === 'live' }">
+    <div class="surface-header" @click="open = open === 'live' ? null : 'live'">
+      <span>Live session</span>
+      <span class="toggle" x-text="open === 'live' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'live'" x-collapse>
+      <p>Active real-time collaboration sessions. Provides:</p>
+      <ul>
+        <li>View current live session participants</li>
+        <li>Share screen or documents in real time</li>
+        <li>Session recording and playback controls</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Health -->
+  <div class="surface" :class="{ open: open === 'health' }">
+    <div class="surface-header" @click="open = open === 'health' ? null : 'health'">
+      <span>Health</span>
+      <span class="toggle" x-text="open === 'health' ? '▾' : '▸'"></span>
+    </div>
+    <div class="surface-content" x-show="open === 'health'" x-collapse>
+      <p>System status and diagnostics. Monitor:</p>
+      <ul>
+        <li>API connectivity and service uptime</li>
+        <li>Recent errors and warnings</li>
+        <li>Performance metrics and resource usage</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
