@@ -37,127 +37,93 @@ def mod():
     return mod
 
 
-@pytest.fixture(autouse=True)
-def _reset_forward_calls():
-    """Reset any state between tests — _forward is stateless, but ensures isolation."""
-    yield
+class TestFeedbackProxy:
+    """Hermetic dispatch tests for the feedback proxy."""
 
+    def test_history_forwards_get(self, mod):
+        seen = {}
 
-def test_history_forwards_get(mod):
-    seen = {}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path)
+            return {"ok": True, "status": 200, "data": {}}
 
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path)
-        return {"ok": True, "status": 200, "data": {"items": []}}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "history", "campaign_id": "c1"})
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/feedback/c1"
 
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({"action": "history", "campaign_id": "c1"})
-    assert seen == {"method": "GET", "path": "/api/feedback/c1"}
+    def test_freetext_forwards_post_with_body(self, mod):
+        seen = {}
 
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path, body=body)
+            return {"ok": True, "status": 200, "data": {}}
 
-def test_freetext_forwards_post(mod):
-    seen = {}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({
+                "action": "freetext",
+                "campaign_id": "c1",
+                "text": "good fit",
+                "criteria_delta": {"experience": 1},
+            })
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/feedback/freetext"
+        assert seen["body"]["campaign_id"] == "c1"
+        assert seen["body"]["text"] == "good fit"
+        assert seen["body"]["criteria_delta"] == {"experience": 1}
 
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path, body=body)
-        return {"ok": True, "status": 201, "data": {}}
+    def test_survey_forwards_post_with_body(self, mod):
+        seen = {}
 
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({
-            "action": "freetext",
-            "campaign_id": "c1",
-            "text": "good job",
-            "criteria_delta": {"weight": 0.9},
-        })
-    assert seen["method"] == "POST"
-    assert seen["path"] == "/api/feedback/freetext"
-    assert seen["body"] == {
-        "campaign_id": "c1",
-        "text": "good job",
-        "criteria_delta": {"weight": 0.9},
-    }
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path, body=body)
+            return {"ok": True, "status": 200, "data": {}}
 
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({
+                "action": "survey",
+                "campaign_id": "c1",
+                "answers": {"q1": "yes"},
+            })
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/feedback/survey"
+        assert seen["body"]["campaign_id"] == "c1"
+        assert seen["body"]["answers"] == {"q1": "yes"}
 
-def test_freetext_default_empty_criteria_delta(mod):
-    seen = {}
+    def test_default_action_is_history(self, mod):
+        seen = {}
 
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path, body=body)
-        return {"ok": True, "status": 201, "data": {}}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path)
+            return {"ok": True, "status": 200, "data": {}}
 
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({"action": "freetext", "campaign_id": "c1", "text": "hi"})
-    assert seen["body"]["criteria_delta"] == {}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": ""})
+        assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
 
+    def test_default_when_no_action(self, mod):
+        seen = {}
 
-def test_survey_forwards_post(mod):
-    seen = {}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path)
+            return {"ok": True, "status": 200, "data": {}}
 
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path, body=body)
-        return {"ok": True, "status": 201, "data": {}}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({})
+        assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
 
-    answers = {"q1": "yes", "q2": "no"}
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({
-            "action": "survey",
-            "campaign_id": "c1",
-            "answers": answers,
-        })
-    assert seen["method"] == "POST"
-    assert seen["path"] == "/api/feedback/survey"
-    assert seen["body"] == {"campaign_id": "c1", "answers": answers}
+    def test_default_campaign_system(self, mod):
+        seen = {}
 
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path)
+            return {"ok": True, "status": 200, "data": {}}
 
-def test_survey_default_empty_answers(mod):
-    seen = {}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "history"})
+        assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
 
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path, body=body)
-        return {"ok": True, "status": 201, "data": {}}
-
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({"action": "survey", "campaign_id": "c1"})
-    assert seen["body"]["answers"] == {}
-
-
-def test_default_is_history(mod):
-    seen = {}
-
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path)
-        return {"ok": True, "status": 200, "data": {}}
-
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({"action": ""})
-    assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
-
-
-def test_default_when_no_action(mod):
-    seen = {}
-
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path)
-        return {"ok": True, "status": 200, "data": {}}
-
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({})
-    assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
-
-
-def test_default_campaign_system(mod):
-    seen = {}
-
-    def fake(method, path, body=None, timeout=10):
-        seen.update(method=method, path=path)
-        return {"ok": True, "status": 200, "data": {}}
-
-    with patch.object(mod, "_forward", fake):
-        r = mod.dispatch({"action": "history"})
-    assert seen == {"method": "GET", "path": "/api/feedback/__system__"}
-
-
-def test_unknown_action_rejected(mod):
-    r = mod.dispatch({"action": "zoom"})
-    assert r["ok"] is False and r["status"] == 400
-    assert "unknown feedback action" in r["error"]
+    def test_unknown_action_rejected(self, mod):
+        r = mod.dispatch({"action": "zoom"})
+        assert r["ok"] is False and r["status"] == 400
+        assert "unknown feedback action" in r["error"]
