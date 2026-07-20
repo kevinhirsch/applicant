@@ -67,3 +67,9 @@ class TestSidebarLauncher:
 
     def test_has_notifications_label(self, html):
         assert "Notifications" in html
+
+    def test_opens_digest_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/digest.html')" in html
+
+    def test_has_digest_label(self, html):
+        assert "Digest" in html
