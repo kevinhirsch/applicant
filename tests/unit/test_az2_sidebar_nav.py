@@ -61,3 +61,9 @@ class TestSidebarLauncher:
 
     def test_has_profile_label(self, html):
         assert "Profile" in html
+
+    def test_opens_notifications_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/notifications.html')" in html
+
+    def test_has_notifications_label(self, html):
+        assert "Notifications" in html
