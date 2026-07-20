@@ -139,3 +139,9 @@ class TestSidebarLauncher:
 
     def test_has_chat_label(self, html):
         assert "Chat" in html
+
+    def test_opens_documents_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/documents.html')" in html
+
+    def test_has_documents_label(self, html):
+        assert "Documents" in html

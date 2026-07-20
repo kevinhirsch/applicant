@@ -1,0 +1,318 @@
+<!-- AZ docs (#??) Documents — browse, approve/decline, provenance, and snapshot per application. -->
+<style>
+  .adoc{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .adoc h1{font-size:1.5rem;margin:0 0 .25rem}
+  .adoc .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .adoc .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adoc .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .adoc .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .adoc .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .adoc .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .adoc .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .adoc .btn.success{background:var(--color-success,#28a745);color:#fff;border-color:var(--color-success,#28a745)}
+  .adoc .btn.danger{background:var(--color-danger-text,#9b1c1c);color:#fff;border-color:var(--color-danger-text,#9b1c1c)}
+  .adoc .btn:disabled{opacity:.5;cursor:not-allowed}
+  .adoc .btn.small{padding:4px 10px;font-size:.75rem}
+  .adoc .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .adoc .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:adoc-spin .6s linear infinite}
+  @keyframes adoc-spin{to{transform:rotate(360deg)}}
+  .adoc .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .adoc .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .adoc .section{margin-bottom:1.5rem}
+  .adoc .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .adoc .section h3{font-size:1rem;margin:.75rem 0 .4rem}
+  .adoc .document-list{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+  .adoc .document-item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;overflow:hidden}
+  .adoc .document-item .doc-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+  .adoc .document-item .doc-type{font-weight:600;font-size:.85rem;padding:2px 8px;border-radius:4px;background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6)}
+  .adoc .document-item .doc-status{font-size:.78rem;padding:2px 8px;border-radius:4px}
+  .adoc .document-item .doc-status.approved{background:#d4edda;color:#155724}
+  .adoc .document-item .doc-status.declined{background:#f8d7da;color:#721c24}
+  .adoc .document-item .doc-status.pending{background:#fff3cd;color:#856404}
+  .adoc .document-item .doc-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:6px;padding:8px 10px;font-size:.78rem;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:8px}
+  .adoc .document-item .doc-warning{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border:1px solid var(--color-warning-border,#ffeeba);border-radius:6px;padding:6px 10px;font-size:.78rem;margin-bottom:8px}
+  .adoc .document-item .doc-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .adoc .provenance-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:6px;max-height:300px;overflow-y:auto}
+  .adoc .snapshot-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:6px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+  .adoc .expander{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:.85rem;font-weight:600;padding:6px 10px;background:var(--color-panel,#f2f5f7);border-radius:6px;border:1px solid var(--color-border,#d8e0e6);margin-top:8px;user-select:none}
+  .adoc .expander:hover{background:var(--color-hover-bg,#e8ecf0)}
+</style>
+
+<div class="adoc" x-data="documentsPanel()">
+  <h1>📄 Documents</h1>
+  <p class="sub">Browse, approve, and review documents per application.</p>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <!-- Campaign picker -->
+    <div class="picker">
+      <label>Campaign</label>
+      <select x-model="selectedCampaignId" @change="onCampaignSelect()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0 && !loading">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <!-- Application picker -->
+      <div class="picker" x-show="applications.length > 0">
+        <label>Application</label>
+        <select x-model="selectedApplicationId" @change="onApplicationSelect()">
+          <option value="">Select an application…</option>
+          <template x-for="app in applications" :key="app.id || app.application_id">
+            <option x-bind:value="app.id || app.application_id" x-text="(app.id || app.application_id) + ' — ' + (app.full_name || app.name || app.label || '')"></option>
+          </template>
+        </select>
+      </div>
+
+      <div class="empty" x-show="applications.length === 0 && selectedCampaignId">
+        <h2>No applications</h2>
+        <p>No applications found for this campaign.</p>
+      </div>
+
+      <!-- Documents list -->
+      <div x-show="selectedApplicationId">
+        <div class="section">
+          <h2>📋 Documents</h2>
+
+          <div class="empty" x-show="documents.length === 0 && !documentsLoading">
+            <h2>No documents</h2>
+            <p>No documents for this application.</p>
+          </div>
+
+          <div class="document-list" x-show="documents.length > 0">
+            <template x-for="doc in documents" :key="doc.id || doc.document_id">
+              <div class="document-item">
+                <div class="doc-header">
+                  <span class="doc-type" x-text="doc.type || doc.document_type || 'Document'"></span>
+                  <span class="doc-status" :class="doc.approved === true ? 'approved' : (doc.approved === false ? 'declined' : 'pending')" x-text="doc.approved === true ? 'Approved' : (doc.approved === false ? 'Declined' : 'Pending')"></span>
+                </div>
+
+                <div class="doc-warning" x-show="doc.degraded">
+                  ⚠️ Degraded: <span x-text="doc.degraded_reason || 'Unknown reason'"></span>
+                </div>
+
+                <div class="doc-content" x-text="doc.content || '(no content)'"></div>
+
+                <div class="doc-actions">
+                  <button class="btn success small" @click="approveDocument(doc.id || doc.document_id)" :disabled="doc.approved === true">✓ Approve</button>
+                  <button class="btn danger small" @click="declineDocument(doc.id || doc.document_id)" :disabled="doc.approved === false">✗ Decline</button>
+                </div>
+
+                <!-- Provenance expander -->
+                <div class="expander" @click="toggleProvenance(doc.id || doc.document_id)">
+                  <span x-text="provenanceOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  Provenance (what I drew on)
+                </div>
+                <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-html="provenanceData || '<em>Loading…</em>'"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Submission snapshot -->
+        <div class="section">
+          <h2>📸 Submission Snapshot</h2>
+
+          <div x-show="snapshotLoading"><div class="spinner"></div> Loading snapshot…</div>
+
+          <div class="snapshot-content" x-show="snapshotData && !snapshotLoading">
+            <div x-html="snapshotData"></div>
+            <div class="snapshot-raw" x-show="snapshotRaw" x-text="snapshotRaw"></div>
+          </div>
+
+          <div class="empty" x-show="snapshotNotFound && !snapshotLoading">
+            <h2>No snapshot yet</h2>
+            <p>No submission snapshot available for this application.</p>
+          </div>
+
+          <div class="err" x-show="snapshotError && !snapshotLoading" x-text="snapshotError"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { callJsonApi } from "/js/api.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("documentsPanel", () => ({
+      campaigns: [],
+      selectedCampaignId: "",
+      selectedApplicationId: "",
+      applications: [],
+      documents: [],
+      fatalError: "",
+      loading: true,
+      documentsLoading: false,
+      provenanceOpen: null,
+      provenanceData: "",
+      snapshotData: null,
+      snapshotRaw: null,
+      snapshotLoading: false,
+      snapshotNotFound: false,
+      snapshotError: "",
+
+      async init() {
+        this.loading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("campaigns", { action: "list" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+          this.campaigns = [];
+        } else {
+          const items = (r.data && r.data.campaigns) || [];
+          this.campaigns = items;
+          if (items.length > 0) {
+            this.selectedCampaignId = items[0].id || items[0].name || "";
+          }
+        }
+        this.loading = false;
+        if (this.selectedCampaignId) {
+          await this.loadApplications();
+        }
+      },
+
+      async onCampaignSelect() {
+        this.fatalError = "";
+        this.selectedApplicationId = "";
+        this.documents = [];
+        this.snapshotData = null;
+        this.snapshotNotFound = false;
+        this.snapshotError = "";
+        if (this.selectedCampaignId) {
+          await this.loadApplications();
+        } else {
+          this.applications = [];
+        }
+      },
+
+      async loadApplications() {
+        this.fatalError = "";
+        const cid = this.selectedCampaignId;
+        if (!cid) { this.applications = []; return; }
+
+        const r = await callJsonApi("tracker", { action: "board", campaign_id: cid });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't load applications.";
+          this.applications = [];
+        } else {
+          const data = r.data || {};
+          const items = data.applications || data.items || data.board || [];
+          this.applications = Array.isArray(items) ? items : (items ? [items] : []);
+        }
+      },
+
+      async onApplicationSelect() {
+        this.fatalError = "";
+        this.documents = [];
+        this.snapshotData = null;
+        this.snapshotNotFound = false;
+        this.snapshotError = "";
+        this.provenanceOpen = null;
+        this.provenanceData = "";
+        if (this.selectedApplicationId) {
+          await Promise.all([
+            this.loadDocuments(),
+            this.loadSnapshot()
+          ]);
+        }
+      },
+
+      async loadDocuments() {
+        this.documentsLoading = true;
+        this.fatalError = "";
+        const appId = this.selectedApplicationId;
+        if (!appId) { this.documents = []; this.documentsLoading = false; return; }
+
+        const r = await callJsonApi("documents", { action: "list", application_id: appId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't load documents.";
+          this.documents = [];
+        } else {
+          const data = r.data || {};
+          const items = data.documents || data.items || [];
+          this.documents = Array.isArray(items) ? items : (items ? [items] : []);
+        }
+        this.documentsLoading = false;
+      },
+
+      async approveDocument(docId) {
+        if (!docId) return;
+        this.fatalError = "";
+        const r = await callJsonApi("documents", { action: "approve", document_id: docId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to approve document.";
+        } else {
+          await this.loadDocuments();
+        }
+      },
+
+      async declineDocument(docId) {
+        if (!docId) return;
+        this.fatalError = "";
+        const r = await callJsonApi("documents", { action: "decline", document_id: docId });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Failed to decline document.";
+        } else {
+          await this.loadDocuments();
+        }
+      },
+
+      async toggleProvenance(docId) {
+        if (!docId) return;
+        if (this.provenanceOpen === docId) {
+          this.provenanceOpen = null;
+          this.provenanceData = "";
+          return;
+        }
+        this.provenanceOpen = docId;
+        this.provenanceData = "";
+        this.fatalError = "";
+        const r = await callJsonApi("documents", { action: "provenance", document_id: docId });
+        if (!r || !r.ok) {
+          this.provenanceData = "<em>Failed to load provenance.</em>";
+        } else {
+          const data = r.data || {};
+          // Render H4 provenance — assume data is HTML or structured
+          const prov = data.provenance || data.html || data.text || JSON.stringify(data, null, 2);
+          this.provenanceData = typeof prov === "string" ? prov : JSON.stringify(prov, null, 2);
+        }
+      },
+
+      async loadSnapshot() {
+        this.snapshotLoading = true;
+        this.snapshotData = null;
+        this.snapshotNotFound = false;
+        this.snapshotError = "";
+        const appId = this.selectedApplicationId;
+        if (!appId) { this.snapshotLoading = false; return; }
+
+        const r = await callJsonApi("documents", { action: "snapshot", application_id: appId });
+        if (!r || !r.ok) {
+          if (r && (r.status === 404 || r.status_code === 404)) {
+            this.snapshotNotFound = true;
+          } else {
+            this.snapshotError = (r && r.error) || "Failed to load snapshot.";
+          }
+        } else {
+          const data = r.data || {};
+          const snap = data.snapshot || data.html || data.content || data.text || JSON.stringify(data, null, 2);
+          this.snapshotData = typeof snap === "string" ? snap : JSON.stringify(snap, null, 2);
+        }
+        this.snapshotLoading = false;
+      }
+    }));
+  });
+</script>
