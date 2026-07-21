@@ -47,4 +47,13 @@ if [ -f "$OVERLAY_DIR/js/manifest.json" ]; then
   cp "$OVERLAY_DIR/js/manifest.json" "$TARGET_DIR/webui/js/manifest.json"
 fi
 
+# AZ0-4/826: Apply string substitution to catch upstream component references
+# that leak the upstream codename into the shipped artifact.  This pass runs
+# after the overlay copies so that overlay-provided files (e.g. manifest.json)
+# are not double-patched.  Only .html and .json files under webui/ are touched;
+# node_modules/ is excluded.
+echo "Applying string substitution: 'Agent Zero' -> '$APP_NAME', 'agent0ai' -> '$APP_SHORT_NAME'"
+find "$TARGET_DIR/webui" -type f -name '*.html' ! -path '*/node_modules/*' -print0 | xargs -0 -r sed -i -e "s/Agent Zero/${APP_NAME}/g" -e "s/agent0ai/${APP_SHORT_NAME}/g"
+find "$TARGET_DIR/webui" -type f -name '*.json' ! -path '*/node_modules/*' -print0 | xargs -0 -r sed -i -e "s/Agent Zero/${APP_NAME}/g" -e "s/agent0ai/${APP_SHORT_NAME}/g"
+
 echo "Branding applied from overlay"
