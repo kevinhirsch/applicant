@@ -233,24 +233,31 @@ window.Alpine.data('aconnections', () => ({
     try {
       await this.loadAll();
     } catch (e) {
-      this.fatalError = 'Failed to load integrations: ' + e.message;
+      this.fatalError = 'Network error loading integrations.';
     } finally {
       this.loading = false;
     }
   },
 
   async loadAll() {
-    const accountsRes = await callJsonApi('connections', { action: 'get_email_accounts' });
-    if (accountsRes.ok) {
-      this.emailAccounts = Array.isArray(accountsRes.data) ? accountsRes.data : [];
-    } else {
-      this.fatalError = (accountsRes.error || 'Failed to load email accounts.');
-    }
-    const calRes = await callJsonApi('connections', { action: 'get_calendar_config' });
-    if (calRes.ok && calRes.data) {
-      this.calendarUrl = calRes.data.url || '';
-      this.calendarHasPassword = !!calRes.data.has_password;
-      this.formCalendarUrl = this.calendarUrl;
+    this.fatalError = '';
+    try {
+      const accountsRes = await callJsonApi('connections', { action: 'get_email_accounts' });
+      if (accountsRes && accountsRes.ok) {
+        this.emailAccounts = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+      } else {
+        this.fatalError = (accountsRes && accountsRes.error) || 'Couldn\'t reach the companion for integrations.';
+      }
+      const calRes = await callJsonApi('connections', { action: 'get_calendar_config' });
+      if (calRes && calRes.ok && calRes.data) {
+        this.calendarUrl = calRes.data.url || '';
+        this.calendarHasPassword = !!calRes.data.has_password;
+        this.formCalendarUrl = this.calendarUrl;
+      } else if (!this.fatalError) {
+        this.fatalError = (calRes && calRes.error) || 'Couldn\'t reach the companion for integrations.';
+      }
+    } catch (e) {
+      this.fatalError = 'Network error loading integrations.';
     }
   },
 
@@ -273,13 +280,13 @@ window.Alpine.data('aconnections', () => ({
       if (this.formSmtpPassword) body.smtp_password = this.formSmtpPassword;
       if (this.formFromAddress) body.from_address = this.formFromAddress;
       const res = await callJsonApi('connections', body);
-      if (res.ok) {
+      if (res && res.ok) {
         this.saveMessage = this.editingAccountId ? 'Account updated successfully.' : 'Account saved successfully.';
         this.clearEmailForm();
         this.editingAccountId = null;
         await this.loadAll();
       } else {
-        this.saveError = res.error || 'Failed to save email account.';
+        this.saveError = (res && res.error) || 'Failed to save email account.';
       }
     } catch (e) {
       this.saveError = 'Error: ' + e.message;
@@ -333,7 +340,7 @@ window.Alpine.data('aconnections', () => ({
         action: 'delete_email_account',
         account_id: id,
       });
-      if (res.ok) {
+      if (res && res.ok) {
         this.saveMessage = 'Account deleted.';
         if (this.editingAccountId === id) {
           this.clearEmailForm();
@@ -341,7 +348,7 @@ window.Alpine.data('aconnections', () => ({
         }
         await this.loadAll();
       } else {
-        this.saveError = res.error || 'Failed to delete account.';
+        this.saveError = (res && res.error) || 'Failed to delete account.';
       }
     } catch (e) {
       this.saveError = 'Error: ' + e.message;
@@ -370,10 +377,10 @@ window.Alpine.data('aconnections', () => ({
         if (this.formSmtpPassword) body.smtp_password = this.formSmtpPassword;
       }
       const res = await callJsonApi('connections', body);
-      if (res.ok && res.data && res.data.sent) {
+      if (res && res.ok && res.data && res.data.sent) {
         this.saveMessage = 'Test email sent successfully.';
       } else {
-        this.saveError = (res.error || (res.data && res.data.error) || 'Test failed.');
+        this.saveError = ((res && res.error) || (res && res.data && res.data.error) || 'Test failed.');
       }
     } catch (e) {
       this.saveError = 'Error: ' + e.message;
@@ -396,13 +403,13 @@ window.Alpine.data('aconnections', () => ({
       if (this.formCalendarUser) body.username = this.formCalendarUser;
       if (this.formCalendarPassword) body.password = this.formCalendarPassword;
       const res = await callJsonApi('connections', body);
-      if (res.ok) {
+      if (res && res.ok) {
         this.calendarUrl = this.formCalendarUrl || '';
         this.calendarHasPassword = !!this.formCalendarPassword || this.calendarHasPassword;
         this.formCalendarPassword = '';
         this.calendarMessage = this.formCalendarUrl ? 'Calendar saved successfully.' : 'Calendar disconnected.';
       } else {
-        this.calendarError = res.error || 'Failed to save calendar configuration.';
+        this.calendarError = (res && res.error) || 'Failed to save calendar configuration.';
       }
     } catch (e) {
       this.calendarError = 'Error: ' + e.message;
@@ -421,10 +428,10 @@ window.Alpine.data('aconnections', () => ({
       if (this.formCalendarUser) body.username = this.formCalendarUser;
       if (this.formCalendarPassword) body.password = this.formCalendarPassword;
       const res = await callJsonApi('connections', body);
-      if (res.ok && res.data && res.data.sent) {
+      if (res && res.ok && res.data && res.data.sent) {
         this.calendarMessage = 'Calendar test successful.';
       } else {
-        this.calendarError = (res.error || (res.data && res.data.error) || 'Calendar test failed.');
+        this.calendarError = ((res && res.error) || (res && res.data && res.data.error) || 'Calendar test failed.');
       }
     } catch (e) {
       this.calendarError = 'Error: ' + e.message;

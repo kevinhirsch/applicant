@@ -81,3 +81,7 @@ class TestConnectionsPanel:
 
     def test_interview_mentioned(self, html):
         assert "interview" in html.lower()
+
+    def test_has_fatal_error_display(self, html):
+        assert 'x-show="fatalError"' in html
+        assert 'class="err" x-text="fatalError"' in html
