@@ -1,0 +1,78 @@
+# intel_tiers.yaml — Canonical Agent-Profile Tier Topology Contract
+# Plane A: shell/agent models (the "think-here-build-there" model plane)
+# The engine tier-ladder (Plane B) is separate.
+#
+# This file is the shipped CONTRACT enforced by test_intel_tier_topology.py.
+# Do NOT add endpoints or api keys here — those are injected at setup (INTEL-7).
+
+tiers:
+  local-fast:
+    locality: local
+    description: "Local Qwen-class inference for high-volume execution work (coding, reading, testing)"
+  cloud-flash:
+    locality: remote
+    description: "Fast cloud inference (DeepSeek flash) for planning, review, security audit"
+  cloud-pro:
+    locality: remote
+    description: "Max-intelligence cloud inference (DeepSeek pro) for debugger/escalation"
+
+presets:
+  Default:
+    model: Qwen3.6-27B
+    tier: local-fast
+  DeepSeek-Chat:
+    model: deepseek-v4-flash
+    tier: cloud-flash
+  DeepSeek-Flash:
+    model: deepseek-v4-flash
+    tier: cloud-flash
+  DeepSeek-Pro:
+    model: deepseek-v4-pro
+    tier: cloud-pro
+
+profiles:
+  agent0:
+    preset: DeepSeek-Chat
+    model: deepseek-v4-flash
+    tier: cloud-flash
+    locality: remote
+  coder:
+    preset: Default
+    model: Qwen3.6-27B
+    tier: local-fast
+    locality: local
+  explorer:
+    preset: Default
+    model: Qwen3.6-27B
+    tier: local-fast
+    locality: local
+  test-engineer:
+    preset: Default
+    model: Qwen3.6-27B
+    tier: local-fast
+    locality: local
+  coder-cloud:
+    preset: DeepSeek-Flash
+    model: deepseek-v4-flash
+    tier: cloud-flash
+    locality: remote
+  explorer-cloud:
+    preset: DeepSeek-Flash
+    model: deepseek-v4-flash
+    tier: cloud-flash
+    locality: remote
+  reviewer:
+    preset: DeepSeek-Flash
+    model: deepseek-v4-flash
+    tier: cloud-flash
+    locality: remote
+  security-auditor:
+    preset: DeepSeek-Flash
+    model: deepseek-v4-flash
+    tier: cloud-flash
+    locality: remote
+  debugger:
+    preset: DeepSeek-Pro
+    model: deepseek-v4-pro
+    tier: cloud-pro
+    locality: remote
