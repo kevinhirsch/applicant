@@ -148,3 +148,26 @@ class TestBrandingSourceConsistency:
             assert "Agent Zero" not in content, (
                 f"Overlay file {html_file.relative_to(A0_WEBUI)} still contains 'Agent Zero'"
             )
+
+
+class TestDockerfileBuildStep:
+    """Deliverable 1b (build): Dockerfile.a0 must apply the overlay at image-build time."""
+
+    DOCKERFILE = PROJECT_ROOT / "docker" / "Dockerfile.a0"
+
+    def test_dockerfile_exists(self):
+        assert self.DOCKERFILE.is_file(), "docker/Dockerfile.a0 missing"
+
+    def test_dockerfile_has_overlay_build_step(self):
+        """Verify Dockerfile.a0 contains the apply-branding.sh invocation as a
+        RUN step (not only referenced from CI)."""
+        content = self.DOCKERFILE.read_text()
+        assert "COPY scripts/apply-branding.sh" in content, (
+            "Dockerfile.a0 must COPY apply-branding.sh into the build stage"
+        )
+        assert "COPY a0-webui/" in content, (
+            "Dockerfile.a0 must COPY a0-webui/ into the build stage"
+        )
+        assert "RUN bash /tmp/branding/scripts/apply-branding.sh" in content, (
+            "Dockerfile.a0 must RUN apply-branding.sh as a build step"
+        )

@@ -23,3 +23,12 @@ FROM agent0ai/agent-zero:v2.4
 # right home for a shipped-immutable product plugin (per-user config still lives in
 # the /a0/usr volume). The subtree stays byte-pristine (additive overlay, D6).
 COPY a0-applicant/ /a0/plugins/applicant/
+
+# AZ0-4/846: Apply branded a0-webui overlay at image-build time so the shipped
+# image carries the white-labeled webui (not just exercised by CI scratch-dir
+# checks). The branding script copies a0-webui/ files onto /a0/webui/ and runs
+# string substitution on .html and .json files.
+COPY scripts/apply-branding.sh /tmp/branding/scripts/apply-branding.sh
+COPY a0-webui/ /tmp/branding/a0-webui/
+COPY branding/ /tmp/branding/branding/
+RUN bash /tmp/branding/scripts/apply-branding.sh /a0 && rm -rf /tmp/branding
