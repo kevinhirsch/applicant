@@ -1,0 +1,156 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#842) Demo Data — DEMO_MODE status + seed/clear through the engine. -->
+<style>
+  .ademo{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .ademo h1{font-size:1.5rem;margin:0 0 .25rem}
+  .ademo .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .ademo .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .ademo .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .ademo .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .ademo .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .ademo .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .ademo .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .ademo .btn:disabled{opacity:.5;cursor:not-allowed}
+  .ademo .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .ademo .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:ademo-spin .6s linear infinite}
+  @keyframes ademo-spin{to{transform:rotate(360deg)}}
+  .ademo .list{display:flex;flex-direction:column;gap:6px;margin-bottom:1.5rem}
+  .ademo .stat-row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:1.5rem}
+  .ademo .stat-card{padding:8px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);font-size:.85rem;flex:1;min-width:100px;text-align:center}
+  .ademo .stat-card .stat-num{font-size:1.4rem;font-weight:700;color:var(--color-primary,#2d7ff9)}
+  .ademo .stat-card .stat-label{color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .ademo .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .ademo .honest-note{background:var(--color-warning-bg,#fff8e1);color:var(--color-warning-text,#8d6e00);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:1rem;line-height:1.4}
+</style>
+
+<div class="ademo" x-data="window.Alpine.data('ademo')">
+  <h1>Demo Data <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=demo')" title="Help for demo data">?</button></h1>
+  <p class="sub">Sample data management for testing</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading demo status...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <!-- Demo mode disabled state -->
+      <div x-show="!demo_mode" class="empty">
+        <h2>Demo mode is disabled</h2>
+        <p>Set <code>DEMO_MODE=1</code> to enable demo data functionality.</p>
+      </div>
+
+      <!-- Demo mode enabled state -->
+      <div x-show="demo_mode">
+        <div x-show="!demo_active" class="empty">
+          <h2>No demo data loaded</h2>
+          <p>Use the button below to load sample campaigns, postings, and applications.</p>
+        </div>
+
+        <div x-show="demo_active">
+          <div class="stat-row">
+            <div class="stat-card" x-show="counts.campaigns !== undefined">
+              <div class="stat-num" x-text="counts.campaigns || 0"></div>
+              <div class="stat-label">Campaigns</div>
+            </div>
+            <div class="stat-card" x-show="counts.postings !== undefined">
+              <div class="stat-num" x-text="counts.postings || 0"></div>
+              <div class="stat-label">Postings</div>
+            </div>
+            <div class="stat-card" x-show="counts.applications !== undefined">
+              <div class="stat-num" x-text="counts.applications || 0"></div>
+              <div class="stat-label">Applications</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button class="btn primary" @click="seedData()" :disabled="seeding">
+            <span x-text="seeding ? 'Loading...' : 'Load demo data'"></span>
+          </button>
+          <button class="btn" @click="clearData()" :disabled="clearing || !demo_active">
+            <span x-text="clearing ? 'Clearing...' : 'Clear demo data'"></span>
+          </button>
+        </div>
+
+        <div class="honest-note">
+          Demo data is separate from real data. Loading demo data will create sample campaigns, postings, and applications.
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('ademo', () => ({
+      demo_mode: false,
+      demo_active: false,
+      loading: false,
+      error: '',
+      counts: {},
+      seeding: false,
+      clearing: false,
+
+      async init() {
+        this.loadStatus();
+      },
+
+      async loadStatus() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('demo', { action: 'status' });
+          if (res.ok) {
+            this.demo_mode = res.data.demo_mode || false;
+            this.demo_active = res.data.demo_active || false;
+            this.counts = res.data.counts || {};
+          } else {
+            this.error = res.error || 'Failed to load demo status';
+          }
+        } catch(e) {
+          this.error = 'Network error loading demo status';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async seedData() {
+        if (!confirm('Load demo data? This will create sample campaigns, postings, and applications.')) return;
+        this.seeding = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('demo', { action: 'seed' });
+          if (res.ok) {
+            await this.loadStatus();
+          } else {
+            this.error = res.error || 'Failed to load demo data';
+          }
+        } catch(e) {
+          this.error = 'Network error loading demo data';
+        } finally {
+          this.seeding = false;
+        }
+      },
+
+      async clearData() {
+        if (!confirm('Clear demo data? This will remove all sample campaigns, postings, and applications.')) return;
+        this.clearing = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('demo', { action: 'clear' });
+          if (res.ok) {
+            await this.loadStatus();
+          } else {
+            this.error = res.error || 'Failed to clear demo data';
+          }
+        } catch(e) {
+          this.error = 'Network error clearing demo data';
+        } finally {
+          this.clearing = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>

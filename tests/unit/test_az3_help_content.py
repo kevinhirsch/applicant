@@ -24,6 +24,7 @@ EXPECTED_SURFACES = {
     "ops", "fonts", "model_endpoints", "feedback", "chat",
     "activity", "takeover", "tiers",
     "privacy", "savejob",
+    "demo",
     "automation",
     "shortcuts",
     "interview_prep",

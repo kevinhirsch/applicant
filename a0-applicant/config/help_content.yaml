@@ -84,6 +84,15 @@ discovery:
     - Send promising listings to your campaign for automated application.
   prerequisites: "At least one connected job board with an active API key"
 
+demo:
+  title: Demo Data
+  steps:
+    - Check whether demo mode is enabled (requires DEMO_MODE=1 environment variable).
+    - Load demo data to populate sample campaigns, postings, and applications for testing.
+    - Clear demo data to remove the demo dataset and return to an empty state.
+    - Note that demo data is separate from real data and does not affect production workflows.
+  prerequisites: "DEMO_MODE=1 environment variable set on the engine service"
+
 criteria:
   title: Criteria
   steps:

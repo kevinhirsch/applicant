@@ -34,6 +34,7 @@ retired front-door traceability and serves as the single source of truth for por
 | fonts (install/list) | `webui/fonts.html` | `api/fonts.py` | delivered | |
 | interview-prep (per-application brief) | `webui/interview_prep.html` | `api/interview_prep.py` | delivered | |
 | discovery (source toggles) | `webui/discovery.html` | `api/discovery.py` | delivered | |
+| demo (demo-data panel) | `webui/demo.html` | `api/demo.py` | delivered | #842 — DEMO_MODE-gated status + seed/clear |
 | notifications | `webui/notifications.html` | `api/notifications.py` | delivered | |
 | attributes (profile CRUD) | `webui/attributes.html` | `api/attributes.py` | delivered | |
 | ops (tool toggles + observability) | `webui/ops.html` | `api/ops.py` | delivered | |
@@ -70,7 +71,7 @@ retired front-door traceability and serves as the single source of truth for por
 
 ### Delivery status summary
 
-- **Fully delivered (panel + proxy, engine-wired):** 30 surfaces (27 named + 3 utility)
+- **Fully delivered (panel + proxy, engine-wired):** 31 surfaces (27 named + 3 utility)
 - **Partial (no engine proxy — static/shell-level):** 2 (config, help)
 - **Gated / present-but-disabled:** 1 (compare — product decision)
 
