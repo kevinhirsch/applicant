@@ -20,9 +20,9 @@ Everything else is either gated on those, owned by you (business/legal), or mino
 
 **Verification (2026-07-21):** unit suite **7830 passed** at the known 2-failure baseline
 (`test_prod_compose_env_file` + `test_deploy_hardening_lens04` — the ONLY allowed failures, pre-existing);
-integration smoke/write/mock/lane tests green or cleanly skip-guarded; **all 35 a0-applicant panels
-render clean in a real browser** (Playwright). Branch: `claude/refactor-agent-zero-applicant-xn7xoc`
-(local only — never pushed).
+integration **42 passed + 11 cleanly skipped** (the skips are the companion-gated lane-regression tests);
+**35/35 a0-applicant panels render clean in a real browser** (Playwright). Branch:
+`claude/refactor-agent-zero-applicant-xn7xoc` (local only — never pushed).
 
 ---
 
