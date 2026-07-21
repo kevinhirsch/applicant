@@ -42,7 +42,7 @@ BACKEND_ONLY = {
 
 # Frontend-only panels (no corresponding API proxy)
 FRONTEND_ONLY = {
-    "activity", "config", "help", "main", "today", "update",
+    "activity", "config", "main", "today", "update",
 }
 
 # Panels intentionally excluded from the main sidebar
