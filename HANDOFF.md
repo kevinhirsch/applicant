@@ -69,6 +69,28 @@ Both are OpenAI-compatible; use the rotated DeepSeek key.
 
 ## 2. Architecture — the running stack
 
+```
+                         HOST (docker, network: docker_default)
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  docker-api-1 (ENGINE :8000)  ── MIND_BACKEND=bridge ─┐                    │
+  │     Plane B LLM (needs LLM_API_KEY)                   │ internal-token     │
+  │     /api/campaigns,/api/tracker,/api/setup/*,...      │ /api/applicant/    │
+  │        ▲                                              ▼ internal/*         │
+  │        │ ENGINE_URL=http://api:8000        docker-companion-1 (:7000)      │
+  │        │ (resolves only if A0 is on             workspace/mailbox/caldav   │
+  │        │  docker_default — ensure-engine-net.sh)     "Setup required" 401  │
+  │  docker-postgres-1   docker-chromadb-1   docker-searxng-1                  │
+  └────────┼───────────────────────────────────────────────────────────────┬─┘
+           │ (a0-applicant proxies forward here)                            │
+  ┌────────┼──────────────────────────────┐              lanes: engine ──► companion
+  │  agent-zero container (A0 SHELL :80)   │              (email/calendar/research)
+  │   35 a0-applicant panels ◄─callJsonApi─┤              mock: LANE_BACKEND=mock
+  │   overseer agent0 + coders (Qwen local │              real: mailbox/caldav creds
+  │     until API_KEY_OTHER → DeepSeek cloud)              (companion-side, yours)
+  └────────────────────────────────────────┘
+```
+
+
 **Two model planes (FR-INTEL suite defines them, all as version-controlled contracts under `config/`):**
 - **Plane A — shell/agent models:** A0's overseer + workers. 9 profiles → 3 tiers
   (`config/intel_tiers.yaml`): agent0/reviewer/security/*-cloud → cloud-flash; coder/explorer/test-engineer
