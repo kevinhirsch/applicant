@@ -121,6 +121,41 @@
         <div x-show="saveError" class="err" x-text="saveError"></div>
         <div x-show="saveMessage" class="success" x-text="saveMessage"></div>
       </div>
+
+      <div class="section">
+        <h2>Quiet hours</h2>
+        <p style="font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin:0 0 8px">
+          Suppress non-critical push notifications (Discord/email) outside working hours. In-app alerts always show.
+        </p>
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:6px;font-size:.85rem">
+            <input type="checkbox" x-model="formQuietHoursEnabled" />
+            Enable quiet hours
+          </label>
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formQuietHoursStart" placeholder="Start (HH:MM, e.g. 22:00)" @keyup.enter="saveQuietHours()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formQuietHoursEnd" placeholder="End (HH:MM, e.g. 07:00)" @keyup.enter="saveQuietHours()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formQuietHoursTz" placeholder="Timezone (e.g. America/New_York)" @keyup.enter="saveQuietHours()" />
+        </div>
+        <div class="form-row" style="gap:12px">
+          <label style="display:flex;align-items:center;gap:4px;font-size:.85rem">
+            <input type="checkbox" x-model="formDiscordRespectsQuiet" />
+            Discord respects quiet hours
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:.85rem">
+            <input type="checkbox" x-model="formEmailRespectsQuiet" />
+            Email respects quiet hours
+          </label>
+        </div>
+        <button class="btn primary" @click="saveQuietHours()" :disabled="saving">
+          <span x-text="saving ? 'Saving...' : 'Save quiet hours'"></span>
+        </button>
+      </div>
     </div>
   </template>
 
@@ -145,6 +180,19 @@
       formNtfy: '',
       formTimeout: '',
 
+      quietHoursEnabled: false,
+      quietHoursStart: '22:00',
+      quietHoursEnd: '07:00',
+      quietHoursTz: '',
+      discordRespectsQuiet: true,
+      emailRespectsQuiet: true,
+      formQuietHoursEnabled: false,
+      formQuietHoursStart: '22:00',
+      formQuietHoursEnd: '07:00',
+      formQuietHoursTz: '',
+      formDiscordRespectsQuiet: true,
+      formEmailRespectsQuiet: true,
+
       async init() {
         this.loadConfig();
       },
@@ -164,6 +212,20 @@
             this.formApprise = this.appriseUrls;
             this.formNtfy = this.ntfyUrl;
             this.formTimeout = this.emailTimeoutMinutes;
+
+            const qh = d.quiet_hours || {};
+            this.quietHoursEnabled = qh.enabled || false;
+            this.quietHoursStart = qh.start || '22:00';
+            this.quietHoursEnd = qh.end || '07:00';
+            this.quietHoursTz = qh.tz || '';
+            this.discordRespectsQuiet = qh.discord_respects_quiet != null ? !!qh.discord_respects_quiet : true;
+            this.emailRespectsQuiet = qh.email_respects_quiet != null ? !!qh.email_respects_quiet : true;
+            this.formQuietHoursEnabled = this.quietHoursEnabled;
+            this.formQuietHoursStart = this.quietHoursStart;
+            this.formQuietHoursEnd = this.quietHoursEnd;
+            this.formQuietHoursTz = this.quietHoursTz;
+            this.formDiscordRespectsQuiet = this.discordRespectsQuiet;
+            this.formEmailRespectsQuiet = this.emailRespectsQuiet;
           } else {
             this.fatalError = res.error || 'Failed to load channel config';
           }
@@ -193,6 +255,34 @@
           }
         } catch(e) {
           this.saveError = 'Network error saving channels';
+        } finally {
+          this.saving = false;
+        }
+      },
+
+      async saveQuietHours() {
+        this.saving = true;
+        this.saveError = '';
+        this.saveMessage = '';
+        try {
+          const payload = {
+            action: 'set_quiet_hours',
+            enabled: this.formQuietHoursEnabled,
+            start: this.formQuietHoursStart,
+            end: this.formQuietHoursEnd,
+            tz: this.formQuietHoursTz,
+            discord_respects_quiet: this.formDiscordRespectsQuiet,
+            email_respects_quiet: this.formEmailRespectsQuiet,
+          };
+          const res = await callJsonApi('channels', payload);
+          if (res.ok) {
+            this.saveMessage = 'Quiet hours saved.';
+            await this.loadConfig();
+          } else {
+            this.saveError = res.error || 'Failed to save quiet hours';
+          }
+        } catch(e) {
+          this.saveError = 'Network error saving quiet hours';
         } finally {
           this.saving = false;
         }

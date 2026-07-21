@@ -58,8 +58,29 @@ def dispatch(input: dict) -> dict:
             body["email_timeout_minutes"] = inp["email_timeout_minutes"]
         return _forward("POST", "/api/setup/channels", body)
 
+    if action == "set_quiet_hours":
+        body = {}
+        inp = input or {}
+        if "enabled" in inp:
+            body["enabled"] = inp["enabled"]
+        if "start" in inp:
+            body["start"] = inp["start"]
+        if "end" in inp:
+            body["end"] = inp["end"]
+        if "tz" in inp:
+            body["tz"] = inp["tz"]
+        if "discord_respects_quiet" in inp:
+            body["discord_respects_quiet"] = inp["discord_respects_quiet"]
+        if "email_respects_quiet" in inp:
+            body["email_respects_quiet"] = inp["email_respects_quiet"]
+        return _forward("POST", "/api/setup/channels/quiet-hours", body)
+
     if action == "test":
-        return {"ok": True, "status": 200, "data": {"sent": True, "note": "Test send not available yet"}}
+        body = {}
+        inp = input or {}
+        if "channel" in inp:
+            body["channel"] = inp["channel"]
+        return _forward("POST", "/api/setup/channels/test", body)
 
     return {"ok": False, "status": 400, "error": f"unknown channels action {action!r}"}
 

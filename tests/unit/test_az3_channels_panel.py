@@ -56,3 +56,26 @@ class TestChannelsPanel:
 
     def test_empty_state(self, html):
         assert "No channels configured" in html
+
+    def test_has_quiet_hours_toggle(self, html):
+        assert 'quietHoursEnabled' in html or 'quiet' in html.lower()
+        assert 'formQuietHoursEnabled' in html
+
+    def test_has_quiet_hours_start_end(self, html):
+        assert 'formQuietHoursStart' in html
+        assert 'formQuietHoursEnd' in html
+
+    def test_has_quiet_hours_tz(self, html):
+        assert 'formQuietHoursTz' in html
+
+    def test_has_discord_respects_quiet(self, html):
+        assert 'formDiscordRespectsQuiet' in html
+
+    def test_has_email_respects_quiet(self, html):
+        assert 'formEmailRespectsQuiet' in html
+
+    def test_has_set_quiet_hours_action(self, html):
+        assert "action: 'set_quiet_hours'" in html
+
+    def test_has_save_quiet_hours_button(self, html):
+        assert 'Save quiet hours' in html or 'saveQuietHours' in html
