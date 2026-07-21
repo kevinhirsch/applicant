@@ -34,6 +34,8 @@ services:
     environment:
       # In-network service wiring: reach the Applicant ENGINE at http://api:8000.
       ENGINE_URL: ${ENGINE_URL:-http://api:8000}
+      # AZ3-6 / #844 seam: companion service for email/calendar credential management (lane credentials).
+      COMPANION_URL: ${COMPANION_URL:-http://companion:7000}
       # AZ0-6 / #828 seam: pre-register the engine's MCP surface as an A0 mcp_server so a
       # fresh install discovers the engine's tools automatically (no manual Settings step).
       # A0 seeds this default via get_default_value("mcp_servers", ...) -> A0_SET_MCP_SERVERS

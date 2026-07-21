@@ -1,0 +1,436 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3-6 (#844) Connections -- email/calendar lane credentials via the companion. -->
+<style>
+  .aconnections{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aconnections h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aconnections .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aconnections .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aconnections .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aconnections .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aconnections .success{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+  .aconnections .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .aconnections .form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .aconnections .form-row input[type="text"],
+  .aconnections .form-row input[type="password"],
+  .aconnections .form-row input[type="number"],
+  .aconnections .form-row input[type="checkbox"]{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:140px}
+  .aconnections .form-row input::placeholder{color:var(--color-text-secondary,#6b7683)}
+  .aconnections .form-row label{display:flex;align-items:center;gap:6px;font-size:.85rem}
+  .aconnections .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aconnections .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aconnections .btn.danger{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-color:var(--color-danger-text,#9b1c1c)}
+  .aconnections .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aconnections .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aconnections .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aconnections-spin .6s linear infinite}
+  @keyframes aconnections-spin{to{transform:rotate(360deg)}}
+  .aconnections .instructions{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 14px;font-size:.82rem;margin-bottom:1rem;line-height:1.5}
+  .aconnections .instructions h3{font-size:.95rem;margin:0 0 .3rem}
+  .aconnections .instructions ul{margin:4px 0 0;padding-left:18px}
+  .aconnections .instructions li{margin-bottom:2px}
+  .aconnections .instructions strong{color:var(--color-text)}
+  .aconnections .entries{margin-bottom:.75rem}
+  .aconnections .entry{padding:8px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);font-size:.85rem;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+  .aconnections .entry .ename{font-weight:600}
+  .aconnections .entry .estatus{font-size:.8rem;color:var(--color-text-secondary,#6b7683)}
+  .aconnections .entry .eactions{display:flex;gap:6px}
+  .aconnections .section h2{font-size:1.1rem;margin:0 0 .5rem}
+  .aconnections .two-plane{background:var(--color-primary-bg,#e8f0fe);border:1px solid var(--color-primary,#2d7ff9);border-radius:8px;padding:10px 14px;font-size:.82rem;margin-bottom:1rem;line-height:1.5}
+  .aconnections .two-plane p{margin:0}
+</style>
+
+<div class="aconnections" x-data="window.Alpine.data('aconnections')">
+  <h1>Integrations <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=connections')" title="Help for integrations">?</button></h1>
+  <p class="sub">Email &amp; Calendar for your job search</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading integrations...
+  </div>
+
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
+
+  <template x-if="!loading">
+    <div>
+      <div class="instructions">
+        <h3>Before you start</h3>
+        <p style="margin:0 0 6px">Applicant scans this inbox for interview invitations, rejections, and offers, and puts detected interviews on this calendar.</p>
+        <p style="margin:0 0 4px;font-weight:600">Requirements:</p>
+        <ul>
+          <li><strong>Gmail app password</strong> (requires 2FA enabled): generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>. Your regular password will fail with 2FA.</li>
+          <li><strong>IMAP</strong>: imap.gmail.com:993</li>
+          <li><strong>SMTP</strong>: smtp.gmail.com:465</li>
+          <li><strong>CalDAV</strong>: URL/username/app-password for your provider's calendar</li>
+        </ul>
+      </div>
+
+      <div class="two-plane">
+        <p><strong>Two-plane distinction:</strong> This panel connects the mailbox and calendar that the <strong>engine</strong> (job-search) reads and writes. It is separate from <strong>Settings &rarr; Connections</strong> in the main Agent Zero menu, which manages the <strong>assistant&rsquo;s own MCP</strong> integrations.</p>
+      </div>
+
+      <!-- Email Account section -->
+      <div class="section">
+        <h2>Email account</h2>
+
+        <div x-show="emailAccounts && emailAccounts.length === 0" class="empty">
+          <h2>No email account connected yet</h2>
+          <p>Add your email account below to start scanning for interview invitations.</p>
+        </div>
+
+        <div x-show="emailAccounts && emailAccounts.length > 0" class="entries">
+          <template x-for="acct in emailAccounts" :key="acct.id">
+            <div class="entry">
+              <div>
+                <span class="ename" x-text="acct.name"></span>
+                <span class="estatus" x-show="acct.has_imap_password" x-text="'IMAP: connected'"></span>
+                <span class="estatus" x-show="!acct.has_imap_password" x-text="'IMAP: no password'"></span>
+                <span class="estatus" x-show="acct.has_smtp_password" style="margin-left:8px" x-text="'SMTP: connected'"></span>
+                <span class="estatus" x-show="!acct.has_smtp_password" style="margin-left:8px" x-text="'SMTP: no password'"></span>
+                <span x-show="acct.id === editingAccountId" style="color:var(--color-primary,#2d7ff9);margin-left:8px;font-size:.8rem">(editing)</span>
+              </div>
+              <div class="eactions">
+                <button class="btn" @click="editAccount(acct)" :disabled="editingAccountId === acct.id">Edit</button>
+                <button class="btn" @click="deleteAccount(acct.id)" :disabled="deletingAccountId === acct.id">
+                  <span x-text="deletingAccountId === acct.id ? 'Deleting...' : 'Delete'"></span>
+                </button>
+                <button class="btn" @click="testAccountInline(acct.id)" :disabled="testingAccount">
+                  <span x-text="testingAccount ? 'Testing...' : 'Test'"></span>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="form-row">
+          <input type="text" x-model="formName" placeholder="Account name (e.g. Work)" @keyup.enter="saveEmailAccount()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formImapHost" placeholder="IMAP host (e.g. imap.gmail.com)" />
+        </div>
+        <div class="form-row">
+          <input type="number" x-model="formImapPort" placeholder="IMAP port (e.g. 993)" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formImapUser" placeholder="IMAP username" />
+        </div>
+        <div class="form-row">
+          <input type="password" x-model="formImapPassword" placeholder="IMAP password (app password)" />
+        </div>
+        <div class="form-row">
+          <label>
+            <input type="checkbox" x-model="formImapStarttls" />
+            IMAP STARTTLS
+          </label>
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formSmtpHost" placeholder="SMTP host (e.g. smtp.gmail.com)" />
+        </div>
+        <div class="form-row">
+          <input type="number" x-model="formSmtpPort" placeholder="SMTP port (e.g. 465)" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formSmtpUser" placeholder="SMTP username" />
+        </div>
+        <div class="form-row">
+          <input type="password" x-model="formSmtpPassword" placeholder="SMTP password (app password)" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formFromAddress" placeholder="From address (e.g. you@gmail.com)" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" @click="saveEmailAccount()" :disabled="savingEmail">
+            <span x-text="editingAccountId ? 'Update' : 'Save'"></span>
+          </button>
+          <button x-show="editingAccountId" class="btn" @click="cancelEmailEdit()">Cancel</button>
+          <button class="btn" @click="testEmailInline()" :disabled="testingAccount">
+            <span x-text="testingAccount ? 'Testing...' : 'Send test'"></span>
+          </button>
+        </div>
+        <div x-show="saveError" class="err" x-text="saveError"></div>
+        <div x-show="saveMessage" class="success" x-text="saveMessage"></div>
+      </div>
+
+      <!-- Calendar section -->
+      <div class="section">
+        <h2>Calendar (CalDAV)</h2>
+
+        <div x-show="!calendarUrl" class="empty">
+          <h2>No calendar connected yet</h2>
+          <p>Add your CalDAV calendar to sync interview events.</p>
+        </div>
+
+        <div x-show="calendarUrl" class="entry" style="margin-bottom:.75rem">
+          <div>
+            <span class="ename" x-text="calendarUrl"></span>
+            <span class="estatus" x-show="calendarHasPassword" style="margin-left:8px">&#10003; password saved</span>
+            <span class="estatus" x-show="!calendarHasPassword" style="margin-left:8px">no password</span>
+          </div>
+          <div class="eactions">
+            <button class="btn" @click="testCalendar()" :disabled="testingCalendar">
+              <span x-text="testingCalendar ? 'Testing...' : 'Send test'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <input type="text" x-model="formCalendarUrl" placeholder="CalDAV URL" @keyup.enter="saveCalendar()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formCalendarUser" placeholder="Calendar username" />
+        </div>
+        <div class="form-row">
+          <input type="password" x-model="formCalendarPassword" placeholder="Calendar password (app password)" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" @click="saveCalendar()" :disabled="savingCalendar">
+            <span x-text="savingCalendar ? 'Saving...' : 'Save'"></span>
+          </button>
+          <button class="btn" @click="testCalendar()" :disabled="testingCalendar">
+            <span x-text="testingCalendar ? 'Testing...' : 'Send test'"></span>
+          </button>
+        </div>
+        <div x-show="calendarError" class="err" x-text="calendarError"></div>
+        <div x-show="calendarMessage" class="success" x-text="calendarMessage"></div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script type="module">
+import { callJsonApi } from '/js/api.js';
+
+window.Alpine.data('aconnections', () => ({
+  loading: true,
+  fatalError: '',
+  emailAccounts: [],
+  editingAccountId: null,
+  formName: '',
+  formImapHost: '',
+  formImapPort: '',
+  formImapUser: '',
+  formImapPassword: '',
+  formImapStarttls: false,
+  formSmtpHost: '',
+  formSmtpPort: '',
+  formSmtpUser: '',
+  formSmtpPassword: '',
+  formFromAddress: '',
+  savingEmail: false,
+  deleteAccountId: null,
+  deletingAccountId: null,
+  testingAccount: false,
+  saveError: '',
+  saveMessage: '',
+  calendarUrl: '',
+  calendarHasPassword: false,
+  formCalendarUrl: '',
+  formCalendarUser: '',
+  formCalendarPassword: '',
+  savingCalendar: false,
+  testingCalendar: false,
+  calendarError: '',
+  calendarMessage: '',
+
+  async init() {
+    try {
+      await this.loadAll();
+    } catch (e) {
+      this.fatalError = 'Failed to load integrations: ' + e.message;
+    } finally {
+      this.loading = false;
+    }
+  },
+
+  async loadAll() {
+    const accountsRes = await callJsonApi('connections', { action: 'get_email_accounts' });
+    if (accountsRes.ok) {
+      this.emailAccounts = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+    } else {
+      this.fatalError = (accountsRes.error || 'Failed to load email accounts.');
+    }
+    const calRes = await callJsonApi('connections', { action: 'get_calendar_config' });
+    if (calRes.ok && calRes.data) {
+      this.calendarUrl = calRes.data.url || '';
+      this.calendarHasPassword = !!calRes.data.has_password;
+      this.formCalendarUrl = this.calendarUrl;
+    }
+  },
+
+  async saveEmailAccount() {
+    this.savingEmail = true;
+    this.saveError = '';
+    this.saveMessage = '';
+    try {
+      const body = { action: this.editingAccountId ? 'update_email_account' : 'add_email_account' };
+      if (this.editingAccountId) body.account_id = this.editingAccountId;
+      if (this.formName) body.name = this.formName;
+      if (this.formImapHost) body.imap_host = this.formImapHost;
+      if (this.formImapPort) body.imap_port = parseInt(this.formImapPort, 10);
+      if (this.formImapUser) body.imap_user = this.formImapUser;
+      if (this.formImapPassword) body.imap_password = this.formImapPassword;
+      body.imap_starttls = !!this.formImapStarttls;
+      if (this.formSmtpHost) body.smtp_host = this.formSmtpHost;
+      if (this.formSmtpPort) body.smtp_port = parseInt(this.formSmtpPort, 10);
+      if (this.formSmtpUser) body.smtp_user = this.formSmtpUser;
+      if (this.formSmtpPassword) body.smtp_password = this.formSmtpPassword;
+      if (this.formFromAddress) body.from_address = this.formFromAddress;
+      const res = await callJsonApi('connections', body);
+      if (res.ok) {
+        this.saveMessage = this.editingAccountId ? 'Account updated successfully.' : 'Account saved successfully.';
+        this.clearEmailForm();
+        this.editingAccountId = null;
+        await this.loadAll();
+      } else {
+        this.saveError = res.error || 'Failed to save email account.';
+      }
+    } catch (e) {
+      this.saveError = 'Error: ' + e.message;
+    } finally {
+      this.savingEmail = false;
+    }
+  },
+
+  editAccount(acct) {
+    this.editingAccountId = acct.id;
+    this.formName = acct.name || '';
+    this.formImapHost = '';
+    this.formImapPort = '';
+    this.formImapUser = '';
+    this.formImapPassword = '';
+    this.formImapStarttls = false;
+    this.formSmtpHost = '';
+    this.formSmtpPort = '';
+    this.formSmtpUser = '';
+    this.formSmtpPassword = '';
+    this.formFromAddress = '';
+    this.saveError = '';
+    this.saveMessage = '';
+  },
+
+  cancelEmailEdit() {
+    this.clearEmailForm();
+    this.editingAccountId = null;
+  },
+
+  clearEmailForm() {
+    this.formName = '';
+    this.formImapHost = '';
+    this.formImapPort = '';
+    this.formImapUser = '';
+    this.formImapPassword = '';
+    this.formImapStarttls = false;
+    this.formSmtpHost = '';
+    this.formSmtpPort = '';
+    this.formSmtpUser = '';
+    this.formSmtpPassword = '';
+    this.formFromAddress = '';
+  },
+
+  async deleteAccount(id) {
+    this.deletingAccountId = id;
+    this.saveError = '';
+    this.saveMessage = '';
+    try {
+      const res = await callJsonApi('connections', {
+        action: 'delete_email_account',
+        account_id: id,
+      });
+      if (res.ok) {
+        this.saveMessage = 'Account deleted.';
+        if (this.editingAccountId === id) {
+          this.clearEmailForm();
+          this.editingAccountId = null;
+        }
+        await this.loadAll();
+      } else {
+        this.saveError = res.error || 'Failed to delete account.';
+      }
+    } catch (e) {
+      this.saveError = 'Error: ' + e.message;
+    } finally {
+      this.deletingAccountId = null;
+    }
+  },
+
+  async testAccountInline(accountId) {
+    this.testingAccount = true;
+    this.saveError = '';
+    this.saveMessage = '';
+    try {
+      const body = { action: 'test_email_account' };
+      if (accountId) {
+        body.account_id = accountId;
+      } else {
+        if (this.formImapHost) body.imap_host = this.formImapHost;
+        if (this.formImapPort) body.imap_port = parseInt(this.formImapPort, 10);
+        if (this.formImapUser) body.imap_user = this.formImapUser;
+        if (this.formImapPassword) body.imap_password = this.formImapPassword;
+        body.imap_starttls = !!this.formImapStarttls;
+        if (this.formSmtpHost) body.smtp_host = this.formSmtpHost;
+        if (this.formSmtpPort) body.smtp_port = parseInt(this.formSmtpPort, 10);
+        if (this.formSmtpUser) body.smtp_user = this.formSmtpUser;
+        if (this.formSmtpPassword) body.smtp_password = this.formSmtpPassword;
+      }
+      const res = await callJsonApi('connections', body);
+      if (res.ok && res.data && res.data.sent) {
+        this.saveMessage = 'Test email sent successfully.';
+      } else {
+        this.saveError = (res.error || (res.data && res.data.error) || 'Test failed.');
+      }
+    } catch (e) {
+      this.saveError = 'Error: ' + e.message;
+    } finally {
+      this.testingAccount = false;
+    }
+  },
+
+  async testEmailInline() {
+    await this.testAccountInline(null);
+  },
+
+  async saveCalendar() {
+    this.savingCalendar = true;
+    this.calendarError = '';
+    this.calendarMessage = '';
+    try {
+      const body = { action: 'set_calendar_config' };
+      if (this.formCalendarUrl) body.url = this.formCalendarUrl;
+      if (this.formCalendarUser) body.username = this.formCalendarUser;
+      if (this.formCalendarPassword) body.password = this.formCalendarPassword;
+      const res = await callJsonApi('connections', body);
+      if (res.ok) {
+        this.calendarUrl = this.formCalendarUrl || '';
+        this.calendarHasPassword = !!this.formCalendarPassword || this.calendarHasPassword;
+        this.formCalendarPassword = '';
+        this.calendarMessage = this.formCalendarUrl ? 'Calendar saved successfully.' : 'Calendar disconnected.';
+      } else {
+        this.calendarError = res.error || 'Failed to save calendar configuration.';
+      }
+    } catch (e) {
+      this.calendarError = 'Error: ' + e.message;
+    } finally {
+      this.savingCalendar = false;
+    }
+  },
+
+  async testCalendar() {
+    this.testingCalendar = true;
+    this.calendarError = '';
+    this.calendarMessage = '';
+    try {
+      const body = { action: 'test_calendar_config' };
+      if (this.formCalendarUrl) body.url = this.formCalendarUrl;
+      if (this.formCalendarUser) body.username = this.formCalendarUser;
+      if (this.formCalendarPassword) body.password = this.formCalendarPassword;
+      const res = await callJsonApi('connections', body);
+      if (res.ok && res.data && res.data.sent) {
+        this.calendarMessage = 'Calendar test successful.';
+      } else {
+        this.calendarError = (res.error || (res.data && res.data.error) || 'Calendar test failed.');
+      }
+    } catch (e) {
+      this.calendarError = 'Error: ' + e.message;
+    } finally {
+      this.testingCalendar = false;
+    }
+  },
+}));
+</script>

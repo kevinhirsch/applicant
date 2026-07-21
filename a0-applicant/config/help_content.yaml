@@ -192,6 +192,16 @@ ops:
     - Review operation logs for troubleshooting.
   prerequisites: "Administrator or operator role on the account"
 
+connections:
+  title: Integrations
+  steps:
+    - Connect your email account using IMAP/SMTP credentials.
+    - For Gmail, generate an app password at myaccount.google.com/apppasswords (your regular password fails with 2FA).
+    - Use imap.gmail.com:993 for IMAP and smtp.gmail.com:465 for SMTP.
+    - Connect a CalDAV calendar by providing the URL, username, and app password.
+    - This panel connects the mailbox and calendar the ENGINE (job-search) reads/writes. It is SEPARATE from Settings -> Connections (the ASSISTANT's own MCP integrations).
+  prerequisites: "A Gmail account with 2FA enabled (to generate an app password), IMAP/SMTP host:port, CalDAV URL, or other compatible email/calendar provider credentials"
+
 fonts:
   title: Fonts
   steps:
