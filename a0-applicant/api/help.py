@@ -29,7 +29,8 @@ def _config_path() -> Path | None:
         Path(__file__).resolve().parent.parent / "config" / "help_content.yaml",
         Path(__file__).resolve().parent / ".." / "config" / "help_content.yaml",
     ]:
-        if cand.exists():
+        raw = str(cand).strip()
+        if raw and cand.is_file():
             return cand
     return None
 
