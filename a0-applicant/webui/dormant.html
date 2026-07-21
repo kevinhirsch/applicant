@@ -21,6 +21,9 @@
   .adormant .badge.dormant{background:#fff3e0;color:#e65100}
   .adormant .badge.unknown{background:#f5f5f5;color:#666}
   .adormant .phase{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+  .adormant .dormant-row{opacity:0.5;pointer-events:none;color:#999}
+  .adormant .dormant-row td{border-bottom-color:#ccc}
+  .adormant .reason{font-size:.8rem;color:var(--color-text-secondary,#6b7683);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 
 <div class="adormant" x-data="dormantPanel()">
@@ -38,15 +41,17 @@
           <th>Key</th>
           <th>Name</th>
           <th>Status</th>
+          <th>Reason</th>
           <th>Live Phase</th>
         </tr>
       </thead>
       <tbody>
         <template x-for="s in surfaces" :key="s.key">
-          <tr>
+          <tr :class="s.status === 'dormant' ? 'dormant-row' : ''">
             <td><code x-text="s.key"></code></td>
             <td x-text="s.name"></td>
             <td><span class="badge" :class="s.status === 'live' ? 'live' : s.status === 'dormant' ? 'dormant' : 'unknown'" x-text="s.status || 'unknown'"></span></td>
+            <td class="reason" x-text="s.wiring_notes || '—'"></td>
             <td class="phase" x-text="s.live_phase || '—'"></td>
           </tr>
         </template>

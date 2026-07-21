@@ -110,6 +110,7 @@ def dormant_surfaces() -> JSONResponse:
                 "requirement_ids": list(s.requirement_ids),
                 "live_phase": s.live_phase,
                 "status": s.status,
+                "wiring_notes": s.wiring_notes,
             }
             for s in DORMANT_SURFACES
         ]
