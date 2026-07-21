@@ -45,3 +45,14 @@ class TestTiersPanel:
 
     def test_has_add_tier_button(self, html):
         assert "Add tier" in html
+
+    def test_has_plane_a_section_title(self, html):
+        assert "Plane A" in html
+
+    def test_has_action_plane_a_call(self, html):
+        assert "action: 'plane_a'" in html
+
+    def test_has_profile_names_in_source(self, html):
+        # The profiles are loaded dynamically via x-for loop from the API,
+        # not embedded as literal strings. Assert the loop template exists.
+        assert 'x-for="(info, name) in planeAProfiles"' in html

@@ -51,9 +51,36 @@ def dispatch(input: dict) -> dict:
             body["tiers"] = inp["tiers"]
         return _forward("PUT", "/api/setup/llm/tiers", body)
 
+    if action == "plane_a":
+        return _load_plane_a_profiles()
+
     return {"ok": False, "status": 400, "error": f"unknown tiers action {action!r}"}
 
 
 class Tiers(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
         return dispatch(input)
+
+
+def _load_plane_a_profiles() -> dict:
+    """Read Plane-A profiles from config/intel_tiers.yaml (pure local read, no engine call)."""
+    import yaml
+    from pathlib import Path
+    cfg_path = Path(__file__).resolve().parents[3] / "config" / "intel_tiers.yaml"
+    try:
+        with open(cfg_path) as f:
+            data = yaml.safe_load(f)
+        profiles = data.get("profiles", {})
+        tiers = data.get("tiers", {})
+        result = {}
+        for name, info in profiles.items():
+            tier = info.get("tier", "")
+            locality = tiers.get(tier, {}).get("locality", info.get("locality", "unknown"))
+            result[name] = {
+                "preset": info.get("preset", ""),
+                "tier": tier,
+                "locality": locality,
+            }
+        return {"ok": True, "data": {"profiles": result}}
+    except Exception as e:
+        return {"ok": False, "status": 500, "error": f"Failed to load plane_a profiles: {e}"}

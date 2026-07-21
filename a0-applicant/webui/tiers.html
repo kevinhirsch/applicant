@@ -78,7 +78,38 @@
     </div>
   </template>
 
-  <script>
+  <div class="section" x-show="!loading">
+    <h2 style="font-size:1.1rem;margin:0 0 .25rem">Plane A — Shell/Agent profiles</h2>
+    <p class="sub" style="margin-bottom:.5rem">Read-only: agent profile bindings from config/intel_tiers.yaml</p>
+    <div x-show="planeALoading" class="loading" style="padding:10px"><span class="spinner"></span></div>
+    <div x-show="planeAError" class="err" x-text="planeAError"></div>
+    <template x-if="!planeALoading && !planeAError">
+      <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+        <thead>
+          <tr style="border-bottom:1px solid var(--color-border,#d8e0e6)">
+            <th style="text-align:left;padding:6px 8px;font-weight:600">Profile</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600">Preset</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600">Tier</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600">Locality</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(info, name) in planeAProfiles" :key="name">
+            <tr style="border-bottom:1px solid var(--color-border,#d8e0e6)">
+              <td style="padding:6px 8px" x-text="name"></td>
+              <td style="padding:6px 8px" x-text="info.preset"></td>
+              <td style="padding:6px 8px" x-text="info.tier"></td>
+              <td style="padding:6px 8px" x-text="info.locality"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </template>
+    <div x-show="!planeALoading && !planeAError && Object.keys(planeAProfiles).length === 0" style="padding:10px;text-align:center;color:var(--color-text-secondary)">
+      No profile bindings found.
+    </div>
+  </div>
+    <script>
   (function() {
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('atiers', () => ({
       tiers: [],
@@ -87,9 +118,13 @@
       saving: false,
       saveMessage: '',
       saveError: '',
+      planeAProfiles: {},
+      planeALoading: false,
+      planeAError: '',
 
       async init() {
         this.loadTiers();
+        await this.loadPlaneA();
       },
 
       async loadTiers() {
@@ -131,7 +166,24 @@
 
       addTier() {
         this.tiers.push({ provider: '', model: '', base_url: '', context_window: 8192 });
-      }
+      },
+
+      async loadPlaneA() {
+        this.planeALoading = true;
+        this.planeAError = '';
+        try {
+          const res = await callJsonApi('tiers', { action: 'plane_a' });
+          if (res.ok && res.data && res.data.profiles) {
+            this.planeAProfiles = res.data.profiles;
+          } else {
+            this.planeAError = (res && res.error) || 'Failed to load Plane A profiles';
+          }
+        } catch(e) {
+          this.planeAError = 'Network error loading Plane A profiles';
+        } finally {
+          this.planeALoading = false;
+        }
+      },
     }));
   })();
   </script>
