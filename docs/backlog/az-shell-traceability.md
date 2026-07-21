@@ -44,6 +44,7 @@ retired front-door traceability and serves as the single source of truth for por
 | audit (logs) | `webui/audit.html` | `api/audit.py` | delivered | |
 | easy-apply (assisted mode) | `webui/easy_apply.html` | `api/easy_apply.py` | delivered | |
 | channels (notification channels) | `webui/channels.html` | `api/channels.py` | delivered | |
+| savejob (save a job) | `webui/savejob.html` | `api/savejob.py` | delivered | |
 
 ### Utility / meta surfaces
 

@@ -100,6 +100,15 @@ vault:
     - Audit access logs to see which surfaces used each credential.
   prerequisites: "At least one external integration that requires credentials"
 
+savejob:
+  title: Save a Job
+  steps:
+    - Paste a job posting URL into the URL field.
+    - Select the target campaign from the dropdown.
+    - Click "Save job" to intake the posting.
+    - Verify the confirmation message appears.
+  prerequisites: "A job posting URL and at least one active campaign"
+
 easy_apply:
   title: Easy Apply
   steps:
