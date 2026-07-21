@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""A0-shell panel playtest harness — visual render/console/dead-control audit.
+"""A0-shell panel playtest harness — responsive/mobile, a11y/contrast, visual render/console/dead-control audit.
 
 Enumerates every a0-applicant/webui/*.html panel, opens each in the running A0 shell
 at SHELL_URL (default http://localhost:80), captures console messages/errors, pageerrors,
 HTTP failures (4xx/5xx), screenshots, unhandled promise rejections, UI artifact leaks
-(undefined, null, NaN, [object Object], JSON blobs), blank-page detection, and politely
-clicks non-destructive controls (buttons, toggles, tabs, accordions, select dropdowns)
-to catch handler exceptions / dead controls.
+(undefined, null, NaN, [object Object], JSON blobs), blank-page detection, responsive/mobile
+overflow + offscreen checks, a11y/contrast checks, and politely clicks non-destructive
+controls (buttons, toggles, tabs, accordions, select dropdowns) to catch handler
+exceptions / dead controls.
 
 Boots nothing — assumes the A0 shell is already running. Logs in via the shell's form.
 
@@ -15,6 +16,7 @@ Usage:
 
 Output:
   - playtest-screens/a0panel-<name>.png        full-page screenshots
+  - playtest-screens/a0panel-<name>-mobile.png mobile-viewport screenshots
   - playtest-panels-results.json               machine-readable per-panel results
 """
 import asyncio
@@ -102,6 +104,13 @@ async def audit_panel(context, name, panel_rel_path):
         "ui_leaks": [],
         "blank_after_load": False,
         "dead_controls": [],
+        "mobile_overflow": False,
+        "mobile_offscreen": [],
+        "mobile_screenshot": None,
+        "a11y_no_name_controls": [],
+        "a11y_images_no_alt": [],
+        "a11y_inputs_no_label": [],
+        "a11y_low_contrast_texts": [],
         "controls_clicked": 0,
         "notes": [],
     }
@@ -210,6 +219,152 @@ async def audit_panel(context, name, panel_rel_path):
             rec["blank_after_load"] = trimmed < 20
         except Exception:
             rec["blank_after_load"] = False
+
+        # ── RESPONSIVE / MOBILE pass ────────────────────────────────────
+        # Save original viewport, resize to mobile 390x844, check overflow + offscreen, screenshot, reset
+        try:
+            orig_vp = {"width": 1440, "height": 900}
+            await page.set_viewport_size({"width": 390, "height": 844})
+            await page.wait_for_timeout(1000)
+
+            # mobile_overflow: horizontal scroll check
+            rec["mobile_overflow"] = bool(await page.evaluate(
+                "document.documentElement.scrollWidth > window.innerWidth + 4"
+            ))
+
+            # mobile_offscreen: interactive controls off left/right edge
+            offscreen = await page.evaluate("""() => {
+                const sel = 'button, input, select, textarea, a[href], [role="button"], [role="tab"], [role="link"]';
+                const els = document.querySelectorAll(sel);
+                const vw = window.innerWidth;
+                const results = [];
+                for (const el of els) {
+                    if (el.offsetParent === null) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.right < -5 || r.left > vw + 5) continue;  // fully off-screen (hidden) — ignore
+                    if (r.left < -5 || r.right > vw + 5) {  // partly off
+                        const label = (el.textContent || '').trim().slice(0, 40) || el.getAttribute('aria-label') || el.getAttribute('title') || el.tagName;
+                        results.push({tag: el.tagName.toLowerCase(), label: label.slice(0, 40)});
+                    }
+                }
+                return results;
+            }""")
+            rec["mobile_offscreen"] = offscreen[:20]
+
+            # Mobile screenshot
+            try:
+                mshot = OUTDIR / f"a0panel-{name}-mobile.png"
+                await page.screenshot(path=str(mshot), full_page=True)
+                rec["mobile_screenshot"] = str(mshot.name)
+            except Exception as e:
+                rec["mobile_screenshot"] = None
+                rec["notes"].append(f"mobile-shot: {str(e)[:80]}")
+
+            # Reset viewport to original
+            await page.set_viewport_size(orig_vp)
+            await page.wait_for_timeout(300)
+        except Exception as e:
+            rec["notes"].append(f"mobile-pass: {str(e)[:120]}")
+            rec["mobile_overflow"] = False
+            rec["mobile_offscreen"] = []
+            rec["mobile_screenshot"] = None
+            try:
+                await page.set_viewport_size({"width": 1440, "height": 900})
+            except Exception:
+                pass
+
+        # ── A11Y / CONTRAST pass (lightweight, no external libs) ────────
+        try:
+            a11y = await page.evaluate(r"""() => {
+                const issues = {no_name_controls: [], images_no_alt: [], inputs_no_label: [], low_contrast_texts: []};
+                // Helper: prefix selector
+                function selStr(el) {
+                    const tag = el.tagName.toLowerCase();
+                    const id = el.id ? '#' + el.id : (el.className ? '.' + el.className.split(' ')[0] : '');
+                    return tag + id;
+                }
+                // 1. Buttons/links/controls without accessible name
+                const controls = document.querySelectorAll('button, a[href], input[type="button"], input[type="submit"], [role="button"], [role="tab"]');
+                for (const el of controls) {
+                    if (el.offsetParent === null) continue;
+                    const text = (el.textContent || '').trim();
+                    const ariaLabel = el.getAttribute('aria-label') || '';
+                    const title = el.getAttribute('title') || '';
+                    const alt = el.getAttribute('alt') || '';
+                    if (!text && !ariaLabel && !title && !alt) {
+                        issues.no_name_controls.push(selStr(el));
+                    }
+                }
+                // 2. Images without alt attribute
+                const imgs = document.querySelectorAll('img');
+                for (const img of imgs) {
+                    if (img.offsetParent === null) continue;
+                    if (!img.hasAttribute('alt')) {
+                        issues.images_no_alt.push(img.getAttribute('src') || '<no-src>');
+                    }
+                }
+                // 3. Form inputs without label/aria-label
+                const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), select, textarea');
+                for (const el of inputs) {
+                    if (el.offsetParent === null) continue;
+                    const ariaLabel = el.getAttribute('aria-label') || '';
+                    const title = el.getAttribute('title') || '';
+                    const placeholder = el.getAttribute('placeholder') || '';
+                    if (ariaLabel || title || placeholder) continue;
+                    const id = el.getAttribute('id');
+                    if (id) {
+                        try {
+                            const labelEl = document.querySelector('label[for="' + CSS.escape(id) + '"]');
+                            if (labelEl) continue;
+                        } catch(e) {}
+                    }
+                    const tag = el.tagName.toLowerCase();
+                    const name = el.getAttribute('name') || '';
+                    issues.inputs_no_label.push(tag + (name ? '[name="' + name + '"]' : '') + selStr(el));
+                }
+                // 4. Low-contrast text (luminance-based, flag < 4.5:1 for normal-size text)
+                function getLum(r, g, b) {
+                    const rs = r / 255, gs = g / 255, bs = b / 255;
+                    const rl = rs <= 0.03928 ? rs / 12.92 : Math.pow((rs + 0.055) / 1.055, 2.4);
+                    const gl = gs <= 0.03928 ? gs / 12.92 : Math.pow((gs + 0.055) / 1.055, 2.4);
+                    const bl = bs <= 0.03928 ? bs / 12.92 : Math.pow((bs + 0.055) / 1.055, 2.4);
+                    return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+                }
+                function contrastRatio(l1, l2) {
+                    const lighter = Math.max(l1, l2), darker = Math.min(l1, l2);
+                    return (lighter + 0.05) / (darker + 0.05);
+                }
+                const textEls = document.querySelectorAll('p, span, div, label, a, h1, h2, h3, h4, h5, h6, li, td, th, button');
+                let checked = 0;
+                for (const el of textEls) {
+                    if (checked >= 20) break;
+                    if (el.offsetParent === null) continue;
+                    const txt = (el.textContent || '').trim();
+                    if (txt.length < 5) continue;
+                    const cs = getComputedStyle(el);
+                    const cMatch = cs.color.match(/rgba?\(\d+),\s*(\d+),\s*(\d+)/);
+                    const bMatch = cs.backgroundColor.match(/rgba?\(\d+),\s*(\d+),\s*(\d+)/);
+                    if (!cMatch || !bMatch) continue;
+                    const lText = getLum(+cMatch[1], +cMatch[2], +cMatch[3]);
+                    const lBg = getLum(+bMatch[1], +bMatch[2], +bMatch[3]);
+                    const ratio = contrastRatio(lText, lBg);
+                    if (ratio < 4.5) {
+                        issues.low_contrast_texts.push({text: txt.slice(0, 35), ratio: Math.round(ratio * 100) / 100, el: el.tagName.toLowerCase()});
+                    }
+                    checked++;
+                }
+                return issues;
+            }""")
+            rec["a11y_no_name_controls"] = a11y.get("no_name_controls", [])
+            rec["a11y_images_no_alt"] = a11y.get("images_no_alt", [])
+            rec["a11y_inputs_no_label"] = a11y.get("inputs_no_label", [])
+            rec["a11y_low_contrast_texts"] = a11y.get("low_contrast_texts", [])
+        except Exception as e:
+            rec["notes"].append(f"a11y-pass: {str(e)[:120]}")
+            rec["a11y_no_name_controls"] = []
+            rec["a11y_images_no_alt"] = []
+            rec["a11y_inputs_no_label"] = []
+            rec["a11y_low_contrast_texts"] = []
 
         # Click non-destructive controls
         ctrl_sel = ('button:not([disabled]), [role="button"], '
@@ -504,6 +659,22 @@ async def main():
     print(f"  err_blank (empty under error): {len(blank_panels)} panels — {blank_panels}")
     print(f"  err_no_message (no error shown): {len(no_msg_panels)} panels — {no_msg_panels}")
     print(f"  err_leak (leaks/errors fired): {len(leak_panels)} panels — {leak_panels}")
+
+    # Responsive summary
+    mobile_overflow_panels = [r["panel"] for r in results if r.get("mobile_overflow")]
+    mobile_offscreen_panels = [r["panel"] for r in results if r.get("mobile_offscreen")]
+    a11y_issues_panels = [r["panel"] for r in results if r.get("a11y_no_name_controls") or r.get("a11y_images_no_alt") or r.get("a11y_inputs_no_label") or r.get("a11y_low_contrast_texts")]
+    if mobile_overflow_panels:
+        print(f"[responsive] mobile_overflow: {len(mobile_overflow_panels)} panels — {mobile_overflow_panels}")
+    if mobile_offscreen_panels:
+        print(f"[responsive] mobile_offscreen: {len(mobile_offscreen_panels)} panels — {mobile_offscreen_panels}")
+    if a11y_issues_panels:
+        print(f"[a11y] issues found in {len(a11y_issues_panels)} panels — {a11y_issues_panels}")
+    total_mobile = set(mobile_overflow_panels + mobile_offscreen_panels + a11y_issues_panels)
+    if total_mobile:
+        print(f"[responsive+a11y] Unique panels with new bug candidates: {len(total_mobile)} — {sorted(total_mobile)}")
+    else:
+        print("[responsive+a11y] No new bug candidates detected 🌟")
     return 0
 
 
