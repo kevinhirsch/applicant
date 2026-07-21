@@ -1,44 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# AZ0-4: Branded-artifact overlay script
+# AZ0-4/846: Branded-artifact overlay script
+# Applies the a0-webui/ build-time overlay over the pristine framework webui.
+#
 # Usage: apply-branding.sh [target_dir]
-#   target_dir: directory containing a full Agent Zero tree (default: agent-zero sibling)
+#   target_dir: directory containing a full Agent Zero tree (default: workspace/../agent-zero sibling)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 TARGET_DIR="${1:-$(dirname "$SCRIPT_DIR")/agent-zero}"
+OVERLAY_DIR="$PROJECT_ROOT/a0-webui"
 
 if [ ! -d "$TARGET_DIR" ]; then
   echo "Error: target directory does not exist: $TARGET_DIR"
   exit 1
 fi
 
-# Source brand configuration
+if [ ! -d "$OVERLAY_DIR" ]; then
+  echo "Error: overlay directory does not exist: $OVERLAY_DIR"
+  exit 1
+fi
+
+# Source brand configuration (for informational use)
 source "$SCRIPT_DIR/../branding/string-map.env"
 
-echo "Applying branding for '$APP_NAME' to $TARGET_DIR"
+echo "Applying branded overlay '$APP_NAME' from $OVERLAY_DIR to $TARGET_DIR/webui"
 
-# --- Copy SVG assets -----------------------------------------------------------
-mkdir -p "$TARGET_DIR/webui/public"
-cp branding/public/*.svg "$TARGET_DIR/webui/public/"
-
-# --- Replace HTML titles -------------------------------------------------------
-for f in "$TARGET_DIR/webui/index.html" "$TARGET_DIR/webui/login.html"; do
-  if [ -f "$f" ]; then
-    sed -i "s|<title>Agent Zero</title>|<title>$APP_NAME</title>|g" "$f"
-  fi
-done
-
-# --- Replace login strings -----------------------------------------------------
-if [ -f "$TARGET_DIR/webui/login.html" ]; then
-  sed -i "s|alt=\"Agent Zero Logo\"|alt=\"$APP_NAME Logo\"|g" "$TARGET_DIR/webui/login.html"
-  sed -i "s|<h2>Agent Zero</h2>|<h2>$APP_NAME</h2>|g" "$TARGET_DIR/webui/login.html"
+# Copy SVG assets from the overlay public dir
+if [ -d "$OVERLAY_DIR/public" ]; then
+  mkdir -p "$TARGET_DIR/webui/public"
+  cp "$OVERLAY_DIR/public/"*.svg "$TARGET_DIR/webui/public/"
 fi
 
-# --- Replace PWA manifest ------------------------------------------------------
-if [ -f "$TARGET_DIR/webui/manifest.json" ]; then
-  sed -i "s|\"name\": \"Agent Zero\"|\"name\": \"$APP_NAME\"|g" "$TARGET_DIR/webui/manifest.json"
-  sed -i "s|\"short_name\": \"Agent Zero\"|\"short_name\": \"$APP_SHORT_NAME\"|g" "$TARGET_DIR/webui/manifest.json"
+# Copy branded HTML files (index.html, login.html) from the overlay
+if [ -f "$OVERLAY_DIR/index.html" ]; then
+  cp "$OVERLAY_DIR/index.html" "$TARGET_DIR/webui/index.html"
+fi
+if [ -f "$OVERLAY_DIR/login.html" ]; then
+  cp "$OVERLAY_DIR/login.html" "$TARGET_DIR/webui/login.html"
 fi
 
-echo "Branding applied"
+# Copy branded PWA manifest
+if [ -f "$OVERLAY_DIR/js/manifest.json" ]; then
+  mkdir -p "$TARGET_DIR/webui/js"
+  cp "$OVERLAY_DIR/js/manifest.json" "$TARGET_DIR/webui/js/manifest.json"
+fi
+
+echo "Branding applied from overlay"

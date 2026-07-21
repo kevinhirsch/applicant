@@ -42,20 +42,6 @@ def _stub_modules():
     flask.Request = object
 
 
-def _assert_safe_envelope(r, label=""):
-    """Assert the response is a well-formed envelope with a non-5xx status.
-
-    Accepts 0 (no-status-yet) and any 2xx/4xx code (e.g. 409 onboarding).
-    Rejects 5xx (>= 500) and non-integer statuses.
-    """
-    assert isinstance(r, dict), f"{label}did not return dict: {r!r}"
-    assert "ok" in r, f"{label}missing ok: {r!r}"
-    assert "status" in r, f"{label}missing status: {r!r}"
-    assert isinstance(r["status"], int), f"{label}status not int: {r!r}"
-    s = r["status"]
-    assert s == 0 or 200 <= s < 500, f"{label}Unexpected status {s}: {r!r}"
-
-
 # ── agent_runs proxy ────────────────────────────────────────────────────
 
 
