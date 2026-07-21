@@ -157,3 +157,9 @@ class TestSidebarLauncher:
 
     def test_has_ops_label(self, html):
         assert "Ops" in html
+
+    def test_opens_channels_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/channels.html')" in html
+
+    def test_has_channels_label(self, html):
+        assert "Channels" in html

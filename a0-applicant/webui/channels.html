@@ -1,0 +1,216 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#839) Channels — notification channel settings (Discord/email SMTP/ntfy). -->
+<style>
+  .achannels{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .achannels h1{font-size:1.5rem;margin:0 0 .25rem}
+  .achannels .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .achannels .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .achannels .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .achannels .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .achannels .success{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+  .achannels .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .achannels .section h2{font-size:1.15rem;margin:0 0 .5rem}
+  .achannels .form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .achannels .form-row input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:140px}
+  .achannels .form-row input::placeholder{color:var(--color-text-secondary,#6b7683)}
+  .achannels .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .achannels .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .achannels .btn:disabled{opacity:.5;cursor:not-allowed}
+  .achannels .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .achannels .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:achannels-spin .6s linear infinite}
+  @keyframes achannels-spin{to{transform:rotate(360deg)}}
+  .achannels .channel-entry{padding:8px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);font-size:.85rem;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+  .achannels .channel-entry .cname{font-weight:600}
+  .achannels .channel-entry .cstatus{font-size:.8rem;color:var(--color-text-secondary,#6b7683)}
+  .achannels .instructions{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 14px;font-size:.82rem;margin-bottom:1rem;line-height:1.5}
+  .achannels .instructions h3{font-size:.95rem;margin:0 0 .3rem}
+  .achannels .instructions ul{margin:4px 0 0;padding-left:18px}
+  .achannels .instructions li{margin-bottom:2px}
+</style>
+
+<div class="achannels" x-data="window.Alpine.data('achannels')">
+  <h1>Channels <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=channels')" title="Help for channels">?</button></h1>
+  <p class="sub">Notification channel settings</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading channels...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <div class="instructions">
+        <h3>Channel prerequisites</h3>
+        <ul>
+          <li><strong>Discord</strong>: create a webhook in your Discord server channel settings and paste the URL below.</li>
+          <li><strong>Email (SMTP)</strong>: enter an Apprise-style <code>mailto://</code> URL (e.g. <code>mailto://user:pass@smtp.example.com:587</code>).</li>
+          <li><strong>ntfy</strong>: pick a topic name on your ntfy server and use <code>https://ntfy.sh/YourTopic</code> or your self-hosted URL.</li>
+          <li>Click <strong>Save</strong> to persist changes; use <strong>Send test</strong> on each channel to verify connectivity.</li>
+        </ul>
+      </div>
+
+      <div class="section">
+        <h2>Current configuration</h2>
+
+        <div x-show="!discordWebhook && !appriseUrls && !ntfyUrl" class="empty">
+          <h2>No channels configured</h2>
+          <p>Add notification channels below to receive alerts about campaign status, updates, and activity.</p>
+        </div>
+
+        <div x-show="discordWebhook" class="channel-entry">
+          <div>
+            <span class="cname">Discord</span>
+            <span class="cstatus" x-text="discordWebhook.slice(0,40) + '...'"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.discord === true">&#10003;</span>
+            <span style="color:var(--color-danger-text,#9b1c1c);font-size:.8rem" x-show="lastTestResult.discord === false">&#10007;</span>
+            <button class="btn" @click="sendTest('discord','discord')" :disabled="testingDiscord">
+              <span x-text="testingDiscord ? 'Sending...' : 'Send test'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="appriseUrls" class="channel-entry">
+          <div>
+            <span class="cname">Email (SMTP)</span>
+            <span class="cstatus" x-text="appriseUrls.slice(0,40) + '...'"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.email === true">&#10003;</span>
+            <span style="color:var(--color-danger-text,#9b1c1c);font-size:.8rem" x-show="lastTestResult.email === false">&#10007;</span>
+            <button class="btn" @click="sendTest('email','email')" :disabled="testingEmail">
+              <span x-text="testingEmail ? 'Sending...' : 'Send test'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="ntfyUrl" class="channel-entry">
+          <div>
+            <span class="cname">ntfy</span>
+            <span class="cstatus" x-text="ntfyUrl.slice(0,40) + '...'"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.ntfy === true">&#10003;</span>
+            <span style="color:var(--color-danger-text,#9b1c1c);font-size:.8rem" x-show="lastTestResult.ntfy === false">&#10007;</span>
+            <button class="btn" @click="sendTest('ntfy','ntfy')" :disabled="testingNtfy">
+              <span x-text="testingNtfy ? 'Sending...' : 'Send test'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Configure channels</h2>
+        <div class="form-row">
+          <input type="text" x-model="formDiscord" placeholder="Discord webhook URL" @keyup.enter="saveConfig()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formApprise" placeholder="Email SMTP (Apprise mailto:// URL)" @keyup.enter="saveConfig()" />
+        </div>
+        <div class="form-row">
+          <input type="text" x-model="formNtfy" placeholder="ntfy URL (e.g. https://ntfy.sh/YourTopic)" @keyup.enter="saveConfig()" />
+        </div>
+        <div class="form-row">
+          <input type="number" x-model="formTimeout" placeholder="Email timeout (minutes)" @keyup.enter="saveConfig()" />
+        </div>
+        <button class="btn primary" @click="saveConfig()" :disabled="saving">
+          <span x-text="saving ? 'Saving...' : 'Save'"></span>
+        </button>
+        <div x-show="saveError" class="err" x-text="saveError"></div>
+        <div x-show="saveMessage" class="success" x-text="saveMessage"></div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('achannels', () => ({
+      discordWebhook: '',
+      appriseUrls: '',
+      ntfyUrl: '',
+      emailTimeoutMinutes: '',
+      loading: false,
+      error: '',
+      saving: false,
+      saveError: '',
+      saveMessage: '',
+      testingDiscord: false,
+      testingEmail: false,
+      testingNtfy: false,
+      lastTestResult: {},
+      formDiscord: '',
+      formApprise: '',
+      formNtfy: '',
+      formTimeout: '',
+
+      async init() {
+        this.loadConfig();
+      },
+
+      async loadConfig() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('channels', { action: 'get' });
+          if (res.ok) {
+            const d = res.data || {};
+            this.discordWebhook = d.discord_webhook_url || '';
+            this.appriseUrls = d.apprise_urls || '';
+            this.ntfyUrl = d.ntfy_url || '';
+            this.emailTimeoutMinutes = d.email_timeout_minutes != null ? String(d.email_timeout_minutes) : '';
+            this.formDiscord = this.discordWebhook;
+            this.formApprise = this.appriseUrls;
+            this.formNtfy = this.ntfyUrl;
+            this.formTimeout = this.emailTimeoutMinutes;
+          } else {
+            this.error = res.error || 'Failed to load channel config';
+          }
+        } catch(e) {
+          this.error = 'Network error loading channels';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async saveConfig() {
+        this.saving = true;
+        this.saveError = '';
+        this.saveMessage = '';
+        try {
+          const payload = { action: 'set' };
+          if (this.formDiscord.trim()) payload.discord_webhook_url = this.formDiscord.trim();
+          if (this.formApprise.trim()) payload.apprise_urls = this.formApprise.trim();
+          if (this.formNtfy.trim()) payload.ntfy_url = this.formNtfy.trim();
+          if (this.formTimeout.trim()) payload.email_timeout_minutes = parseInt(this.formTimeout.trim()) || 0;
+          const res = await callJsonApi('channels', payload);
+          if (res.ok) {
+            this.saveMessage = 'Channel configuration saved.';
+            await this.loadConfig();
+          } else {
+            this.saveError = res.error || 'Failed to save channel config';
+          }
+        } catch(e) {
+          this.saveError = 'Network error saving channels';
+        } finally {
+          this.saving = false;
+        }
+      },
+
+      async sendTest(channelName, channelKey) {
+        const testKey = 'testing' + channelName.charAt(0).toUpperCase() + channelName.slice(1);
+        this[testKey] = true;
+        try {
+          const res = await callJsonApi('channels', { action: 'test', channel: channelName });
+          this.lastTestResult = { ...this.lastTestResult, [channelKey]: !!(res.ok && res.data && res.data.sent) };
+        } catch(e) {
+          this.lastTestResult = { ...this.lastTestResult, [channelKey]: false };
+        } finally {
+          this[testKey] = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
