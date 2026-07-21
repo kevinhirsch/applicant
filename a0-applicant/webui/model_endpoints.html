@@ -82,7 +82,14 @@
         <button class="btn" @click="loadModels(item)" :disabled="busy">Models</button>
         <button class="btn danger" @click="removeEndpoint(item)" :disabled="busy">Remove</button>
       </div>
-      <div class="models-list" x-show="item._showModels && item._models" x-html="item._modelsHtml || ''"></div>
+      <div class="models-list" x-show="item._showModels && item._models && item._models.length > 0">
+        <template x-for="model in item._models" :key="model.id || model.name || model">
+          <div class="model-item" x-text="model.name || model.id || model"></div>
+        </template>
+      </div>
+      <div class="models-list" x-show="item._showModels && item._models && item._models.length === 0">
+        <em>No models found.</em>
+      </div>
     </div>
   </template>
 
@@ -207,12 +214,7 @@
         } else {
           item._showModels = !item._showModels;
           const models = r.data && r.data.models ? r.data.models : [];
-          if (models.length === 0) {
-            item._modelsHtml = "<em>No models found.</em>";
-          } else {
-            item._modelsHtml = models.map(m => `<div class="model-item">${m.name || m.id || m}</div>`).join("");
-          }
-          item._models = models.length > 0;
+          item._models = models;
         }
         this.busy = false;
       },

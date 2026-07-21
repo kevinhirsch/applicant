@@ -115,7 +115,7 @@
                   <span x-text="provenanceOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
                   Provenance (what I drew on)
                 </div>
-                <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-html="provenanceData || '<em>Loading…</em>'"></div>
+                <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-text="provenanceData || 'Loading…'"></div>
               </div>
             </template>
           </div>
@@ -128,7 +128,7 @@
           <div x-show="snapshotLoading"><div class="spinner"></div> Loading snapshot…</div>
 
           <div class="snapshot-content" x-show="snapshotData && !snapshotLoading">
-            <div x-html="snapshotData"></div>
+            <div x-text="snapshotData"></div>
             <div class="snapshot-raw" x-show="snapshotRaw" x-text="snapshotRaw"></div>
           </div>
 
@@ -283,7 +283,7 @@
         this.fatalError = "";
         const r = await callJsonApi("documents", { action: "provenance", document_id: docId });
         if (!r || !r.ok) {
-          this.provenanceData = "<em>Failed to load provenance.</em>";
+          this.provenanceData = "Failed to load provenance.";
         } else {
           const data = r.data || {};
           // Render H4 provenance — assume data is HTML or structured

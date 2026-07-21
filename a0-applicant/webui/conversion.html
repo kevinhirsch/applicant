@@ -57,7 +57,20 @@
       <div class="actions">
         <button class="btn primary" @click="preview()" :disabled="busy">Build preview</button>
       </div>
-      <div class="preview-info" x-show="previewResult" x-html="previewResult"></div>
+      <div class="preview-info" x-show="previewResult">
+        <template x-if="previewResult.artifact_available">
+          <div>
+            <span>📄 Artifact available</span>
+            <span x-show="previewResult.page_count != null">📏 <span x-text="previewResult.page_count"></span> pages</span>
+            <span x-show="previewResult.fidelity_ok" x-text="'✅ Fidelity check passed'"></span>
+            <span x-show="previewResult.fidelity_failed" x-text="'⚠️ Fidelity check failed'"></span>
+          </div>
+        </template>
+        <template x-if="!previewResult.artifact_available">
+          <span>⏳ No artifact yet — preview may be compiling</span>
+        </template>
+        <div x-show="previewResult.notes" style="margin-top:4px">📝 <span x-text="previewResult.notes"></span></div>
+      </div>
     </div>
 
     <div class="card">
@@ -151,17 +164,13 @@
           this.fatalError = (r && r.error) || "Failed to build preview.";
         } else {
           const d = r.data || {};
-          let html = "";
-          if (d.artifact_available) {
-            html += `<span>📄 Artifact available</span>`;
-            if (d.page_count != null) html += `<span>📏 ${d.page_count} pages</span>`;
-            if (d.fidelity_ok) html += `<span>✅ Fidelity check passed</span>`;
-            else html += `<span>⚠️ Fidelity check failed</span>`;
-          } else {
-            html += `<span>⏳ No artifact yet — preview may be compiling</span>`;
-          }
-          if (d.notes) html += `<div style="margin-top:4px">📝 ${d.notes}</div>`;
-          this.previewResult = html;
+          this.previewResult = {
+            artifact_available: !!d.artifact_available,
+            page_count: d.page_count != null ? d.page_count : null,
+            fidelity_ok: !!d.fidelity_ok,
+            fidelity_failed: !d.artifact_available || !d.fidelity_ok,
+            notes: d.notes || null,
+          };
         }
         this.busy = false;
       },
