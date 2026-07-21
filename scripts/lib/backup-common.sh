@@ -185,6 +185,49 @@ bkup_restore_engine_state() {
   docker compose -f "${compose_file}" run --rm -T --no-deps --entrypoint tar "${api_service}"     -xzf - -C /data <"${tar_file}"
 }
 
+# --- a0 shell/user data (a0-data named volume: /a0/usr — settings, chats, memory, skills, plugins) -----
+
+# bkup_export_a0_data COMPOSE_FILE A0_SERVICE OUT_FILE APPLY
+#
+# Streams a gzip tar of the a0 container's /a0/usr (the `a0-data` named volume:
+# settings, chats, memory, skills, plugins — the shell's entire user-data tree)
+# host-side into OUT_FILE. Uses `run --rm --no-deps --entrypoint tar` (same
+# pattern as bkup_export_engine_state) so it works whether or not the a0 service
+# is running.
+bkup_export_a0_data() {
+  local compose_file="$1" a0_service="$2" out_file="$3" apply="$4"
+  if [[ "${apply}" -ne 1 ]]; then
+    echo "    (would run) docker compose -f ${compose_file} run --rm -T --no-deps --entrypoint tar ${a0_service} -czf - -C /a0 usr >${out_file}"
+    return 0
+  fi
+  if ! docker compose -f "${compose_file}" run --rm -T --no-deps --entrypoint tar "${a0_service}" \
+      -czf - -C /a0 usr >"${out_file}"; then
+    rm -f "${out_file}"
+    return 1
+  fi
+  if [[ ! -s "${out_file}" ]]; then
+    rm -f "${out_file}"
+    return 1
+  fi
+  return 0
+}
+
+# bkup_restore_a0_data COMPOSE_FILE A0_SERVICE TAR_FILE APPLY
+#
+# Inverse of bkup_export_a0_data: streams TAR_FILE host-side into the a0
+# container and extracts it at /a0 (recreating /a0/usr from the archive,
+# which was captured with `-C /a0 usr` so paths inside are already relative
+# to /a0).
+bkup_restore_a0_data() {
+  local compose_file="$1" a0_service="$2" tar_file="$3" apply="$4"
+  if [[ "${apply}" -ne 1 ]]; then
+    echo "    (would run) docker compose -f ${compose_file} run --rm -T --no-deps --entrypoint tar ${a0_service} -xzf - -C /a0 <${tar_file}"
+    return 0
+  fi
+  docker compose -f "${compose_file}" run --rm -T --no-deps --entrypoint tar "${a0_service}" \
+    -xzf - -C /a0 <"${tar_file}"
+}
+
 # --- config (.env) -------------------------------------------------------------
 
 # bkup_collect_config ENV_FILE OUT_DIR APPLY
@@ -275,13 +318,14 @@ bkup_extract_tarball() {
 # indistinguishable from a full one). Written into the staging dir before
 # bkup_make_tarball bundles everything up.
 bkup_write_manifest() {
-  local out_file="$1" has_db="$2" has_workspace="$3" has_config="$4" has_secrets="${5:-0}"
+  local out_file="$1" has_db="$2" has_workspace="$3" has_config="$4" has_a0="${5:-0}" has_secrets="${6:-0}"
   {
     printf 'Applicant backup manifest\n'
     printf 'created_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'db.sql (Postgres dump): %s\n' "$([[ "${has_db}" -eq 1 ]] && echo present || echo MISSING)"
     printf 'workspace-data.tar.gz (front-door UI data/): %s\n' "$([[ "${has_workspace}" -eq 1 ]] && echo present || echo MISSING)"
     printf 'engine-state.tar.gz (vault master key, checkpoints, fonts, browser profiles): %s\n' "$([[ "${has_secrets}" -eq 1 ]] && echo present || echo "MISSING (sealed credentials in db.sql cannot be decrypted after a volume wipe)")"
+    printf 'a0-shell-data.tar.gz (a0 user data: settings, chats, memory, skills, plugins): %s\n' "$([[ "${has_a0}" -eq 1 ]] && echo present || echo MISSING)"
     printf 'config/.env: %s\n' "$([[ "${has_config}" -eq 1 ]] && echo present || echo "absent (no .env on this host)")"
   } >"${out_file}"
 }

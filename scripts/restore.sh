@@ -62,6 +62,7 @@ bkup_load_env "${ENV_FILE}"
 DB_SERVICE="postgres"
 UI_SERVICE="applicant-ui"
 API_SERVICE="api"
+A0_SERVICE="a0"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
 
@@ -105,7 +106,7 @@ else
   STAGE_DIR="${BACKUP_DIR}/.dry-run-restore-preview"
 fi
 
-log "1/5 Extracting ${FROM}"
+log "1/6 Extracting ${FROM}"
 bkup_extract_tarball "${FROM}" "${STAGE_DIR}" "${APPLY}"
 
 if [[ "${APPLY}" -eq 1 && -f "${STAGE_DIR}/MANIFEST.txt" ]]; then
@@ -113,7 +114,7 @@ if [[ "${APPLY}" -eq 1 && -f "${STAGE_DIR}/MANIFEST.txt" ]]; then
   sed 's/^/    /' "${STAGE_DIR}/MANIFEST.txt"
 fi
 
-log "2/5 Restoring the Postgres database"
+log "2/6 Restoring the Postgres database"
 if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/db.sql" ]]; then
   echo "    (skip) this backup has no db.sql member — nothing to restore into Postgres." >&2
 else
@@ -121,7 +122,7 @@ else
     "${STAGE_DIR}/db.sql" "${APPLY}"
 fi
 
-log "3/5 Restoring workspace data/ (front-door UI)"
+log "3/6 Restoring workspace data/ (front-door UI)"
 if [[ "${APPLY}" -eq 1 && ! -f "${STAGE_DIR}/workspace-data.tar.gz" ]]; then
   echo "    (skip) this backup has no workspace-data.tar.gz member." >&2
 else
@@ -129,7 +130,7 @@ else
     "${STAGE_DIR}/workspace-data.tar.gz" "${APPLY}"
 fi
 
-log "4/5 Restoring engine durable state (vault master key, checkpoints, fonts, browser profiles)"
+log "4/6 Restoring engine durable state (vault master key, checkpoints, fonts, browser profiles)"
 ENGINE_STATE_TAR="${STAGE_DIR}/engine-state.tar.gz"
 # Backups taken before the export covered every durable volume named this
 # member engine-secrets.tar.gz (vault key only) — restore those too.
@@ -153,7 +154,15 @@ else
   fi
 fi
 
-log "5/5 Restoring config (.env)"
+log "5/6 Restoring a0 shell user data (settings, chats, memory, skills, plugins)"
+A0_TAR="${STAGE_DIR}/a0-shell-data.tar.gz"
+if [[ "${APPLY}" -eq 1 && ! -f "${A0_TAR}" ]]; then
+  echo "    (skip) this backup has no a0-shell-data.tar.gz member." >&2
+else
+  bkup_restore_a0_data "${COMPOSE_FILE}" "${A0_SERVICE}" "${A0_TAR}" "${APPLY}"
+fi
+
+log "6/6 Restoring config (.env)"
 if [[ "${APPLY}" -ne 1 ]]; then
   # The dry run never extracts the tarball, so the member check inside
   # bkup_restore_config would always (wrongly) report "no config/.env member" —

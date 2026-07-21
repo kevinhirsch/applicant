@@ -15,6 +15,7 @@
 #   - engine-state.tar.gz        the engine's durable /data volumes: secrets
 #                                (credential vault master key), checkpoints,
 #                                fonts, profiles (signed-in browser sessions)
+#   - a0-shell-data.tar.gz    the a0 shell's /a0/usr (settings, chats, memory, skills, plugins — the a0-data named volume)
 #   - config/.env                the deploy secrets/config (POSTGRES_PASSWORD,
 #                                APPLICANT_INTERNAL_TOKEN, LLM keys, ...)
 #   - MANIFEST.txt                what actually landed in this tarball
@@ -53,6 +54,7 @@ bkup_load_env "${ENV_FILE}"
 DB_SERVICE="postgres"
 UI_SERVICE="applicant-ui"
 API_SERVICE="api"
+A0_SERVICE="a0"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
 
@@ -103,6 +105,7 @@ fi
 HAS_DB=0
 HAS_WORKSPACE=0
 HAS_SECRETS=0
+HAS_A0=0
 HAS_CONFIG=0
 
 log "1/5 Postgres dump"
@@ -145,16 +148,23 @@ else
   echo "    (warn) engine state export failed — the backup will NOT include the credential vault key (sealed credentials in db.sql cannot be decrypted from this backup after a volume wipe), nor checkpoints/fonts/browser profiles." >&2
 fi
 
-log "4/5 Config (.env)"
+log "4/6 A0 shell user data (settings, chats, memory, skills, plugins)"
+if bkup_export_a0_data "${COMPOSE_FILE}" "${A0_SERVICE}" "${WORK_DIR}/a0-shell-data.tar.gz" "${APPLY}"; then
+  HAS_A0=1
+else
+  echo "    (warn) a0 data export failed — the backup will NOT include a0-shell-data.tar.gz (the a0 container's /a0/usr: settings, chats, memory, skills, plugins)." >&2
+fi
+
+log "5/6 Config (.env)"
 if bkup_collect_config "${ENV_FILE}" "${WORK_DIR}/config" "${APPLY}"; then
   [[ -f "${ENV_FILE}" ]] && HAS_CONFIG=1
 fi
 
-log "5/5 Assembling one tarball -> ${OUTPUT}"
+log "6/6 Assembling one tarball -> ${OUTPUT}"
 if [[ "${APPLY}" -eq 1 ]]; then
-  bkup_write_manifest "${WORK_DIR}/MANIFEST.txt" "${HAS_DB}" "${HAS_WORKSPACE}" "${HAS_CONFIG}" "${HAS_SECRETS}"
+  bkup_write_manifest "${WORK_DIR}/MANIFEST.txt" "${HAS_DB}" "${HAS_WORKSPACE}" "${HAS_CONFIG}" "${HAS_A0}" "${HAS_SECRETS}"
 else
-  echo "    (would run) write MANIFEST.txt (db=${HAS_DB} workspace=${HAS_WORKSPACE} secrets=${HAS_SECRETS} config=${HAS_CONFIG})"
+  echo "    (would run) write MANIFEST.txt (db=${HAS_DB} workspace=${HAS_WORKSPACE} secrets=${HAS_SECRETS} a0=${HAS_A0} config=${HAS_CONFIG})"
 fi
 bkup_make_tarball "${OUTPUT}" "${WORK_DIR}" "${APPLY}"
 
