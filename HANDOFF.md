@@ -30,8 +30,12 @@ integration **42 passed + 11 cleanly skipped** (the skips are the companion-gate
 
 ### 1a. `GITHUB_TOKEN` → close the done issues
 - **Rotate** your PAT first, then `export GITHUB_TOKEN=<rotated>`.
-- Close via `~/agent-zero-ops/gh-issue.py` (reads `GITHUB_TOKEN`/`GH_TOKEN` from env only; never prints secrets).
-- The close-ready list is in §3.
+- **Turnkey:** `~/agent-zero-ops/close-done-issues.sh` — dry-run by default (prints exactly what it would
+  do); `close-done-issues.sh --confirm` posts an evidence comment + closes all **18** verified-done issues
+  (list + evidence baked into the script; mapped by DELIVERABLE since the FR-INTEL commit #s were scrambled).
+- Underlying tool: `~/agent-zero-ops/gh-issue.py` (reads `GITHUB_TOKEN`/`GH_TOKEN` from env only; never prints secrets).
+- The close-ready list is in §3. (#838/#839/#842 are near-close-ready — NOT in the auto-close set; they have
+  deferred sub-items, so review + close those individually once the cloud coder finishes them.)
 
 ### 1b. LLM key → engine Plane-B **and** A0's cloud coder (ONE key, two places)
 Both are OpenAI-compatible; use the rotated DeepSeek key.
