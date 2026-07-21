@@ -982,12 +982,19 @@ def build_container(settings: Settings | None = None) -> Container:
     # Stage 2.5: outbound client for the engine -> workspace callback channel. The
     # shared secret gates it (available() is False when unset) so the default/test
     # lane never tries to reach the workspace.
-    from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+    # ``WORKSPACE_BACKEND=mock`` selects the deterministic mock (no network; pure
+    # fixture data) for testing lane logic without real IMAP/CalDAV credentials.
+    if settings.workspace_backend == "mock":
+        from applicant.adapters.workspace.mock_workspace_client import MockWorkspaceClient
 
-    workspace = HttpWorkspaceClient(
-        base_url=settings.workspace_url,
-        token=settings.applicant_internal_token,
-    )
+        workspace = MockWorkspaceClient()
+    else:
+        from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+
+        workspace = HttpWorkspaceClient(
+            base_url=settings.workspace_url,
+            token=settings.applicant_internal_token,
+        )
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (

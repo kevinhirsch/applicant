@@ -286,6 +286,13 @@ class Settings(BaseSettings):
     # ``available()`` is False, so callers degrade gracefully.
     workspace_url: str = Field(default="http://applicant-ui:7000", alias="WORKSPACE_URL")
     applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
+    #: Backend selection for the WorkspacePort adapter. ``"real"`` (default) uses
+    #: ``HttpWorkspaceClient`` which speaks HTTP to the companion workspace app.
+    #: ``"mock"`` uses ``MockWorkspaceClient`` which serves deterministic fixture
+    #: data with no network — useful for testing lane email/calendar logic without
+    #: real IMAP/CalDAV credentials. Every other value is equivalent to ``"real"``
+    #: (the safe default for production).
+    workspace_backend: str = Field(default="real", alias="WORKSPACE_BACKEND")
 
     # --- Pre-application research feed (#299) --------------------------------
     # When enabled, on-demand cover-letter generation may best-effort pull the
