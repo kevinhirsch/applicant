@@ -1,0 +1,131 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#842) Save a Job — paste a job URL to intake it into a campaign. -->
+<style>
+  .asavejob{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .asavejob h1{font-size:1.5rem;margin:0 0 .25rem}
+  .asavejob .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .asavejob .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .asavejob .result-ok{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+  .asavejob .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .asavejob .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .asavejob .form-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .asavejob .form-row input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:200px}
+  .asavejob .form-row input::placeholder{color:var(--color-text-secondary,#6b7683)}
+  .asavejob .form-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;min-width:200px}
+  .asavejob .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .asavejob .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .asavejob .btn:disabled{opacity:.5;cursor:not-allowed}
+  .asavejob .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .asavejob .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:asavejob-spin .6s linear infinite}
+  @keyframes asavejob-spin{to{transform:rotate(360deg)}}
+  .asavejob .instructions{font-size:.85rem;color:var(--color-text-secondary,#6b7683);margin-bottom:1rem;padding:8px 12px;background:var(--color-panel,#f2f5f7);border-radius:8px;border:1px solid var(--color-border,#d8e0e6)}
+</style>
+
+<div class="asavejob" x-data="window.Alpine.data('asavejob')">
+  <h1>Save a Job <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=savejob')" title="Help for save a job">?</button></h1>
+  <p class="sub">Paste a job posting URL to add it to a campaign</p>
+
+  <div class="instructions">
+    Paste a job posting URL below to intake it into the applicant tracking pipeline.
+    Select a campaign, enter the URL, and click "Save job".
+  </div>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading campaigns...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <template x-if="campaigns.length">
+        <div>
+          <div class="form-row">
+            <select x-model="campaignId">
+              <template x-for="c in campaigns" :key="c.id">
+                <option :value="c.id" x-text="c.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="form-row">
+            <input type="text" x-model="url" placeholder="Job posting URL (e.g. https://...)" @keyup.enter="saveJob()" />
+            <button class="btn primary" @click="saveJob()" :disabled="saving || !url.trim()">
+              <span x-text="saving ? 'Saving...' : 'Save job'"></span>
+            </button>
+          </div>
+          <div x-show="saveError" class="err" x-text="saveError"></div>
+          <div x-show="saveMessage" class="result-ok" x-text="saveMessage"></div>
+        </div>
+      </template>
+
+      <div x-show="!campaigns.length" class="empty">
+        <h2>No campaigns yet</h2>
+        <p>Create a campaign first, then come back to save job URLs.</p>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('asavejob', () => ({
+      campaigns: [],
+      campaignId: '',
+      url: '',
+      loading: false,
+      error: '',
+      saving: false,
+      saveError: '',
+      saveMessage: '',
+
+      async init() {
+        this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('campaigns', { action: 'list' });
+          if (res.ok) {
+            this.campaigns = (res.data && res.data.campaigns) || [];
+            if (this.campaigns.length) {
+              this.campaignId = this.campaigns[0].id;
+            }
+          } else {
+            this.error = res.error || 'Failed to load campaigns';
+          }
+        } catch(e) {
+          this.error = 'Network error loading campaigns';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async saveJob() {
+        const u = this.url.trim();
+        if (!u) return;
+        this.saving = true;
+        this.saveError = '';
+        this.saveMessage = '';
+        try {
+          const res = await callJsonApi('savejob', {
+            action: 'save',
+            campaign_id: this.campaignId,
+            url: u
+          });
+          if (res.ok) {
+            this.saveMessage = 'Job saved successfully!';
+            this.url = '';
+          } else {
+            this.saveError = res.error || 'Failed to save job';
+          }
+        } catch(e) {
+          this.saveError = 'Network error saving job';
+        } finally {
+          this.saving = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
