@@ -5,7 +5,6 @@ Issue: #859
 """
 
 import re
-import warnings
 from pathlib import Path
 
 import pytest
@@ -216,16 +215,30 @@ class TestThemeCss:
 # (d) plugin.yaml
 # ---------------------------------------------------------------------------
 
+PLUGIN_ROOT = PROJECT_ROOT / "a0-applicant"
+
+
 @pytest.mark.unit
 class TestPluginYaml:
-    """Verify plugin.yaml presence at project root."""
+    """Verify plugin.yaml presence and schema."""
 
     def test_plugin_yaml_exists(self):
-        """plugin.yaml must exist at project root. If missing, it's flagged (not failed)."""
-        plugin_yaml = PROJECT_ROOT / "plugin.yaml"
-        if not plugin_yaml.is_file():
-            warnings.warn(
-                "MISSING: plugin.yaml not found at project root. "
-                "This file is needed for plugin discovery metadata.",
-                stacklevel=2,
+        """plugin.yaml must exist at a0-applicant/ and contain valid metadata."""
+        import yaml
+
+        plugin_yaml = PLUGIN_ROOT / "plugin.yaml"
+        assert plugin_yaml.is_file(), (
+            f"plugin.yaml not found at {plugin_yaml}. "
+            "This file is needed for plugin discovery metadata."
+        )
+        with open(plugin_yaml, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert isinstance(data, dict), "plugin.yaml must be a YAML dict"
+        for key in ("name", "title", "description", "version"):
+            val = data.get(key)
+            assert isinstance(val, str) and val.strip(), (
+                f"plugin.yaml key {key!r} must be a non-empty string, got {val!r}"
             )
+        assert data["name"] == "applicant", (
+            f'plugin.yaml name must be "applicant", got {data["name"]!r}'
+        )
