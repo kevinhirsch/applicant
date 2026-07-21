@@ -18,10 +18,10 @@ in and green. **Completing it is now ~90% three unlocks only you can provide** �
 
 Everything else is either gated on those, owned by you (business/legal), or minor polish.
 
-**Verification (2026-07-21):** unit suite **7830 passed** at the known 2-failure baseline
+**Verification (2026-07-21):** unit suite **7895 passed** at the known 2-failure baseline
 (`test_prod_compose_env_file` + `test_deploy_hardening_lens04` — the ONLY allowed failures, pre-existing);
 integration **42 passed + 11 cleanly skipped** (the skips are the companion-gated lane-regression tests);
-**35/35 a0-applicant panels render clean in a real browser** (Playwright). Branch:
+**39/39 a0-applicant panels render clean in a real browser** (Playwright). Branch:
 `claude/refactor-agent-zero-applicant-xn7xoc` (local only — never pushed).
 
 ---
@@ -31,7 +31,7 @@ integration **42 passed + 11 cleanly skipped** (the skips are the companion-gate
 ### 1a. `GITHUB_TOKEN` → close the done issues
 - **Rotate** your PAT first, then `export GITHUB_TOKEN=<rotated>`.
 - **Turnkey:** `~/agent-zero-ops/close-done-issues.sh` — dry-run by default (prints exactly what it would
-  do); `close-done-issues.sh --confirm` posts an evidence comment + closes all **18** verified-done issues
+  do); `close-done-issues.sh --confirm` posts an evidence comment + closes all **21** verified-done issues
   (list + evidence baked into the script; mapped by DELIVERABLE since the FR-INTEL commit #s were scrambled).
 - Underlying tool: `~/agent-zero-ops/gh-issue.py` (reads `GITHUB_TOKEN`/`GH_TOKEN` from env only; never prints secrets).
 - The close-ready list is in §3. (#838/#839/#842 are near-close-ready — NOT in the auto-close set; they have
@@ -131,9 +131,10 @@ real engine — verified: `campaigns.list`/`tracker.board` → 200 with live dat
 - **Surfaces/tooling (7):** #843 (dormant preservation) #845 (help system A+B) #850 (lane regression tests)
   #856 (traceability gate) #859 (release-readiness gate) #846 (a0-webui build-time overlay) #849 (companion
   headless hardening).
-- **Gap-fill (this session) → pushed to near-close-ready:** #838 (health + global pause), #839
-  (settings suite: channels/tiers/privacy panels — automation-prefs deferred to cloud), #842
-  (save-a-job + audit/owner-export + consent + screening/vault/today/ops all built; only fuzzy chrome left).
+- **Gap-fill (this session) → now CLOSE-READY (3):** #838 (health + global pause), #839 (full settings
+  suite: channels/tiers/privacy/automation-prefs panels — the last built on cloud), #842 (vault/easy_apply/
+  screening/today/ops/audit-export/save-a-job/shortcuts/interview-prep/demo-data all built; campaign-switcher
+  skipped as redundant — 19 panels already have in-body campaign pickers).
 
 Plus infra/quality not tied to a single issue: the **A0-shell playtest harness**
 (`scripts/playtest_panels.py`) that renders every panel in a real browser (found + fixed real render
