@@ -198,3 +198,12 @@ chat:
     - Issue commands to automate workflows or trigger actions.
     - Review chat history to revisit past answers and decisions.
   prerequisites: "A configured AI model endpoint"
+
+channels:
+  title: Channels
+  steps:
+    - Configure a Discord webhook URL to receive notifications in your server.
+    - Set up an email (SMTP) channel using an Apprise-style mailto:// URL with your SMTP credentials.
+    - Add an ntfy channel by specifying your ntfy topic URL (e.g. https://ntfy.sh/YourTopic).
+    - Save your channel configuration and use the send-test button to verify connectivity.
+  prerequisites: "A Discord webhook URL, an ntfy topic, or SMTP credentials (host, port, user, password)"

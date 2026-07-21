@@ -18,7 +18,7 @@ HELP_HTML = ROOT / "a0-applicant" / "webui" / "help.html"
 
 # Every surface listed in the spec
 EXPECTED_SURFACES = {
-    "today", "digest", "documents", "campaigns", "tracker",
+    "today", "digest", "documents", "campaigns", "channels", "tracker",
     "discovery", "criteria", "screening", "vault", "easy_apply",
     "gallery", "compare", "mind", "notifications", "health",
     "ops", "fonts", "model_endpoints", "feedback", "chat",
