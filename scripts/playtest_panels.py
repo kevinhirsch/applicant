@@ -275,7 +275,7 @@ async def audit_panel(context, name, panel_rel_path):
 
         # ── A11Y / CONTRAST pass (lightweight, no external libs) ────────
         try:
-            a11y = await page.evaluate("""() => {
+            a11y = await page.evaluate(r"""() => {
                 const issues = {no_name_controls: [], images_no_alt: [], inputs_no_label: [], low_contrast_texts: []};
                 // Helper: prefix selector
                 function selStr(el) {
