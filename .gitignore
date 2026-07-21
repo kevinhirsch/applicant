@@ -67,3 +67,7 @@ docs/site/
 
 # X-3 perf measurement output (workspace/tests/perf/measure.js) — ephemeral
 workspace/tests/perf/.out/
+
+# Playtest harness generated artifacts
+playtest-screens/
+playtest-panels-results.json
