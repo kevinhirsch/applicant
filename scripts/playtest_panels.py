@@ -3,8 +3,10 @@
 
 Enumerates every a0-applicant/webui/*.html panel, opens each in the running A0 shell
 at SHELL_URL (default http://localhost:80), captures console messages/errors, pageerrors,
-HTTP 5xx, screenshots, and politely clicks non-destructive controls to catch handler
-exceptions / dead controls.
+HTTP failures (4xx/5xx), screenshots, unhandled promise rejections, UI artifact leaks
+(undefined, null, NaN, [object Object], JSON blobs), blank-page detection, and politely
+clicks non-destructive controls (buttons, toggles, tabs, accordions, select dropdowns)
+to catch handler exceptions / dead controls.
 
 Boots nothing — assumes the A0 shell is already running. Logs in via the shell's form.
 
@@ -95,6 +97,10 @@ async def audit_panel(context, name, panel_rel_path):
         "console_errors": [],
         "pageerrors": [],
         "http_5xx": [],
+        "failed_requests": [],
+        "unhandled_rejections": [],
+        "ui_leaks": [],
+        "blank_after_load": False,
         "dead_controls": [],
         "controls_clicked": 0,
         "notes": [],
@@ -119,6 +125,8 @@ async def audit_panel(context, name, panel_rel_path):
             return
         if st >= 500:
             rec["http_5xx"].append(f"{st} {url}")
+        if st >= 400:
+            rec["failed_requests"].append({"url": url, "status": st})
 
     page.on("console", on_console)
     page.on("pageerror", on_pageerror)
@@ -137,6 +145,18 @@ async def audit_panel(context, name, panel_rel_path):
           return Promise.resolve();
         };
       }
+      window.__unhandledRejections = [];
+      window.addEventListener('unhandledrejection', function(event) {
+        var val = '';
+        if (event.reason) {
+          if (event.reason.stack) val = event.reason.stack;
+          else if (event.reason.message) val = event.reason.message;
+          else val = String(event.reason);
+        } else {
+          val = String(event);
+        }
+        window.__unhandledRejections.push(val);
+      });
     })()""")
 
     try:
@@ -158,9 +178,46 @@ async def audit_panel(context, name, panel_rel_path):
         except Exception as e:
             rec["notes"].append(f"screenshot failed: {str(e)[:120]}")
 
+        # Post-settle captures: unhandled rejections, UI leaks, blank page
+        try:
+            rec["unhandled_rejections"] = await page.evaluate("window.__unhandledRejections || []")
+        except Exception:
+            rec["unhandled_rejections"] = []
+        try:
+            body_text = await page.evaluate("document.body.innerText")
+            leaks = []
+            ui_leak_patterns = [
+                "undefined", "null", "NaN", "[object Object]", "[object Promise]",
+                "{{", "x-text",
+            ]
+            for pat in ui_leak_patterns:
+                idx = body_text.find(pat)
+                if idx != -1:
+                    start = max(0, idx - 40)
+                    end = min(len(body_text), idx + len(pat) + 40)
+                    snippet = body_text[start:end]
+                    leaks.append({"artifact": pat, "snippet": snippet})
+            # Also check for JSON error blobs: starts with { and has "error" or "message"
+            import re as _re
+            for m in _re.finditer(r'\{[^}]{1,300}["\'](?:error|message)["\'][^}]*\}', body_text):
+                blob = m.group()
+                leaks.append({"artifact": "json-error-blob", "snippet": blob[:80]})
+            rec["ui_leaks"] = leaks
+        except Exception:
+            rec["ui_leaks"] = []
+        try:
+            trimmed = await page.evaluate("document.body.innerText.trim().length")
+            rec["blank_after_load"] = trimmed < 20
+        except Exception:
+            rec["blank_after_load"] = False
+
         # Click non-destructive controls
         ctrl_sel = ('button:not([disabled]), [role="button"], '
-                    '.btn, .cal-btn, [data-settings-tab], [x-on\\:click]')
+                    '.btn, .cal-btn, [data-settings-tab], [x-on\\:click], '
+                    'select, [role="tab"], [role="button"], '
+                    '.expander, [data-expander], .collapse-toggle, '
+                    '[data-collapse-toggle], .accordion-trigger, '
+                    '[aria-expanded]')
         try:
             handles = await page.query_selector_all(ctrl_sel)
         except Exception:
@@ -174,15 +231,23 @@ async def audit_panel(context, name, panel_rel_path):
             try:
                 if not await h.is_visible():
                     continue
+                tag = (await h.evaluate("el.tagName.toLowerCase()")) or ""
                 label = ((await h.inner_text()) or (await h.get_attribute("aria-label")) or
                          (await h.get_attribute("title")) or "")
                 label = label.strip()
                 if DESTRUCTIVE.search(label):
                     continue
-                await h.click(timeout=1500)
-                clicked += 1
-                await page.wait_for_timeout(150)
-                await page.keyboard.press("Escape")
+                if tag == "select":
+                    # Open select dropdown then dismiss without submitting
+                    await h.click(timeout=1500)
+                    clicked += 1
+                    await page.wait_for_timeout(150)
+                    await page.keyboard.press("Escape")
+                else:
+                    await h.click(timeout=1500)
+                    clicked += 1
+                    await page.wait_for_timeout(150)
+                    await page.keyboard.press("Escape")
                 await page.wait_for_timeout(60)
             except Exception as e:
                 msg = str(e).splitlines()[0][:160]
@@ -245,7 +310,9 @@ async def main():
             v = "OK" if rec["rendered"] else "RENDER-FAIL"
             print(f"rendered={rec['rendered']} clicks={rec['controls_clicked']} "
                   f"console={len(rec['console_errors'])} pageerr={len(rec['pageerrors'])} "
-                  f"5xx={len(rec['http_5xx'])} dead={len(rec['dead_controls'])} [{v}]")
+                  f"5xx={len(rec['http_5xx'])} dead={len(rec['dead_controls'])} "
+                  f"failed_req={len(rec['failed_requests'])} unhandled_rej={len(rec['unhandled_rejections'])} "
+                  f"ui_leaks={len(rec['ui_leaks'])} blank={rec['blank_after_load']} [{v}]")
 
         await ctx.close()
         await browser.close()
@@ -255,7 +322,9 @@ async def main():
 
     issues = 0
     for r in results:
-        if r.get("pageerrors") or r.get("http_5xx") or r.get("dead_controls") or not r.get("rendered"):
+        if (r.get("pageerrors") or r.get("http_5xx") or r.get("failed_requests") or
+            r.get("unhandled_rejections") or r.get("ui_leaks") or r.get("blank_after_load") or
+            r.get("dead_controls") or not r.get("rendered")):
             issues += 1
     print(f"Panels with notable issues: {issues}/{len(results)}")
     return 0

@@ -20,7 +20,7 @@ HARNESS_PATH = SCRIPTS_DIR / "playtest_panels.py"
 APPLICANT_WEBUI = PROJECT_ROOT / "a0-applicant" / "webui"
 
 # Results schema keys a per-panel record MUST include
-REQUIRED_RESULT_KEYS = {"rendered", "console_errors", "pageerrors", "http_5xx", "dead_controls"}
+REQUIRED_RESULT_KEYS = {"rendered", "console_errors", "pageerrors", "http_5xx", "failed_requests", "unhandled_rejections", "ui_leaks", "blank_after_load", "dead_controls"}
 
 
 class TestHarnessExists:
@@ -115,8 +115,8 @@ class TestResultsContract:
             )
 
     def test_error_fields_are_lists(self, playtest_results):
-        """Error fields (console_errors, pageerrors, http_5xx, dead_controls) are lists."""
-        list_fields = ["console_errors", "pageerrors", "http_5xx", "dead_controls"]
+        """Error fields (console_errors, pageerrors, http_5xx, failed_requests, unhandled_rejections, ui_leaks, dead_controls) are lists."""
+        list_fields = ["console_errors", "pageerrors", "http_5xx", "failed_requests", "unhandled_rejections", "ui_leaks", "dead_controls"]
         for record in playtest_results["panels"]:
             panel = record.get("panel", "?")
             for field in list_fields:
@@ -124,6 +124,14 @@ class TestResultsContract:
                 assert isinstance(val, list), (
                     f"Panel '{panel}' {field} is not a list: {type(val).__name__}"
                 )
+
+    def test_blank_after_load_is_bool(self, playtest_results):
+        """Every panel's 'blank_after_load' field is a bool."""
+        for record in playtest_results["panels"]:
+            panel = record.get("panel", "?")
+            assert isinstance(record["blank_after_load"], bool), (
+                f"Panel '{panel}' blank_after_load is not bool: {record['blank_after_load']}"
+            )
 
     def test_harness_script_defines_results_contract(self):
         """The harness source references all contract keys."""
