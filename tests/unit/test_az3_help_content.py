@@ -24,6 +24,7 @@ EXPECTED_SURFACES = {
     "ops", "fonts", "model_endpoints", "feedback", "chat",
     "activity", "takeover", "tiers",
     "privacy", "savejob",
+    "automation",
 }
 
 # Spec-jargon tokens that must NOT appear in help copy

@@ -16,7 +16,7 @@ HELP_HTML = WEBUI / "help.html"
 
 # Panels that should get the help affordance (match help_content.yaml keys)
 TARGET_SURFACES = [
-    "today", "digest", "documents", "activity", "campaigns",
+    "today", "digest", "documents", "activity", "automation", "campaigns",
     "tracker", "takeover", "discovery", "criteria", "screening",
     "vault", "easy_apply", "gallery", "compare", "mind",
     "notifications", "health", "ops", "fonts", "model_endpoints",
@@ -70,10 +70,10 @@ class TestHelpAffordancePerSurface:
         for sid in TARGET_SURFACES:
             assert sid in content, f"{sid} missing from help_content.yaml"
 
-    def test_23_surfaces_covered(self) -> None:
-        """Ensure we're covering exactly 23 surfaces."""
-        assert len(TARGET_SURFACES) == 23, (
-            f"Expected 23 target surfaces, got {len(TARGET_SURFACES)}"
+    def test_24_surfaces_covered(self) -> None:
+        """Ensure we're covering exactly 24 surfaces."""
+        assert len(TARGET_SURFACES) == 24, (
+            f"Expected 24 target surfaces, got {len(TARGET_SURFACES)}"
         )
 
 
@@ -115,9 +115,9 @@ class TestConsistentSnippet:
         return count
 
     def test_all_target_use_same_class(self) -> None:
-        """All 23 target panels use the help-btn class consistently."""
-        assert self._count_help_btn_occurrences() == 23, (
-            "Expected exactly 23 help-btn occurrences across target panels"
+        """All 24 target panels use the help-btn class consistently."""
+        assert self._count_help_btn_occurrences() == 24, (
+            "Expected exactly 24 help-btn occurrences across target panels"
         )
 
 

@@ -1,0 +1,354 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#839) Automation — automation preferences settings panel. -->
+<style>
+  .aauto{max-width:720px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aauto h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aauto .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aauto .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aauto .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aauto .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aauto-spin .6s linear infinite}
+  @keyframes aauto-spin{to{transform:rotate(360deg)}}
+  .aauto .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .aauto .section h2{font-size:1.15rem;margin:0 0 .75rem;color:var(--color-text)}
+  .aauto .section h2:first-child{border-top:none;margin-top:0}
+  .aauto .field-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .aauto .field-row label{font-size:.85rem;font-weight:600;min-width:240px;color:var(--color-text)}
+  .aauto .field-row input[type="text"],.aauto .field-row input[type="number"],.aauto .field-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:140px}
+  .aauto .field-row input[type="checkbox"]{width:18px;height:18px;cursor:pointer}
+  .aauto .field-row select{cursor:pointer}
+  .aauto .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aauto .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aauto .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aauto .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aauto .success{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+</style>
+
+<div class="aauto" x-data="window.Alpine.data('aauto')">
+  <h1>Automation <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=automation')" title="Help for automation">?</button></h1>
+  <p class="sub">Configure automation preferences for the applicant engine</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading preferences...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="successMsg && !loading" class="success" x-text="successMsg"></div>
+
+  <template x-if="!loading">
+    <div>
+      <!-- Section: Approvals -->
+      <div class="section">
+        <h2>Approvals</h2>
+        <div class="field-row">
+          <label>approval_timeout_days</label>
+          <input type="number" step="1" x-model="fields.approval_timeout_days" />
+        </div>
+        <div class="field-row">
+          <label>approval_wait_seconds</label>
+          <input type="number" step="1" x-model="fields.approval_wait_seconds" />
+        </div>
+        <div class="field-row">
+          <label>computer_use_approvals</label>
+          <input type="checkbox" x-model="fields.computer_use_approvals" />
+        </div>
+        <div class="field-row">
+          <label>memory_write_approval</label>
+          <input type="checkbox" x-model="fields.memory_write_approval" />
+        </div>
+        <div class="field-row">
+          <label>skills_write_approval</label>
+          <input type="checkbox" x-model="fields.skills_write_approval" />
+        </div>
+      </div>
+
+      <!-- Section: Scheduling -->
+      <div class="section">
+        <h2>Scheduling</h2>
+        <div class="field-row">
+          <label>scheduler_interval_seconds</label>
+          <input type="number" step="1" x-model="fields.scheduler_interval_seconds" />
+        </div>
+        <div class="field-row">
+          <label>curation_schedule</label>
+          <input type="text" x-model="fields.curation_schedule" />
+        </div>
+        <div class="field-row">
+          <label>status_update_schedule</label>
+          <input type="text" x-model="fields.status_update_schedule" />
+        </div>
+        <div class="field-row">
+          <label>essentials_nudge_schedule</label>
+          <input type="text" x-model="fields.essentials_nudge_schedule" />
+        </div>
+        <div class="field-row">
+          <label>loop_failure_alert_threshold</label>
+          <input type="number" step="1" x-model="fields.loop_failure_alert_threshold" />
+        </div>
+      </div>
+
+      <!-- Section: Eligibility & ATS -->
+      <div class="section">
+        <h2>Eligibility &amp; ATS</h2>
+        <div class="field-row">
+          <label>ats_match_rate_floor</label>
+          <input type="number" step="0.01" min="0" max="1" x-model="fields.ats_match_rate_floor" />
+        </div>
+        <div class="field-row">
+          <label>presubmit_eligibility_enabled</label>
+          <input type="checkbox" x-model="fields.presubmit_eligibility_enabled" />
+        </div>
+        <div class="field-row">
+          <label>presubmit_max_listing_age_days</label>
+          <input type="number" step="1" x-model="fields.presubmit_max_listing_age_days" />
+        </div>
+        <div class="field-row">
+          <label>presubmit_max_apps_per_company_per_day</label>
+          <input type="number" step="1" x-model="fields.presubmit_max_apps_per_company_per_day" />
+        </div>
+        <div class="field-row">
+          <label>presubmit_duplicate_cooldown_days</label>
+          <input type="number" step="1" x-model="fields.presubmit_duplicate_cooldown_days" />
+        </div>
+        <div class="field-row">
+          <label>pii_retention_days</label>
+          <input type="number" step="1" x-model="fields.pii_retention_days" />
+        </div>
+      </div>
+
+      <!-- Section: Memory & Skills -->
+      <div class="section">
+        <h2>Memory &amp; Skills</h2>
+        <div class="field-row">
+          <label>memory_max_chars</label>
+          <input type="number" step="1" x-model="fields.memory_max_chars" />
+        </div>
+        <div class="field-row">
+          <label>user_max_chars</label>
+          <input type="number" step="1" x-model="fields.user_max_chars" />
+        </div>
+        <div class="field-row">
+          <label>context_compress_threshold</label>
+          <input type="number" step="1" x-model="fields.context_compress_threshold" />
+        </div>
+      </div>
+
+      <!-- Section: Browser & Egress -->
+      <div class="section">
+        <h2>Browser &amp; Egress</h2>
+        <div class="field-row">
+          <label>browser_engine</label>
+          <select x-model="fields.browser_engine">
+            <option value="">(default)</option>
+            <option value="chromium">chromium</option>
+            <option value="firefox">firefox</option>
+            <option value="webkit">webkit</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>browser_channel</label>
+          <select x-model="fields.browser_channel">
+            <option value="">(default)</option>
+            <option value="stable">stable</option>
+            <option value="beta">beta</option>
+            <option value="dev">dev</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>egress_timezone</label>
+          <input type="text" x-model="fields.egress_timezone" />
+        </div>
+        <div class="field-row">
+          <label>egress_locale</label>
+          <input type="text" x-model="fields.egress_locale" />
+        </div>
+        <div class="field-row">
+          <label>egress_mode</label>
+          <select x-model="fields.egress_mode">
+            <option value="">(default)</option>
+            <option value="direct">direct</option>
+            <option value="proxy">proxy</option>
+            <option value="tor">tor</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>egress_residential</label>
+          <input type="checkbox" x-model="fields.egress_residential" />
+        </div>
+        <div class="field-row">
+          <label>egress_proxy_url</label>
+          <input type="text" x-model="fields.egress_proxy_url" />
+        </div>
+        <div class="field-row">
+          <label>stealth_persona</label>
+          <input type="text" x-model="fields.stealth_persona" />
+        </div>
+      </div>
+
+      <!-- Section: Computer Use -->
+      <div class="section">
+        <h2>Computer Use</h2>
+        <div class="field-row">
+          <label>computer_use_backend</label>
+          <select x-model="fields.computer_use_backend">
+            <option value="">(default)</option>
+            <option value="native">native</option>
+            <option value="docker">docker</option>
+            <option value="xpra">xpra</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>computer_use_mode</label>
+          <select x-model="fields.computer_use_mode">
+            <option value="">(default)</option>
+            <option value="headless">headless</option>
+            <option value="desktop">desktop</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>takeover_desktop</label>
+          <input type="checkbox" x-model="fields.takeover_desktop" />
+        </div>
+        <div class="field-row">
+          <label>remote_view_backend</label>
+          <input type="text" x-model="fields.remote_view_backend" />
+        </div>
+        <div class="field-row">
+          <label>resume_render</label>
+          <input type="checkbox" x-model="fields.resume_render" />
+        </div>
+      </div>
+
+      <!-- Section: Discovery & Captcha -->
+      <div class="section">
+        <h2>Discovery &amp; Captcha</h2>
+        <div class="field-row">
+          <label>discovery_proxies</label>
+          <input type="text" x-model="fields.discovery_proxies" />
+        </div>
+        <div class="field-row">
+          <label>discovery_rss_feeds</label>
+          <input type="text" x-model="fields.discovery_rss_feeds" />
+        </div>
+        <div class="field-row">
+          <label>captcha_strategy</label>
+          <select x-model="fields.captcha_strategy">
+            <option value="">(default)</option>
+            <option value="none">none</option>
+            <option value="auto">auto</option>
+            <option value="manual">manual</option>
+            <option value="service">service</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>captcha_service</label>
+          <select x-model="fields.captcha_service">
+            <option value="">(default)</option>
+            <option value="2captcha">2captcha</option>
+            <option value="capsolver">capsolver</option>
+            <option value="anticaptcha">anticaptcha</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>captcha_api_key</label>
+          <input type="text" x-model="fields.captcha_api_key" />
+        </div>
+      </div>
+
+      <!-- Section: LLM & Tools -->
+      <div class="section">
+        <h2>LLM &amp; Tools</h2>
+        <div class="field-row">
+          <label>llm_smart_routing_prefer_local</label>
+          <input type="checkbox" x-model="fields.llm_smart_routing_prefer_local" />
+        </div>
+        <div class="field-row">
+          <label>prefill_use_planner</label>
+          <input type="checkbox" x-model="fields.prefill_use_planner" />
+        </div>
+        <div class="field-row">
+          <label>chat_tools</label>
+          <input type="text" x-model="fields.chat_tools" />
+        </div>
+        <div class="field-row">
+          <label>loop_tools</label>
+          <input type="text" x-model="fields.loop_tools" />
+        </div>
+        <div class="field-row">
+          <label>sandbox_backend</label>
+          <input type="text" x-model="fields.sandbox_backend" />
+        </div>
+        <div class="field-row">
+          <label>material_research_enabled</label>
+          <input type="checkbox" x-model="fields.material_research_enabled" />
+        </div>
+      </div>
+
+      <!-- Section: Accounts -->
+      <div class="section">
+        <h2>Accounts</h2>
+        <div class="field-row">
+          <label>allow_automated_accounts</label>
+          <input type="checkbox" x-model="fields.allow_automated_accounts" />
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:1.5rem">
+        <button class="btn primary" @click="saveSettings()" :disabled="saving">
+          <span x-text="saving ? 'Saving...' : 'Save Settings'"></span>
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('aauto', () => ({
+      fields: {},
+      loading: false,
+      saving: false,
+      error: '',
+      successMsg: '',
+
+      async init() {
+        await this.loadPrefs();
+      },
+
+      async loadPrefs() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('automation', { action: 'get' });
+          if (res.ok) {
+            this.fields = res.data || {};
+          } else {
+            this.error = res.error || 'Failed to load preferences';
+          }
+        } catch(e) {
+          this.error = 'Network error loading preferences';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async saveSettings() {
+        this.saving = true;
+        this.error = '';
+        this.successMsg = '';
+        try {
+          const payload = { action: 'set', ...this.fields };
+          const res = await callJsonApi('automation', payload);
+          if (res.ok) {
+            this.successMsg = 'Settings saved successfully.';
+          } else {
+            this.error = res.error || 'Failed to save settings';
+          }
+        } catch(e) {
+          this.error = 'Network error saving settings';
+        } finally {
+          this.saving = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>

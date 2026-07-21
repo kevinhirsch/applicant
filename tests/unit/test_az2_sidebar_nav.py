@@ -56,6 +56,12 @@ class TestSidebarLauncher:
     def test_has_activity_label(self, html):
         assert "Activity" in html
 
+    def test_opens_automation_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/automation.html')" in html
+
+    def test_has_automation_label(self, html):
+        assert "Automation" in html
+
     def test_opens_attributes_panel(self, html):
         assert "window.openModal('/plugins/applicant/webui/attributes.html')" in html
 

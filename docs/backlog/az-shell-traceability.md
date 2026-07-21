@@ -24,6 +24,7 @@ retired front-door traceability and serves as the single source of truth for por
 | health / capabilities | `webui/health.html` | `api/health.py` | delivered | |
 | campaigns (CRUD) | `webui/campaigns.html` | `api/campaigns.py` | delivered | |
 | activity / agent-runs | `webui/activity.html` | `api/agent_runs.py` | delivered | alias: panel=`activity`, proxy=`agent_runs` |
+| automation-preferences (settings) | `webui/automation.html` | `api/automation.py` | delivered | |
 | mind / memory | `webui/mind.html` | `api/mind.py` | delivered | |
 | gallery (screenshots) | `webui/gallery.html` | `api/gallery.py` | delivered | |
 | criteria (match criteria) | `webui/criteria.html` | `api/criteria.py` | delivered | |
@@ -67,7 +68,7 @@ retired front-door traceability and serves as the single source of truth for por
 
 ### Delivery status summary
 
-- **Fully delivered (panel + proxy, engine-wired):** 28 surfaces (25 named + 3 utility)
+- **Fully delivered (panel + proxy, engine-wired):** 29 surfaces (26 named + 3 utility)
 - **Partial (no engine proxy — static/shell-level):** 2 (config, help)
 - **Gated / present-but-disabled:** 1 (compare — product decision)
 

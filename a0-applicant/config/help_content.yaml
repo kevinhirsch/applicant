@@ -37,6 +37,17 @@ activity:
     - Use the run/pause/resume controls to manage agent execution.
   prerequisites: "At least one agent session or scheduled task"
 
+automation:
+  title: Automation
+  steps:
+    - Adjust approval timeouts and wait periods to control how long pending actions remain active.
+    - Configure the scheduler interval to set how often the engine checks for new tasks and updates.
+    - Set the ATS match rate floor to filter applications below a minimum suitability score.
+    - Manage memory and skills write approval to control which data the agent can persist automatically.
+    - Configure browser engine, egress mode, and relay settings for automated browsing sessions.
+    - Toggle LLM smart routing preference to favor local models or route to cloud endpoints.
+  prerequisites: "A valid account with at least one active campaign"
+
 campaigns:
   title: Campaigns
   steps:
