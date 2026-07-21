@@ -187,3 +187,9 @@ class TestSidebarLauncher:
 
     def test_has_savejob_label(self, html):
         assert "Save a Job" in html
+
+    def test_opens_shortcuts_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/shortcuts.html')" in html
+
+    def test_has_shortcuts_label(self, html):
+        assert "Shortcuts" in html

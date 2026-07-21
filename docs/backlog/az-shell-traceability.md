@@ -57,6 +57,7 @@ retired front-door traceability and serves as the single source of truth for por
 | help / about | `webui/help.html` | none (static) | partial | static HTML help page |
 | dormant-surface registry | `webui/dormant.html` | `api/dormant.py` | delivered | engine-registered lifecycle status |
 | feedback (surveys) | `webui/feedback.html` | `api/feedback.py` | delivered | |
+| keyboard shortcuts (reference) | `webui/shortcuts.html` | none (static) | partial | static reference modal; no API proxy needed |
 
 ### Proxy-only endpoints (no dedicated panel)
 

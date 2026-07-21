@@ -25,6 +25,7 @@ EXPECTED_SURFACES = {
     "activity", "takeover", "tiers",
     "privacy", "savejob",
     "automation",
+    "shortcuts",
 }
 
 # Spec-jargon tokens that must NOT appear in help copy

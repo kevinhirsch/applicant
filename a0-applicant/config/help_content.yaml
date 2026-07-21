@@ -247,3 +247,12 @@ tiers:
     - Drag tiers to reorder the escalation priority.
     - Save the ladder to persist your changes.
   prerequisites: "none (uses the configured model endpoints)"
+
+shortcuts:
+  title: Keyboard Shortcuts
+  steps:
+    - Press Esc to close any open modal or panel.
+    - Use Ctrl+S (or Cmd+S on macOS) to save or approve a pending action.
+    - Navigate between panels by clicking sidebar buttons.
+    - Use the shortcut reference panel (Shortcuts in the sidebar) for a full list.
+  prerequisites: "none"

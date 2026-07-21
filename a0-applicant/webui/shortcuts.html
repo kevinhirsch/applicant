@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keyboard Shortcuts</title>
+  <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
+    .shortcut-group { border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+    .shortcut-header {
+      padding: 0.6rem 1rem; background: #f3f4f6;
+      font-weight: 600; font-size: 0.9rem; user-select: none;
+    }
+    .shortcut-body { padding: 0.6rem 1rem; font-size: 0.85rem; line-height: 1.5; border-top: 1px solid #d1d5db; }
+    .shortcut-row { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: 1px solid #f3f4f6; }
+    .shortcut-row:last-child { border-bottom: none; }
+    .shortcut-keys { display: flex; gap: 0.3rem; align-items: center; flex-shrink: 0; }
+    .shortcut-desc { color: #4b5563; margin-right: 1rem; }
+    kbd {
+      display: inline-block; padding: 0.2rem 0.4rem; font-size: 0.75rem;
+      font-family: monospace; line-height: 1; color: #1f2937;
+      background: #e5e7eb; border: 1px solid #d1d5db;
+      border-radius: 4px; box-shadow: 0 1px 0 #9ca3af;
+      white-space: nowrap;
+    }
+    .tips-list { margin: 0.25rem 0 0.25rem 1.2rem; padding: 0; }
+    .tips-list li { margin-bottom: 0.3rem; }
+    .help-bar { display: flex; justify-content: flex-end; margin-bottom: 0.75rem; }
+    .help-btn {
+      background: #4361ee; color: #fff; border: none; border-radius: 50%;
+      width: 1.6rem; height: 1.6rem; font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+    .help-btn:hover { background: #3651d4; }
+  </style>
+</head>
+<body x-data>
+  <div class="help-bar">
+    <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=shortcuts')" title="Help for keyboard shortcuts">?</button>
+  </div>
+
+  <h1>Keyboard Shortcuts</h1>
+
+  <!-- Shell Shortcuts -->
+  <div class="shortcut-group">
+    <div class="shortcut-header">Shell Shortcuts</div>
+    <div class="shortcut-body">
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Close any open modal or panel</span>
+        <span class="shortcut-keys"><kbd>Esc</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Save or approve a pending action</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>S</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Pass or reject the current item</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Search or filter content</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>F</kbd></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Navigation -->
+  <div class="shortcut-group">
+    <div class="shortcut-header">Panel Navigation</div>
+    <div class="shortcut-body">
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Open a panel by clicking its sidebar button</span>
+        <span class="shortcut-keys">Click sidebar buttons</span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Navigate between open panels</span>
+        <span class="shortcut-keys">Click sidebar buttons</span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Close the current panel or modal</span>
+        <span class="shortcut-keys"><kbd>Esc</kbd></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Common Panel Actions -->
+  <div class="shortcut-group">
+    <div class="shortcut-header">Common Panel Actions</div>
+    <div class="shortcut-body">
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Save or approve changes</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>S</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Pass or reject current selection</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Search within the active panel</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>F</kbd></span>
+      </div>
+      <div class="shortcut-row">
+        <span class="shortcut-desc">Toggle filter options</span>
+        <span class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Surface Tips -->
+  <div class="shortcut-group">
+    <div class="shortcut-header">Surface Tips</div>
+    <div class="shortcut-body">
+      <ul class="tips-list">
+        <li>Click the <strong>?</strong> button in any panel title for context help.</li>
+        <li>Use sidebar buttons to switch between surfaces.</li>
+        <li>Press <kbd>Esc</kbd> to close modals and return to the main view.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
