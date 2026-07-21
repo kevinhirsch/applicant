@@ -158,6 +158,12 @@ class TestSidebarLauncher:
     def test_has_ops_label(self, html):
         assert "Ops" in html
 
+    def test_opens_tiers_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/tiers.html')" in html
+
+    def test_has_tiers_label(self, html):
+        assert "Tiers" in html
+
     def test_opens_channels_panel(self, html):
         assert "window.openModal('/plugins/applicant/webui/channels.html')" in html
 

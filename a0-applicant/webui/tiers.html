@@ -1,0 +1,138 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#839) Tiers — model escalation ladder editor. -->
+<style>
+  .atiers{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .atiers h1{font-size:1.5rem;margin:0 0 .25rem}
+  .atiers .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .atiers .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .atiers .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .atiers .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .atiers .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .atiers .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .atiers .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .atiers .btn:disabled{opacity:.5;cursor:not-allowed}
+  .atiers .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .atiers .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:atiers-spin .6s linear infinite}
+  @keyframes atiers-spin{to{transform:rotate(360deg)}}
+  .atiers .list{display:flex;flex-direction:column;gap:6px;margin-bottom:1.5rem}
+  .atiers .tier-entry{padding:10px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);font-size:.85rem}
+  .atiers .tier-entry .tier-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}
+  .atiers .tier-entry .tier-step{font-weight:600;color:var(--color-primary,#2d7ff9);min-width:50px}
+  .atiers .tier-entry input{flex:1;min-width:100px;padding:4px 6px;border-radius:4px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;font-size:.82rem}
+  .atiers .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .atiers .inst{color:var(--color-text-secondary,#6b7683);font-size:.82rem;margin-bottom:.75rem;padding:8px 12px;background:var(--color-panel,#f2f5f7);border-radius:8px;border:1px solid var(--color-border,#d8e0e6)}
+  .atiers .save-bar{display:flex;gap:8px;align-items:center;margin-top:1rem}
+  .atiers .save-msg{color:var(--color-success-text,#1a7d1a);font-size:.82rem;padding:6px 0}
+</style>
+
+<div class="atiers" x-data="window.Alpine.data('atiers')">
+  <h1>Tiers <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=tiers')" title="Help for tiers">?</button></h1>
+  <p class="sub">Model escalation ladder</p>
+
+  <div class="inst">
+    The ladder decides which model handles a step; higher tiers cost more.
+    Lower-numbered tiers run first; the engine escalates upward as needed.
+    Edit a tier's provider/model below and save to persist changes.
+  </div>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading tiers...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <div class="list" x-show="tiers.length">
+        <template x-for="(t, i) in tiers" :key="i">
+          <div class="tier-entry">
+            <div class="tier-row">
+              <span class="tier-step" x-text="'Tier ' + (i + 1)"></span>
+            </div>
+            <div class="tier-row">
+              <input type="text" x-model="tiers[i].provider" placeholder="Provider" />
+              <input type="text" x-model="tiers[i].model" placeholder="Model" />
+              <input type="text" x-model="tiers[i].base_url" placeholder="Base URL" />
+            </div>
+            <div class="tier-row">
+              <input type="number" x-model="tiers[i].context_window" placeholder="Context window" style="max-width:140px" />
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="!tiers.length" class="empty">
+        <h2>No tiers configured</h2>
+        <p>Add a tier to the ladder to define the model escalation chain.</p>
+      </div>
+
+      <div class="save-bar">
+        <button class="btn primary" @click="saveTiers()" :disabled="saving">
+          <span x-text="saving ? 'Saving...' : 'Save ladder'"></span>
+        </button>
+        <button class="btn" @click="addTier()">+ Add tier</button>
+        <button class="btn" @click="loadTiers()" :disabled="loading">Refresh</button>
+      </div>
+      <div x-show="saveMessage" class="save-msg" x-text="saveMessage"></div>
+      <div x-show="saveError" class="err" x-text="saveError"></div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('atiers', () => ({
+      tiers: [],
+      loading: false,
+      error: '',
+      saving: false,
+      saveMessage: '',
+      saveError: '',
+
+      async init() {
+        this.loadTiers();
+      },
+
+      async loadTiers() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('tiers', { action: 'get' });
+          if (res.ok) {
+            this.tiers = (res.data && res.data.tiers) || [];
+          } else {
+            this.error = res.error || 'Failed to load tiers';
+          }
+        } catch(e) {
+          this.error = 'Network error loading tiers';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async saveTiers() {
+        this.saving = true;
+        this.saveMessage = '';
+        this.saveError = '';
+        this.error = '';
+        try {
+          const res = await callJsonApi('tiers', { action: 'set', tiers: this.tiers });
+          if (res.ok) {
+            this.saveMessage = 'Ladder saved successfully.';
+            await this.loadTiers();
+          } else {
+            this.saveError = res.error || 'Failed to save ladder';
+          }
+        } catch(e) {
+          this.saveError = 'Network error saving ladder';
+        } finally {
+          this.saving = false;
+        }
+      },
+
+      addTier() {
+        this.tiers.push({ provider: '', model: '', base_url: '', context_window: 8192 });
+      }
+    }));
+  })();
+  </script>
+</div>
