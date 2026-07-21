@@ -245,3 +245,29 @@ th { font-weight: 600; background: var(--color-panel); }
 .mb-md { margin-bottom: var(--space-md); }
 .p-sm { padding: var(--space-sm); }
 .p-md { padding: var(--space-md); }
+
+/* ── Help affordance: per-surface '?' button inside h1 ── */
+.help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  vertical-align: middle;
+  margin-left: 6px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.help-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}

@@ -30,7 +30,7 @@
 </style>
 
 <div class="amind" x-data="mindPanel()">
-  <h1>🧠 Mind</h1>
+  <h1>🧠 Mind <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=mind')" title="Help for mind">?</button></h1>
 
   <div class="tabs">
     <template x-for="tab in ['memory','skills','curation']" :key="tab">

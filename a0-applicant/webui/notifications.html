@@ -23,7 +23,7 @@
 </style>
 
 <div class="anotifications" x-data="notificationsPanel()">
-  <h1>🔔 Notifications</h1>
+  <h1>🔔 Notifications <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=notifications')" title="Help for notifications">?</button></h1>
 
   <div class="toolbar">
     <label><input type="checkbox" x-model="includeSeen" @change="refresh()"> Include seen</label>

@@ -30,7 +30,7 @@
 </style>
 
 <div class="acampaigns" x-data="campaignsPanel()">
-  <h1>📢 Campaigns</h1>
+  <h1>📢 Campaigns <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=campaigns')" title="Help for campaigns">?</button></h1>
   <div class="sub" x-text="`${campaigns.length} campaign${campaigns.length===1?'':'s'}`" x-show="!loading && !fatalError && campaigns.length > 0"></div>
 
   <div class="new-form" x-show="!loading && !fatalError">

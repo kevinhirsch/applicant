@@ -86,7 +86,14 @@
       contentError: '',
 
       async init() {
-        this.loadSurfaces();
+        await this.loadSurfaces();
+        // Deep-link support: auto-open surface from ?surface= query param
+        const params = new URLSearchParams(window.location.search);
+        const surfaceParam = params.get('surface');
+        if (surfaceParam) {
+          // Wait for surfaces to be loaded then toggle
+          this.toggleSurface(surfaceParam);
+        }
       },
 
       async loadSurfaces() {

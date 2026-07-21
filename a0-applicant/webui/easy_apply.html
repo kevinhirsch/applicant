@@ -25,7 +25,7 @@
 </style>
 
 <div class="aeasy-apply" x-data="easyApplyPanel()">
-  <h1>⚡ Easy Apply</h1>
+  <h1>⚡ Easy Apply <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=easy_apply')" title="Help for easy_apply">?</button></h1>
   <div class="sub" x-text="statusText" x-show="!loading && !fatalError && data"></div>
 
   <div class="toolbar">

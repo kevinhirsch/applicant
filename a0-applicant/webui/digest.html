@@ -28,7 +28,7 @@
 </style>
 
 <div class="adigest" x-data="digestPanel()">
-  <h1>📋 Daily Digest</h1>
+  <h1>📋 Daily Digest <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=digest')" title="Help for digest">?</button></h1>
   <div class="sub" x-show="!loading && !fatalError && rows.length > 0" x-text="`${rows.length} application${rows.length===1?'':'s'} to review`"></div>
 
   <div class="toolbar">

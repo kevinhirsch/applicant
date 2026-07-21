@@ -32,7 +32,7 @@
 </style>
 
 <div class="avault" x-data="vaultPanel()">
-  <h1>🔐 Vault</h1>
+  <h1>🔐 Vault <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=vault')" title="Help for vault">?</button></h1>
   <div class="sub" x-text="`${tenants.length} saved sign-in${tenants.length===1?'':'s'} for ${selectedCampaign || '(no campaign)'}`" x-show="!loading && !fatalError && selectedCampaign"></div>
 
   <!-- Campaign picker -->
