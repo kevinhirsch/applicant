@@ -61,6 +61,12 @@
       <div class="conversation" x-show="conversation.length > 0">
         <template x-for="(item, idx) in conversation" :key="idx">
           <div class="msg" :class="item.role + (item.pending ? ' pending' : '')" x-text="item.text"></div>
+          <!-- AZ3 (#845): deep-link button for help-intent answers -->
+          <template x-if="item.deep_link">
+            <div class="chips" style="align-self:flex-start">
+              <button class="chip" @click="window.openModal(item.deep_link)" x-text="'Open Help about ' + (item.surface || 'this topic')"></button>
+            </div>
+          </template>
           <template x-if="item.role === 'assistant' && item.actions && item.actions.length > 0">
             <div class="chips" style="align-self:flex-start">
               <template x-for="(act, aidx) in item.actions" :key="aidx">
@@ -179,11 +185,21 @@
         this.conversation.splice(pendingIdx, 1);
       } else {
         const data = r.data || {};
-        const reply = data.reply || data.text || data.message || "";
-        if (reply) {
-          this.conversation[pendingIdx] = { role: "assistant", text: reply };
+        // AZ3 (#845): render help intent answer with deep-link button
+        if (data.answer && data.deep_link) {
+          this.conversation[pendingIdx] = {
+            role: "assistant",
+            text: data.answer,
+            deep_link: data.deep_link,
+            surface: data.surface || "",
+          };
         } else {
-          this.conversation.splice(pendingIdx, 1);
+          const reply = data.reply || data.text || data.message || "";
+          if (reply) {
+            this.conversation[pendingIdx] = { role: "assistant", text: reply };
+          } else {
+            this.conversation.splice(pendingIdx, 1);
+          }
         }
         // Check for pending attribute change
         if (data.pending_change) {
