@@ -46,7 +46,7 @@ FRONTEND_ONLY = {
 }
 
 # Panels intentionally excluded from the main sidebar
-EXCLUDED_FROM_SIDEBAR = {"config"}
+EXCLUDED_FROM_SIDEBAR = set()
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +155,6 @@ class TestSidebarWiring:
             f"Panels missing from sidebar: {sorted(missing)}"
         )
 
-    def test_excluded_config_not_in_sidebar(self):
-        """config.html must not appear in the sidebar."""
-        sidebar = _get_sidebar_panels()
-        assert "config" not in sidebar, "config panel is in sidebar but should be excluded"
 
     def test_no_duplicate_sidebar_entries(self):
         """No panel should appear more than once in the sidebar."""

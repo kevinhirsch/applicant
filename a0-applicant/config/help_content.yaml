@@ -274,3 +274,17 @@ shortcuts:
     - Navigate between panels by clicking sidebar buttons.
     - Use the shortcut reference panel (Shortcuts in the sidebar) for a full list.
   prerequisites: "none"
+
+config:
+  title: Settings
+  steps:
+    - Use the Settings hub to navigate to the configuration surface you need.
+    - Click a card to open the corresponding settings sub-panel.
+    - Channels: configure Discord/email/ntfy notification channels and send a test.
+    - Model Tiers: manage the model-escalation ladder.
+    - Privacy & Sandbox: set telemetry preferences and Proxmox sandbox connection.
+    - Automation: adjust approval timeouts, scheduling, eligibility, and engine preferences.
+    - Fonts: manage installed fonts for r&eacute;sum&eacute; rendering.
+    - Model Endpoints: configure AI provider base URLs, API keys, and model names.
+    - Notifications: review in-app notification history and preferences.
+  prerequisites: "none"

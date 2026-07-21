@@ -27,6 +27,7 @@ EXPECTED_SURFACES = {
     "demo",
     "automation",
     "shortcuts",
+    "config",
     "interview_prep",
 }
 

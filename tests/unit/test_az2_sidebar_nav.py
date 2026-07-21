@@ -199,3 +199,9 @@ class TestSidebarLauncher:
 
     def test_has_shortcuts_label(self, html):
         assert "Shortcuts" in html
+
+    def test_opens_config_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/config.html')" in html
+
+    def test_has_settings_label(self, html):
+        assert "Settings" in html

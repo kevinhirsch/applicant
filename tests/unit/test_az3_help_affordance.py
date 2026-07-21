@@ -22,11 +22,12 @@ TARGET_SURFACES = [
     "notifications", "health", "ops", "fonts", "model_endpoints",
     "feedback", "chat",
     "privacy",
+    "config",
     "interview_prep",
 ]
 
 # Panels that must NOT have the help affordance
-EXCLUDED = {"help", "config", "main"}
+EXCLUDED = {"help", "main"}
 
 
 class TestHelpAffordancePerSurface:
@@ -71,10 +72,10 @@ class TestHelpAffordancePerSurface:
         for sid in TARGET_SURFACES:
             assert sid in content, f"{sid} missing from help_content.yaml"
 
-    def test_25_surfaces_covered(self) -> None:
-        """Ensure we're covering exactly 25 surfaces."""
-        assert len(TARGET_SURFACES) == 25, (
-            f"Expected 25 target surfaces, got {len(TARGET_SURFACES)}"
+    def test_26_surfaces_covered(self) -> None:
+        """Ensure we're covering exactly 26 surfaces."""
+        assert len(TARGET_SURFACES) == 26, (
+            f"Expected 26 target surfaces, got {len(TARGET_SURFACES)}"
         )
 
 
@@ -116,9 +117,9 @@ class TestConsistentSnippet:
         return count
 
     def test_all_target_use_same_class(self) -> None:
-        """All 24 target panels use the help-btn class consistently."""
-        assert self._count_help_btn_occurrences() == 25, (
-            "Expected exactly 25 help-btn occurrences across target panels"
+        """All target panels use the help-btn class consistently."""
+        assert self._count_help_btn_occurrences() == 28, (
+            "Expected exactly 28 help-btn occurrences across target panels (config added 2)"
         )
 
 
