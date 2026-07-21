@@ -1,0 +1,80 @@
+# intel_orchestration.yaml — Orchestration Doctrine Contract (FR-INTEL-5)
+# Plane A: shipped orchestration CONTRACT; applied in the agent0 overseer prompt;
+# enforced by test_intel_orchestration.py.
+#
+# This file defines how the overseer (cloud agent0) delegates work to subordinates.
+# Referential integrity: profiles named here must exist in config/intel_tiers.yaml
+# and their tier+locality must match.
+
+doctrine:
+  overseer_is_cloud: true
+  overseer_role: "planner/reviewer, not typist"
+  overseer_does_implementation: false
+
+delegation:
+  - work: "Real coding/edits/running commands & builds"
+    profile: coder
+    tier: local-fast
+    locality: local
+  - work: "Reading/searching code"
+    profile: explorer
+    tier: local-fast
+    locality: local
+  - work: "Writing & running tests"
+    profile: test-engineer
+    tier: local-fast
+    locality: local
+  - work: "Independent verification of an important change"
+    profile: reviewer
+    tier: cloud-flash
+    locality: remote
+  - work: "Security-sensitive review"
+    profile: security-auditor
+    tier: cloud-flash
+    locality: remote
+  - work: "Hard debugging / deep judgment"
+    profile: debugger
+    tier: cloud-pro
+    locality: remote
+
+remote_only_catalog:
+  - id: R1
+    scenario: "Planning/decomposition/architecture/ambiguity resolution"
+    why: "strongest reasoning, sets everything downstream"
+    tier: "overseer (cloud-flash)"
+  - id: R2
+    scenario: "Reviewing/synthesising worker output; final answer to user"
+    why: "must not trust a local worker's self-assessment"
+    tier: "overseer (cloud-flash)"
+  - id: R3
+    scenario: "Independent verification of an important change"
+    why: "a second, stronger, independent judge"
+    tier: "reviewer (cloud-flash)"
+  - id: R4
+    scenario: "Security review"
+    why: "higher stakes; catch subtle issues"
+    tier: "security-auditor (cloud-flash)"
+  - id: R5
+    scenario: "Hard debugging after local escalation exhausted"
+    why: "max intelligence"
+    tier: "debugger (cloud-pro)"
+  - id: R6
+    scenario: "Any step > ctx_cap (~96000)"
+    why: "physically exceeds the local window"
+    tier: "*-cloud (cloud-flash, 1M ctx)"
+  - id: R7
+    scenario: "Repeated local failure (>=2 struggles)"
+    why: "local model can't converge (INTEL-4)"
+    tier: "DeepSeek-Pro (cloud-pro)"
+  - id: R8
+    scenario: "Parallelism beyond concurrency(2) local slots"
+    why: "GPU can't run more heavy streams"
+    tier: "overflow -> *-cloud (cloud-flash)"
+  - id: R9
+    scenario: "Vision / image reasoning"
+    why: "local model is text-only"
+    tier: "vision-capable cloud"
+
+fan_out:
+  max_local: 2
+  overflow: cloud
