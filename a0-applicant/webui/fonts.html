@@ -33,7 +33,7 @@
     <span class="spinner"></span> Loading fonts...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -81,7 +81,7 @@
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('afonts', () => ({
       fonts: [],
       loading: false,
-      error: '',
+      fatalError: '',
       detecting: false,
       detectMessage: '',
       installName: '',
@@ -101,16 +101,16 @@
 
       async loadFonts() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('fonts', { action: 'list' });
           if (res.ok) {
             this.fonts = (res.data && res.data.installed) || [];
           } else {
-            this.error = res.error || 'Failed to load fonts';
+            this.fatalError = res.error || 'Failed to load fonts';
           }
         } catch(e) {
-          this.error = 'Network error loading fonts';
+          this.fatalError = 'Network error loading fonts';
         } finally {
           this.loading = false;
         }
@@ -119,7 +119,7 @@
       async detectFonts() {
         this.detecting = true;
         this.detectMessage = '';
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('fonts', { action: 'detect' });
           if (res.ok) {
@@ -129,10 +129,10 @@
             this.detectMessage = 'Detected ' + required.length + ' required font' + (required.length === 1 ? '' : 's') + ', ' + missing.length + ' missing';
             await this.loadFonts();
           } else {
-            this.error = res.error || 'Font detection failed';
+            this.fatalError = res.error || 'Font detection failed';
           }
         } catch(e) {
-          this.error = 'Network error during detection';
+          this.fatalError = 'Network error during detection';
         } finally {
           this.detecting = false;
         }

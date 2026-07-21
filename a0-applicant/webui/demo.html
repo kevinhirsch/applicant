@@ -31,7 +31,7 @@
     <span class="spinner"></span> Loading demo status...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -87,7 +87,7 @@
       demo_mode: false,
       demo_active: false,
       loading: false,
-      error: '',
+      fatalError: '',
       counts: {},
       seeding: false,
       clearing: false,
@@ -98,7 +98,7 @@
 
       async loadStatus() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('demo', { action: 'status' });
           if (res.ok) {
@@ -106,10 +106,10 @@
             this.demo_active = res.data.demo_active || false;
             this.counts = res.data.counts || {};
           } else {
-            this.error = res.error || 'Failed to load demo status';
+            this.fatalError = res.error || 'Failed to load demo status';
           }
         } catch(e) {
-          this.error = 'Network error loading demo status';
+          this.fatalError = 'Network error loading demo status';
         } finally {
           this.loading = false;
         }
@@ -118,16 +118,16 @@
       async seedData() {
         if (!confirm('Load demo data? This will create sample campaigns, postings, and applications.')) return;
         this.seeding = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('demo', { action: 'seed' });
           if (res.ok) {
             await this.loadStatus();
           } else {
-            this.error = res.error || 'Failed to load demo data';
+            this.fatalError = res.error || 'Failed to load demo data';
           }
         } catch(e) {
-          this.error = 'Network error loading demo data';
+          this.fatalError = 'Network error loading demo data';
         } finally {
           this.seeding = false;
         }
@@ -136,16 +136,16 @@
       async clearData() {
         if (!confirm('Clear demo data? This will remove all sample campaigns, postings, and applications.')) return;
         this.clearing = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('demo', { action: 'clear' });
           if (res.ok) {
             await this.loadStatus();
           } else {
-            this.error = res.error || 'Failed to clear demo data';
+            this.fatalError = res.error || 'Failed to clear demo data';
           }
         } catch(e) {
-          this.error = 'Network error clearing demo data';
+          this.fatalError = 'Network error clearing demo data';
         } finally {
           this.clearing = false;
         }

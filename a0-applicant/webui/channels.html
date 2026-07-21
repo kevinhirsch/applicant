@@ -36,7 +36,7 @@
     <span class="spinner"></span> Loading channels...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -132,7 +132,7 @@
       ntfyUrl: '',
       emailTimeoutMinutes: '',
       loading: false,
-      error: '',
+      fatalError: '',
       saving: false,
       saveError: '',
       saveMessage: '',
@@ -151,7 +151,7 @@
 
       async loadConfig() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('channels', { action: 'get' });
           if (res.ok) {
@@ -165,10 +165,10 @@
             this.formNtfy = this.ntfyUrl;
             this.formTimeout = this.emailTimeoutMinutes;
           } else {
-            this.error = res.error || 'Failed to load channel config';
+            this.fatalError = res.error || 'Failed to load channel config';
           }
         } catch(e) {
-          this.error = 'Network error loading channels';
+          this.fatalError = 'Network error loading channels';
         } finally {
           this.loading = false;
         }

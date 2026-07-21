@@ -31,7 +31,7 @@
     <span class="spinner"></span> Loading preferences...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
   <div x-show="successMsg && !loading" class="success" x-text="successMsg"></div>
 
   <template x-if="!loading">
@@ -306,7 +306,7 @@
       fields: {},
       loading: false,
       saving: false,
-      error: '',
+      fatalError: '',
       successMsg: '',
 
       async init() {
@@ -315,16 +315,16 @@
 
       async loadPrefs() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('automation', { action: 'get' });
           if (res.ok) {
             this.fields = res.data || {};
           } else {
-            this.error = res.error || 'Failed to load preferences';
+            this.fatalError = res.error || 'Failed to load preferences';
           }
         } catch(e) {
-          this.error = 'Network error loading preferences';
+          this.fatalError = 'Network error loading preferences';
         } finally {
           this.loading = false;
         }
@@ -332,7 +332,7 @@
 
       async saveSettings() {
         this.saving = true;
-        this.error = '';
+        this.fatalError = '';
         this.successMsg = '';
         try {
           const payload = { action: 'set', ...this.fields };
@@ -340,10 +340,10 @@
           if (res.ok) {
             this.successMsg = 'Settings saved successfully.';
           } else {
-            this.error = res.error || 'Failed to save settings';
+            this.fatalError = res.error || 'Failed to save settings';
           }
         } catch(e) {
-          this.error = 'Network error saving settings';
+          this.fatalError = 'Network error saving settings';
         } finally {
           this.saving = false;
         }

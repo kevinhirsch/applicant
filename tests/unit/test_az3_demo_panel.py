@@ -47,7 +47,7 @@ class TestDemoHtmlPanel:
     def test_has_error_line(self) -> None:
         source = DEMO_HTML.read_text(encoding="utf-8")
         assert "error" in source.lower()
-        assert "x-show=\"error" in source or 'x-show="error' in source
+        assert "x-show=\"fatalError" in source 
 
     def test_has_help_affordance(self) -> None:
         source = DEMO_HTML.read_text(encoding="utf-8")

@@ -39,7 +39,7 @@
     <span class="spinner"></span> Loading privacy settings...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -113,7 +113,7 @@
   (function() {
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('aprivacy', () => ({
       loading: false,
-      error: '',
+      fatalError: '',
       telemetryEnabled: false,
       telemetryEndpoint: '',
       telemetryMsg: '',
@@ -134,7 +134,7 @@
 
       async loadSettings() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('privacy', { action: 'get' });
           if (res.ok && res.data) {
@@ -151,7 +151,7 @@
             this.rdpUsername = conn.rdp_username || '';
           }
         } catch(e) {
-          this.error = 'Failed to load privacy settings';
+          this.fatalError = 'Failed to load privacy settings';
         } finally {
           this.loading = false;
         }

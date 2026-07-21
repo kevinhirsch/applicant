@@ -43,7 +43,7 @@ class TestInterviewPrepPanel:
         assert "no interview prep" in html.lower() or "No interview prep" in html
 
     def test_has_error_line(self, html):
-        assert "x-show=\"error" in html
+        assert "x-show=\"fatalError" in html
 
     def test_has_help_affordance(self, html):
         assert "help.html?surface=interview_prep" in html

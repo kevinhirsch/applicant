@@ -39,7 +39,7 @@
     <span class="spinner"></span> Loading tiers...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -83,7 +83,7 @@
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('atiers', () => ({
       tiers: [],
       loading: false,
-      error: '',
+      fatalError: '',
       saving: false,
       saveMessage: '',
       saveError: '',
@@ -94,16 +94,16 @@
 
       async loadTiers() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('tiers', { action: 'get' });
           if (res.ok) {
             this.tiers = (res.data && res.data.tiers) || [];
           } else {
-            this.error = res.error || 'Failed to load tiers';
+            this.fatalError = res.error || 'Failed to load tiers';
           }
         } catch(e) {
-          this.error = 'Network error loading tiers';
+          this.fatalError = 'Network error loading tiers';
         } finally {
           this.loading = false;
         }
@@ -113,7 +113,7 @@
         this.saving = true;
         this.saveMessage = '';
         this.saveError = '';
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('tiers', { action: 'set', tiers: this.tiers });
           if (res.ok) {

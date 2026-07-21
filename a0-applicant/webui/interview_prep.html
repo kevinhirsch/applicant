@@ -32,7 +32,7 @@
     <span class="spinner"></span> Loading...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -102,7 +102,7 @@
       campaignId: '',
       applicationId: '',
       loading: false,
-      error: '',
+      fatalError: '',
       generated: null,
       brief: {},
 
@@ -112,16 +112,16 @@
 
       async loadCampaigns() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('campaigns', { action: 'list' });
           if (res.ok) {
             this.campaigns = (res.data && res.data.campaigns) || [];
           } else {
-            this.error = res.error || 'Failed to load campaigns';
+            this.fatalError = res.error || 'Failed to load campaigns';
           }
         } catch(e) {
-          this.error = 'Network error loading campaigns';
+          this.fatalError = 'Network error loading campaigns';
         } finally {
           this.loading = false;
         }
@@ -136,16 +136,16 @@
           return;
         }
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('tracker', { action: 'board', campaign_id: this.campaignId });
           if (res.ok) {
             this.applications = (res.data && res.data.applications) || [];
           } else {
-            this.error = res.error || 'Failed to load applications';
+            this.fatalError = res.error || 'Failed to load applications';
           }
         } catch(e) {
-          this.error = 'Network error loading applications';
+          this.fatalError = 'Network error loading applications';
         } finally {
           this.loading = false;
         }
@@ -156,7 +156,7 @@
         this.generated = null;
         if (!this.applicationId) return;
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('interview_prep', { action: 'get', campaign_id: this.campaignId, application_id: this.applicationId });
           if (res.ok) {
@@ -173,10 +173,10 @@
               };
             }
           } else {
-            this.error = res.error || 'Failed to load interview prep';
+            this.fatalError = res.error || 'Failed to load interview prep';
           }
         } catch(e) {
-          this.error = 'Network error loading interview prep';
+          this.fatalError = 'Network error loading interview prep';
         } finally {
           this.loading = false;
         }
