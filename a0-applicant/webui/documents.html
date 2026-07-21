@@ -116,6 +116,42 @@
                   Provenance (what I drew on)
                 </div>
                 <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-text="provenanceData || 'Loading…'"></div>
+
+                <!-- Redline expander -->
+                <div class="expander" @click="redlineOpen = (redlineOpen === (doc.id || doc.document_id)) ? null : (doc.id || doc.document_id)">
+                  <span x-text="redlineOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  ✏️ Propose a redline
+                </div>
+                <div x-show="redlineOpen === (doc.id || doc.document_id)" style="margin-top:8px">
+                  <textarea x-model="redlineNewSource[doc.id || doc.document_id]" placeholder="Paste proposed replacement text here…" style="width:100%;min-height:100px;padding:8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);font-family:inherit;font-size:.78rem;box-sizing:border-box"></textarea>
+                  <div style="display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap">
+                    <label style="font-size:.78rem">Base source:
+                      <input type="text" x-model="redlineBaseSource[doc.id || doc.document_id]" placeholder="Defaults to current content" style="padding:4px 8px;border-radius:4px;border:1px solid var(--color-border,#d8e0e6);font-size:.78rem">
+                    </label>
+                    <label style="font-size:.78rem">Aggressiveness:
+                      <input type="range" min="0" max="100" x-model="redlineAggressiveness[doc.id || doc.document_id]" style="width:120px">
+                      <span x-text="redlineAggressiveness[doc.id || doc.document_id] || 20"></span>
+                    </label>
+                    <button class="btn small" @click="submitRedline(doc.id || doc.document_id, doc)" :disabled="redlineLoading === (doc.id || doc.document_id)">Compute Redline</button>
+                  </div>
+                  <div class="loading" x-show="redlineLoading === (doc.id || doc.document_id)"><div class="spinner"></div><br>Computing redline…</div>
+                  <div class="err" x-show="redlineError[doc.id || doc.document_id]" x-text="redlineError[doc.id || doc.document_id]"></div>
+
+                  <!-- Redline result -->
+                  <div x-show="redlineResults[doc.id || doc.document_id]" style="margin-top:8px">
+                    <div class="provenance-content" x-html="redlineResults[doc.id || doc.document_id].rendered_html || ''"></div>
+                    <div x-show="!redlineResults[doc.id || doc.document_id].rendered_html">
+                      <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Additions:</div>
+                      <div class="doc-content" style="margin-bottom:4px"><template x-for="a in redlineResults[doc.id || doc.document_id].additions" :key="a"><div style="color:#155724">+ <span x-text="a"></span></div></template></div>
+                      <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Subtractions:</div>
+                      <div class="doc-content"><template x-for="s in redlineResults[doc.id || doc.document_id].subtractions" :key="s"><div style="color:#721c24">− <span x-text="s"></span></div></template></div>
+                    </div>
+                    <div class="doc-actions" style="margin-top:8px">
+                      <button class="btn success small" @click="approveRedlineViaDoc(doc.id || doc.document_id)">✓ Apply Redline</button>
+                      <button class="btn danger small" @click="dismissRedline(doc.id || doc.document_id)">✗ Dismiss</button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </template>
           </div>
@@ -164,6 +200,15 @@
       snapshotLoading: false,
       snapshotNotFound: false,
       snapshotError: "",
+
+      // Redline state
+      redlineOpen: null,
+      redlineNewSource: {},
+      redlineBaseSource: {},
+      redlineAggressiveness: {},
+      redlineLoading: null,
+      redlineError: {},
+      redlineResults: {},
 
       async init() {
         this.loading = true;
@@ -290,6 +335,46 @@
           const prov = data.provenance || data.html || data.text || JSON.stringify(data, null, 2);
           this.provenanceData = typeof prov === "string" ? prov : JSON.stringify(prov, null, 2);
         }
+      },
+
+      async submitRedline(docId, doc) {
+        const newSource = this.redlineNewSource[docId];
+        if (!newSource || !newSource.trim()) {
+          this.redlineError[docId] = "New source text is required.";
+          return;
+        }
+        this.redlineLoading = docId;
+        this.redlineError[docId] = "";
+        const baseSource = this.redlineBaseSource[docId] || (doc && doc.content) || '';
+        const aggressiveness = this.redlineAggressiveness[docId] || 20;
+        
+        const r = await callJsonApi("documents", {
+          action: "redline",
+          variant_id: (doc && (doc.variant_id || doc.id)) || docId,
+          base_source: baseSource,
+          new_source: newSource,
+          aggressiveness: aggressiveness
+        });
+        
+        if (!r || !r.ok) {
+          this.redlineError[docId] = (r && r.error) || "Failed to compute redline.";
+        } else {
+          this.redlineResults[docId] = r.data || {};
+        }
+        this.redlineLoading = null;
+      },
+
+      dismissRedline(docId) {
+        this.redlineResults[docId] = null;
+        this.redlineNewSource[docId] = "";
+        this.redlineBaseSource[docId] = "";
+        this.redlineAggressiveness[docId] = 20;
+        this.redlineError[docId] = "";
+      },
+
+      async approveRedlineViaDoc(docId) {
+        this.dismissRedline(docId);
+        await this.approveDocument(docId);
       },
 
       async loadSnapshot() {

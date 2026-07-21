@@ -48,3 +48,12 @@ class TestDocumentsPanel:
 
     def test_empty_state_no_campaigns(self, html):
         assert "No campaigns" in html or "Select a campaign" in html
+
+    def test_redline_submit_via_callJsonApi(self, html):
+        assert 'action: "redline"' in html
+
+    def test_redline_result_render_element(self, html):
+        assert 'redlineResults' in html and 'rendered_html' in html
+
+    def test_redline_approve_decline_affordances(self, html):
+        assert 'approveRedlineViaDoc' in html and 'dismissRedline' in html
