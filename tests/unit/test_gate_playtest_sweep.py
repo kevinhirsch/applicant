@@ -17,6 +17,15 @@ import pytest
 HANDLER_DIR = Path(__file__).resolve().parents[2] / "a0-applicant/api"
 
 
+def _assert_safe_envelope(r):
+    """Assert the response is a well-formed envelope with a 2xx/4xx status (or 0)."""
+    assert isinstance(r, dict), f"dispatch returned non-dict: {r!r}"
+    assert "ok" in r, f"missing ok: {r!r}"
+    assert "status" in r, f"missing status: {r!r}"
+    assert isinstance(r["status"], int), f"status not int: {r!r}"
+    assert r["status"] == 0 or 200 <= r["status"] < 500, f"Unexpected status {r['status']}: {r!r}"
+
+
 def _stub_modules():
     """Set up stubs for helpers.api and flask so any proxy module can load."""
     api = types.ModuleType("helpers.api")
@@ -31,6 +40,20 @@ def _stub_modules():
     sys.modules["helpers.api"] = api
     flask = sys.modules.setdefault("flask", types.ModuleType("flask"))
     flask.Request = object
+
+
+def _assert_safe_envelope(r, label=""):
+    """Assert the response is a well-formed envelope with a non-5xx status.
+
+    Accepts 0 (no-status-yet) and any 2xx/4xx code (e.g. 409 onboarding).
+    Rejects 5xx (>= 500) and non-integer statuses.
+    """
+    assert isinstance(r, dict), f"{label}did not return dict: {r!r}"
+    assert "ok" in r, f"{label}missing ok: {r!r}"
+    assert "status" in r, f"{label}missing status: {r!r}"
+    assert isinstance(r["status"], int), f"{label}status not int: {r!r}"
+    s = r["status"]
+    assert s == 0 or 200 <= s < 500, f"{label}Unexpected status {s}: {r!r}"
 
 
 # ── agent_runs proxy ────────────────────────────────────────────────────
@@ -160,7 +183,7 @@ def test_agent_runs_monkey_garbage_input(mod_agent_runs):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── attributes proxy ────────────────────────────────────────────────────
@@ -245,7 +268,7 @@ def test_attributes_monkey_garbage_input(mod_attributes):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── audit proxy ────────────────────────────────────────────────────
@@ -312,7 +335,7 @@ def test_audit_monkey_garbage_input(mod_audit):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── campaigns proxy ────────────────────────────────────────────────────
@@ -428,7 +451,7 @@ def test_campaigns_monkey_garbage_input(mod_campaigns):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── chat proxy ────────────────────────────────────────────────────
@@ -513,7 +536,7 @@ def test_chat_monkey_garbage_input(mod_chat):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── compare proxy ────────────────────────────────────────────────────
@@ -579,7 +602,7 @@ def test_compare_monkey_garbage_input(mod_compare):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── conversion proxy ────────────────────────────────────────────────────
@@ -677,7 +700,7 @@ def test_conversion_monkey_garbage_input(mod_conversion):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── criteria proxy ────────────────────────────────────────────────────
@@ -761,7 +784,7 @@ def test_criteria_monkey_garbage_input(mod_criteria):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── digest proxy ────────────────────────────────────────────────────
@@ -861,7 +884,7 @@ def test_digest_monkey_garbage_input(mod_digest):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── discovery proxy ────────────────────────────────────────────────────
@@ -928,7 +951,7 @@ def test_discovery_monkey_garbage_input(mod_discovery):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── documents proxy ────────────────────────────────────────────────────
@@ -1059,7 +1082,7 @@ def test_documents_monkey_garbage_input(mod_documents):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── dormant proxy ────────────────────────────────────────────────────
@@ -1108,7 +1131,7 @@ def test_dormant_monkey_garbage_input(mod_dormant):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── easy_apply proxy ────────────────────────────────────────────────────
@@ -1159,7 +1182,7 @@ def test_easy_apply_monkey_garbage_input(mod_easy_apply):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── feedback proxy ────────────────────────────────────────────────────
@@ -1243,7 +1266,7 @@ def test_feedback_monkey_garbage_input(mod_feedback):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── fonts proxy ────────────────────────────────────────────────────
@@ -1324,7 +1347,7 @@ def test_fonts_monkey_garbage_input(mod_fonts):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── gallery proxy ────────────────────────────────────────────────────
@@ -1374,7 +1397,7 @@ def test_gallery_monkey_garbage_input(mod_gallery):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── health proxy ────────────────────────────────────────────────────
@@ -1423,7 +1446,7 @@ def test_health_monkey_garbage_input(mod_health):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── mind proxy ────────────────────────────────────────────────────
@@ -1534,7 +1557,7 @@ def test_mind_monkey_garbage_input(mod_mind):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── model_endpoints proxy ────────────────────────────────────────────────────
@@ -1645,7 +1668,7 @@ def test_model_endpoints_monkey_garbage_input(mod_model_endpoints):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── notifications proxy ────────────────────────────────────────────────────
@@ -1725,7 +1748,7 @@ def test_notifications_monkey_garbage_input(mod_notifications):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── onboarding proxy ────────────────────────────────────────────────────
@@ -1807,7 +1830,7 @@ def test_onboarding_monkey_garbage_input(mod_onboarding):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── ops proxy ────────────────────────────────────────────────────
@@ -1922,7 +1945,7 @@ def test_ops_monkey_garbage_input(mod_ops):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── pending proxy ────────────────────────────────────────────────────
@@ -2040,7 +2063,7 @@ def test_pending_monkey_garbage_input(mod_pending):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── research proxy ────────────────────────────────────────────────────
@@ -2122,7 +2145,7 @@ def test_research_monkey_garbage_input(mod_research):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── screening proxy ────────────────────────────────────────────────────
@@ -2188,7 +2211,7 @@ def test_screening_monkey_garbage_input(mod_screening):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── takeover proxy ────────────────────────────────────────────────────
@@ -2349,7 +2372,7 @@ def test_takeover_monkey_garbage_input(mod_takeover):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── tracker proxy ────────────────────────────────────────────────────
@@ -2415,7 +2438,7 @@ def test_tracker_monkey_garbage_input(mod_tracker):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── update_panel proxy ────────────────────────────────────────────────────
@@ -2479,7 +2502,7 @@ def test_update_panel_monkey_garbage_input(mod_update_panel):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 # ── vault proxy ────────────────────────────────────────────────────
@@ -2613,7 +2636,7 @@ def test_vault_monkey_garbage_input(mod_vault):
         assert isinstance(r, dict), f"dispatch({bad!r}) did not return dict: {r!r}"
         assert "ok" in r, f"dispatch({bad!r}) missing ok: {r!r}"
         assert "status" in r, f"dispatch({bad!r}) missing status: {r!r}"
-        assert r.get("status") in (200, 400, 0), "Unexpected status %s: %s" % (r.get("status"), r)
+        _assert_safe_envelope(r)
 
 
 
