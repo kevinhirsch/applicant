@@ -208,6 +208,16 @@ channels:
     - Save your channel configuration and use the send-test button to verify connectivity.
   prerequisites: "A Discord webhook URL, an ntfy topic, or SMTP credentials (host, port, user, password)"
 
+privacy:
+  title: Privacy & Sandbox
+  steps:
+    - Telemetry data collection is off by default; enable it only if you want to share anonymous usage data.
+    - Configure a telemetry endpoint to send data to your own analytics service.
+    - Set up the sandbox connection with your Proxmox API URL, node, and template VM ID.
+    - Enter the CDP host and port for browser automation connectivity.
+    - Enter an RDP username for remote desktop access to sandbox VMs.
+  prerequisites: "none"
+
 tiers:
   title: Model tiers
   steps:

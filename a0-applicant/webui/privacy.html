@@ -161,7 +161,7 @@
         this.telemetryMsg = '';
         this.telemetryErr = '';
         try {
-          const body: any = { enabled: this.telemetryEnabled };
+          const body = { enabled: this.telemetryEnabled };
           if (this.telemetryEndpoint) body.endpoint = this.telemetryEndpoint;
           const res = await callJsonApi('privacy', { action: 'set_telemetry', ...body });
           if (res.ok) {
@@ -179,7 +179,7 @@
         this.sandboxMsg = '';
         this.sandboxErr = '';
         try {
-          const body: any = {
+          const body = {
             proxmox_api_url: this.proxmoxApiUrl,
             proxmox_node: this.proxmoxNode,
             template_vmid: this.templateVmid ? parseInt(this.templateVmid, 10) : 0,

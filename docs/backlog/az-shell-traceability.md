@@ -35,6 +35,7 @@ retired front-door traceability and serves as the single source of truth for por
 | notifications | `webui/notifications.html` | `api/notifications.py` | delivered | |
 | attributes (profile CRUD) | `webui/attributes.html` | `api/attributes.py` | delivered | |
 | ops (tool toggles + observability) | `webui/ops.html` | `api/ops.py` | delivered | |
+| privacy / sandbox (telemetry) | `webui/privacy.html` | `api/privacy.py` | delivered | |
 | screening (answer library) | `webui/screening.html` | `api/screening.py` | delivered | |
 | model-endpoints | `webui/model_endpoints.html` | `api/model_endpoints.py` | delivered | |
 | tiers (model-escalation ladder) | `webui/tiers.html` | `api/tiers.py` | delivered | |
