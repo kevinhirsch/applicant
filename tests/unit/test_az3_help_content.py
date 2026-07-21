@@ -22,6 +22,7 @@ EXPECTED_SURFACES = {
     "discovery", "criteria", "screening", "vault", "easy_apply",
     "gallery", "compare", "mind", "notifications", "health",
     "ops", "fonts", "model_endpoints", "feedback", "chat",
+    "activity", "takeover",
 }
 
 # Spec-jargon tokens that must NOT appear in help copy

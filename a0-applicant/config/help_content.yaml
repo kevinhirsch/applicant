@@ -28,6 +28,15 @@ documents:
     - Search within document contents to find specific information.
   prerequisites: "A base resume or cover letter uploaded in your profile"
 
+activity:
+  title: Activity
+  steps:
+    - Check the activity feed for agent runs, scheduler events, and session history.
+    - Filter by status (running, paused, completed) to narrow results.
+    - Review current intent and recent runs for context.
+    - Use the run/pause/resume controls to manage agent execution.
+  prerequisites: "At least one agent session or scheduled task"
+
 campaigns:
   title: Campaigns
   steps:
@@ -45,6 +54,15 @@ tracker:
     - Drag applications between stages to update their progress.
     - Click any application row to open its full detail view.
   prerequisites: "At least one application in flight"
+
+takeover:
+  title: Live Takeover
+  steps:
+    - Review the live session dashboard to see active takeovers.
+    - Select a session to monitor its real-time progress.
+    - Use operator controls to intervene or guide the session as needed.
+    - End the session when the takeover is complete.
+  prerequisites: "An active session with a connected agent or operator"
 
 discovery:
   title: Discovery
