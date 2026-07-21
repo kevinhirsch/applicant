@@ -2335,7 +2335,8 @@ def test_takeover_final_approval(mod_takeover):
     with patch.object(mod_takeover, "_forward", fake):
         r = mod_takeover.dispatch({
         'action': 'final_approval',
-        'application_id': 'a1'
+        'application_id': 'a1',
+        'mode': 'agent'
     })
     assert seen.get("called"), "dispatch did not call _forward"
     assert isinstance(r, dict), f"dispatch returned non-dict: {r!r}"
