@@ -110,6 +110,12 @@ class TestSidebarLauncher:
     def test_has_fonts_label(self, html):
         assert "Fonts" in html
 
+    def test_opens_privacy_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/privacy.html')" in html
+
+    def test_has_privacy_label(self, html):
+        assert "Privacy" in html
+
     def test_opens_discovery_panel(self, html):
         assert "window.openModal('/plugins/applicant/webui/discovery.html')" in html
 

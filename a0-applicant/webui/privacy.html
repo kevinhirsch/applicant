@@ -1,0 +1,205 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#839) Privacy & Sandbox — telemetry toggle + sandbox connection settings. -->
+<style>
+  .aprivacy{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aprivacy h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aprivacy .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aprivacy .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aprivacy .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aprivacy .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aprivacy .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .aprivacy .section h2{font-size:1.15rem;margin:0 0 .5rem}
+  .aprivacy .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aprivacy .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aprivacy-spin .6s linear infinite}
+  @keyframes aprivacy-spin{to{transform:rotate(360deg)}}
+  .aprivacy .toggle-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:.9rem}
+  .aprivacy .toggle-row input[type="checkbox"]{width:18px;height:18px;accent-color:var(--color-primary,#2d7ff9)}
+  .aprivacy .toggle-status{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-left:4px}
+  .aprivacy .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+  .aprivacy .form-grid .field{display:flex;flex-direction:column;gap:3px}
+  .aprivacy .form-grid label{font-size:.8rem;color:var(--color-text-secondary,#6b7683)}
+  .aprivacy .form-grid input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .aprivacy .form-grid input::placeholder{color:var(--color-text-secondary,#6b7683)}
+  .aprivacy .form-grid input[type="password"]{font-family:monospace}
+  .aprivacy .btn-row{display:flex;gap:8px;margin-top:12px}
+  .aprivacy .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aprivacy .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aprivacy .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aprivacy .msg{font-size:.82rem;margin-top:6px}
+  .aprivacy .msg.ok{color:var(--color-success-text,#1a7d1a)}
+  .aprivacy .msg.fail{color:var(--color-danger-text,#9b1c1c)}
+  .aprivacy .instructions{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:8px;line-height:1.4}
+</style>
+
+<div class="aprivacy" x-data="window.Alpine.data('aprivacy')">
+  <h1>Privacy & Sandbox <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=privacy')" title="Help for privacy">?</button></h1>
+  <p class="sub">Telemetry preferences and sandbox connection settings</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading privacy settings...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <!-- Telemetry section -->
+      <div class="section">
+        <h2>Telemetry</h2>
+        <label class="toggle-row">
+          <input type="checkbox" x-model="telemetryEnabled" @change="setTelemetry()" />
+          <span>Error telemetry</span>
+          <span class="toggle-status" x-show="telemetryEnabled" x-text="telemetryEndpoint ? '(via ' + telemetryEndpoint + ')' : '(enabled)'"></span>
+        </label>
+        <p class="instructions">Telemetry is off unless you enable it. No data is collected or sent.</p>
+        <div class="form-grid" x-show="telemetryEnabled">
+          <div class="field" style="grid-column:1/-1">
+            <label>Collection endpoint</label>
+            <input type="text" x-model="telemetryEndpoint" placeholder="e.g. https://telemetry.example.com/report" @change="setTelemetry()" />
+          </div>
+        </div>
+        <div class="msg ok" x-show="telemetryMsg" x-text="telemetryMsg"></div>
+        <div class="msg fail" x-show="telemetryErr" x-text="telemetryErr"></div>
+      </div>
+
+      <!-- Sandbox connection section -->
+      <div class="section">
+        <h2>Sandbox connection</h2>
+        <p class="instructions">Configure the Proxmox VM sandbox for automated application sessions. Secrets are stored encrypted.</p>
+
+        <div class="form-grid">
+          <div class="field" style="grid-column:1/-1">
+            <label>Proxmox API URL</label>
+            <input type="text" x-model="proxmoxApiUrl" placeholder="e.g. https://proxmox.local:8000" />
+          </div>
+          <div class="field">
+            <label>Proxmox node</label>
+            <input type="text" x-model="proxmoxNode" placeholder="e.g. pve" />
+          </div>
+          <div class="field">
+            <label>Template VM ID</label>
+            <input type="number" x-model="templateVmid" placeholder="e.g. 9001" />
+          </div>
+          <div class="field">
+            <label>CDP host</label>
+            <input type="text" x-model="cdpHost" placeholder="e.g. 192.168.1.10" />
+          </div>
+          <div class="field">
+            <label>CDP port</label>
+            <input type="number" x-model="cdpPort" placeholder="9222" />
+          </div>
+          <div class="field">
+            <label>RDP username</label>
+            <input type="text" x-model="rdpUsername" placeholder="e.g. Administrator" />
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn primary" @click="setSandbox()" :disabled="saving">
+            <span x-text="saving ? 'Saving...' : 'Save sandbox connection'"></span>
+          </button>
+        </div>
+        <div class="msg ok" x-show="sandboxMsg" x-text="sandboxMsg"></div>
+        <div class="msg fail" x-show="sandboxErr" x-text="sandboxErr"></div>
+      </div>
+
+      <div class="empty" style="margin-top:1.5rem">
+        <p class="instructions">Changes are saved immediately. Restart the sandbox service after updating connection settings.</p>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('aprivacy', () => ({
+      loading: false,
+      error: '',
+      telemetryEnabled: false,
+      telemetryEndpoint: '',
+      telemetryMsg: '',
+      telemetryErr: '',
+      saving: false,
+      sandboxMsg: '',
+      sandboxErr: '',
+      proxmoxApiUrl: '',
+      proxmoxNode: '',
+      templateVmid: '',
+      cdpHost: '',
+      cdpPort: '9222',
+      rdpUsername: '',
+
+      async init() {
+        await this.loadSettings();
+      },
+
+      async loadSettings() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('privacy', { action: 'get' });
+          if (res.ok && res.data) {
+            const t = res.data.telemetry || {};
+            this.telemetryEnabled = !!t.enabled;
+            this.telemetryEndpoint = t.endpoint || '';
+            const s = res.data.sandbox_connection || {};
+            const conn = s.connection || {};
+            this.proxmoxApiUrl = conn.proxmox_api_url || '';
+            this.proxmoxNode = conn.proxmox_node || '';
+            this.templateVmid = conn.template_vmid != null ? String(conn.template_vmid) : '';
+            this.cdpHost = conn.cdp_host || '';
+            this.cdpPort = conn.cdp_port != null ? String(conn.cdp_port) : '9222';
+            this.rdpUsername = conn.rdp_username || '';
+          }
+        } catch(e) {
+          this.error = 'Failed to load privacy settings';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async setTelemetry() {
+        this.telemetryMsg = '';
+        this.telemetryErr = '';
+        try {
+          const body: any = { enabled: this.telemetryEnabled };
+          if (this.telemetryEndpoint) body.endpoint = this.telemetryEndpoint;
+          const res = await callJsonApi('privacy', { action: 'set_telemetry', ...body });
+          if (res.ok) {
+            this.telemetryMsg = this.telemetryEnabled ? 'Telemetry enabled.' : 'Telemetry disabled.';
+          } else {
+            this.telemetryErr = res.error || 'Failed to save telemetry preference';
+          }
+        } catch(e) {
+          this.telemetryErr = 'Network error saving telemetry';
+        }
+      },
+
+      async setSandbox() {
+        this.saving = true;
+        this.sandboxMsg = '';
+        this.sandboxErr = '';
+        try {
+          const body: any = {
+            proxmox_api_url: this.proxmoxApiUrl,
+            proxmox_node: this.proxmoxNode,
+            template_vmid: this.templateVmid ? parseInt(this.templateVmid, 10) : 0,
+            cdp_host: this.cdpHost,
+            cdp_port: this.cdpPort ? parseInt(this.cdpPort, 10) : 9222,
+            rdp_username: this.rdpUsername,
+          };
+          const res = await callJsonApi('privacy', { action: 'set_sandbox', ...body });
+          if (res.ok) {
+            this.sandboxMsg = 'Sandbox connection saved.';
+          } else {
+            this.sandboxErr = res.error || 'Failed to save sandbox connection';
+          }
+        } catch(e) {
+          this.sandboxErr = 'Network error saving sandbox connection';
+        } finally {
+          this.saving = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
