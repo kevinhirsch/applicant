@@ -1,0 +1,182 @@
+# Per-surface help content — single source of truth for the help panel and chat responses.
+# Keyed by surface id. Copy must be plain-language, name real prerequisites, avoid spec jargon.
+
+today:
+  title: Today
+  steps:
+    - Check the daily dashboard for upcoming deadlines and overdue items.
+    - Review recent activity from your active applications.
+    - Use quick-action shortcuts for common tasks like sending follow-ups.
+    - Click any card to open the related surface for more detail.
+  prerequisites: "A valid account with at least one active campaign"
+
+digest:
+  title: Digest
+  steps:
+    - Open the digest to see a curated summary of updates across your surfaces.
+    - Filter the digest by surface or time period to narrow what you see.
+    - Mark items as read or actionable to track what needs attention.
+    - Use the recap action to get a condensed overview of recent changes.
+  prerequisites: "At least one application or campaign with recent activity"
+
+documents:
+  title: Documents
+  steps:
+    - Upload application-related documents (resumes, cover letters, references).
+    - Preview and download files directly from the documents list.
+    - Organise documents by category using the folder structure.
+    - Search within document contents to find specific information.
+  prerequisites: "A base resume or cover letter uploaded in your profile"
+
+campaigns:
+  title: Campaigns
+  steps:
+    - Create a new campaign by giving it a name and selecting a template.
+    - Add recipient lists or configure job-boards to source candidates.
+    - Monitor campaign performance through the activity feed and analytics.
+    - Clone an existing campaign to reuse its configuration for a new run.
+  prerequisites: "At least one connected job board account or recipient list"
+
+tracker:
+  title: Tracker
+  steps:
+    - Open the tracker to see a pipeline view of all your applications.
+    - Filter by stage, campaign, or date range to focus on specific items.
+    - Drag applications between stages to update their progress.
+    - Click any application row to open its full detail view.
+  prerequisites: "At least one application in flight"
+
+discovery:
+  title: Discovery
+  steps:
+    - Open discovery to find new job postings from connected sources.
+    - Toggle source keys on or off to control which job boards are searched.
+    - Review discovered listings and decide which to pursue.
+    - Send promising listings to your campaign for automated application.
+  prerequisites: "At least one connected job board with an active API key"
+
+criteria:
+  title: Criteria
+  steps:
+    - Define screening criteria for each campaign (skills, experience, location).
+    - Set weight or priority for each criterion to control ranking.
+    - Review how applicants score against your criteria.
+    - Adjust criteria thresholds as needed to refine your candidate pool.
+  prerequisites: "An active campaign with at least one incoming application"
+
+screening:
+  title: Screening
+  steps:
+    - Review each applicant's profile against your campaign criteria.
+    - Accept or reject candidates based on screening results.
+    - View detailed explanation of why a candidate passed or failed screening.
+    - Shortlisted candidates proceed to the next stage for review.
+  prerequisites: "Completed criteria setup on the campaign"
+
+vault:
+  title: Vault
+  steps:
+    - Store sensitive credentials, API keys, and tokens securely in the vault.
+    - Access stored secrets when configuring integrations or job boards.
+    - Rotate or revoke credentials from the vault at any time.
+    - Audit access logs to see which surfaces used each credential.
+  prerequisites: "At least one external integration that requires credentials"
+
+easy_apply:
+  title: Easy Apply
+  steps:
+    - Enable easy-apply mode to auto-fill application forms from your profile.
+    - Verify the filled fields before submission to catch any mismatches.
+    - Set default answers for common questions to speed up the process.
+    - Review submission logs to confirm which applications were sent.
+  prerequisites: "A completed base resume and at least one job listing targeted"
+
+gallery:
+  title: Gallery
+  steps:
+    - Open the gallery to view screenshots and materials for a campaign.
+    - Browse generated cover letters, resumes, and other collateral.
+    - Approve or flag materials for revision before they are used.
+    - Download approved materials for offline use or manual submission.
+  prerequisites: "A campaign with at least one generated document or screenshot"
+
+compare:
+  title: Compare
+  steps:
+    - Select two or more applications or candidates to compare side by side.
+    - Review key fields side by side: skills, experience, match score.
+    - Use the comparison to decide which candidate to advance.
+    - Export the comparison report for your records.
+  prerequisites: "At least two applications in screening or review stage"
+
+mind:
+  title: Mind
+  steps:
+    - Open the mind surface to see a visual map of your application ecosystem.
+    - Explore relationships between campaigns, applications, and outcomes.
+    - Filter the map by time period or surface type.
+    - Click any node to navigate directly to that surface.
+  prerequisites: "At least two active campaigns or a campaign with multiple applications"
+
+notifications:
+  title: Notifications
+  steps:
+    - Check notifications for updates on application status and new opportunities.
+    - Configure which events trigger notifications (email, in-app, or both).
+    - Mark notifications as read to clear your queue.
+    - Click a notification to jump directly to the relevant surface.
+  prerequisites: "A configured notification channel (email or in-app)"
+
+health:
+  title: Health
+  steps:
+    - Open the health panel to view system status and diagnostics.
+    - Check API connectivity to confirm your integrations are working.
+    - Review recent errors and warnings for any surfaces that need attention.
+    - Monitor performance metrics such as response times and resource usage.
+  prerequisites: "none"
+
+ops:
+  title: Ops
+  steps:
+    - Open the ops panel to manage system operations and maintenance tasks.
+    - View scheduled jobs and their execution status.
+    - Trigger manual operations like cache clearing or data reindexing.
+    - Review operation logs for troubleshooting.
+  prerequisites: "Administrator or operator role on the account"
+
+fonts:
+  title: Fonts
+  steps:
+    - Open the fonts panel to see which fonts are installed for resume rendering.
+    - Detect missing fonts by uploading a resume or document.
+    - Install new fonts from a file to expand rendering options.
+    - Refresh the font cache after installation to apply changes.
+  prerequisites: "A resume document in .docx or .tex format"
+
+model_endpoints:
+  title: Model Endpoints
+  steps:
+    - Configure AI model endpoints by providing a base URL and API key.
+    - Select the provider (OpenAI, Anthropic, Ollama, etc.) and model name.
+    - Test the endpoint to confirm connectivity before saving.
+    - Switch between endpoints to compare output quality or performance.
+  prerequisites: "A valid API key for at least one supported AI provider"
+
+feedback:
+  title: Feedback
+  steps:
+    - Submit feedback about the system directly through this surface.
+    - Include details about what worked well or what could improve.
+    - Attach screenshots or logs if reporting an issue.
+    - Track the status of your submitted feedback.
+  prerequisites: "none"
+
+chat:
+  title: Chat
+  steps:
+    - Ask questions about your applications, documents, or campaigns.
+    - Request document generation or summarisation through the chat interface.
+    - Issue commands to automate workflows or trigger actions.
+    - Review chat history to revisit past answers and decisions.
+  prerequisites: "A configured AI model endpoint"
