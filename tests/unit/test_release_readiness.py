@@ -37,6 +37,7 @@ THEME_LINK_HREF = "/plugins/applicant/webui/applicant-theme.css"
 # Backend-only API proxies (no corresponding WebUI panel)
 BACKEND_ONLY = {
     "agent_runs", "base_resume", "features", "hello",
+    "local_only_status",
     "onboarding", "pending", "update_panel",
 }
 
