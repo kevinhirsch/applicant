@@ -29,6 +29,11 @@
   .atakeover .app-id-input{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
   .atakeover .app-id-input input{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
   .atakeover .app-id-input label{font-weight:600;font-size:.85rem}
+  .atakeover .badge{display:inline-block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:#a855f7;color:#fff;border-radius:4px;padding:2px 8px;vertical-align:middle}
+  .atakeover .guarded-hdr{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#faf5ff;border-bottom:1px solid #e9d5ff;font-size:.82rem;font-weight:600;color:#6b21a8}
+  .atakeover .locked{text-align:center;padding:24px 12px;margin-bottom:1rem;background:var(--color-danger-bg,#fdecea);border-radius:8px;border:1px solid var(--color-danger-border,#f5c6cb)}
+  .atakeover .locked h3{font-size:1rem;margin:0 0 .3rem;color:var(--color-danger-text,#9b1c1c)}
+  .atakeover .locked p{margin:0;font-size:.85rem;color:var(--color-danger-text,#9b1c1c)}
 </style>
 
 <div class="atakeover" x-data="takeoverPanel()">
@@ -64,6 +69,7 @@
         <div x-show="viewUrlLoading"><div class="spinner"></div> Loading view URL…</div>
 
         <div class="iframe-wrap" x-show="viewUrl && !viewUrlLoading">
+          <div class="guarded-hdr"><span class="badge">🛡️ guarded</span>Live application session — guarded</div>
           <iframe x-bind:src="viewUrl" allow="camera;microphone;fullscreen"></iframe>
         </div>
 
@@ -91,10 +97,19 @@
       </div>
 
       <div class="actions" x-show="applicationId" style="margin-top: 12px">
-        <button class="btn danger" @click="doFinalApproval()" :disabled="actionLoading" style="font-weight: 700">
-          ✅ Approve final submission (human)
+        <button class="btn danger" @click="doSubmitForMe()" :disabled="actionLoading" style="font-weight: 700">
+          🤖 Submit it for me
+        </button>
+        <button class="btn primary" @click="doSubmittedMyself()" :disabled="actionLoading" style="font-weight: 700">
+          ✅ I submitted it myself
         </button>
       </div>
+    </div>
+
+    <!-- Locked state: shown when engine signals no takeover-capable sandbox -->
+    <div class="locked" x-show="locked">
+      <h3>🔒 Locked: <span x-text="lockedReason"></span></h3>
+      <p>The takeover sandbox is unavailable. Normal operations are suspended.</p>
     </div>
   </div>
 </div>
@@ -113,17 +128,28 @@
       actionLoading: false,
       fatalError: "",
       loading: true,
+      locked: false,
+      lockedReason: "",
 
       async init() {
         this.loading = true;
         this.fatalError = "";
+        this.locked = false;
+        this.lockedReason = "";
         const r = await callJsonApi("takeover", { action: "sessions" });
         if (!r || !r.ok) {
           this.fatalError = (r && r.error) || "Couldn't reach the takeover engine.";
           this.sessions = [];
         } else {
-          const items = (r.data && r.data.sessions) || (r.data && r.data.items) || [];
-          this.sessions = Array.isArray(items) ? items : (items ? [items] : []);
+          // Check for locked/degraded signal from engine response
+          if (r.data && (r.data.locked || r.data.degraded)) {
+            this.locked = true;
+            this.lockedReason = (r.data.reason) || "No takeover-capable sandbox available.";
+            this.sessions = [];
+          } else {
+            const items = (r.data && r.data.sessions) || (r.data && r.data.items) || [];
+            this.sessions = Array.isArray(items) ? items : (items ? [items] : []);
+          }
         }
         this.loading = false;
       },
@@ -201,13 +227,24 @@
         this.actionLoading = false;
       },
 
-      async doFinalApproval() {
+      async doSubmitForMe() {
         if (!this.applicationId) return;
         this.actionLoading = true;
         this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId });
+        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "agent" });
         if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Final approval request failed.";
+          this.fatalError = (r && r.error) || "Agent submission request failed.";
+        }
+        this.actionLoading = false;
+      },
+
+      async doSubmittedMyself() {
+        if (!this.applicationId) return;
+        this.actionLoading = true;
+        this.fatalError = "";
+        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "self" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Self-submission confirmation failed.";
         }
         this.actionLoading = false;
       }

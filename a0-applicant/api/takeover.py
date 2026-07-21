@@ -86,7 +86,10 @@ def dispatch(input: dict) -> dict:
         application_id = (input or {}).get("application_id")
         if not application_id:
             return {"ok": False, "status": 400, "error": "application_id required"}
-        return _forward("POST", f"/api/remote/applications/{application_id}/request-final-approval")
+        mode = (input or {}).get("mode")
+        if not mode or mode not in ("agent", "self"):
+            return {"ok": False, "status": 400, "error": "mode required (agent|self)"}
+        return _forward("POST", f"/api/remote/applications/{application_id}/request-final-approval", body={"mode": mode})
 
     return {"ok": False, "status": 400, "error": f"unknown takeover action {action!r}"}
 

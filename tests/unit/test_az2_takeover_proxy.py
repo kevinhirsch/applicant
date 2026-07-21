@@ -141,11 +141,11 @@ class TestTakeoverProxy:
         seen = {}
 
         def fake(method, path, body=None, timeout=10):
-            seen.update(method=method, path=path)
+            seen.update(method=method, path=path, body=body)
             return {"ok": True, "status": 202, "data": {}}
 
         with patch.object(mod, "_forward", fake):
-            r = mod.dispatch({"action": "final_approval", "application_id": "app1"})
+            r = mod.dispatch({"action": "final_approval", "application_id": "app1", "mode": "agent"})
         assert seen["method"] == "POST"
         assert seen["path"] == "/api/remote/applications/app1/request-final-approval"
 
@@ -190,6 +190,40 @@ class TestTakeoverProxy:
         assert not r["ok"]
         assert r["status"] == 400
         assert "application_id" in r.get("error", "")
+
+    def test_final_approval_requires_mode(self, mod):
+        r = mod.dispatch({"action": "final_approval", "application_id": "app1"})
+        assert not r["ok"]
+        assert r["status"] == 400
+        assert "mode" in r.get("error", "")
+
+    def test_final_approval_requires_valid_mode(self, mod):
+        r = mod.dispatch({"action": "final_approval", "application_id": "app1", "mode": "invalid"})
+        assert not r["ok"]
+        assert r["status"] == 400
+        assert "mode" in r.get("error", "")
+
+    def test_final_approval_agent_mode(self, mod):
+        seen = {}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path, body=body)
+            return {"ok": True, "status": 202, "data": {}}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "final_approval", "application_id": "app1", "mode": "agent"})
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/remote/applications/app1/request-final-approval"
+        assert seen["body"] == {"mode": "agent"}
+
+    def test_final_approval_self_mode(self, mod):
+        seen = {}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path, body=body)
+            return {"ok": True, "status": 202, "data": {}}
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "final_approval", "application_id": "app1", "mode": "self"})
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/remote/applications/app1/request-final-approval"
+        assert seen["body"] == {"mode": "self"}
 
     def test_unknown_action(self, mod):
         r = mod.dispatch({"action": "nonsense"})
