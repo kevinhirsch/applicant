@@ -18,11 +18,11 @@ When a **local** agent struggles (modelled as N consecutive action failures), th
 
 ## Live Implementation
 
-The `_model_escalate` A0 plugin (not in this repo) implements the contract via 3 A0 extension points:
+The three Python extensions implementing this contract ship in `a0-applicant/extensions/python/`, one per A0 extension point:
 
-- `chat_model_call_before` — checks the struggle counter and escalates the call when the threshold is reached
-- `hist_add_warning` — surfaces an H1 receipt message when escalation occurs
-- `tool_execute_after` — resets the counter on a clean tool result (handles the revert-on-success)
+- `chat_model_call_before/_30_model_escalate.py` — checks the struggle counter and escalates the call when the threshold is reached
+- `tool_execute_after/_20_escalate_track.py` — resets the counter on a clean tool result (handles the revert-on-success)
+- `hist_add_warning/end/_50_escalate_track.py` — surfaces an H1 receipt message when escalation occurs
 
 **Ordering**: `_model_escalate` runs **before** `_failover` and `_local_concurrency`, so those hooks see an already-escalated call.
 
