@@ -5,6 +5,9 @@
   .adigest h1{font-size:1.5rem;margin:0 0 .25rem}
   .adigest .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
   .adigest .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adigest .shortfalls{background:var(--color-warn-bg,#fff8dc);color:var(--color-warn-text,#8a6d0b);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:.85rem}
+  .adigest .shortfalls-title{font-weight:700;margin-bottom:4px}
+  .adigest .shortfall-item{padding:2px 0}
   .adigest .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
   .adigest .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
   .adigest .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
@@ -42,6 +45,8 @@
 
   <div class="recap-box" x-show="recapMessage" x-text="recapMessage"></div>
 
+  <div class="shortfalls" x-show="sourceShortfalls.length > 0"><div class="shortfalls-title">⚠️ Source Shortfalls</div><template x-for="s in sourceShortfalls" :key="s.source_key"><div class="shortfall-item" x-text="s.message"></div></template></div>
+
   <template x-for="row in rows" :key="row.application_id">
     <div class="item">
       <div class="info">
@@ -56,6 +61,7 @@
           <input type="text" x-model="declineReasons[row.application_id]" placeholder="Reason…" @keyup.enter="decline(row.application_id)">
           <button class="btn" @click="decline(row.application_id)" :disabled="busy || !(declineReasons[row.application_id] || '').trim()">Pass</button>
         </div>
+        <button class="btn" @click="window.openModal('/plugins/applicant/webui/documents.html?application_id=' + row.application_id)" :disabled="busy">Review</button>
       </div>
     </div>
   </template>
@@ -72,6 +78,7 @@
   document.addEventListener("alpine:init", () => {
     window.Alpine.data("digestPanel", () => ({
       rows: [],
+      sourceShortfalls: [],
       loading: true,
       fatalError: "",
       busy: false,
@@ -92,6 +99,7 @@
           this.rows = [];
         } else {
           this.rows = (r.data && r.data.rows) || [];
+          this.sourceShortfalls = (r.data && r.data.source_shortfalls) || [];
           if (r.data && r.data.empty_day_note) {
             this.rows = [];
           }

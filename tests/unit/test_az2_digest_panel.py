@@ -38,3 +38,23 @@ class TestDigestPanel:
 
     def test_error_line_present(self, html):
         assert 'fatalError' in html or 'r.ok' in html or 'r.error' in html
+
+    def test_source_shortfalls_read_and_rendered(self, html):
+        """Panel reads source_shortfalls from API response and renders a per-item block."""
+        assert "sourceShortfalls" in html, "Alpine state sourceShortfalls must be declared"
+        assert "source_shortfalls" in html, "API response field source_shortfalls must be read"
+        assert "shortfalls" in html.lower(), "Shortfalls must have a render block"
+        # Ensure render is NOT conditioned solely on empty rows
+        # The block should reference sourceShortfalls.length, not rows.length
+        assert "sourceShortfalls.length > 0" in html or "sourceShortfalls.length>0" in html, "Shortfalls render must be gated on sourceShortfalls.length, not rows.length"
+        # Assert per-item message rendering
+        assert "s.message" in html, "Each shortfall item must render the message field"
+
+    def test_deep_link_to_documents_review(self, html):
+        """Each digest row has a deep-link/button into the documents review surface carrying application_id."""
+        assert "window.openModal" in html, "Must use shell's openModal convention"
+        assert "documents.html" in html, "Must navigate to the documents panel"
+        assert "application_id" in html, "Must reference application_id in the deep-link"
+        assert "Review" in html, "The deep-link button should be labeled 'Review'"
+        # Confirm the link is per-row (in the actions div or with template x-for)
+        assert 'x-for="row in rows"' in html, "Must be inside the row template"
