@@ -182,6 +182,12 @@ class TestSidebarLauncher:
     def test_has_channels_label(self, html):
         assert "Channels" in html
 
+    def test_opens_connections_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/connections.html')" in html
+
+    def test_has_connections_label(self, html):
+        assert "Connections" in html
+
     def test_opens_savejob_panel(self, html):
         assert "window.openModal('/plugins/applicant/webui/savejob.html')" in html
 
