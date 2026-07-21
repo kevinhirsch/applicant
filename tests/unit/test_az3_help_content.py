@@ -29,6 +29,7 @@ EXPECTED_SURFACES = {
     "shortcuts",
     "config",
     "interview_prep",
+    "connections",
 }
 
 # Spec-jargon tokens that must NOT appear in help copy
