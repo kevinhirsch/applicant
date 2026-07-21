@@ -298,7 +298,6 @@ async def audit_panel_with_error_injection(context, name, panel_rel_path):
     page.on("pageerror", on_pageerror)
 
     await page.add_init_script("""(() => {
-      window.callJsonApi = async () => ({ok:false, status:500, error:"harness-injected error"});
       if (typeof window.openModal === 'undefined') {
         window.openModal = function(path) {
           (window.__openModalCalls = window.__openModalCalls || []).push(path);
@@ -321,6 +320,11 @@ async def audit_panel_with_error_injection(context, name, panel_rel_path):
 
     try:
         url = f"{SHELL_URL}/{panel_rel_path}"
+        await page.route("**/api/*", lambda route: route.fulfill(
+            status=500,
+            content_type="application/json",
+            body='{"detail":"harness-injected error"}'
+        ))
         resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(2000)
 
@@ -356,22 +360,39 @@ async def audit_panel_with_error_injection(context, name, panel_rel_path):
         except Exception:
             rec["err_blank"] = True
 
-        # err_no_message: rendered but no error indicator in text or CSS class
+        # err_no_message: rendered but panel doesn't display any error indicator
         if not rec["err_blank"] and body_text:
-            lower = body_text.lower()
-            has_error_keyword = any(kw in lower for kw in ["error", "failed", "couldn't", "unable", "try again"])
-            has_error_class = False
+            # Check if any visible error element exists with non-empty text
+            has_visible_error = False
             try:
-                els = await page.evaluate(
-                    '''Array.from(document.querySelectorAll('*')).filter(
-                       e => e.className && typeof e.className === 'string' &&
-                            e.className.toLowerCase().includes('error')
-                    ).length'''
-                )
-                has_error_class = els > 0
+                has_visible_error = await page.evaluate('''() => {
+                    // Check elements with err/error class
+                    const errEls = document.querySelectorAll('.err, [class*="err" i], [class*="error" i]');
+                    for (const el of errEls) {
+                        if (el.offsetParent !== null) {  // visible
+                            const txt = (el.textContent || "").trim();
+                            if (txt.length > 0) return true;
+                        }
+                    }
+                    // Check Alpine x-show error patterns
+                    const xEls = document.querySelectorAll('[x-show="fatalError"], [x-show*="fatalError"], [x-show*="error"], [x-show*="Error"]');
+                    for (const el of xEls) {
+                        if (el.offsetParent !== null) {
+                            const txt = (el.textContent || "").trim();
+                            if (txt.length > 0) return true;
+                        }
+                    }
+                    return false;
+                }''')
             except Exception:
                 pass
-            rec["err_no_message"] = not has_error_keyword and not has_error_class
+
+            if not has_visible_error:
+                lower = body_text.lower()
+                has_error_keyword = any(kw in lower for kw in ["error", "failed", "couldn't", "unable", "try again"])
+                rec["err_no_message"] = not has_error_keyword
+            else:
+                rec["err_no_message"] = False
         elif not rec["err_blank"]:
             rec["err_no_message"] = True
 
@@ -390,6 +411,7 @@ async def audit_panel_with_error_injection(context, name, panel_rel_path):
         rec["notes"].append(f"FATAL: {str(e)[:200]}")
     finally:
         await page.wait_for_timeout(200)
+        await page.unroute("**/api/*")
         await page.close()
     return rec
 
