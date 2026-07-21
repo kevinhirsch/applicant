@@ -39,16 +39,23 @@ integration **42 passed + 11 cleanly skipped** (the skips are the companion-gate
 
 ### 1b. LLM key → engine Plane-B **and** A0's cloud coder (ONE key, two places)
 Both are OpenAI-compatible; use the rotated DeepSeek key.
-- **Engine (Plane B — material generation, curation, mind bridge):** set on `docker-api-1` (via the
-  root-owned repo `.env` or the compose `environment:`), then `docker compose -f docker/docker-compose.yml up -d`:
-  - `LLM_PROVIDER=openai`  `LLM_BASE_URL=https://api.deepseek.com/v1`  `LLM_MODEL=deepseek-chat`  `LLM_API_KEY=<key>`
-- **A0's cloud coder/overseer (fixes the local grind):** A0 resolves `provider: other` keys via
-  `API_KEY_OTHER` (`get_api_key()` → `API_KEY_{SERVICE}`). The DeepSeek presets
-  (`DeepSeek-Flash`/`Chat`/`Pro` in `/a0/usr/plugins/_model_config/presets.yaml`) all use
-  `provider: other` + `api.deepseek.com` but have **no key set** — so `agent0` (overseer) and the
-  cloud coders silently fall back to the local Qwen. **Set `API_KEY_OTHER=<rotated DeepSeek key>` in
-  A0's dotenv and restart A0.** This activates the whole FR-INTEL tier topology (agent0→DeepSeek-Chat,
-  coder-cloud/reviewer/security→DeepSeek-Flash, debugger→DeepSeek-Pro) and makes panel work fast/reliable.
+- **Engine (Plane B — material generation, curation, mind bridge):** `LLM_PROVIDER=openai`
+  `LLM_BASE_URL=https://api.deepseek.com/v1` `LLM_MODEL=deepseek-chat` `LLM_API_KEY=<key>`.
+  **⚠️ Do NOT put these in the repo root `.env`** — the pytest suite loads it via pydantic Settings and
+  the `llm_configured` tests break (20 failures, seen 2026-07-21). Inject them into the **engine
+  CONTAINER** instead: add them to the `api` service's `environment:` in `docker/docker-compose.yml`
+  (which currently uses inline env, not `env_file`), or a container-only env file, and also add
+  `secrets/` to `.dockerignore` (root-owned → breaks the build context). Then recreate `docker-api-1`.
+  Plane B is only needed for #145 / live material generation — not for the shell or the cloud coder.
+- **A0's cloud coder/overseer — ACTIVATED 2026-07-21 (was the cause of all-session local grinding).**
+  A0's LIVE model config had every agent on `{"model_preset":"Default"}` (local Qwen) — the FR-INTEL
+  topology was only a repo spec, never applied to A0. Fix (all `.bak`-backed): (1) `API_KEY_OTHER=<key>`
+  in `/a0/usr/.env`; (2) `/a0/usr/plugins/_model_config/config.json` → `{"model_preset":"DeepSeek-Chat"}`
+  (overseer); (3) `/a0/usr/agents/coder/plugins/_model_config/config.json` → `{"model_preset":"DeepSeek-Flash"}`;
+  (4) `docker restart agent-zero`. VERIFIED: GPU stays 0% while drives progress = cloud. Panels now land
+  in ONE clean drive (the automation-prefs panel that stalled twice on local built in one cloud drive).
+  **LESSON: keep A0's live `_model_config` in sync with the repo topology spec.** Revert to local:
+  restore the `.bak-pre-cloud*` files + restart.
 - **Why it matters:** the local Qwen-27B converges on small/contract units but **over-explores and
   grinds/stalls on multi-file panel work** (multiple incidents this session — one file took 64 min).
   The cloud key is *the* accelerator for all remaining panel/gap-fill work.
