@@ -22,6 +22,9 @@ APPLICANT_WEBUI = PROJECT_ROOT / "a0-applicant" / "webui"
 # Results schema keys a per-panel record MUST include
 REQUIRED_RESULT_KEYS = {"rendered", "console_errors", "pageerrors", "http_5xx", "failed_requests", "unhandled_rejections", "ui_leaks", "blank_after_load", "dead_controls"}
 
+# Error-injection result keys a per-panel record MUST include
+REQUIRED_ERROR_INJECTION_KEYS = {"err_blank", "err_no_message", "err_leak", "console_errors", "pageerrors", "unhandled_rejections", "notes"}
+
 
 class TestHarnessExists:
     """Verify the harness script is present and parseable."""
@@ -159,3 +162,74 @@ class TestHarnessConfig:
         source = HARNESS_PATH.read_text(encoding="utf-8")
         assert "helpers" in source
         assert "dotenv" in source
+
+
+class TestErrorInjectionContract:
+    """The error-injection pass produces the correct result schema in the harness."""
+
+    RESULTS_SAMPLE_PATH = PROJECT_ROOT / "playtest-panels-results.json"
+
+    @pytest.fixture
+    def playtest_results(self):
+        """Load the latest playtest results if available."""
+        if not self.RESULTS_SAMPLE_PATH.is_file():
+            pytest.skip("playtest-panels-results.json not found (run harness first)")
+        with open(self.RESULTS_SAMPLE_PATH) as f:
+            data = json.load(f)
+        if "error_injection" not in data:
+            pytest.skip("error_injection key missing — results from old harness version")
+        return data
+
+    def test_harness_source_references_error_injection_keys(self):
+        """The harness source references all required error-injection keys."""
+        source = HARNESS_PATH.read_text(encoding="utf-8")
+        for key in REQUIRED_ERROR_INJECTION_KEYS:
+            assert key in source, f"Key '{key}' not mentioned in harness source"
+
+    def test_results_has_error_injection_key(self, playtest_results):
+        """Results JSON has 'error_injection' key."""
+        assert "error_injection" in playtest_results, "Missing 'error_injection' key"
+        assert isinstance(playtest_results["error_injection"], list), "'error_injection' must be a list"
+
+    def test_every_error_injection_record_has_required_keys(self, playtest_results):
+        """Every error-injection record has all required keys."""
+        for record in playtest_results["error_injection"]:
+            missing = REQUIRED_ERROR_INJECTION_KEYS - set(record.keys())
+            assert not missing, (
+                f"Panel '{record.get('panel', '?')}' missing error-injection keys: {missing}"
+            )
+
+    def test_err_blank_is_bool(self, playtest_results):
+        """Every error-injection record's err_blank is a bool."""
+        for record in playtest_results["error_injection"]:
+            panel = record.get("panel", "?")
+            assert isinstance(record["err_blank"], bool), (
+                f"Panel '{panel}' err_blank is not bool: {record['err_blank']}"
+            )
+
+    def test_err_no_message_is_bool(self, playtest_results):
+        """Every error-injection record's err_no_message is a bool."""
+        for record in playtest_results["error_injection"]:
+            panel = record.get("panel", "?")
+            assert isinstance(record["err_no_message"], bool), (
+                f"Panel '{panel}' err_no_message is not bool: {record['err_no_message']}"
+            )
+
+    def test_err_leak_is_bool(self, playtest_results):
+        """Every error-injection record's err_leak is a bool."""
+        for record in playtest_results["error_injection"]:
+            panel = record.get("panel", "?")
+            assert isinstance(record["err_leak"], bool), (
+                f"Panel '{panel}' err_leak is not bool: {record['err_leak']}"
+            )
+
+    def test_error_injection_list_fields_are_lists(self, playtest_results):
+        """Error-injection list fields (console_errors, pageerrors, unhandled_rejections, notes) are lists."""
+        list_fields = ["console_errors", "pageerrors", "unhandled_rejections", "notes"]
+        for record in playtest_results["error_injection"]:
+            panel = record.get("panel", "?")
+            for field in list_fields:
+                val = record.get(field)
+                assert isinstance(val, list), (
+                    f"Panel '{panel}' {field} is not a list: {type(val).__name__}"
+                )

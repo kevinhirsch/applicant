@@ -263,6 +263,137 @@ async def audit_panel(context, name, panel_rel_path):
     return rec
 
 
+async def audit_panel_with_error_injection(context, name, panel_rel_path):
+    """Check how a panel behaves when callJsonApi ALWAYS returns a failure.
+
+    Overrides callJsonApi to return a 500/error envelope, then loads the
+    panel and checks whether it:
+    - err_blank: shows nothing (body < 20 chars) under the error condition
+    - err_no_message: renders but doesn't display any error indicator
+    - err_leak: leaks raw error text or [object Object]/"500" into visible text
+    """
+    page = await context.new_page()
+    rec = {
+        "panel": name,
+        "err_blank": False,
+        "err_no_message": False,       "err_leak": False,
+        "console_errors": [],
+        "pageerrors": [],
+        "unhandled_rejections": [],
+        "notes": [],
+    }
+
+    def on_console(msg):
+        if msg.type in ("error",):
+            t = msg.text or ""
+            if not NOISE.search(t):
+                rec["console_errors"].append(t[:300])
+
+    def on_pageerror(exc):
+        s = str(exc)
+        if not NOISE.search(s):
+            rec["pageerrors"].append(s[:300])
+
+    page.on("console", on_console)
+    page.on("pageerror", on_pageerror)
+
+    await page.add_init_script("""(() => {
+      window.callJsonApi = async () => ({ok:false, status:500, error:"harness-injected error"});
+      if (typeof window.openModal === 'undefined') {
+        window.openModal = function(path) {
+          (window.__openModalCalls = window.__openModalCalls || []).push(path);
+          return Promise.resolve();
+        };
+      }
+      window.__unhandledRejections = [];
+      window.addEventListener('unhandledrejection', function(event) {
+        var val = '';
+        if (event.reason) {
+          if (event.reason.stack) val = event.reason.stack;
+          else if (event.reason.message) val = event.reason.message;
+          else val = String(event.reason);
+        } else {
+          val = String(event);
+        }
+        window.__unhandledRejections.push(val);
+      });
+    })()""")
+
+    try:
+        url = f"{SHELL_URL}/{panel_rel_path}"
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(2000)
+
+        if resp and resp.status < 400:
+            pass
+        else:
+            status = resp.status if resp else "no-response"
+            rec["notes"].append(f"HTTP {status} loading panel")
+
+        # Screenshot
+        OUTDIR.mkdir(parents=True, exist_ok=True)
+        shot = OUTDIR / f"a0panel-einj-{name}.png"
+        try:
+            await page.screenshot(path=str(shot), full_page=True)
+        except Exception as e:
+            rec["notes"].append(f"screenshot failed: {str(e)[:120]}")
+
+        # Evaluate error-handling signals
+        try:
+            rec["unhandled_rejections"] = await page.evaluate("window.__unhandledRejections || []")
+        except Exception:
+            rec["unhandled_rejections"] = []
+
+        try:
+            body_text = await page.evaluate("document.body.innerText")
+        except Exception:
+            body_text = ""
+
+        # err_blank: body text < 20 chars despite error
+        try:
+            trimmed_len = await page.evaluate("document.body.innerText.trim().length")
+            rec["err_blank"] = trimmed_len < 20
+        except Exception:
+            rec["err_blank"] = True
+
+        # err_no_message: rendered but no error indicator in text or CSS class
+        if not rec["err_blank"] and body_text:
+            lower = body_text.lower()
+            has_error_keyword = any(kw in lower for kw in ["error", "failed", "couldn't", "unable", "try again"])
+            has_error_class = False
+            try:
+                els = await page.evaluate(
+                    '''Array.from(document.querySelectorAll('*')).filter(
+                       e => e.className && typeof e.className === 'string' &&
+                            e.className.toLowerCase().includes('error')
+                    ).length'''
+                )
+                has_error_class = els > 0
+            except Exception:
+                pass
+            rec["err_no_message"] = not has_error_keyword and not has_error_class
+        elif not rec["err_blank"]:
+            rec["err_no_message"] = True
+
+        # err_leak: leaked raw error text, [object Object], "undefined", "500" in visible text,
+        #          OR a pageerror / unhandled rejection fired
+        pageerrors = rec["pageerrors"]
+        unrej = rec["unhandled_rejections"]
+        if body_text:
+            leak_patterns = ["harness-injected error", "[object Object]", "undefined", "\"500\"", " 500 "]
+            text_leak = any(p in body_text for p in leak_patterns)
+        else:
+            text_leak = False
+        rec["err_leak"] = bool(text_leak or pageerrors or unrej)
+
+    except Exception as e:
+        rec["notes"].append(f"FATAL: {str(e)[:200]}")
+    finally:
+        await page.wait_for_timeout(200)
+        await page.close()
+    return rec
+
+
 async def login(context):
     """Authenticate to the A0 shell via form-based login."""
     page = await context.new_page()
@@ -286,6 +417,7 @@ async def main():
         print(f"         {name:25s} -> {rel}")
 
     results = []
+    error_injection_results = []
     async with async_playwright() as p:
         launch_kwargs = {"headless": True,
                          "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]}
@@ -314,12 +446,26 @@ async def main():
                   f"failed_req={len(rec['failed_requests'])} unhandled_rej={len(rec['unhandled_rejections'])} "
                   f"ui_leaks={len(rec['ui_leaks'])} blank={rec['blank_after_load']} [{v}]")
 
+        # --- Error-injection pass ---
+        for name, rel in panels:
+            print(f"[error-inject] {name} ...", end=" ", flush=True)
+            rec = await audit_panel_with_error_injection(ctx, name, rel)
+            error_injection_results.append(rec)
+            print(f"blank={rec['err_blank']} no_msg={rec['err_no_message']} leak={rec['err_leak']} "
+                  f"console={len(rec['console_errors'])} pageerr={len(rec['pageerrors'])} "
+                  f"unhandled_rej={len(rec['unhandled_rejections'])}")
+
         await ctx.close()
         await browser.close()
 
-    RESULTS_JSON.write_text(json.dumps({"login_ok": True, "panels": results}, indent=2))
-    print(f"\nWrote {RESULTS_JSON} ({len(results)} panel records); screens in {OUTDIR}/")
+    RESULTS_JSON.write_text(json.dumps({
+        "login_ok": True,
+        "panels": results,
+        "error_injection": error_injection_results,
+    }, indent=2))
+    print(f"\nWrote {RESULTS_JSON} ({len(results)} panel records, {len(error_injection_results)} error-inject records); screens in {OUTDIR}/")
 
+    # Normal pass summary
     issues = 0
     for r in results:
         if (r.get("pageerrors") or r.get("http_5xx") or r.get("failed_requests") or
@@ -327,6 +473,15 @@ async def main():
             r.get("dead_controls") or not r.get("rendered")):
             issues += 1
     print(f"Panels with notable issues: {issues}/{len(results)}")
+
+    # Error-injection summary
+    blank_panels = [r["panel"] for r in error_injection_results if r["err_blank"]]
+    no_msg_panels = [r["panel"] for r in error_injection_results if r["err_no_message"]]
+    leak_panels = [r["panel"] for r in error_injection_results if r["err_leak"]]
+    print(f"Error-injection results:")
+    print(f"  err_blank (empty under error): {len(blank_panels)} panels — {blank_panels}")
+    print(f"  err_no_message (no error shown): {len(no_msg_panels)} panels — {no_msg_panels}")
+    print(f"  err_leak (leaks/errors fired): {len(leak_panels)} panels — {leak_panels}")
     return 0
 
 
