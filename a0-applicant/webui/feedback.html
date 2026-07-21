@@ -126,8 +126,8 @@
   </div>
 </div>
 
-<script type="module">
-  window.Alpine.data("feedbackPanel", () => ({
+<script>
+  if (typeof window.Alpine !== 'undefined') window.Alpine.data("feedbackPanel", () => ({
     campaigns: [],
     selectedCampaignId: "__system__",
     fatalError: "",

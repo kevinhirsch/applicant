@@ -87,8 +87,8 @@
   </template>
 </div>
 
-<script type="module">
-  window.Alpine.data("chatPanel", () => ({
+<script>
+  if (typeof window.Alpine !== 'undefined') window.Alpine.data("chatPanel", () => ({
     campaigns: [],
     selectedCampaignId: "__system__",
     fatalError: "",

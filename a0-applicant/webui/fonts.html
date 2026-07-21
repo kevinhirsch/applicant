@@ -78,7 +78,7 @@
 
   <script>
   (function() {
-    window.Alpine.data('afonts', () => ({
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('afonts', () => ({
       fonts: [],
       loading: false,
       error: '',
