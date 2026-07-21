@@ -1,0 +1,24 @@
+# Hardware capability envelope: 3 numbers + modality (concurrency, ctx_cap, decode_tok_s, prefill_tok_s, vision).
+# ctx_cap is the USABLE A0 preset ctx_length, NOT the physical max-model-len.
+# Note the TurboQuant continuation-prefill cliff and the env VLLM_TURBOQUANT_CONTINUATION_WORKSPACE_RESERVE_TOKENS=131072 mitigation knob.
+
+reference:
+  concurrency: 2
+  ctx_cap: 96000
+  decode_tok_s: 75
+  prefill_tok_s: 1600
+  vision: false
+
+byo-endpoint:
+  concurrency: 1
+  ctx_cap: 32000
+  decode_tok_s: 30
+  prefill_tok_s: 500
+  vision: false
+
+cloud-only:
+  concurrency: 0
+  ctx_cap: 0
+  decode_tok_s: 0
+  prefill_tok_s: 0
+  vision: false
