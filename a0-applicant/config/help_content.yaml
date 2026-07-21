@@ -207,3 +207,13 @@ channels:
     - Add an ntfy channel by specifying your ntfy topic URL (e.g. https://ntfy.sh/YourTopic).
     - Save your channel configuration and use the send-test button to verify connectivity.
   prerequisites: "A Discord webhook URL, an ntfy topic, or SMTP credentials (host, port, user, password)"
+
+tiers:
+  title: Model tiers
+  steps:
+    - View the current model-escalation ladder showing which models are used for each agent tier.
+    - Edit a tier by clicking its row and selecting a different model from the dropdown.
+    - Add or remove tiers from the escalation ladder using the add/remove controls.
+    - Drag tiers to reorder the escalation priority.
+    - Save the ladder to persist your changes.
+  prerequisites: "none (uses the configured model endpoints)"

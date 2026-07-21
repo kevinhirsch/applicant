@@ -37,6 +37,7 @@ retired front-door traceability and serves as the single source of truth for por
 | ops (tool toggles + observability) | `webui/ops.html` | `api/ops.py` | delivered | |
 | screening (answer library) | `webui/screening.html` | `api/screening.py` | delivered | |
 | model-endpoints | `webui/model_endpoints.html` | `api/model_endpoints.py` | delivered | |
+| tiers (model-escalation ladder) | `webui/tiers.html` | `api/tiers.py` | delivered | |
 | vault (credentials) | `webui/vault.html` | `api/vault.py` | delivered | |
 | conversion (engine state) | `webui/conversion.html` | `api/conversion.py` | delivered | |
 | audit (logs) | `webui/audit.html` | `api/audit.py` | delivered | |
