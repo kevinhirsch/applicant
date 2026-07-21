@@ -26,6 +26,7 @@ EXPECTED_SURFACES = {
     "privacy", "savejob",
     "automation",
     "shortcuts",
+    "interview_prep",
 }
 
 # Spec-jargon tokens that must NOT appear in help copy

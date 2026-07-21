@@ -191,5 +191,11 @@ class TestSidebarLauncher:
     def test_opens_shortcuts_panel(self, html):
         assert "window.openModal('/plugins/applicant/webui/shortcuts.html')" in html
 
+    def test_opens_interview_prep_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/interview_prep.html')" in html
+
+    def test_has_interview_prep_label(self, html):
+        assert "Interview Prep" in html
+
     def test_has_shortcuts_label(self, html):
         assert "Shortcuts" in html

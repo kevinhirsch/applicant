@@ -248,6 +248,15 @@ tiers:
     - Save the ladder to persist your changes.
   prerequisites: "none (uses the configured model endpoints)"
 
+interview_prep:
+  title: Interview Prep
+  steps:
+    - Select a campaign from the campaign picker to see its applications.
+    - Select an application to generate an interview-preparation brief.
+    - Review the brief for key skills, talking points, and questions to ask.
+    - The brief is engine-generated and requires a configured LLM to produce content.
+  prerequisites: "A campaign with at least one application that has reached interview-invited stage"
+
 shortcuts:
   title: Keyboard Shortcuts
   steps:

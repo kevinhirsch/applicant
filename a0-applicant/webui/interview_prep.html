@@ -1,0 +1,187 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#842) Interview Prep — per-application interview brief. -->
+<style>
+  .aintprep{max-width:640px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aintprep h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aintprep .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aintprep .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aintprep .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aintprep .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aintprep .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aintprep .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aintprep .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aintprep .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aintprep .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aintprep .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aintprep-spin .6s linear infinite}
+  @keyframes aintprep-spin{to{transform:rotate(360deg)}}
+  .aintprep .picker-row{display:flex;gap:8px;align-items:center;margin-bottom:.75rem;flex-wrap:wrap}
+  .aintprep .picker-row label{font-size:.85rem;font-weight:600;min-width:100px}
+  .aintprep .picker-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:140px}
+  .aintprep .brief{margin-top:1rem}
+  .aintprep .brief .field{margin-bottom:.75rem}
+  .aintprep .brief .field-label{font-size:.82rem;font-weight:600;color:var(--color-text-secondary,#6b7683);margin-bottom:.2rem}
+  .aintprep .brief .field-value{font-size:.9rem;line-height:1.5}
+  .aintprep .notice{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border-radius:8px;padding:12px 16px;font-size:.85rem;margin-top:.75rem}
+</style>
+
+<div class="aintprep" x-data="window.Alpine.data('aintprep')">
+  <h1>Interview Prep <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=interview_prep')" title="Help for interview prep">?</button></h1>
+  <p class="sub">Generate an interview-preparation brief for an application</p>
+
+  <div x-show="loading" class="loading">
+    <span class="spinner"></span> Loading...
+  </div>
+
+  <div x-show="error && !loading" class="err" x-text="error"></div>
+
+  <template x-if="!loading">
+    <div>
+      <div class="picker-row">
+        <label>Campaign</label>
+        <select x-model="campaignId" @change="onCampaignChange()">
+          <option value="">-- Select campaign --</option>
+          <template x-for="c in campaigns" :key="c.id">
+            <option :value="c.id" x-text="c.name || c.id"></option>
+          </template>
+        </select>
+      </div>
+
+      <div class="picker-row" x-show="applications.length">
+        <label>Application</label>
+        <select x-model="applicationId" @change="onApplicationChange()">
+          <option value="">-- Select application --</option>
+          <template x-for="a in applications" :key="a.id">
+            <option :value="a.id" x-text="a.candidateName || a.id"></option>
+          </template>
+        </select>
+      </div>
+
+      <div x-show="!campaignId && !applications.length" class="empty">
+        <h2>No interview prep available</h2>
+        <p>Select a campaign and application to generate a preparation brief.</p>
+      </div>
+
+      <div x-show="generated === false" class="notice">
+        Interview prep is not available for this application yet. This engine-generated feature requires a configured LLM and the application must have reached the interview-invited stage.
+      </div>
+
+      <div x-show="generated === true" class="brief">
+        <div class="field">
+          <div class="field-label">Company</div>
+          <div class="field-value" x-text="brief.company_name || ''"></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Role</div>
+          <div class="field-value" x-text="brief.role_title || ''"></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Key Skills</div>
+          <div class="field-value" x-text="brief.key_skills || ''"></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Talking Points</div>
+          <div class="field-value" x-text="brief.talking_points || ''"></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Questions to Ask</div>
+          <div class="field-value" x-text="brief.questions_to_ask || ''"></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Tips</div>
+          <div class="field-value" x-text="brief.tips || ''"></div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('aintprep', () => ({
+      campaigns: [],
+      applications: [],
+      campaignId: '',
+      applicationId: '',
+      loading: false,
+      error: '',
+      generated: null,
+      brief: {},
+
+      async init() {
+        this.loadCampaigns();
+      },
+
+      async loadCampaigns() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('campaigns', { action: 'list' });
+          if (res.ok) {
+            this.campaigns = (res.data && res.data.campaigns) || [];
+          } else {
+            this.error = res.error || 'Failed to load campaigns';
+          }
+        } catch(e) {
+          this.error = 'Network error loading campaigns';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async onCampaignChange() {
+        this.applicationId = '';
+        this.brief = {};
+        this.generated = null;
+        if (!this.campaignId) {
+          this.applications = [];
+          return;
+        }
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('tracker', { action: 'board', campaign_id: this.campaignId });
+          if (res.ok) {
+            this.applications = (res.data && res.data.applications) || [];
+          } else {
+            this.error = res.error || 'Failed to load applications';
+          }
+        } catch(e) {
+          this.error = 'Network error loading applications';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async onApplicationChange() {
+        this.brief = {};
+        this.generated = null;
+        if (!this.applicationId) return;
+        this.loading = true;
+        this.error = '';
+        try {
+          const res = await callJsonApi('interview_prep', { action: 'get', campaign_id: this.campaignId, application_id: this.applicationId });
+          if (res.ok) {
+            const d = res.data || {};
+            this.generated = d.generated === true;
+            if (this.generated) {
+              this.brief = {
+                company_name: d.company_name || '',
+                role_title: d.role_title || '',
+                key_skills: d.key_skills || '',
+                talking_points: d.talking_points || '',
+                questions_to_ask: d.questions_to_ask || '',
+                tips: d.tips || ''
+              };
+            }
+          } else {
+            this.error = res.error || 'Failed to load interview prep';
+          }
+        } catch(e) {
+          this.error = 'Network error loading interview prep';
+        } finally {
+          this.loading = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
