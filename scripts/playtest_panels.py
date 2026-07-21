@@ -123,6 +123,21 @@ async def audit_panel(context, name, panel_rel_path):
     page.on("console", on_console)
     page.on("pageerror", on_pageerror)
     page.on("response", on_response)
+    # ── Shell-global stubs ─────────────────────────────────────────────
+    # Panels are designed to load same-document inside the A0 SPA shell,
+    # which provides globals such as window.openModal, callJsonApi, etc.
+    # The harness loads each panel standalone (page.goto to the panel URL),
+    # so these globals are undefined — causing spurious pageerrors
+    # (e.g. "window.openModal is not a function").  These are harness
+    # fidelity shims, NOT product bugs — the panels are correct.
+    await page.add_init_script("""(() => {
+      if (typeof window.openModal === 'undefined') {
+        window.openModal = function(path) {
+          (window.__openModalCalls = window.__openModalCalls || []).push(path);
+          return Promise.resolve();
+        };
+      }
+    })()""")
 
     try:
         url = f"{SHELL_URL}/{panel_rel_path}"
