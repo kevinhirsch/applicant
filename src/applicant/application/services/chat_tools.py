@@ -32,7 +32,7 @@ from typing import Any
 from applicant.core.rules.agent_memory import claims_authority
 from applicant.core.rules.computer_use import DesktopAction
 from applicant.observability.logging import get_logger
-from applicant.ports.driven.memory_store import KIND_ENVIRONMENT, KIND_USER
+from applicant.ports.driven.memory_store import KIND_ENVIRONMENT, KIND_USER, MemoryEntry
 from applicant.ports.driven.skill_store import Skill
 
 log = get_logger(__name__)
@@ -48,6 +48,23 @@ MAX_TOOL_ROUNDS = 4
 
 def _ok(text: str) -> str:
     return text
+
+
+def _is_general_preference(text: str) -> bool:
+    """Heuristic: a self-referential personal note vs a job-domain fact."""
+    lower = text.lower().strip()
+    # Personal / user preference signals
+    if any(lower.startswith(p) for p in ("i ", "i'm ", "i am ", "my ", "me ", "i'd ", "i'll ", "i've ", "i") if len(lower) > 2):
+        return True
+    personal_signals = {"prefer", "like", "want", "need", "communication", "style", "nickname", "call me", "my name"}
+    if personal_signals & set(lower.split()):
+        return True
+    # Job-domain signals: keep these going through curation
+    job_signals = {"job", "role", "position", "company", "salary", "resume", "cover letter", "application"}
+    if job_signals & set(lower.split()):
+        return False
+    # Default: ambiguous goes to curation (safer)
+    return False
 
 
 class ChatToolbox:
@@ -265,6 +282,13 @@ class ChatToolbox:
                 "I won't save that as a standing instruction — a note can't grant me "
                 "permission to submit, create accounts, or skip your review."
             )
+        # D3: classify - general preferences route directly to A0's memory, job facts go through curation
+        is_general = _is_general_preference(text)
+        if is_general and self._agent_memory is not None and hasattr(self._agent_memory, 'memory'):
+            kind = KIND_USER
+            entry = MemoryEntry(text=text, kind=kind, campaign_id=self._campaign_str())
+            self._agent_memory.memory.add(entry)
+            return "Noted! (saved to your personal notes)"
         kind = KIND_USER if args.get("about_user") else KIND_ENVIRONMENT
         result = self._curation.stage_memory(
             text, kind=kind, campaign_id=self._campaign_str()

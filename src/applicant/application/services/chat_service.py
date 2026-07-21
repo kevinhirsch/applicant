@@ -260,6 +260,7 @@ class ChatTurnResult:
     gaps: list[str] = field(default_factory=list)
     proposed_changes: list[ProposedChange] = field(default_factory=list)
     control_actions: list[ControlAction] = field(default_factory=list)
+    actions: list[dict] = field(default_factory=list)  # inline job-action chips: [{label, action, args}]
 
 
 class ChatService:
@@ -562,12 +563,14 @@ class ChatService:
             if toolbox is not None:
                 tooled = self._reply_with_tools(system, prompt, toolbox)
                 if tooled is not None:
+                    tooled = self._strip_unauthorized_status(campaign_id, tooled)
                     return tooled.strip() or deterministic
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
                 max_tokens=_CHAT_MAX_TOKENS,
             )
             text = (result.text or "").strip()
+            text = self._strip_unauthorized_status(campaign_id, text)
             return text or deterministic
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
@@ -750,6 +753,42 @@ class ChatService:
         if len(extra) > 800:
             extra = extra[:800]
         return base + "\n\nTone preferences from the user: " + extra
+
+    def _strip_unauthorized_status(self, campaign_id: CampaignId, reply: str) -> str:
+        """D4: Strip any status claims from `reply` that are not backed by the
+        bounded _status_context / _essentials_context sources.
+
+        When both context sources are empty, any line containing a status keyword
+        AND a number is stripped to prevent the LLM from fabricating values.
+        Returns the filtered reply (never None — always at minimum '').
+        """
+        status_ctx = self._status_context(campaign_id)
+        essentials_ctx = self._essentials_context(campaign_id)
+        has_context = bool(status_ctx.strip() or essentials_ctx.strip())
+        if has_context:
+            return reply
+
+        import re
+        status_keywords = {
+            'applied', 'submitted', 'interview', 'offer', 'resume', 'cover letter',
+            'status', 'rejected', 'approved', 'pending', 'running', 'paused',
+            'application', 'applications', 'progress', 'completed', 'finished',
+            'started', 'sent', 'reviewing', 'checking', 'received', 'working on',
+            'accepted', 'declined', 'waiting', 'number of', 'count of',
+        }
+        lines = reply.split('\n')
+        filtered: list[str] = []
+        for line in lines:
+            lower = line.strip().lower()
+            if not lower:
+                filtered.append(line)
+                continue
+            has_status = any(kw in lower for kw in status_keywords)
+            has_number = bool(re.search(r'\b\d+\b', lower))
+            if has_status and has_number:
+                continue
+            filtered.append(line)
+        return '\n'.join(filtered)
 
     # --- current-status context (FR-AGENT-7 / FR-OBS-2; truthful) ---------
     def _status_context(self, campaign_id: CampaignId) -> str:

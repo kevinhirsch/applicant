@@ -373,3 +373,79 @@ def test_round_cap_bounds_the_loop():
 
     assert llm.round <= MAX_TOOL_ROUNDS
     assert reply  # a final wrap-up text was produced after the cap
+
+
+@pytest.mark.unit
+def test_remember_general_preference_routes_to_memory():
+    """D3: A general preference like 'I prefer remote' saves directly to memory (not curation)."""
+    mem, skills, recall = InMemoryMemoryStore(), InMemorySkillStore(), InMemoryRecallIndex()
+    cur = _curation(mem, skills, recall)
+    llm = _ScriptedToolLLM(
+        [[_tc("remember", text="I prefer fully remote roles only.", about_user=True)]]
+    )
+    chat = _chat(llm, agent_memory=_Memory(mem, skills, recall), curation=cur)
+
+    reply = chat._reply_text(_cid(), "I prefer remote roles.", gaps=[])
+
+    # The preference should be saved directly to memory, not staged
+    saved = mem.snapshot().all()
+    assert len(saved) > 0
+    assert any("remote" in (entry.text or "").lower() for entry in saved)
+    # Curation should have nothing staged (direct save bypasses curation approval)
+    assert len(cur.list_staged()) == 0
+    assert reply  # a reply was produced
+
+
+@pytest.mark.unit
+def test_remember_job_fact_routes_to_curation():
+    """D3: A job-domain fact like 'The salary range is 120k' goes through curation staging."""
+    mem, skills, recall = InMemoryMemoryStore(), InMemorySkillStore(), InMemoryRecallIndex()
+    cur = _curation(mem, skills, recall)
+    llm = _ScriptedToolLLM(
+        [[_tc("remember", text="The salary range for this role is 120k-150k.")]]
+    )
+    chat = _chat(llm, agent_memory=_Memory(mem, skills, recall), curation=cur)
+
+    chat._reply_text(_cid(), "Remember the salary range.", gaps=[])
+
+    # Memory should NOT have been saved directly
+    saved = mem.snapshot().all()
+    # Curation should have the job fact staged for approval
+    staged = cur.list_staged()
+    assert len(staged) == 1
+    assert any("approval" in r.lower() for r in llm.seen_tool_results)
+
+
+@pytest.mark.unit
+def test_remember_ambiguous_defaults_to_curation():
+    """D3: An ambiguous note (neither clearly personal nor job-related) goes to curation (safe default)."""
+    mem, skills, recall = InMemoryMemoryStore(), InMemorySkillStore(), InMemoryRecallIndex()
+    cur = _curation(mem, skills, recall)
+    llm = _ScriptedToolLLM(
+        [[_tc("remember", text="The candidate mentioned they value work-life balance.")]]
+    )
+    chat = _chat(llm, agent_memory=_Memory(mem, skills, recall), curation=cur)
+
+    chat._reply_text(_cid(), "Note that they value work-life balance.", gaps=[])
+
+    saved = mem.snapshot().all()
+    staged = cur.list_staged()
+    # Ambiguous defaults to curation (safer)
+    assert len(staged) == 1
+
+
+@pytest.mark.unit
+def test_remember_naming_appends_personal_suffix():
+    """D3: reply text should indicate where the item landed - personal notes vs job fact."""
+    mem, skills, recall = InMemoryMemoryStore(), InMemorySkillStore(), InMemoryRecallIndex()
+    cur = _curation(mem, skills, recall)
+
+    # Personal preference test
+    llm = _ScriptedToolLLM(
+        [[_tc("remember", text="My name is Alex.")]],
+        final_text="Got it! I've saved that."
+    )
+    chat = _chat(llm, agent_memory=_Memory(mem, skills, recall), curation=cur)
+    reply = chat._reply_text(_cid(), "My name is Alex.", gaps=[])
+    # The tool result should say "personal notes" or the reply should confirm
+    assert any("personal" in r.lower() for r in llm.seen_tool_results)

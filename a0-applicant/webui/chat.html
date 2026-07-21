@@ -27,6 +27,9 @@
   .achat .confirm-banner .actions{display:flex;gap:8px;margin-top:6px}
   .achat .confirm-banner .btn.confirm{background:var(--color-primary,#2d7ff9);color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:.8rem}
   .achat .confirm-banner .btn.reject{background:transparent;color:var(--color-text);border:1px solid var(--color-border,#d8e0e6);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.8rem}
+  .achat .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;margin-bottom:4px}
+  .achat .chip{padding:5px 12px;border-radius:16px;border:1px solid var(--color-primary,#2d7ff9);background:var(--color-background,#fff);color:var(--color-primary,#2d7ff9);font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s ease}
+  .achat .chip:hover{background:var(--color-primary,#2d7ff9);color:#fff}
 </style>
 
 <div class="achat" x-data="chatPanel()">
@@ -58,6 +61,13 @@
       <div class="conversation" x-show="conversation.length > 0">
         <template x-for="(item, idx) in conversation" :key="idx">
           <div class="msg" :class="item.role + (item.pending ? ' pending' : '')" x-text="item.text"></div>
+          <template x-if="item.role === 'assistant' && item.actions && item.actions.length > 0">
+            <div class="chips" style="align-self:flex-start">
+              <template x-for="(act, aidx) in item.actions" :key="aidx">
+                <button class="chip" @click="callJsonApi('chat', { action: act.action, ...act.args })" x-text="act.label"></button>
+              </template>
+            </div>
+          </template>
         </template>
       </div>
 
@@ -178,6 +188,9 @@
         // Check for pending attribute change
         if (data.pending_change) {
           this.pendingConfirm = data.pending_change;
+        }
+        if (data.actions && data.actions.length > 0) {
+          this.conversation[pendingIdx].actions = data.actions;
         }
       }
       this.sending = false;

@@ -52,3 +52,24 @@ class TestChatPanel:
 
     def test_has_pending_confirm_banner(self, html):
         assert "confirm-banner" in html
+
+    def test_chip_css_classes(self, html):
+        """D1: chip rendering CSS classes exist in the panel HTML."""
+        assert '.achat .chips' in html
+        assert '.achat .chip' in html
+
+    def test_chip_markup_structure(self, html):
+        """D1: chips are rendered for assistant messages with actions."""
+        assert 'item.actions' in html
+        assert 'act.label' in html
+        assert 'act.action' in html
+        assert 'callJsonApi' in html
+
+    def test_chip_actions_data_field(self, html):
+        """D1: the actions field from data is attached to conversation items."""
+        assert 'data.actions' in html
+        assert 'pendingIdx].actions' in html
+
+    def test_chip_assistant_only(self, html):
+        """D1: chips only render for assistant role messages."""
+        assert "item.role === 'assistant'" in html
