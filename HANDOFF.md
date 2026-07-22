@@ -373,3 +373,107 @@ As of 2026-07-22 ~02:45 local:
    placement, business decisions.
 5. **Reconciliation + ship** (§7 order, owner-supervised): branch → main → push; then #857 front-door
    retirement + #858 workspace migration execution with sign-off.
+
+---
+
+## 11. Spec-pilot lineage & two-stream reconciliation (added 2026-07-22)
+
+> §1–§10 were written by the **build stream** (the Claude session that drives A0 to write Applicant
+> code). This section is added by the **spec stream** (the Claude session that authored the spec,
+> decisions, and backlog, and merged them to `main`). It exists because the single biggest source of
+> confusion in this program is that **two Claude sessions share the branch *name* but not the *work***.
+> Read this before trusting any "PR is idle / no activity" signal.
+
+### 11.1 The two Claude streams — do not conflate (this is the #1 confusion)
+
+| Stream | What it did | Where its output lives |
+|---|---|---|
+| **Spec stream** (this section's author) | Authored the strategy + product spec; recorded 26 owner decisions; filed the 60-issue backlog; merged the spec docs to `main` via PRs #822 and #864. **Wrote no build code.** | `origin/main` (durable, reviewed) |
+| **Build stream** (author of §1–§10) | Drove A0 (the coder at :5080) to build the port, closed ~25 issues with real commits, found/fixed the three journey bugs (§4), authored FR-INTEL (#865–871), wrote this HANDOFF. | **local unpushed branch** in the A0 container (tip `271f9770` at close, ~310 ahead — see §7 and `docs/ops/session-close-2026-07-22.md` §2) |
+
+Both use the branch name `claude/refactor-agent-zero-applicant-xn7xoc`, but on **different checkouts**:
+- the **build** is the local branch inside `agent-zero` (`/a0/usr/projects/applicant`), never pushed;
+- **`origin/claude/refactor-agent-zero-applicant-xn7xoc`** (tip `13fbb71`) holds **only the spec
+  stream's 2 housekeeping commits** — it is *not* the build.
+
+**Correction of record (so no one repeats it):** the spec stream spent ~3 days polling **origin
+PR #864** and reported it "idle" ~25 times while the build was in fact progressing on the **local**
+branch. Origin never saw the build *code* — no git push credentials exist in the container or host
+(deliberate, §7); individual docs/scripts DO land on `origin/main` via **A0's github-MCP upload
+path** (how `8e11153` and `fa5b56d5` arrived — note that path **bypasses the PR CI gates**). **To
+gauge build progress, read the closed issues' completion notes and the container's local branch —
+never an origin PR.** #822/#864 carried
+**docs only** (verified: `3b83ed7` = 2 files); neither merged any build code to `main`.
+
+### 11.2 What is durably on `origin/main` (the reviewed spec — the build stream's map)
+
+- **#822 (`910b281`)** — the four strategy docs the whole build follows:
+  `docs/agent-zero-plane-map.md` (architecture, the safety line, updateability discipline),
+  `docs/backlog/agent-zero-port.md` (parity matrix + phases **AZ-0…AZ-7 + AZ-R**, 41 stories,
+  decisions **D1–D26**), `docs/design/agent-zero-user-journey.md` (rebrand, guided setup,
+  notifications, integrations, interactability, the instructions gate),
+  `docs/backlog/az0-kickoff-prompt.md` (the coding-agent kickoff contract).
+- **#864 (`3b83ed7`)** — D22 revision (spec-first merge) + kickoff re-point.
+- **`8e11153`** — this HANDOFF (build stream).
+- **`fa5b56d5`** — the build stream's close-out: `docs/ops/session-close-2026-07-22.md` (exact refs
+  at close, the publish procedure, verification ground truth) + the preserved diagnostic probes
+  (`scripts/diagnostics/`, `scripts/journey_via_sidebar.py`) — landed via the MCP upload path.
+- The build itself (`agent-zero/` subtree, `a0-applicant/`, `a0-webui/`, `branding/`) is **NOT on
+  `origin/main`** — it is the 307-commit local branch (§7).
+
+### 11.3 The decision record (D1–D26) — all owner-decided; full table in `docs/backlog/agent-zero-port.md` §5
+
+Load-bearing ones the build must not silently drift from: **D1** bespoke UI (managed `a0-webui/`
+fork; framework subtree byte-pristine) · **D2** A0 collects the model, syncs to engine; engine keeps
+the tier ladder · **D3/D9** companion services now, MCP-lane convergence committed as **AZ-7** ·
+**D4** single-user + login · **D5** engine notification ladder authoritative · **D6** both Applicant
+artifacts out-of-tree, applied at build · **D7** front-door retires at the ship gate (no dual-UI) ·
+**D8** one unified chat · **D10** ntfy opt-in push · **D11** all three model-connect forks · **D12**
+curated default + power-tools toggle · **D13** new visual identity, owner-approved · **D14**
+"Applicant", warm-professional · **D15** full workspace-data migration (per-entity matrix;
+engine-owned state never migrates) · **D16** VM grows · **D17** A0 stock autonomy (makes AZ5-1 the
+load-bearing control) · **D18** Discord stays first-class · **D19** memory routed by content
+(job facts → engine mind via curation gate) · **D20** owner dogfoods from AZ-2 · **D21** ships as
+Applicant 2.0 · **D22** spec-first merge (revised) · **D23** accept A0's disk-trust secret posture,
+documented · **D24** English-only, i18n-ready · **D25** soft spend budget · **D26** upstream release
+tags, on-demand sync.
+
+### 11.4 Backlog audit reconciliation (2026-07-22, cross-checked against GitHub)
+
+- **38 open · 30 az-port closed** (verified via the issues API; §1's "25 closed" is the build
+  stream's close-pipeline batch count — the label-verified GitHub total is 30). The build stream closed all of
+  **AZ-0** (#823–828, incl. the #828 seam gate), **AZ-1 except AZ1-3** (#829, #830, #832 + the
+  FR-INTEL suite #865–871), most of **AZ-2** (#834–836,838), most of **AZ-3** (#839,841–845),
+  **AZ-4** (#849,850), **AZR-1** (#846), and the real deploy bug it found and fixed (#872, the
+  `fastapi_mcp` API-mismatch that had blocked the seam).
+- **Still open** (the build stream's §8 is the authority on why): AZ1-3 #831, AZ2-1/2-5 remnants
+  (#833,837), AZ3-2 #840, AZR-2/3 (#847,848), AZ5 gates (#851–853), AZ6 (#854–859), AZ7 (#860–863),
+  plus the retained road-to-market track (#654,671,672,681,684–686,698–700,703,706–708,716–718,722)
+  and #145 — 19 az-port + 19 others = 38.
+- **Dedupes the unification caught, still valid:** AZ4-3 → superseded by **AZ7-2 #861**;
+  **AZ6-5 = #671** (the existing PAG-1 gate, not duplicated).
+- **FR-INTEL provenance:** #865–871 were authored **by the build stream mid-build** (not in the
+  original #822 spec) — the local↔cloud model-routing doctrine that keeps paid tokens for judgment
+  and free local Qwen for typing (spec: `docs/backlog/az-port-intelligence-routing.md` — **on the
+  build branch only, not yet on `origin/main`**; the reference resolves at reconciliation). Treat
+  that doc as a first-class spec addendum alongside the #822 set.
+
+### 11.5 Safety-line status (the product's identity — verify it never regresses)
+
+- **Verified:** the #828 seam-proof passed live — the engine's MCP surface refuses a consequential
+  submit **server-side** even to the A0 agent. "The autopilot that can't fire itself" holds across
+  the shell boundary at the MCP layer.
+- **Outstanding hard gate:** **AZ5-1 #851** — the *bypass* negative test (the A0 agent's own
+  browser/shell cannot complete a real application *around* the engine). Under **D17** (stock A0
+  autonomy) this is the load-bearing control, not optional. It is not yet closed. Ship (AZ-6) does
+  not happen before it, AZ5-3 (H1–H5 re-audit #853), and PAG-1 (#671) are green.
+
+### 11.6 If you are picking this up cold — the one-paragraph orientation
+
+The spec is on `origin/main` (§11.2). The build is functionally done and browser-verified but lives
+on an **unpushed local branch** (§7) and is **not** on `origin/main`; reconciliation is a deliberate,
+owner-supervised step — `docs/ops/session-close-2026-07-22.md` is the second pickup doc (exact refs
+at close + the §3 publish procedure). Progress is tracked by **closed issues + their commit-cited completion notes**,
+not by any origin PR. The piloting model is **Claude specs/verifies/steers, A0 writes the code**
+(§6). The remaining work is the still-open chains in §11.4 (drive via §6.1), the owner unlocks (§2),
+and — before any launch — the AZ5-1 bypass test, the H1–H5 re-audit, and PAG-1 (§11.5).
