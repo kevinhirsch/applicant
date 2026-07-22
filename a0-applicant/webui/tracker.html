@@ -150,7 +150,8 @@
         this.fatalError = (boardR && boardR.error) || "Couldn't reach the tracker engine.";
         this.boardApplications = [];
       } else {
-        this.boardApplications = boardR.data || [];
+        const d = boardR.data || {};
+        this.boardApplications = Array.isArray(d) ? d : (Array.isArray(d.applications) ? d.applications : []);
       }
 
       if (!this.fatalError) {
@@ -159,7 +160,8 @@
           this.fatalError = (attnR && attnR.error) || "Couldn't reach the tracker attention engine.";
           this.attentionItems = [];
         } else {
-          this.attentionItems = attnR.data || [];
+          const d = attnR.data || {};
+          this.attentionItems = Array.isArray(d) ? d : (Array.isArray(d.applications) ? d.applications : []);
         }
       }
 

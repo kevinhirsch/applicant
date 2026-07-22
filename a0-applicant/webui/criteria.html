@@ -73,7 +73,7 @@
         </div>
 
         <div x-show="criteriaData">
-          <div class="hr-text" x-show="criteriaData.human_readable" x-text="criteriaData.human_readable"></div>
+          <div class="hr-text" x-show="criteriaData?.human_readable" x-text="criteriaData?.human_readable || ''"></div>
 
           <div x-show="criteriaData.titles && criteriaData.titles.length > 0">
             <h2>📌 Job Titles <span class="count" x-text="'(' + criteriaData.titles.length + ')'"></span></h2>

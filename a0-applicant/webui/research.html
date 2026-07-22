@@ -115,15 +115,15 @@
         <h2>💰 Budget & Usage</h2>
         <div class="budget-grid" x-show="budgetData && !budgetLoading">
           <div class="budget-item">
-            <div class="value" x-bind:class="{ ok: budgetData.available, 'empty-state': !budgetData.available }" x-text="budgetData.available ? '✓' : '✗'"></div>
+            <div class="value" x-bind:class="{ ok: budgetData?.available, 'empty-state': !budgetData?.available }" x-text="budgetData?.available ? '✓' : '✗'"></div>
             <div class="label">Available</div>
           </div>
           <div class="budget-item">
-            <div class="value" x-text="budgetData.calls_made != null ? budgetData.calls_made : '—'"></div>
+            <div class="value" x-text="budgetData?.calls_made != null ? budgetData.calls_made : '—'"></div>
             <div class="label">Calls made</div>
           </div>
           <div class="budget-item">
-            <div class="value" x-text="budgetData.budget_remaining != null ? budgetData.budget_remaining : '—'"></div>
+            <div class="value" x-text="budgetData?.budget_remaining != null ? budgetData.budget_remaining : '—'"></div>
             <div class="label">Budget remaining</div>
           </div>
         </div>

@@ -112,7 +112,7 @@
           <table x-show="!historyLoading && historyData && historyData.applications && historyData.applications.length > 0">
             <thead><tr><th>Application</th><th>Status</th><th>Role</th><th>Mode</th><th>Outcomes</th></tr></thead>
             <tbody>
-              <template x-for="app in historyData.applications" :key="app.id || app.application_id">
+              <template x-for="app in (historyData?.applications || [])" :key="app.id || app.application_id">
                 <tr>
                   <td x-text="app.id || app.application_id || app.name || '-' "></td>
                   <td x-text="app.status || app.state || '-' "></td>
@@ -137,7 +137,7 @@
             <p>Select a campaign to load detections.</p>
           </div>
           <div x-show="!detectionsLoading && detectionsData && detectionsData.detections && detectionsData.detections.length > 0">
-            <template x-for="(det, i) in detectionsData.detections" :key="i">
+            <template x-for="(det, i) in (detectionsData?.detections || [])" :key="i">
               <div class="detection-item">
                 <div x-text="det.message || det.description || det.type || 'Detection event'"></div>
                 <div class="detection-meta">
