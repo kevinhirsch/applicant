@@ -66,59 +66,58 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("campaignsPanel", () => ({
-      campaigns: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
-      newName: "",
+  window.Alpine.data("campaignsPanel", () => ({
+    campaigns: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
+    newName: "",
 
-      async init() {
-        await this.loadCampaigns();
-      },
+    async init() {
+      await this.loadCampaigns();
+    },
 
-      async loadCampaigns() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
-        } else {
-          this.campaigns = (r.data && r.data.campaigns) || [];
-        }
-        this.loading = false;
-      },
+    async loadCampaigns() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        this.campaigns = (r.data && r.data.campaigns) || [];
+      }
+      this.loading = false;
+    },
 
-      async createCampaign() {
-        const name = this.newName.trim();
-        if (!name) return;
-        this.busy = true;
-        await callJsonApi("campaigns", { action: "create", name: name });
-        this.newName = "";
-        this.busy = false;
-        await this.loadCampaigns();
-      },
+    async createCampaign() {
+      const name = this.newName.trim();
+      if (!name) return;
+      this.busy = true;
+      await callJsonApi("campaigns", { action: "create", name: name });
+      this.newName = "";
+      this.busy = false;
+      await this.loadCampaigns();
+    },
 
-      async cloneCampaign(campaignId) {
-        this.busy = true;
-        await callJsonApi("campaigns", { action: "clone", campaign_id: campaignId });
-        this.busy = false;
-        await this.loadCampaigns();
-      },
+    async cloneCampaign(campaignId) {
+      this.busy = true;
+      await callJsonApi("campaigns", { action: "clone", campaign_id: campaignId });
+      this.busy = false;
+      await this.loadCampaigns();
+    },
 
-      async toggleActive(c) {
-        this.busy = true;
-        await callJsonApi("campaigns", { action: "update", campaign_id: c.id, active: !c.active });
-        this.busy = false;
-        await this.loadCampaigns();
-      },
-    }));
-  });
+    async toggleActive(c) {
+      this.busy = true;
+      await callJsonApi("campaigns", { action: "update", campaign_id: c.id, active: !c.active });
+      this.busy = false;
+      await this.loadCampaigns();
+    },
+  }));
 </script>

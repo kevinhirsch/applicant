@@ -67,72 +67,71 @@
   </template>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("updatePanel", () => ({
-      state: "idle",
-      message: "",
-      updaterAvailable: false,
-      logTail: [],
-      triggerMessage: "",
-      notDeployedMsg: "The one-click updater isn't running. Update once the normal way (scripts/update.sh --apply on the host) to deploy it.",
-      loading: true,
-      fatalError: "",
-      busy: false,
-      timerId: null,
+  window.Alpine.data("updatePanel", () => ({
+    state: "idle",
+    message: "",
+    updaterAvailable: false,
+    logTail: [],
+    triggerMessage: "",
+    notDeployedMsg: "The one-click updater isn't running. Update once the normal way (scripts/update.sh --apply on the host) to deploy it.",
+    loading: true,
+    fatalError: "",
+    busy: false,
+    timerId: null,
 
-      get statusSubtitle() {
-        if (this.loading) return "";
-        return `State: ${this.state}${this.updaterAvailable ? " · Updater active" : " · Updater not deployed"}`;
-      },
+    get statusSubtitle() {
+      if (this.loading) return "";
+      return `State: ${this.state}${this.updaterAvailable ? " · Updater active" : " · Updater not deployed"}`;
+    },
 
-      async init() {
+    async init() {
+      await this.fetchStatus();
+      // Poll every 10s while the updater is running
+      this.timerId = setInterval(() => {
+        if (this.state === "running") this.fetchStatus();
+      }, 10000);
+    },
+
+    destroy() {
+      if (this.timerId) {
+        clearInterval(this.timerId);
+        this.timerId = null;
+      }
+    },
+
+    async fetchStatus() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("update_panel", { action: "status" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the update engine.";
+      } else if (r.data) {
+        this.state = r.data.state || "idle";
+        this.message = r.data.message || "";
+        this.updaterAvailable = r.data.updater_available === true;
+        this.logTail = r.data.log_tail || [];
+      }
+      this.loading = false;
+    },
+
+    async triggerUpdate() {
+      this.busy = true;
+      this.triggerMessage = "";
+      this.fatalError = "";
+      const r = await callJsonApi("update_panel", { action: "trigger" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't request an update.";
+      } else if (r.data) {
+        this.triggerMessage = r.data.message || "";
+        this.state = "running";
+        // Refresh status to pick up new state
         await this.fetchStatus();
-        // Poll every 10s while the updater is running
-        this.timerId = setInterval(() => {
-          if (this.state === "running") this.fetchStatus();
-        }, 10000);
-      },
-
-      destroy() {
-        if (this.timerId) {
-          clearInterval(this.timerId);
-          this.timerId = null;
-        }
-      },
-
-      async fetchStatus() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("update_panel", { action: "status" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the update engine.";
-        } else if (r.data) {
-          this.state = r.data.state || "idle";
-          this.message = r.data.message || "";
-          this.updaterAvailable = r.data.updater_available === true;
-          this.logTail = r.data.log_tail || [];
-        }
-        this.loading = false;
-      },
-
-      async triggerUpdate() {
-        this.busy = true;
-        this.triggerMessage = "";
-        this.fatalError = "";
-        const r = await callJsonApi("update_panel", { action: "trigger" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't request an update.";
-        } else if (r.data) {
-          this.triggerMessage = r.data.message || "";
-          this.state = "running";
-          // Refresh status to pick up new state
-          await this.fetchStatus();
-        }
-        this.busy = false;
-      },
-    }));
-  });
+      }
+      this.busy = false;
+    },
+  }));
 </script>

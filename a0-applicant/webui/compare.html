@@ -122,67 +122,66 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("comparePanel", () => ({
-      mode: "applications",
-      idsText: "",
-      selectedCampaignId: "",
-      campaigns: [],
-      result: null,
-      loading: true,
-      fatalError: "",
-      comparing: false,
+  window.Alpine.data("comparePanel", () => ({
+    mode: "applications",
+    idsText: "",
+    selectedCampaignId: "",
+    campaigns: [],
+    result: null,
+    loading: true,
+    fatalError: "",
+    comparing: false,
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
-        } else {
-          this.campaigns = (r.data && r.data.campaigns) || [];
-        }
-        this.loading = false;
-      },
-
-      hasEnoughIds() {
-        return this.parseIds().length >= 2;
-      },
-
-      parseIds() {
-        return this.idsText
-          .split(/[,\n]/)
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-      },
-
-      async doCompare() {
-        const ids = this.parseIds();
-        if (ids.length < 2) {
-          this.fatalError = "Enter at least two IDs.";
-          return;
-        }
-        this.comparing = true;
-        this.fatalError = "";
-        this.result = null;
-        const payload = {
-          action: this.mode,
-          ids: ids,
-          campaign_id: this.selectedCampaignId || ""
-        };
-        const r = await callJsonApi("compare", payload);
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Compare request failed.";
-          this.result = null;
-        } else {
-          this.result = r.data || {};
-        }
-        this.comparing = false;
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        this.campaigns = (r.data && r.data.campaigns) || [];
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    hasEnoughIds() {
+      return this.parseIds().length >= 2;
+    },
+
+    parseIds() {
+      return this.idsText
+        .split(/[,\n]/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+    },
+
+    async doCompare() {
+      const ids = this.parseIds();
+      if (ids.length < 2) {
+        this.fatalError = "Enter at least two IDs.";
+        return;
+      }
+      this.comparing = true;
+      this.fatalError = "";
+      this.result = null;
+      const payload = {
+        action: this.mode,
+        ids: ids,
+        campaign_id: this.selectedCampaignId || ""
+      };
+      const r = await callJsonApi("compare", payload);
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Compare request failed.";
+        this.result = null;
+      } else {
+        this.result = r.data || {};
+      }
+      this.comparing = false;
+    }
+  }));
 </script>

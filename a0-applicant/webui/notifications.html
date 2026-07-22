@@ -54,59 +54,58 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("notificationsPanel", () => ({
-      notifications: [],
-      count: 0,
-      loading: true,
-      fatalError: "",
-      busy: false,
-      includeSeen: false,
+  window.Alpine.data("notificationsPanel", () => ({
+    notifications: [],
+    count: 0,
+    loading: true,
+    fatalError: "",
+    busy: false,
+    includeSeen: false,
 
-      async init() {
-        await this.load();
-      },
+    async init() {
+      await this.load();
+    },
 
-      async load() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("notifications", { action: "list", include_seen: this.includeSeen });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the notifications engine.";
-          this.notifications = [];
-          this.count = 0;
-        } else {
-          this.notifications = (r.data && r.data.items) || [];
-          this.count = (r.data && r.data.count) || 0;
-        }
-        this.loading = false;
-      },
-
-      async refresh() {
-        await this.load();
-      },
-
-      async markSeen(id) {
-        this.busy = true;
-        await callJsonApi("notifications", { action: "seen", notification_id: id });
-        this.busy = false;
-        await this.load();
-      },
-
-      async deliverNow() {
-        this.busy = true;
-        const r = await callJsonApi("notifications", { action: "deliver_now" });
-        if (r && r.ok && r.data) {
-          alert(`Flushed ${r.data.count} notifications through ${(r.data.flushed||[]).join(", ")}`);
-        } else {
-          this.fatalError = (r && r.error) || "Deliver now failed.";
-        }
-        this.busy = false;
-        await this.load();
+    async load() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("notifications", { action: "list", include_seen: this.includeSeen });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the notifications engine.";
+        this.notifications = [];
+        this.count = 0;
+      } else {
+        this.notifications = (r.data && r.data.items) || [];
+        this.count = (r.data && r.data.count) || 0;
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    async refresh() {
+      await this.load();
+    },
+
+    async markSeen(id) {
+      this.busy = true;
+      await callJsonApi("notifications", { action: "seen", notification_id: id });
+      this.busy = false;
+      await this.load();
+    },
+
+    async deliverNow() {
+      this.busy = true;
+      const r = await callJsonApi("notifications", { action: "deliver_now" });
+      if (r && r.ok && r.data) {
+        alert(`Flushed ${r.data.count} notifications through ${(r.data.flushed||[]).join(", ")}`);
+      } else {
+        this.fatalError = (r && r.error) || "Deliver now failed.";
+      }
+      this.busy = false;
+      await this.load();
+    }
+  }));
 </script>

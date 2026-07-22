@@ -175,96 +175,95 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("criteriaPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      criteriaData: null,
-      signatureData: null,
-      loading: true,
-      fatalError: "",
-      adjusting: false,
-      adjustment: "",
-      rationale: "",
+  window.Alpine.data("criteriaPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    criteriaData: null,
+    signatureData: null,
+    loading: true,
+    fatalError: "",
+    adjusting: false,
+    adjustment: "",
+    rationale: "",
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
         } else {
-          const items = (r.data && r.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
-          } else {
-            this.selectedCampaignId = "__system__";
-          }
+          this.selectedCampaignId = "__system__";
         }
-        this.loading = false;
-        if (this.selectedCampaignId) {
-          await this.loadCriteriaAndSignature();
-        }
-      },
-
-      async loadCriteriaAndSignature() {
-        this.loading = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaignId || "__system__";
-
-        const [criteriaRes, sigRes] = await Promise.all([
-          callJsonApi("criteria", { action: "view", campaign_id: cid }),
-          callJsonApi("criteria", { action: "signature", campaign_id: cid })
-        ]);
-
-        if (!criteriaRes || !criteriaRes.ok) {
-          this.fatalError = (criteriaRes && criteriaRes.error) || "Couldn't reach the criteria engine.";
-          this.criteriaData = null;
-        } else {
-          this.criteriaData = criteriaRes.data || null;
-        }
-
-        if (sigRes && sigRes.ok) {
-          this.signatureData = sigRes.data || null;
-        } else {
-          this.signatureData = null;
-        }
-
-        this.loading = false;
-      },
-
-      async applyLearnedAdjustment() {
-        this.adjusting = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaignId || "__system__";
-        let adjDict;
-        try {
-          adjDict = JSON.parse(this.adjustment);
-        } catch (e) {
-          this.fatalError = "Invalid JSON in adjustment field.";
-          this.adjusting = false;
-          return;
-        }
-        const r = await callJsonApi("criteria", {
-          action: "apply_learned",
-          campaign_id: cid,
-          adjustment: adjDict,
-          rationale: this.rationale
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to apply adjustment.";
-        } else {
-          this.adjustment = "";
-          this.rationale = "";
-          await this.loadCriteriaAndSignature();
-        }
-        this.adjusting = false;
       }
-    }));
-  });
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadCriteriaAndSignature();
+      }
+    },
+
+    async loadCriteriaAndSignature() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+
+      const [criteriaRes, sigRes] = await Promise.all([
+        callJsonApi("criteria", { action: "view", campaign_id: cid }),
+        callJsonApi("criteria", { action: "signature", campaign_id: cid })
+      ]);
+
+      if (!criteriaRes || !criteriaRes.ok) {
+        this.fatalError = (criteriaRes && criteriaRes.error) || "Couldn't reach the criteria engine.";
+        this.criteriaData = null;
+      } else {
+        this.criteriaData = criteriaRes.data || null;
+      }
+
+      if (sigRes && sigRes.ok) {
+        this.signatureData = sigRes.data || null;
+      } else {
+        this.signatureData = null;
+      }
+
+      this.loading = false;
+    },
+
+    async applyLearnedAdjustment() {
+      this.adjusting = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      let adjDict;
+      try {
+        adjDict = JSON.parse(this.adjustment);
+      } catch (e) {
+        this.fatalError = "Invalid JSON in adjustment field.";
+        this.adjusting = false;
+        return;
+      }
+      const r = await callJsonApi("criteria", {
+        action: "apply_learned",
+        campaign_id: cid,
+        adjustment: adjDict,
+        rationale: this.rationale
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to apply adjustment.";
+      } else {
+        this.adjustment = "";
+        this.rationale = "";
+        await this.loadCriteriaAndSignature();
+      }
+      this.adjusting = false;
+    }
+  }));
 </script>

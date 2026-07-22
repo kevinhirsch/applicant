@@ -110,94 +110,93 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("mindPanel", () => ({
-      activeTab: "memory",
-      loading: true,
-      fatalError: "",
-      busy: false,
-      memoryData: { environment: [], user: [] },
-      skillsData: [],
-      curationData: [],
+  window.Alpine.data("mindPanel", () => ({
+    activeTab: "memory",
+    loading: true,
+    fatalError: "",
+    busy: false,
+    memoryData: { environment: [], user: [] },
+    skillsData: [],
+    curationData: [],
 
-      async init() {
-        await this.loadMemory();
-      },
+    async init() {
+      await this.loadMemory();
+    },
 
-      async switchTab(tab) {
-        this.activeTab = tab;
-        this.fatalError = "";
-        if (tab === "memory" && this.memoryData.environment.length === 0 && this.memoryData.user.length === 0) await this.loadMemory();
-        if (tab === "skills" && this.skillsData.length === 0) await this.loadSkills();
-        if (tab === "curation" && this.curationData.length === 0) await this.loadCuration();
-      },
+    async switchTab(tab) {
+      this.activeTab = tab;
+      this.fatalError = "";
+      if (tab === "memory" && this.memoryData.environment.length === 0 && this.memoryData.user.length === 0) await this.loadMemory();
+      if (tab === "skills" && this.skillsData.length === 0) await this.loadSkills();
+      if (tab === "curation" && this.curationData.length === 0) await this.loadCuration();
+    },
 
-      async loadMemory() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("mind", { action: "memory" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the memory engine.";
-          this.memoryData = { environment: [], user: [] };
-        } else {
-          this.memoryData = {
-            environment: (r.data && r.data.environment) || [],
-            user: (r.data && r.data.user) || [],
-          };
-        }
-        this.loading = false;
-      },
-
-      async loadSkills() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("mind", { action: "skills" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the skills engine.";
-          this.skillsData = [];
-        } else {
-          this.skillsData = (r.data && r.data.items) || [];
-        }
-        this.loading = false;
-      },
-
-      async loadCuration() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("mind", { action: "curation" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the curation engine.";
-          this.curationData = [];
-        } else {
-          this.curationData = (r.data && r.data.items) || [];
-        }
-        this.loading = false;
-      },
-
-      async approveProposal(proposal) {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("mind", { action: "approve", proposal_id: proposal.id });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to approve.";
-        }
-        this.busy = false;
-        await this.loadCuration();
-      },
-
-      async forgetItem(item) {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("mind", { action: "forget", ref: item.ref, text: item.text, scope: item.scope, campaign_id: item.campaign_id });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to forget.";
-        }
-        this.busy = false;
-        await this.loadMemory();
+    async loadMemory() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "memory" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the memory engine.";
+        this.memoryData = { environment: [], user: [] };
+      } else {
+        this.memoryData = {
+          environment: (r.data && r.data.environment) || [],
+          user: (r.data && r.data.user) || [],
+        };
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    async loadSkills() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "skills" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the skills engine.";
+        this.skillsData = [];
+      } else {
+        this.skillsData = (r.data && r.data.items) || [];
+      }
+      this.loading = false;
+    },
+
+    async loadCuration() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "curation" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the curation engine.";
+        this.curationData = [];
+      } else {
+        this.curationData = (r.data && r.data.items) || [];
+      }
+      this.loading = false;
+    },
+
+    async approveProposal(proposal) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "approve", proposal_id: proposal.id });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to approve.";
+      }
+      this.busy = false;
+      await this.loadCuration();
+    },
+
+    async forgetItem(item) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "forget", ref: item.ref, text: item.text, scope: item.scope, campaign_id: item.campaign_id });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to forget.";
+      }
+      this.busy = false;
+      await this.loadMemory();
+    }
+  }));
 </script>

@@ -83,68 +83,67 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("discoveryPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      sources: [],
-      loading: true,
-      fatalError: "",
-      toggling: false,
+  window.Alpine.data("discoveryPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    sources: [],
+    loading: true,
+    fatalError: "",
+    toggling: false,
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
         } else {
-          const items = (r.data && r.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
-          } else {
-            this.selectedCampaignId = "__system__";
-          }
+          this.selectedCampaignId = "__system__";
         }
-        this.loading = false;
-        if (this.selectedCampaignId) {
-          await this.loadSources();
-        }
-      },
-
-      async loadSources() {
-        this.loading = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaignId || "__system__";
-        const r = await callJsonApi("discovery", { action: "list", campaign_id: cid });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the discovery engine.";
-          this.sources = [];
-        } else {
-          this.sources = r.data || [];
-        }
-        this.loading = false;
-      },
-
-      async toggleSource(s) {
-        this.toggling = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaignId || "__system__";
-        const sk = s.source_key;
-        const enabled = !s.enabled;
-        const r = await callJsonApi("discovery", { action: "set", campaign_id: cid, source_key: sk, enabled: enabled });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to toggle source.";
-        } else {
-          await this.loadSources();
-        }
-        this.toggling = false;
       }
-    }));
-  });
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadSources();
+      }
+    },
+
+    async loadSources() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      const r = await callJsonApi("discovery", { action: "list", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the discovery engine.";
+        this.sources = [];
+      } else {
+        this.sources = r.data || [];
+      }
+      this.loading = false;
+    },
+
+    async toggleSource(s) {
+      this.toggling = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      const sk = s.source_key;
+      const enabled = !s.enabled;
+      const r = await callJsonApi("discovery", { action: "set", campaign_id: cid, source_key: sk, enabled: enabled });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to toggle source.";
+      } else {
+        await this.loadSources();
+      }
+      this.toggling = false;
+    }
+  }));
 </script>

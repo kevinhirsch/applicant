@@ -72,74 +72,73 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("digestPanel", () => ({
-      rows: [],
-      sourceShortfalls: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
-      recapMessage: "",
-      declineReasons: {},
+  window.Alpine.data("digestPanel", () => ({
+    rows: [],
+    sourceShortfalls: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
+    recapMessage: "",
+    declineReasons: {},
 
-      async init() {
-        await this.load();
-      },
+    async init() {
+      await this.load();
+    },
 
-      async load() {
-        this.loading = true;
-        this.fatalError = "";
-        this.recapMessage = "";
-        const r = await callJsonApi("digest", { action: "get" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the digest engine.";
+    async load() {
+      this.loading = true;
+      this.fatalError = "";
+      this.recapMessage = "";
+      const r = await callJsonApi("digest", { action: "get" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the digest engine.";
+        this.rows = [];
+      } else {
+        this.rows = (r.data && r.data.rows) || [];
+        this.sourceShortfalls = (r.data && r.data.source_shortfalls) || [];
+        if (r.data && r.data.empty_day_note) {
           this.rows = [];
-        } else {
-          this.rows = (r.data && r.data.rows) || [];
-          this.sourceShortfalls = (r.data && r.data.source_shortfalls) || [];
-          if (r.data && r.data.empty_day_note) {
-            this.rows = [];
-          }
         }
-        this.loading = false;
-      },
-
-      async refresh() {
-        await this.load();
-      },
-
-      async approve(applicationId) {
-        this.busy = true;
-        await callJsonApi("digest", { action: "approve", application_id: applicationId });
-        this.busy = false;
-        await this.load();
-      },
-
-      async decline(applicationId) {
-        const reason = (this.declineReasons[applicationId] || "").trim();
-        if (!reason) return;
-        this.busy = true;
-        await callJsonApi("digest", { action: "decline", application_id: applicationId, reason: reason });
-        this.declineReasons[applicationId] = "";
-        this.busy = false;
-        await this.load();
-      },
-
-      async recap() {
-        this.busy = true;
-        this.fatalError = "";
-        this.recapMessage = "";
-        const r = await callJsonApi("digest", { action: "recap" });
-        if (r && r.ok && r.data) {
-          this.recapMessage = r.data.recap || r.data.message || JSON.stringify(r.data);
-        } else {
-          this.fatalError = (r && r.error) || "Weekly recap failed.";
-        }
-        this.busy = false;
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    async refresh() {
+      await this.load();
+    },
+
+    async approve(applicationId) {
+      this.busy = true;
+      await callJsonApi("digest", { action: "approve", application_id: applicationId });
+      this.busy = false;
+      await this.load();
+    },
+
+    async decline(applicationId) {
+      const reason = (this.declineReasons[applicationId] || "").trim();
+      if (!reason) return;
+      this.busy = true;
+      await callJsonApi("digest", { action: "decline", application_id: applicationId, reason: reason });
+      this.declineReasons[applicationId] = "";
+      this.busy = false;
+      await this.load();
+    },
+
+    async recap() {
+      this.busy = true;
+      this.fatalError = "";
+      this.recapMessage = "";
+      const r = await callJsonApi("digest", { action: "recap" });
+      if (r && r.ok && r.data) {
+        this.recapMessage = r.data.recap || r.data.message || JSON.stringify(r.data);
+      } else {
+        this.fatalError = (r && r.error) || "Weekly recap failed.";
+      }
+      this.busy = false;
+    }
+  }));
 </script>

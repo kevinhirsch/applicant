@@ -177,147 +177,146 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("opsPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      tools: [],
-      toolsLoading: false,
-      toolsError: "",
-      historyData: null,
-      historyLoading: false,
-      historyError: "",
-      detectionsData: null,
-      detectionsLoading: false,
-      detectionsError: "",
-      logsData: null,
-      logsLoading: false,
-      logsError: "",
-      loading: true,
-      fatalError: "",
+  window.Alpine.data("opsPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    tools: [],
+    toolsLoading: false,
+    toolsError: "",
+    historyData: null,
+    historyLoading: false,
+    historyError: "",
+    detectionsData: null,
+    detectionsLoading: false,
+    detectionsError: "",
+    logsData: null,
+    logsLoading: false,
+    logsError: "",
+    loading: true,
+    fatalError: "",
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
 
-        // Load campaigns
-        const campR = await callJsonApi("campaigns", { action: "list" });
-        if (!campR || !campR.ok) {
-          this.fatalError = (campR && campR.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
-        } else {
-          const items = (campR.data && campR.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
-          }
+      // Load campaigns
+      const campR = await callJsonApi("campaigns", { action: "list" });
+      if (!campR || !campR.ok) {
+        this.fatalError = (campR && campR.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (campR.data && campR.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
         }
-
-        // Load tools
-        await this.loadTools();
-
-        this.loading = false;
-
-        // Load campaign data if we have a selected campaign
-        if (this.selectedCampaignId) {
-          await this.loadCampaignData();
-        }
-
-        // Load logs
-        await this.loadLogs();
-      },
-
-      async loadTools() {
-        this.toolsLoading = true;
-        this.toolsError = "";
-        const r = await callJsonApi("ops", { action: "tools" });
-        if (!r || !r.ok) {
-          this.toolsError = (r && r.error) || "Failed to load tools.";
-          this.tools = [];
-        } else {
-          const items = (r.data && r.data.tools) || [];
-          this.tools = items;
-        }
-        this.toolsLoading = false;
-      },
-
-      async toggleTool(toolKey) {
-        const tool = this.tools.find(t => (t.key || t.name) === toolKey);
-        if (!tool) return;
-        this.toolsLoading = true;
-        this.toolsError = "";
-        const r = await callJsonApi("ops", {
-          action: "set_tool",
-          tool_key: toolKey,
-          enabled: !tool.enabled
-        });
-        if (!r || !r.ok) {
-          this.toolsError = (r && r.error) || "Failed to toggle tool.";
-        }
-        // Re-load to get source-of-truth state
-        await this.loadTools();
-      },
-
-      async loadCampaignData() {
-        const cid = this.selectedCampaignId || "__system__";
-        await Promise.all([
-          this.loadHistory(cid),
-          this.loadDetections(cid)
-        ]);
-      },
-
-      async loadHistory(cid) {
-        this.historyLoading = true;
-        this.historyError = "";
-        const r = await callJsonApi("ops", { action: "history", campaign_id: cid });
-        if (!r || !r.ok) {
-          this.historyError = (r && r.error) || "Failed to load history.";
-          this.historyData = null;
-        } else {
-          this.historyData = r.data || null;
-        }
-        this.historyLoading = false;
-      },
-
-      async loadDetections(cid) {
-        this.detectionsLoading = true;
-        this.detectionsError = "";
-        const r = await callJsonApi("ops", { action: "detections", campaign_id: cid });
-        if (!r || !r.ok) {
-          this.detectionsError = (r && r.error) || "Failed to load detections.";
-          this.detectionsData = null;
-        } else {
-          this.detectionsData = r.data || null;
-        }
-        this.detectionsLoading = false;
-      },
-
-      async onCampaignSelect() {
-        this.fatalError = "";
-        this.historyData = null;
-        this.detectionsData = null;
-        this.historyError = "";
-        this.detectionsError = "";
-        if (this.selectedCampaignId) {
-          await this.loadCampaignData();
-        }
-      },
-
-      async loadLogs() {
-        this.logsLoading = true;
-        this.logsError = "";
-        const r = await callJsonApi("ops", { action: "logs" });
-        if (!r || !r.ok) {
-          this.logsError = (r && r.error) || "Failed to load logs.";
-          this.logsData = null;
-        } else {
-          this.logsData = r.data || null;
-        }
-        this.logsLoading = false;
       }
-    }));
-  });
+
+      // Load tools
+      await this.loadTools();
+
+      this.loading = false;
+
+      // Load campaign data if we have a selected campaign
+      if (this.selectedCampaignId) {
+        await this.loadCampaignData();
+      }
+
+      // Load logs
+      await this.loadLogs();
+    },
+
+    async loadTools() {
+      this.toolsLoading = true;
+      this.toolsError = "";
+      const r = await callJsonApi("ops", { action: "tools" });
+      if (!r || !r.ok) {
+        this.toolsError = (r && r.error) || "Failed to load tools.";
+        this.tools = [];
+      } else {
+        const items = (r.data && r.data.tools) || [];
+        this.tools = items;
+      }
+      this.toolsLoading = false;
+    },
+
+    async toggleTool(toolKey) {
+      const tool = this.tools.find(t => (t.key || t.name) === toolKey);
+      if (!tool) return;
+      this.toolsLoading = true;
+      this.toolsError = "";
+      const r = await callJsonApi("ops", {
+        action: "set_tool",
+        tool_key: toolKey,
+        enabled: !tool.enabled
+      });
+      if (!r || !r.ok) {
+        this.toolsError = (r && r.error) || "Failed to toggle tool.";
+      }
+      // Re-load to get source-of-truth state
+      await this.loadTools();
+    },
+
+    async loadCampaignData() {
+      const cid = this.selectedCampaignId || "__system__";
+      await Promise.all([
+        this.loadHistory(cid),
+        this.loadDetections(cid)
+      ]);
+    },
+
+    async loadHistory(cid) {
+      this.historyLoading = true;
+      this.historyError = "";
+      const r = await callJsonApi("ops", { action: "history", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.historyError = (r && r.error) || "Failed to load history.";
+        this.historyData = null;
+      } else {
+        this.historyData = r.data || null;
+      }
+      this.historyLoading = false;
+    },
+
+    async loadDetections(cid) {
+      this.detectionsLoading = true;
+      this.detectionsError = "";
+      const r = await callJsonApi("ops", { action: "detections", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.detectionsError = (r && r.error) || "Failed to load detections.";
+        this.detectionsData = null;
+      } else {
+        this.detectionsData = r.data || null;
+      }
+      this.detectionsLoading = false;
+    },
+
+    async onCampaignSelect() {
+      this.fatalError = "";
+      this.historyData = null;
+      this.detectionsData = null;
+      this.historyError = "";
+      this.detectionsError = "";
+      if (this.selectedCampaignId) {
+        await this.loadCampaignData();
+      }
+    },
+
+    async loadLogs() {
+      this.logsLoading = true;
+      this.logsError = "";
+      const r = await callJsonApi("ops", { action: "logs" });
+      if (!r || !r.ok) {
+        this.logsError = (r && r.error) || "Failed to load logs.";
+        this.logsData = null;
+      } else {
+        this.logsData = r.data || null;
+      }
+      this.logsLoading = false;
+    }
+  }));
 </script>

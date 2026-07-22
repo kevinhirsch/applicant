@@ -136,111 +136,110 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("researchPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      cachedResults: [],
-      cachedLoading: false,
-      budgetData: null,
-      budgetLoading: false,
-      loading: true,
-      fatalError: "",
-      running: false,
-      runQuery: "",
-      runCompany: "",
-      runRole: "",
-      runContext: "",
-      runForce: false,
+  window.Alpine.data("researchPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    cachedResults: [],
+    cachedLoading: false,
+    budgetData: null,
+    budgetLoading: false,
+    loading: true,
+    fatalError: "",
+    running: false,
+    runQuery: "",
+    runCompany: "",
+    runRole: "",
+    runContext: "",
+    runForce: false,
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
         } else {
-          const items = (r.data && r.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
-          } else {
-            this.selectedCampaignId = "__system__";
-          }
+          this.selectedCampaignId = "__system__";
         }
-        this.loading = false;
-        if (this.selectedCampaignId) {
-          await this.loadResearch();
-        }
-      },
-
-      async loadResearch() {
-        this.fatalError = "";
-        this.cachedLoading = true;
-        this.budgetLoading = true;
-        this.cachedResults = [];
-        this.budgetData = null;
-        const cid = this.selectedCampaignId || "__system__";
-
-        // Load cached results
-        const cachedR = await callJsonApi("research", { action: "cached", campaign_id: cid });
-        if (!cachedR || !cachedR.ok) {
-          if (cachedR && cachedR.status === 404) {
-            this.cachedResults = [];
-          } else {
-            this.fatalError = (cachedR && cachedR.error) || "Couldn't reach the research engine.";
-            this.cachedResults = [];
-          }
-        } else {
-          const data = cachedR.data || {};
-          const reports = data.reports || data.results || [];
-          this.cachedResults = Array.isArray(reports) ? reports : (reports ? [reports] : []);
-        }
-        this.cachedLoading = false;
-
-        if (!this.fatalError) {
-          // Load budget
-          const budgetR = await callJsonApi("research", { action: "budget", campaign_id: cid });
-          if (!budgetR || !budgetR.ok) {
-            this.budgetData = null;
-          } else {
-            this.budgetData = budgetR.data || {};
-          }
-        }
-        this.budgetLoading = false;
-      },
-
-      async refreshAll() {
-        this.cachedResults = [];
-        this.budgetData = null;
-        await this.loadResearch();
-      },
-
-      async runResearch() {
-        if (!this.runQuery.trim() || !this.selectedCampaignId) return;
-        this.running = true;
-        this.fatalError = "";
-        const payload = {
-          action: "run",
-          campaign_id: this.selectedCampaignId,
-          query: this.runQuery.trim(),
-        };
-        if (this.runCompany.trim()) payload.company = this.runCompany.trim();
-        if (this.runRole.trim()) payload.role = this.runRole.trim();
-        if (this.runContext.trim()) payload.context = this.runContext.trim();
-        if (this.runForce) payload.force = true;
-
-        const r = await callJsonApi("research", payload);
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Research run failed.";
-        }
-        this.running = false;
-        await this.refreshAll();
       }
-    }));
-  });
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadResearch();
+      }
+    },
+
+    async loadResearch() {
+      this.fatalError = "";
+      this.cachedLoading = true;
+      this.budgetLoading = true;
+      this.cachedResults = [];
+      this.budgetData = null;
+      const cid = this.selectedCampaignId || "__system__";
+
+      // Load cached results
+      const cachedR = await callJsonApi("research", { action: "cached", campaign_id: cid });
+      if (!cachedR || !cachedR.ok) {
+        if (cachedR && cachedR.status === 404) {
+          this.cachedResults = [];
+        } else {
+          this.fatalError = (cachedR && cachedR.error) || "Couldn't reach the research engine.";
+          this.cachedResults = [];
+        }
+      } else {
+        const data = cachedR.data || {};
+        const reports = data.reports || data.results || [];
+        this.cachedResults = Array.isArray(reports) ? reports : (reports ? [reports] : []);
+      }
+      this.cachedLoading = false;
+
+      if (!this.fatalError) {
+        // Load budget
+        const budgetR = await callJsonApi("research", { action: "budget", campaign_id: cid });
+        if (!budgetR || !budgetR.ok) {
+          this.budgetData = null;
+        } else {
+          this.budgetData = budgetR.data || {};
+        }
+      }
+      this.budgetLoading = false;
+    },
+
+    async refreshAll() {
+      this.cachedResults = [];
+      this.budgetData = null;
+      await this.loadResearch();
+    },
+
+    async runResearch() {
+      if (!this.runQuery.trim() || !this.selectedCampaignId) return;
+      this.running = true;
+      this.fatalError = "";
+      const payload = {
+        action: "run",
+        campaign_id: this.selectedCampaignId,
+        query: this.runQuery.trim(),
+      };
+      if (this.runCompany.trim()) payload.company = this.runCompany.trim();
+      if (this.runRole.trim()) payload.role = this.runRole.trim();
+      if (this.runContext.trim()) payload.context = this.runContext.trim();
+      if (this.runForce) payload.force = true;
+
+      const r = await callJsonApi("research", payload);
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Research run failed.";
+      }
+      this.running = false;
+      await this.refreshAll();
+    }
+  }));
 </script>

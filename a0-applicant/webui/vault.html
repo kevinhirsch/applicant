@@ -97,101 +97,100 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("vaultPanel", () => ({
-      campaigns: [],
-      tenants: [],
-      selectedCampaign: "",
-      loading: true,
-      fatalError: "",
-      busy: false,
-      tenantKey: "",
-      credUsername: "",
-      credSecret: "",
+  window.Alpine.data("vaultPanel", () => ({
+    campaigns: [],
+    tenants: [],
+    selectedCampaign: "",
+    loading: true,
+    fatalError: "",
+    busy: false,
+    tenantKey: "",
+    credUsername: "",
+    credSecret: "",
 
-      async init() {
-        await this.refreshCampaigns();
-      },
+    async init() {
+      await this.refreshCampaigns();
+    },
 
-      async refreshCampaigns() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the vault";
-          this.campaigns = [];
-        } else {
-          this.campaigns = (r.data && r.data.campaigns) || [];
-        }
-        this.loading = false;
-        if (this.selectedCampaign) {
-          await this.loadTenants();
-        }
-      },
+    async refreshCampaigns() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the vault";
+        this.campaigns = [];
+      } else {
+        this.campaigns = (r.data && r.data.campaigns) || [];
+      }
+      this.loading = false;
+      if (this.selectedCampaign) {
+        await this.loadTenants();
+      }
+    },
 
-      async loadTenants() {
-        if (!this.selectedCampaign) return;
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("vault", {
-          action: "list",
-          campaign_id: this.selectedCampaign,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the vault";
-          this.tenants = [];
-        } else {
-          this.tenants = (r.data && r.data.tenants) || [];
-        }
-        this.loading = false;
-      },
+    async loadTenants() {
+      if (!this.selectedCampaign) return;
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("vault", {
+        action: "list",
+        campaign_id: this.selectedCampaign,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the vault";
+        this.tenants = [];
+      } else {
+        this.tenants = (r.data && r.data.tenants) || [];
+      }
+      this.loading = false;
+    },
 
-      async addCredential() {
-        const key = this.tenantKey.trim();
-        const user = this.credUsername.trim();
-        const secret = this.credSecret.trim();
-        if (!key || !user || !secret || !this.selectedCampaign) return;
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("vault", {
-          action: "add",
-          campaign_id: this.selectedCampaign,
-          tenant_key: key,
-          username: user,
-          secret: secret,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the vault";
-        } else {
-          this.tenantKey = "";
-          this.credUsername = "";
-          this.credSecret = "";
-          await this.loadTenants();
-        }
-        this.busy = false;
-      },
+    async addCredential() {
+      const key = this.tenantKey.trim();
+      const user = this.credUsername.trim();
+      const secret = this.credSecret.trim();
+      if (!key || !user || !secret || !this.selectedCampaign) return;
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("vault", {
+        action: "add",
+        campaign_id: this.selectedCampaign,
+        tenant_key: key,
+        username: user,
+        secret: secret,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the vault";
+      } else {
+        this.tenantKey = "";
+        this.credUsername = "";
+        this.credSecret = "";
+        await this.loadTenants();
+      }
+      this.busy = false;
+    },
 
-      async deleteCredential(tenantKey) {
-        if (!this.selectedCampaign || !tenantKey) return;
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("vault", {
-          action: "delete",
-          campaign_id: this.selectedCampaign,
-          tenant_key: tenantKey,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the vault";
-        } else {
-          await this.loadTenants();
-        }
-        this.busy = false;
-      },
-    }));
-  });
+    async deleteCredential(tenantKey) {
+      if (!this.selectedCampaign || !tenantKey) return;
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("vault", {
+        action: "delete",
+        campaign_id: this.selectedCampaign,
+        tenant_key: tenantKey,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the vault";
+      } else {
+        await this.loadTenants();
+      }
+      this.busy = false;
+    },
+  }));
 </script>

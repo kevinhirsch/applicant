@@ -97,97 +97,96 @@
   </template>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("activityPanel", () => ({
-      status: {},
-      intent: "",
-      runs: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
+  window.Alpine.data("activityPanel", () => ({
+    status: {},
+    intent: "",
+    runs: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
 
-      get isRunning() {
-        return this.status.running === true;
-      },
+    get isRunning() {
+      return this.status.running === true;
+    },
 
-      get statusLabel() {
-        if (!this.status || Object.keys(this.status).length === 0) return "Unknown";
-        return this.status.running ? "Running" : this.status.paused ? "Paused" : "Idle";
-      },
+    get statusLabel() {
+      if (!this.status || Object.keys(this.status).length === 0) return "Unknown";
+      return this.status.running ? "Running" : this.status.paused ? "Paused" : "Idle";
+    },
 
-      get stateClass() {
-        if (!this.status || Object.keys(this.status).length === 0) return "idle";
-        return this.status.running ? "running" : this.status.paused ? "paused" : "idle";
-      },
+    get stateClass() {
+      if (!this.status || Object.keys(this.status).length === 0) return "idle";
+      return this.status.running ? "running" : this.status.paused ? "paused" : "idle";
+    },
 
-      get todayCount() {
-        return this.status.today_count != null ? this.status.today_count : "—";
-      },
+    get todayCount() {
+      return this.status.today_count != null ? this.status.today_count : "—";
+    },
 
-      get lastTick() {
-        return (this.status.scheduler && this.status.scheduler.last_tick) || "—";
-      },
+    get lastTick() {
+      return (this.status.scheduler && this.status.scheduler.last_tick) || "—";
+    },
 
-      get nextTick() {
-        return (this.status.scheduler && this.status.scheduler.next_tick) || "—";
-      },
+    get nextTick() {
+      return (this.status.scheduler && this.status.scheduler.next_tick) || "—";
+    },
 
-      get latestIntent() {
-        return this.intent || (this.status.latest_intent) || "";
-      },
+    get latestIntent() {
+      return this.intent || (this.status.latest_intent) || "";
+    },
 
-      async init() {
-        await this.loadAll();
-      },
+    async init() {
+      await this.loadAll();
+    },
 
-      async loadAll() {
-        this.loading = true;
-        this.fatalError = "";
+    async loadAll() {
+      this.loading = true;
+      this.fatalError = "";
 
-        const statusR = await callJsonApi("agent_runs", { action: "status" });
-        if (!statusR || !statusR.ok) {
-          this.fatalError = (statusR && statusR.error) || "Couldn't reach the agent-runs engine.";
-          this.loading = false;
-          return;
-        }
-        this.status = statusR.data || {};
-
-        const intentR = await callJsonApi("agent_runs", { action: "intent" });
-        if (intentR && intentR.ok) {
-          this.intent = (intentR.data && intentR.data.intent) || "";
-        }
-
-        const listR = await callJsonApi("agent_runs", { action: "list" });
-        if (listR && listR.ok) {
-          this.runs = (listR.data && listR.data.runs) || [];
-        }
-
+      const statusR = await callJsonApi("agent_runs", { action: "status" });
+      if (!statusR || !statusR.ok) {
+        this.fatalError = (statusR && statusR.error) || "Couldn't reach the agent-runs engine.";
         this.loading = false;
-      },
+        return;
+      }
+      this.status = statusR.data || {};
 
-      async runNow() {
-        this.busy = true;
-        await callJsonApi("agent_runs", { action: "run" });
-        this.busy = false;
-        await this.loadAll();
-      },
+      const intentR = await callJsonApi("agent_runs", { action: "intent" });
+      if (intentR && intentR.ok) {
+        this.intent = (intentR.data && intentR.data.intent) || "";
+      }
 
-      async pauseAgent() {
-        this.busy = true;
-        await callJsonApi("agent_runs", { action: "pause" });
-        this.busy = false;
-        await this.loadAll();
-      },
+      const listR = await callJsonApi("agent_runs", { action: "list" });
+      if (listR && listR.ok) {
+        this.runs = (listR.data && listR.data.runs) || [];
+      }
 
-      async resumeAgent() {
-        this.busy = true;
-        await callJsonApi("agent_runs", { action: "resume" });
-        this.busy = false;
-        await this.loadAll();
-      },
-    }));
-  });
+      this.loading = false;
+    },
+
+    async runNow() {
+      this.busy = true;
+      await callJsonApi("agent_runs", { action: "run" });
+      this.busy = false;
+      await this.loadAll();
+    },
+
+    async pauseAgent() {
+      this.busy = true;
+      await callJsonApi("agent_runs", { action: "pause" });
+      this.busy = false;
+      await this.loadAll();
+    },
+
+    async resumeAgent() {
+      this.busy = true;
+      await callJsonApi("agent_runs", { action: "resume" });
+      this.busy = false;
+      await this.loadAll();
+    },
+  }));
 </script>

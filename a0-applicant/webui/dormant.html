@@ -65,31 +65,30 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    Alpine.data("dormantPanel", () => ({
-      surfaces: [],
-      loading: true,
-      fatalError: "",
+  Alpine.data("dormantPanel", () => ({
+    surfaces: [],
+    loading: true,
+    fatalError: "",
 
-      init() {
-        this.load();
-      },
+    init() {
+      this.load();
+    },
 
-      async load() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("dormant", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the dormant surfaces.";
-          this.surfaces = [];
-        } else {
-          this.surfaces = Array.isArray(r.data) ? r.data : [];
-        }
-        this.loading = false;
-      },
-    }));
-  });
+    async load() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("dormant", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the dormant surfaces.";
+        this.surfaces = [];
+      } else {
+        this.surfaces = Array.isArray(r.data) ? r.data : [];
+      }
+      this.loading = false;
+    },
+  }));
 </script>

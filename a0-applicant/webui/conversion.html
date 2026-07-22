@@ -89,121 +89,120 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("conversionPanel", () => ({
-      campaigns: [],
-      selectedCampaign: "",
-      engine: "",
-      loading: true,
-      fatalError: "",
-      busy: false,
-      previewResult: "",
+  window.Alpine.data("conversionPanel", () => ({
+    campaigns: [],
+    selectedCampaign: "",
+    engine: "",
+    loading: true,
+    fatalError: "",
+    busy: false,
+    previewResult: "",
 
-      get engineLabel() {
-        if (!this.engine) return "";
-        if (this.engine === "latex") return "Engine: LaTeX";
-        if (this.engine === "docx") return "Engine: DOCX";
-        return `Engine: ${this.engine}`;
-      },
+    get engineLabel() {
+      if (!this.engine) return "";
+      if (this.engine === "latex") return "Engine: LaTeX";
+      if (this.engine === "docx") return "Engine: DOCX";
+      return `Engine: ${this.engine}`;
+    },
 
-      async init() {
-        await this.loadCampaigns();
-      },
+    async init() {
+      await this.loadCampaigns();
+    },
 
-      async loadCampaigns() {
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (r && r.ok && r.data && r.data.campaigns) {
-          this.campaigns = r.data.campaigns;
-          if (this.campaigns.length > 0) {
-            this.selectedCampaign = this.campaigns[0].id;
-          }
+    async loadCampaigns() {
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (r && r.ok && r.data && r.data.campaigns) {
+        this.campaigns = r.data.campaigns;
+        if (this.campaigns.length > 0) {
+          this.selectedCampaign = this.campaigns[0].id;
         }
-        if (this.selectedCampaign) {
-          await this.loadEngine();
-        } else {
-          this.loading = false;
-        }
-      },
-
-      async loadEngine() {
-        this.loading = true;
-        this.fatalError = "";
-        this.previewResult = "";
-        const cid = this.selectedCampaign;
-        if (!cid) {
-          this.loading = false;
-          return;
-        }
-        const r = await callJsonApi("conversion", {
-          action: "engine",
-          campaign_id: cid,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the conversion engine.";
-          this.engine = "";
-        } else {
-          this.engine = (r.data && r.data.engine) || "";
-        }
+      }
+      if (this.selectedCampaign) {
+        await this.loadEngine();
+      } else {
         this.loading = false;
-      },
+      }
+    },
 
-      async preview() {
-        this.busy = true;
-        this.fatalError = "";
-        this.previewResult = "";
-        const r = await callJsonApi("conversion", {
-          action: "preview",
-          campaign_id: this.selectedCampaign,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to build preview.";
-        } else {
-          const d = r.data || {};
-          this.previewResult = {
-            artifact_available: !!d.artifact_available,
-            page_count: d.page_count != null ? d.page_count : null,
-            fidelity_ok: !!d.fidelity_ok,
-            fidelity_failed: !d.artifact_available || !d.fidelity_ok,
-            notes: d.notes || null,
-          };
-        }
-        this.busy = false;
-      },
+    async loadEngine() {
+      this.loading = true;
+      this.fatalError = "";
+      this.previewResult = "";
+      const cid = this.selectedCampaign;
+      if (!cid) {
+        this.loading = false;
+        return;
+      }
+      const r = await callJsonApi("conversion", {
+        action: "engine",
+        campaign_id: cid,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the conversion engine.";
+        this.engine = "";
+      } else {
+        this.engine = (r.data && r.data.engine) || "";
+      }
+      this.loading = false;
+    },
 
-      async accept() {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("conversion", {
-          action: "accept",
-          campaign_id: this.selectedCampaign,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to accept LaTeX engine.";
-        } else {
-          this.engine = (r.data && r.data.engine) || "";
-        }
-        this.busy = false;
-      },
+    async preview() {
+      this.busy = true;
+      this.fatalError = "";
+      this.previewResult = "";
+      const r = await callJsonApi("conversion", {
+        action: "preview",
+        campaign_id: this.selectedCampaign,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to build preview.";
+      } else {
+        const d = r.data || {};
+        this.previewResult = {
+          artifact_available: !!d.artifact_available,
+          page_count: d.page_count != null ? d.page_count : null,
+          fidelity_ok: !!d.fidelity_ok,
+          fidelity_failed: !d.artifact_available || !d.fidelity_ok,
+          notes: d.notes || null,
+        };
+      }
+      this.busy = false;
+    },
 
-      async reject() {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("conversion", {
-          action: "reject",
-          campaign_id: this.selectedCampaign,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to reject LaTeX engine.";
-        } else {
-          this.engine = (r.data && r.data.engine) || "";
-        }
-        this.busy = false;
-      },
-    }));
-  });
+    async accept() {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("conversion", {
+        action: "accept",
+        campaign_id: this.selectedCampaign,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to accept LaTeX engine.";
+      } else {
+        this.engine = (r.data && r.data.engine) || "";
+      }
+      this.busy = false;
+    },
+
+    async reject() {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("conversion", {
+        action: "reject",
+        campaign_id: this.selectedCampaign,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to reject LaTeX engine.";
+      } else {
+        this.engine = (r.data && r.data.engine) || "";
+      }
+      this.busy = false;
+    },
+  }));
 </script>

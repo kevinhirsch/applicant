@@ -67,63 +67,62 @@ a0-applicant attributes proxy (action=list|add|delete). -->
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("attributesPanel", () => ({
-      attributes: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
-      name: "",
-      value: "",
-      isSensitive: false,
+  window.Alpine.data("attributesPanel", () => ({
+    attributes: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
+    name: "",
+    value: "",
+    isSensitive: false,
 
-      async init() {
-        await this.loadAttributes();
-      },
+    async init() {
+      await this.loadAttributes();
+    },
 
-      async loadAttributes() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("attributes", {
-          action: "list",
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the attributes engine.";
-          this.attributes = [];
-        } else {
-          // Engine returns {campaign_id, items: [{id, name, value, is_sensitive, ...}]}
-          this.attributes = (r.data && r.data.items) || [];
-        }
-        this.loading = false;
-      },
-
-      async addAttribute() {
-        const name = this.name.trim();
-        const value = this.value.trim();
-        if (!name || !value) return;
-        this.busy = true;
-        await callJsonApi("attributes", {
-          action: "add",
-          name: name,
-          value: value,
-          is_sensitive: this.isSensitive
-        });
-        this.name = "";
-        this.value = "";
-        this.isSensitive = false;
-        this.busy = false;
-        await this.loadAttributes();
-      },
-
-      async deleteAttribute(attributeId) {
-        this.busy = true;
-        await callJsonApi("attributes", { action: "delete", attribute_id: attributeId });
-        this.busy = false;
-        await this.loadAttributes();
+    async loadAttributes() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("attributes", {
+        action: "list",
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the attributes engine.";
+        this.attributes = [];
+      } else {
+        // Engine returns {campaign_id, items: [{id, name, value, is_sensitive, ...}]}
+        this.attributes = (r.data && r.data.items) || [];
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    async addAttribute() {
+      const name = this.name.trim();
+      const value = this.value.trim();
+      if (!name || !value) return;
+      this.busy = true;
+      await callJsonApi("attributes", {
+        action: "add",
+        name: name,
+        value: value,
+        is_sensitive: this.isSensitive
+      });
+      this.name = "";
+      this.value = "";
+      this.isSensitive = false;
+      this.busy = false;
+      await this.loadAttributes();
+    },
+
+    async deleteAttribute(attributeId) {
+      this.busy = true;
+      await callJsonApi("attributes", { action: "delete", attribute_id: attributeId });
+      this.busy = false;
+      await this.loadAttributes();
+    }
+  }));
 </script>

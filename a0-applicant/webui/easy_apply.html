@@ -75,56 +75,55 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("easyApplyPanel", () => ({
-      campaigns: [],
-      selectedCampaign: "",
-      postingId: "",
-      data: null,
-      statusText: "",
-      loading: false,
-      fatalError: "",
+  window.Alpine.data("easyApplyPanel", () => ({
+    campaigns: [],
+    selectedCampaign: "",
+    postingId: "",
+    data: null,
+    statusText: "",
+    loading: false,
+    fatalError: "",
 
-      async init() {
-        await this.loadCampaigns();
-      },
+    async init() {
+      await this.loadCampaigns();
+    },
 
-      async loadCampaigns() {
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (r && r.ok && r.data && r.data.campaigns) {
-          this.campaigns = r.data.campaigns;
-          if (this.campaigns.length > 0) {
-            this.selectedCampaign = this.campaigns[0].id;
-          }
+    async loadCampaigns() {
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (r && r.ok && r.data && r.data.campaigns) {
+        this.campaigns = r.data.campaigns;
+        if (this.campaigns.length > 0) {
+          this.selectedCampaign = this.campaigns[0].id;
         }
-      },
+      }
+    },
 
-      async lookupStatus() {
-        if (!this.postingId.trim()) return;
-        this.loading = true;
-        this.fatalError = "";
+    async lookupStatus() {
+      if (!this.postingId.trim()) return;
+      this.loading = true;
+      this.fatalError = "";
+      this.data = null;
+      this.statusText = "";
+      const cid = this.selectedCampaign || "__system__";
+      const r = await callJsonApi("easy_apply", {
+        action: "status",
+        campaign_id: cid,
+        posting_id: this.postingId.trim(),
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the easy-apply engine.";
         this.data = null;
-        this.statusText = "";
-        const cid = this.selectedCampaign || "__system__";
-        const r = await callJsonApi("easy_apply", {
-          action: "status",
-          campaign_id: cid,
-          posting_id: this.postingId.trim(),
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the easy-apply engine.";
-          this.data = null;
-        } else {
-          this.data = r.data || {};
-          this.statusText = "Status loaded";
-        }
-        this.loading = false;
-      },
-    }));
-  });
+      } else {
+        this.data = r.data || {};
+        this.statusText = "Status loaded";
+      }
+      this.loading = false;
+    },
+  }));
 </script>

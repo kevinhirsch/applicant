@@ -104,65 +104,64 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("trackerPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      boardApplications: [],
-      attentionItems: [],
-      loading: true,
-      fatalError: "",
+  window.Alpine.data("trackerPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    boardApplications: [],
+    attentionItems: [],
+    loading: true,
+    fatalError: "",
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
         } else {
-          const items = (r.data && r.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "__system__";
-          } else {
-            this.selectedCampaignId = "__system__";
-          }
+          this.selectedCampaignId = "__system__";
         }
-        this.loading = false;
-        if (this.selectedCampaignId) {
-          await this.loadBoard();
-        }
-      },
-
-      async loadBoard() {
-        this.loading = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaignId || "__system__";
-
-        const boardR = await callJsonApi("tracker", { action: "board", campaign_id: cid });
-        if (!boardR || !boardR.ok) {
-          this.fatalError = (boardR && boardR.error) || "Couldn't reach the tracker engine.";
-          this.boardApplications = [];
-        } else {
-          this.boardApplications = boardR.data || [];
-        }
-
-        if (!this.fatalError) {
-          const attnR = await callJsonApi("tracker", { action: "attention", campaign_id: cid });
-          if (!attnR || !attnR.ok) {
-            this.fatalError = (attnR && attnR.error) || "Couldn't reach the tracker attention engine.";
-            this.attentionItems = [];
-          } else {
-            this.attentionItems = attnR.data || [];
-          }
-        }
-
-        this.loading = false;
       }
-    }));
-  });
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadBoard();
+      }
+    },
+
+    async loadBoard() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+
+      const boardR = await callJsonApi("tracker", { action: "board", campaign_id: cid });
+      if (!boardR || !boardR.ok) {
+        this.fatalError = (boardR && boardR.error) || "Couldn't reach the tracker engine.";
+        this.boardApplications = [];
+      } else {
+        this.boardApplications = boardR.data || [];
+      }
+
+      if (!this.fatalError) {
+        const attnR = await callJsonApi("tracker", { action: "attention", campaign_id: cid });
+        if (!attnR || !attnR.ok) {
+          this.fatalError = (attnR && attnR.error) || "Couldn't reach the tracker attention engine.";
+          this.attentionItems = [];
+        } else {
+          this.attentionItems = attnR.data || [];
+        }
+      }
+
+      this.loading = false;
+    }
+  }));
 </script>

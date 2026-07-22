@@ -114,140 +114,139 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("takeoverPanel", () => ({
-      sessions: [],
-      selectedSessionId: "",
-      viewUrl: null,
-      viewUrlLoading: false,
-      takeoverLoading: false,
-      applicationId: "",
-      actionLoading: false,
-      fatalError: "",
-      loading: true,
-      locked: false,
-      lockedReason: "",
+  window.Alpine.data("takeoverPanel", () => ({
+    sessions: [],
+    selectedSessionId: "",
+    viewUrl: null,
+    viewUrlLoading: false,
+    takeoverLoading: false,
+    applicationId: "",
+    actionLoading: false,
+    fatalError: "",
+    loading: true,
+    locked: false,
+    lockedReason: "",
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        this.locked = false;
-        this.lockedReason = "";
-        const r = await callJsonApi("takeover", { action: "sessions" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the takeover engine.";
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      this.locked = false;
+      this.lockedReason = "";
+      const r = await callJsonApi("takeover", { action: "sessions" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the takeover engine.";
+        this.sessions = [];
+      } else {
+        // Check for locked/degraded signal from engine response
+        if (r.data && (r.data.locked || r.data.degraded)) {
+          this.locked = true;
+          this.lockedReason = (r.data.reason) || "No takeover-capable sandbox available.";
           this.sessions = [];
         } else {
-          // Check for locked/degraded signal from engine response
-          if (r.data && (r.data.locked || r.data.degraded)) {
-            this.locked = true;
-            this.lockedReason = (r.data.reason) || "No takeover-capable sandbox available.";
-            this.sessions = [];
-          } else {
-            const items = (r.data && r.data.sessions) || (r.data && r.data.items) || [];
-            this.sessions = Array.isArray(items) ? items : (items ? [items] : []);
-          }
+          const items = (r.data && r.data.sessions) || (r.data && r.data.items) || [];
+          this.sessions = Array.isArray(items) ? items : (items ? [items] : []);
         }
-        this.loading = false;
-      },
-
-      onSessionSelect() {
-        this.fatalError = "";
-        this.viewUrl = null;
-      },
-
-      async loadViewUrl() {
-        if (!this.selectedSessionId) return;
-        this.viewUrlLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "view_url", session_id: this.selectedSessionId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to get view URL.";
-        } else {
-          this.viewUrl = (r.data && (r.data.url || r.data.view_url)) || "";
-        }
-        this.viewUrlLoading = false;
-      },
-
-      async doTakeover() {
-        if (!this.selectedSessionId) return;
-        this.takeoverLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "takeover", session_id: this.selectedSessionId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Takeover request failed.";
-        }
-        this.takeoverLoading = false;
-      },
-
-      async doResume2FA() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "resume_2fa", application_id: this.applicationId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to resume 2FA.";
-        }
-        this.actionLoading = false;
-      },
-
-      async doResumeAccount() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "resume_account", application_id: this.applicationId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to resume account step.";
-        }
-        this.actionLoading = false;
-      },
-
-      async doResumeDetection() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "resume_detection", application_id: this.applicationId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to resume detection step.";
-        }
-        this.actionLoading = false;
-      },
-
-      async doHandoff() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "handoff", application_id: this.applicationId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Handoff request failed.";
-        }
-        this.actionLoading = false;
-      },
-
-      async doSubmitForMe() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "agent" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Agent submission request failed.";
-        }
-        this.actionLoading = false;
-      },
-
-      async doSubmittedMyself() {
-        if (!this.applicationId) return;
-        this.actionLoading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "self" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Self-submission confirmation failed.";
-        }
-        this.actionLoading = false;
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    onSessionSelect() {
+      this.fatalError = "";
+      this.viewUrl = null;
+    },
+
+    async loadViewUrl() {
+      if (!this.selectedSessionId) return;
+      this.viewUrlLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "view_url", session_id: this.selectedSessionId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to get view URL.";
+      } else {
+        this.viewUrl = (r.data && (r.data.url || r.data.view_url)) || "";
+      }
+      this.viewUrlLoading = false;
+    },
+
+    async doTakeover() {
+      if (!this.selectedSessionId) return;
+      this.takeoverLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "takeover", session_id: this.selectedSessionId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Takeover request failed.";
+      }
+      this.takeoverLoading = false;
+    },
+
+    async doResume2FA() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "resume_2fa", application_id: this.applicationId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to resume 2FA.";
+      }
+      this.actionLoading = false;
+    },
+
+    async doResumeAccount() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "resume_account", application_id: this.applicationId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to resume account step.";
+      }
+      this.actionLoading = false;
+    },
+
+    async doResumeDetection() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "resume_detection", application_id: this.applicationId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to resume detection step.";
+      }
+      this.actionLoading = false;
+    },
+
+    async doHandoff() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "handoff", application_id: this.applicationId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Handoff request failed.";
+      }
+      this.actionLoading = false;
+    },
+
+    async doSubmitForMe() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "agent" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Agent submission request failed.";
+      }
+      this.actionLoading = false;
+    },
+
+    async doSubmittedMyself() {
+      if (!this.applicationId) return;
+      this.actionLoading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("takeover", { action: "final_approval", application_id: this.applicationId, mode: "self" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Self-submission confirmation failed.";
+      }
+      this.actionLoading = false;
+    }
+  }));
 </script>

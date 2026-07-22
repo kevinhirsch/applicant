@@ -55,50 +55,49 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("auditPanel", () => ({
-      campaigns: [],
-      selectedCampaign: "",
-      entries: [],
-      loading: true,
-      fatalError: "",
+  window.Alpine.data("auditPanel", () => ({
+    campaigns: [],
+    selectedCampaign: "",
+    entries: [],
+    loading: true,
+    fatalError: "",
 
-      async init() {
-        await this.loadCampaigns();
-      },
+    async init() {
+      await this.loadCampaigns();
+    },
 
-      async loadCampaigns() {
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (r && r.ok && r.data && r.data.campaigns) {
-          this.campaigns = r.data.campaigns;
-          if (this.campaigns.length > 0) {
-            this.selectedCampaign = this.campaigns[0].id;
-          }
+    async loadCampaigns() {
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (r && r.ok && r.data && r.data.campaigns) {
+        this.campaigns = r.data.campaigns;
+        if (this.campaigns.length > 0) {
+          this.selectedCampaign = this.campaigns[0].id;
         }
-        await this.loadLog();
-      },
+      }
+      await this.loadLog();
+    },
 
-      async loadLog() {
-        this.loading = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaign || "__system__";
-        const r = await callJsonApi("audit", {
-          action: "log",
-          campaign_id: cid,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the audit engine.";
-          this.entries = [];
-        } else {
-          this.entries = (r.data && r.data.entries) || (r.data && r.data.items) || [];
-        }
-        this.loading = false;
-      },
-    }));
-  });
+    async loadLog() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaign || "__system__";
+      const r = await callJsonApi("audit", {
+        action: "log",
+        campaign_id: cid,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the audit engine.";
+        this.entries = [];
+      } else {
+        this.entries = (r.data && r.data.entries) || (r.data && r.data.items) || [];
+      }
+      this.loading = false;
+    },
+  }));
 </script>

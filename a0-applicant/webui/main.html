@@ -175,8 +175,10 @@
   </template>
 </div>
 
-<script type="module">
-  import { callJsonApi, getCsrfToken } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
+  const getCsrfToken = async (...a) => (await _apiP).getCsrfToken(...a);
 
   const SECTIONS = [
     { id:"base_resume", title:"Your Résumé", hint:"Upload your résumé and I'll parse it — you confirm what I find." },
@@ -212,101 +214,99 @@
   ];
   const TITLES = Object.fromEntries(SECTIONS.map(s => [s.id, s.title]));
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("applicantOnboarding", () => ({
-      SECTIONS,
-      loading: true, fatalError: "", sectionError: "", saving: false,
-      uploading: false, resumeResult: null,
-      state: { sections_complete: [] }, step: 0, form: {}, finished: false,
-      readyState: { apply_ready: false, apply_missing: [] },
+  window.Alpine.data("applicantOnboarding", () => ({
+    SECTIONS,
+    loading: true, fatalError: "", sectionError: "", saving: false,
+    uploading: false, resumeResult: null,
+    state: { sections_complete: [] }, step: 0, form: {}, finished: false,
+    readyState: { apply_ready: false, apply_missing: [] },
 
-      async init() { await this.refresh(); this.jumpToFirstIncomplete(); this.loading = false; },
-      async refresh() {
-        const r = await callJsonApi("onboarding", { action: "state" });
-        if (!r || !r.ok) { this.fatalError = "Couldn't reach the setup engine. Is a model connected?"; return; }
-        this.state = r.data || { sections_complete: [] };
-        this.fatalError = "";
-      },
-      jumpToFirstIncomplete() {
-        const done = new Set(this.state.sections_complete || []);
-        const i = this.SECTIONS.findIndex(s => !done.has(s.id));
-        this.step = i < 0 ? this.SECTIONS.length : i;   // >= length => "ready to finish"
-        this.loadForm();
-      },
-      loadForm() {
-        this.sectionError = "";
-        const s = this.current;
-        this.form = {};
-        if (s && s.id === "eeo") for (const f of s.fields) this.form[f.k] = "Decline to self-identify";
-      },
-      get current() { return this.SECTIONS[this.step] || null; },
-      get doneCount() { return (this.state.sections_complete || []).length; },
-      get progress() { return Math.round(100 * this.doneCount / this.SECTIONS.length); },
-      isDone(id) { return (this.state.sections_complete || []).includes(id); },
-      labelFor(id) { return TITLES[id] || id; },
-      goto(i) { if (i >= 0 && i < this.SECTIONS.length) { this.finished = false; this.step = i; this.loadForm(); } },
-      prev() { if (this.step > 0) { this.step--; this.loadForm(); } },
+    async init() { await this.refresh(); this.jumpToFirstIncomplete(); this.loading = false; },
+    async refresh() {
+      const r = await callJsonApi("onboarding", { action: "state" });
+      if (!r || !r.ok) { this.fatalError = "Couldn't reach the setup engine. Is a model connected?"; return; }
+      this.state = r.data || { sections_complete: [] };
+      this.fatalError = "";
+    },
+    jumpToFirstIncomplete() {
+      const done = new Set(this.state.sections_complete || []);
+      const i = this.SECTIONS.findIndex(s => !done.has(s.id));
+      this.step = i < 0 ? this.SECTIONS.length : i;   // >= length => "ready to finish"
+      this.loadForm();
+    },
+    loadForm() {
+      this.sectionError = "";
+      const s = this.current;
+      this.form = {};
+      if (s && s.id === "eeo") for (const f of s.fields) this.form[f.k] = "Decline to self-identify";
+    },
+    get current() { return this.SECTIONS[this.step] || null; },
+    get doneCount() { return (this.state.sections_complete || []).length; },
+    get progress() { return Math.round(100 * this.doneCount / this.SECTIONS.length); },
+    isDone(id) { return (this.state.sections_complete || []).includes(id); },
+    labelFor(id) { return TITLES[id] || id; },
+    goto(i) { if (i >= 0 && i < this.SECTIONS.length) { this.finished = false; this.step = i; this.loadForm(); } },
+    prev() { if (this.step > 0) { this.step--; this.loadForm(); } },
 
-      async save() {
-        const s = this.current; if (!s) return;
-        this.saving = true; this.sectionError = "";
-        const r = await callJsonApi("onboarding", { action: "section", section: s.id, data: this.form });
-        this.saving = false;
-        if (!r || !r.ok) { this.sectionError = this._err(r) || "The engine rejected this section."; return; }
-        await this.refresh(); this.next();
-      },
-      async skip() {
-        const s = this.current; if (!s) return;
-        this.saving = true;
-        await callJsonApi("onboarding", { action: "section", section: s.id, data: {} });
-        this.saving = false; await this.refresh(); this.next();
-      },
-      next() { if (this.step < this.SECTIONS.length) this.step++; this.loadForm(); },
+    async save() {
+      const s = this.current; if (!s) return;
+      this.saving = true; this.sectionError = "";
+      const r = await callJsonApi("onboarding", { action: "section", section: s.id, data: this.form });
+      this.saving = false;
+      if (!r || !r.ok) { this.sectionError = this._err(r) || "The engine rejected this section."; return; }
+      await this.refresh(); this.next();
+    },
+    async skip() {
+      const s = this.current; if (!s) return;
+      this.saving = true;
+      await callJsonApi("onboarding", { action: "section", section: s.id, data: {} });
+      this.saving = false; await this.refresh(); this.next();
+    },
+    next() { if (this.step < this.SECTIONS.length) this.step++; this.loadForm(); },
 
-      async uploadResume() {
-        const el = document.getElementById('resumeFile');
-        if (!el || !el.files || !el.files[0]) { this.sectionError = 'Please select a file first.'; return; }
-        this.uploading = true; this.sectionError = ''; this.resumeResult = null;
-        try {
-          const fd = new FormData();
-          fd.append('file', el.files[0]);
-          const token = await getCsrfToken();
-          const r = await fetch('/api/a0-applicant/base_resume', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRF-Token': token },
-            body: fd,
-          });
-          const resp = await r.json();
-          if (resp && resp.ok) {
-            this.resumeResult = { ok: true, data: resp.data };
-            this.form = { resume_parsed: true, parsed_data: resp.data };
-          } else {
-            this.resumeResult = { ok: false, error: (resp && resp.error) || 'Engine rejected the file' };
-          }
-        } catch (e) {
-          this.resumeResult = { ok: false, error: e.message || 'Upload failed' };
-        } finally {
-          this.uploading = false;
+    async uploadResume() {
+      const el = document.getElementById('resumeFile');
+      if (!el || !el.files || !el.files[0]) { this.sectionError = 'Please select a file first.'; return; }
+      this.uploading = true; this.sectionError = ''; this.resumeResult = null;
+      try {
+        const fd = new FormData();
+        fd.append('file', el.files[0]);
+        const token = await getCsrfToken();
+        const r = await fetch('/api/a0-applicant/base_resume', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'X-CSRF-Token': token },
+          body: fd,
+        });
+        const resp = await r.json();
+        if (resp && resp.ok) {
+          this.resumeResult = { ok: true, data: resp.data };
+          this.form = { resume_parsed: true, parsed_data: resp.data };
+        } else {
+          this.resumeResult = { ok: false, error: (resp && resp.error) || 'Engine rejected the file' };
         }
-      },
+      } catch (e) {
+        this.resumeResult = { ok: false, error: e.message || 'Upload failed' };
+      } finally {
+        this.uploading = false;
+      }
+    },
 
-      async finish() {
-        this.saving = true;
-        const r = await callJsonApi("onboarding", { action: "complete" });
-        this.saving = false;
-        // engine truth: 200 => ready; 409 => apply_missing in the error detail
-        if (r && r.ok) { this.readyState = { apply_ready: true, apply_missing: [] }; }
-        else { this.readyState = { apply_ready: false, apply_missing: this._missing(r) }; }
-        this.finished = true;
-      },
-      resume() { this.finished = false; this.jumpToFirstIncomplete(); },
+    async finish() {
+      this.saving = true;
+      const r = await callJsonApi("onboarding", { action: "complete" });
+      this.saving = false;
+      // engine truth: 200 => ready; 409 => apply_missing in the error detail
+      if (r && r.ok) { this.readyState = { apply_ready: true, apply_missing: [] }; }
+      else { this.readyState = { apply_ready: false, apply_missing: this._missing(r) }; }
+      this.finished = true;
+    },
+    resume() { this.finished = false; this.jumpToFirstIncomplete(); },
 
-      _err(r) { try { return (JSON.parse(r.error).detail?.message) || r.error; } catch { return r && r.error; } },
-      _missing(r) {
-        try { const d = JSON.parse(r.error).detail; return d.missing_sections || d.apply_missing || []; }
-        catch { return (this.SECTIONS.map(s => s.id).filter(id => !this.isDone(id))); }
-      },
-    }));
-  });
+    _err(r) { try { return (JSON.parse(r.error).detail?.message) || r.error; } catch { return r && r.error; } },
+    _missing(r) {
+      try { const d = JSON.parse(r.error).detail; return d.missing_sections || d.apply_missing || []; }
+      catch { return (this.SECTIONS.map(s => s.id).filter(id => !this.isDone(id))); }
+    },
+  }));
 </script>

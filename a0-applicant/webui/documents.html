@@ -180,225 +180,224 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("documentsPanel", () => ({
-      campaigns: [],
-      selectedCampaignId: "",
-      selectedApplicationId: "",
-      applications: [],
-      documents: [],
-      fatalError: "",
-      loading: true,
-      documentsLoading: false,
-      provenanceOpen: null,
-      provenanceData: "",
-      snapshotData: null,
-      snapshotRaw: null,
-      snapshotLoading: false,
-      snapshotNotFound: false,
-      snapshotError: "",
+  window.Alpine.data("documentsPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    selectedApplicationId: "",
+    applications: [],
+    documents: [],
+    fatalError: "",
+    loading: true,
+    documentsLoading: false,
+    provenanceOpen: null,
+    provenanceData: "",
+    snapshotData: null,
+    snapshotRaw: null,
+    snapshotLoading: false,
+    snapshotNotFound: false,
+    snapshotError: "",
 
-      // Redline state
-      redlineOpen: null,
-      redlineNewSource: {},
-      redlineBaseSource: {},
-      redlineAggressiveness: {},
-      redlineLoading: null,
-      redlineError: {},
-      redlineResults: {},
+    // Redline state
+    redlineOpen: null,
+    redlineNewSource: {},
+    redlineBaseSource: {},
+    redlineAggressiveness: {},
+    redlineLoading: null,
+    redlineError: {},
+    redlineResults: {},
 
-      async init() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("campaigns", { action: "list" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
-          this.campaigns = [];
-        } else {
-          const items = (r.data && r.data.campaigns) || [];
-          this.campaigns = items;
-          if (items.length > 0) {
-            this.selectedCampaignId = items[0].id || items[0].name || "";
-          }
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "";
         }
-        this.loading = false;
-        if (this.selectedCampaignId) {
-          await this.loadApplications();
-        }
-      },
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadApplications();
+      }
+    },
 
-      async onCampaignSelect() {
-        this.fatalError = "";
-        this.selectedApplicationId = "";
+    async onCampaignSelect() {
+      this.fatalError = "";
+      this.selectedApplicationId = "";
+      this.documents = [];
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      if (this.selectedCampaignId) {
+        await this.loadApplications();
+      } else {
+        this.applications = [];
+      }
+    },
+
+    async loadApplications() {
+      this.fatalError = "";
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.applications = []; return; }
+
+      const r = await callJsonApi("tracker", { action: "board", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't load applications.";
+        this.applications = [];
+      } else {
+        const data = r.data || {};
+        const items = data.applications || data.items || data.board || [];
+        this.applications = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+    },
+
+    async onApplicationSelect() {
+      this.fatalError = "";
+      this.documents = [];
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      this.provenanceOpen = null;
+      this.provenanceData = "";
+      if (this.selectedApplicationId) {
+        await Promise.all([
+          this.loadDocuments(),
+          this.loadSnapshot()
+        ]);
+      }
+    },
+
+    async loadDocuments() {
+      this.documentsLoading = true;
+      this.fatalError = "";
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.documents = []; this.documentsLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "list", application_id: appId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't load documents.";
         this.documents = [];
-        this.snapshotData = null;
-        this.snapshotNotFound = false;
-        this.snapshotError = "";
-        if (this.selectedCampaignId) {
-          await this.loadApplications();
-        } else {
-          this.applications = [];
-        }
-      },
+      } else {
+        const data = r.data || {};
+        const items = data.documents || data.items || [];
+        this.documents = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.documentsLoading = false;
+    },
 
-      async loadApplications() {
-        this.fatalError = "";
-        const cid = this.selectedCampaignId;
-        if (!cid) { this.applications = []; return; }
+    async approveDocument(docId) {
+      if (!docId) return;
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "approve", document_id: docId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to approve document.";
+      } else {
+        await this.loadDocuments();
+      }
+    },
 
-        const r = await callJsonApi("tracker", { action: "board", campaign_id: cid });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't load applications.";
-          this.applications = [];
-        } else {
-          const data = r.data || {};
-          const items = data.applications || data.items || data.board || [];
-          this.applications = Array.isArray(items) ? items : (items ? [items] : []);
-        }
-      },
+    async declineDocument(docId) {
+      if (!docId) return;
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "decline", document_id: docId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to decline document.";
+      } else {
+        await this.loadDocuments();
+      }
+    },
 
-      async onApplicationSelect() {
-        this.fatalError = "";
-        this.documents = [];
-        this.snapshotData = null;
-        this.snapshotNotFound = false;
-        this.snapshotError = "";
+    async toggleProvenance(docId) {
+      if (!docId) return;
+      if (this.provenanceOpen === docId) {
         this.provenanceOpen = null;
         this.provenanceData = "";
-        if (this.selectedApplicationId) {
-          await Promise.all([
-            this.loadDocuments(),
-            this.loadSnapshot()
-          ]);
-        }
-      },
-
-      async loadDocuments() {
-        this.documentsLoading = true;
-        this.fatalError = "";
-        const appId = this.selectedApplicationId;
-        if (!appId) { this.documents = []; this.documentsLoading = false; return; }
-
-        const r = await callJsonApi("documents", { action: "list", application_id: appId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't load documents.";
-          this.documents = [];
-        } else {
-          const data = r.data || {};
-          const items = data.documents || data.items || [];
-          this.documents = Array.isArray(items) ? items : (items ? [items] : []);
-        }
-        this.documentsLoading = false;
-      },
-
-      async approveDocument(docId) {
-        if (!docId) return;
-        this.fatalError = "";
-        const r = await callJsonApi("documents", { action: "approve", document_id: docId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to approve document.";
-        } else {
-          await this.loadDocuments();
-        }
-      },
-
-      async declineDocument(docId) {
-        if (!docId) return;
-        this.fatalError = "";
-        const r = await callJsonApi("documents", { action: "decline", document_id: docId });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to decline document.";
-        } else {
-          await this.loadDocuments();
-        }
-      },
-
-      async toggleProvenance(docId) {
-        if (!docId) return;
-        if (this.provenanceOpen === docId) {
-          this.provenanceOpen = null;
-          this.provenanceData = "";
-          return;
-        }
-        this.provenanceOpen = docId;
-        this.provenanceData = "";
-        this.fatalError = "";
-        const r = await callJsonApi("documents", { action: "provenance", document_id: docId });
-        if (!r || !r.ok) {
-          this.provenanceData = "Failed to load provenance.";
-        } else {
-          const data = r.data || {};
-          // Render H4 provenance — assume data is HTML or structured
-          const prov = data.provenance || data.html || data.text || JSON.stringify(data, null, 2);
-          this.provenanceData = typeof prov === "string" ? prov : JSON.stringify(prov, null, 2);
-        }
-      },
-
-      async submitRedline(docId, doc) {
-        const newSource = this.redlineNewSource[docId];
-        if (!newSource || !newSource.trim()) {
-          this.redlineError[docId] = "New source text is required.";
-          return;
-        }
-        this.redlineLoading = docId;
-        this.redlineError[docId] = "";
-        const baseSource = this.redlineBaseSource[docId] || (doc && doc.content) || '';
-        const aggressiveness = this.redlineAggressiveness[docId] || 20;
-        
-        const r = await callJsonApi("documents", {
-          action: "redline",
-          variant_id: (doc && (doc.variant_id || doc.id)) || docId,
-          base_source: baseSource,
-          new_source: newSource,
-          aggressiveness: aggressiveness
-        });
-        
-        if (!r || !r.ok) {
-          this.redlineError[docId] = (r && r.error) || "Failed to compute redline.";
-        } else {
-          this.redlineResults[docId] = r.data || {};
-        }
-        this.redlineLoading = null;
-      },
-
-      dismissRedline(docId) {
-        this.redlineResults[docId] = null;
-        this.redlineNewSource[docId] = "";
-        this.redlineBaseSource[docId] = "";
-        this.redlineAggressiveness[docId] = 20;
-        this.redlineError[docId] = "";
-      },
-
-      async approveRedlineViaDoc(docId) {
-        this.dismissRedline(docId);
-        await this.approveDocument(docId);
-      },
-
-      async loadSnapshot() {
-        this.snapshotLoading = true;
-        this.snapshotData = null;
-        this.snapshotNotFound = false;
-        this.snapshotError = "";
-        const appId = this.selectedApplicationId;
-        if (!appId) { this.snapshotLoading = false; return; }
-
-        const r = await callJsonApi("documents", { action: "snapshot", application_id: appId });
-        if (!r || !r.ok) {
-          if (r && (r.status === 404 || r.status_code === 404)) {
-            this.snapshotNotFound = true;
-          } else {
-            this.snapshotError = (r && r.error) || "Failed to load snapshot.";
-          }
-        } else {
-          const data = r.data || {};
-          const snap = data.snapshot || data.html || data.content || data.text || JSON.stringify(data, null, 2);
-          this.snapshotData = typeof snap === "string" ? snap : JSON.stringify(snap, null, 2);
-        }
-        this.snapshotLoading = false;
+        return;
       }
-    }));
-  });
+      this.provenanceOpen = docId;
+      this.provenanceData = "";
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "provenance", document_id: docId });
+      if (!r || !r.ok) {
+        this.provenanceData = "Failed to load provenance.";
+      } else {
+        const data = r.data || {};
+        // Render H4 provenance — assume data is HTML or structured
+        const prov = data.provenance || data.html || data.text || JSON.stringify(data, null, 2);
+        this.provenanceData = typeof prov === "string" ? prov : JSON.stringify(prov, null, 2);
+      }
+    },
+
+    async submitRedline(docId, doc) {
+      const newSource = this.redlineNewSource[docId];
+      if (!newSource || !newSource.trim()) {
+        this.redlineError[docId] = "New source text is required.";
+        return;
+      }
+      this.redlineLoading = docId;
+      this.redlineError[docId] = "";
+      const baseSource = this.redlineBaseSource[docId] || (doc && doc.content) || '';
+      const aggressiveness = this.redlineAggressiveness[docId] || 20;
+      
+      const r = await callJsonApi("documents", {
+        action: "redline",
+        variant_id: (doc && (doc.variant_id || doc.id)) || docId,
+        base_source: baseSource,
+        new_source: newSource,
+        aggressiveness: aggressiveness
+      });
+      
+      if (!r || !r.ok) {
+        this.redlineError[docId] = (r && r.error) || "Failed to compute redline.";
+      } else {
+        this.redlineResults[docId] = r.data || {};
+      }
+      this.redlineLoading = null;
+    },
+
+    dismissRedline(docId) {
+      this.redlineResults[docId] = null;
+      this.redlineNewSource[docId] = "";
+      this.redlineBaseSource[docId] = "";
+      this.redlineAggressiveness[docId] = 20;
+      this.redlineError[docId] = "";
+    },
+
+    async approveRedlineViaDoc(docId) {
+      this.dismissRedline(docId);
+      await this.approveDocument(docId);
+    },
+
+    async loadSnapshot() {
+      this.snapshotLoading = true;
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.snapshotLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "snapshot", application_id: appId });
+      if (!r || !r.ok) {
+        if (r && (r.status === 404 || r.status_code === 404)) {
+          this.snapshotNotFound = true;
+        } else {
+          this.snapshotError = (r && r.error) || "Failed to load snapshot.";
+        }
+      } else {
+        const data = r.data || {};
+        const snap = data.snapshot || data.html || data.content || data.text || JSON.stringify(data, null, 2);
+        this.snapshotData = typeof snap === "string" ? snap : JSON.stringify(snap, null, 2);
+      }
+      this.snapshotLoading = false;
+    }
+  }));
 </script>

@@ -102,130 +102,129 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("modelEndpointsPanel", () => ({
-      campaigns: [],
-      selectedCampaign: "",
-      items: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
-      formBaseUrl: "",
-      formApiKey: "",
-      formName: "",
-      formModelType: "llm",
-      localOnly: false,
+  window.Alpine.data("modelEndpointsPanel", () => ({
+    campaigns: [],
+    selectedCampaign: "",
+    items: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
+    formBaseUrl: "",
+    formApiKey: "",
+    formName: "",
+    formModelType: "llm",
+    localOnly: false,
 
-      async init() {
-        await this.loadCampaigns();
-        try {
-          const lo = await callJsonApi("local_only_status", { action: "get" });
-          if (lo && lo.ok) this.localOnly = lo.local_only;
-        } catch(e) {}
-      },
+    async init() {
+      await this.loadCampaigns();
+      try {
+        const lo = await callJsonApi("local_only_status", { action: "get" });
+        if (lo && lo.ok) this.localOnly = lo.local_only;
+      } catch(e) {}
+    },
 
-      async loadCampaigns() {
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (r && r.ok && r.data && r.data.campaigns) {
-          this.campaigns = r.data.campaigns;
-          if (this.campaigns.length > 0) {
-            this.selectedCampaign = this.campaigns[0].id;
-          }
+    async loadCampaigns() {
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (r && r.ok && r.data && r.data.campaigns) {
+        this.campaigns = r.data.campaigns;
+        if (this.campaigns.length > 0) {
+          this.selectedCampaign = this.campaigns[0].id;
         }
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
-        }
+      }
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
+      }
+      await this.loadEndpoints();
+    },
+
+    async loadEndpoints() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "list",
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
+        this.items = [];
+      } else {
+        this.items = (r.data && r.data.endpoints) || r.data || [];
+      }
+      this.loading = false;
+    },
+
+    async addEndpoint() {
+      if (!this.formBaseUrl.trim()) return;
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "add",
+        base_url: this.formBaseUrl.trim(),
+        api_key: this.formApiKey,
+        name: this.formName.trim() || "",
+        model_type: this.formModelType,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to add endpoint.";
+      } else {
+        this.formBaseUrl = "";
+        this.formApiKey = "";
+        this.formName = "";
+        this.formModelType = "llm";
         await this.loadEndpoints();
-      },
+      }
+      this.busy = false;
+    },
 
-      async loadEndpoints() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("model_endpoints", {
-          action: "list",
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the model endpoints engine.";
-          this.items = [];
-        } else {
-          this.items = (r.data && r.data.endpoints) || r.data || [];
-        }
-        this.loading = false;
-      },
+    async testEndpoint(item) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "test",
+        base_url: item.base_url,
+        api_key: item.api_key || "",
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Endpoint test failed.";
+      }
+      this.busy = false;
+    },
 
-      async addEndpoint() {
-        if (!this.formBaseUrl.trim()) return;
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("model_endpoints", {
-          action: "add",
-          base_url: this.formBaseUrl.trim(),
-          api_key: this.formApiKey,
-          name: this.formName.trim() || "",
-          model_type: this.formModelType,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to add endpoint.";
-        } else {
-          this.formBaseUrl = "";
-          this.formApiKey = "";
-          this.formName = "";
-          this.formModelType = "llm";
-          await this.loadEndpoints();
-        }
-        this.busy = false;
-      },
+    async removeEndpoint(item) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "remove",
+        endpoint_id: item.id,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to remove endpoint.";
+      }
+      await this.loadEndpoints();
+      this.busy = false;
+    },
 
-      async testEndpoint(item) {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("model_endpoints", {
-          action: "test",
-          base_url: item.base_url,
-          api_key: item.api_key || "",
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Endpoint test failed.";
-        }
-        this.busy = false;
-      },
-
-      async removeEndpoint(item) {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("model_endpoints", {
-          action: "remove",
-          endpoint_id: item.id,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to remove endpoint.";
-        }
-        await this.loadEndpoints();
-        this.busy = false;
-      },
-
-      async loadModels(item) {
-        this.busy = true;
-        this.fatalError = "";
-        const r = await callJsonApi("model_endpoints", {
-          action: "models",
-          endpoint_id: item.id,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to load models.";
-          item._showModels = false;
-        } else {
-          item._showModels = !item._showModels;
-          const models = r.data && r.data.models ? r.data.models : [];
-          item._models = models;
-        }
-        this.busy = false;
-      },
-    }));
-  });
+    async loadModels(item) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "models",
+        endpoint_id: item.id,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to load models.";
+        item._showModels = false;
+      } else {
+        item._showModels = !item._showModels;
+        const models = r.data && r.data.models ? r.data.models : [];
+        item._models = models;
+      }
+      this.busy = false;
+    },
+  }));
 </script>

@@ -73,77 +73,76 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("screeningPanel", () => ({
-      campaigns: [],
-      selectedCampaign: "",
-      items: [],
-      loading: true,
-      fatalError: "",
-      busy: false,
-      genApplicationId: "",
-      genQuestion: "",
-      genContext: "",
+  window.Alpine.data("screeningPanel", () => ({
+    campaigns: [],
+    selectedCampaign: "",
+    items: [],
+    loading: true,
+    fatalError: "",
+    busy: false,
+    genApplicationId: "",
+    genQuestion: "",
+    genContext: "",
 
-      async init() {
-        await this.loadCampaigns();
-      },
+    async init() {
+      await this.loadCampaigns();
+    },
 
-      async loadCampaigns() {
-        const r = await callJsonApi("campaigns", {
-          action: "list",
-        });
-        if (r && r.ok && r.data && r.data.campaigns) {
-          this.campaigns = r.data.campaigns;
-          if (this.campaigns.length > 0) {
-            this.selectedCampaign = this.campaigns[0].id;
-          }
+    async loadCampaigns() {
+      const r = await callJsonApi("campaigns", {
+        action: "list",
+      });
+      if (r && r.ok && r.data && r.data.campaigns) {
+        this.campaigns = r.data.campaigns;
+        if (this.campaigns.length > 0) {
+          this.selectedCampaign = this.campaigns[0].id;
         }
-        await this.loadLibrary();
-      },
+      }
+      await this.loadLibrary();
+    },
 
-      async loadLibrary() {
-        this.loading = true;
-        this.fatalError = "";
-        const cid = this.selectedCampaign || "__system__";
-        const r = await callJsonApi("screening", {
-          action: "library",
-          campaign_id: cid,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the screening engine.";
-          this.items = [];
-        } else {
-          this.items = (r.data && r.data.items) || [];
-        }
-        this.loading = false;
-      },
+    async loadLibrary() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaign || "__system__";
+      const r = await callJsonApi("screening", {
+        action: "library",
+        campaign_id: cid,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the screening engine.";
+        this.items = [];
+      } else {
+        this.items = (r.data && r.data.items) || [];
+      }
+      this.loading = false;
+    },
 
-      async generateAnswer() {
-        if (!this.genQuestion.trim()) return;
-        this.busy = true;
-        this.fatalError = "";
-        const body = {
-          action: "generate",
-          campaign_id: this.selectedCampaign || "__system__",
-          application_id: this.genApplicationId.trim() || "__system__",
-          question: this.genQuestion.trim(),
-        };
-        if (this.genContext.trim()) {
-          body.true_source = this.genContext.trim();
-        }
-        const r = await callJsonApi("screening", body);
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Failed to generate screening answer.";
-        }
-        this.busy = false;
-        this.genQuestion = "";
-        this.genContext = "";
-        await this.loadLibrary();
-      },
-    }));
-  });
+    async generateAnswer() {
+      if (!this.genQuestion.trim()) return;
+      this.busy = true;
+      this.fatalError = "";
+      const body = {
+        action: "generate",
+        campaign_id: this.selectedCampaign || "__system__",
+        application_id: this.genApplicationId.trim() || "__system__",
+        question: this.genQuestion.trim(),
+      };
+      if (this.genContext.trim()) {
+        body.true_source = this.genContext.trim();
+      }
+      const r = await callJsonApi("screening", body);
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to generate screening answer.";
+      }
+      this.busy = false;
+      this.genQuestion = "";
+      this.genContext = "";
+      await this.loadLibrary();
+    },
+  }));
 </script>

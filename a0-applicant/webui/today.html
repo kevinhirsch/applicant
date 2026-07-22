@@ -67,63 +67,62 @@
   </div>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("todayPanel", () => ({
-      items: [],
-      count: 0,
-      loading: true,
-      fatalError: "",
-      busy: false,
-      showSnoozed: false,
-      campaignId: "__system__",
+  window.Alpine.data("todayPanel", () => ({
+    items: [],
+    count: 0,
+    loading: true,
+    fatalError: "",
+    busy: false,
+    showSnoozed: false,
+    campaignId: "__system__",
 
-      async init() {
-        await this.loadItems();
-      },
+    async init() {
+      await this.loadItems();
+    },
 
-      async loadItems() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("pending", {
-          action: "list",
-          campaign_id: this.campaignId,
-          include_snoozed: this.showSnoozed,
-        });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the pending-actions engine.";
-          this.items = [];
-          this.count = 0;
-        } else {
-          this.items = (r.data && r.data.items) || [];
-          this.count = (r.data && r.data.count) || 0;
-        }
-        this.loading = false;
-      },
+    async loadItems() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("pending", {
+        action: "list",
+        campaign_id: this.campaignId,
+        include_snoozed: this.showSnoozed,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the pending-actions engine.";
+        this.items = [];
+        this.count = 0;
+      } else {
+        this.items = (r.data && r.data.items) || [];
+        this.count = (r.data && r.data.count) || 0;
+      }
+      this.loading = false;
+    },
 
-      async resolveItem(actionId) {
-        this.busy = true;
-        await callJsonApi("pending", { action: "resolve", action_id: actionId });
-        this.busy = false;
-        await this.loadItems();
-      },
+    async resolveItem(actionId) {
+      this.busy = true;
+      await callJsonApi("pending", { action: "resolve", action_id: actionId });
+      this.busy = false;
+      await this.loadItems();
+    },
 
-      async snoozeItem(actionId, hours = 24) {
-        this.busy = true;
-        await callJsonApi("pending", { action: "snooze", action_id: actionId, hours });
-        this.busy = false;
-        await this.loadItems();
-      },
+    async snoozeItem(actionId, hours = 24) {
+      this.busy = true;
+      await callJsonApi("pending", { action: "snooze", action_id: actionId, hours });
+      this.busy = false;
+      await this.loadItems();
+    },
 
-      async resolveAll() {
-        this.busy = true;
-        const ids = this.items.map(i => i.id);
-        await callJsonApi("pending", { action: "resolve_bulk", campaign_id: this.campaignId, action_ids: ids });
-        this.busy = false;
-        await this.loadItems();
-      },
-    }));
-  });
+    async resolveAll() {
+      this.busy = true;
+      const ids = this.items.map(i => i.id);
+      await callJsonApi("pending", { action: "resolve_bulk", campaign_id: this.campaignId, action_ids: ids });
+      this.busy = false;
+      await this.loadItems();
+    },
+  }));
 </script>
