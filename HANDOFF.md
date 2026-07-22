@@ -441,7 +441,8 @@ tags, on-demand sync.
   `fastapi_mcp` API-mismatch that had blocked the seam).
 - **Still open** (the build stream's §8 is the authority on why): AZ1-3 #831, AZ2-1/2-5 remnants
   (#833,837), AZ3-2 #840, AZR-2/3 (#847,848), AZ5 gates (#851–853), AZ6 (#854–859), AZ7 (#860–863),
-  plus the retained road-to-market track (#654,671,672,681,684–686,698–708,716–718,722) and #145.
+  plus the retained road-to-market track (#654,671,672,681,684–686,698–700,703,706–708,716–718,722)
+  and #145 — 19 az-port + 19 others = 38.
 - **Dedupes the unification caught, still valid:** AZ4-3 → superseded by **AZ7-2 #861**;
   **AZ6-5 = #671** (the existing PAG-1 gate, not duplicated).
 - **FR-INTEL provenance:** #865–871 were authored **by the build stream mid-build** (not in the
