@@ -111,6 +111,9 @@
 
   <script>
   (function() {
+const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
+const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('aprivacy', () => ({
       loading: false,
       fatalError: '',

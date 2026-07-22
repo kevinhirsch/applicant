@@ -118,7 +118,7 @@
   (() => {
   (() => {
   const _apiP = import("/js/api.js");
-  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
 
   window.Alpine.data("takeoverPanel", () => ({
     sessions: [],

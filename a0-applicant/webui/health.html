@@ -100,7 +100,8 @@
     async loadCapabilities() {
       this.loading = true;
       this.fatalError = "";
-      const { callJsonApi } = await _apiP;
+      const { callJsonApi: _rawCallJsonApi } = await _apiP;
+const callJsonApi = (ep, ...a) => _rawCallJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
       const r = await callJsonApi("health", { action: "capabilities" });
       if (!r || !r.ok) {
         this.fatalError = (r && r.error) || "Couldn't reach the health engine.";
@@ -116,7 +117,8 @@
       this.globalResults = [];
       this.globalSummary = { ok: 0, fail: 0 };
 
-      const { callJsonApi } = await _apiP;
+      const { callJsonApi: _rawCallJsonApi } = await _apiP;
+const callJsonApi = (ep, ...a) => _rawCallJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
       const listR = await callJsonApi("campaigns", { action: "list" });
       const campaigns = (listR && listR.ok && listR.data && listR.data.campaigns) || [];
 
