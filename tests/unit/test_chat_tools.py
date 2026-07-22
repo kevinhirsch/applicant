@@ -377,7 +377,7 @@ def test_round_cap_bounds_the_loop():
 
 @pytest.mark.unit
 def test_remember_general_preference_routes_to_memory():
-    """D3: A general preference like 'I prefer remote' saves directly to memory (not curation)."""
+    """D3: A general preference like 'I prefer remote' is staged for approval (never silently saved)."""
     mem, skills, recall = InMemoryMemoryStore(), InMemorySkillStore(), InMemoryRecallIndex()
     cur = _curation(mem, skills, recall)
     llm = _ScriptedToolLLM(
@@ -387,12 +387,13 @@ def test_remember_general_preference_routes_to_memory():
 
     reply = chat._reply_text(_cid(), "I prefer remote roles.", gaps=[])
 
-    # The preference should be saved directly to memory, not staged
+    # The preference should be staged for review (not silently saved to memory)
     saved = mem.snapshot().all()
-    assert len(saved) > 0
-    assert any("remote" in (entry.text or "").lower() for entry in saved)
-    # Curation should have nothing staged (direct save bypasses curation approval)
-    assert len(cur.list_staged()) == 0
+    assert len(saved) == 0  # NOT silently saved
+    # Curation should have the preference staged for approval
+    staged = cur.list_staged()
+    assert len(staged) == 1
+    assert any("remote" in (s.entry.text or "").lower() for s in staged)
     assert reply  # a reply was produced
 
 
@@ -447,5 +448,5 @@ def test_remember_naming_appends_personal_suffix():
     )
     chat = _chat(llm, agent_memory=_Memory(mem, skills, recall), curation=cur)
     reply = chat._reply_text(_cid(), "My name is Alex.", gaps=[])
-    # The tool result should say "personal notes" or the reply should confirm
-    assert any("personal" in r.lower() for r in llm.seen_tool_results)
+    # The tool result should mention approval (staged for review)
+    assert any("approval" in r.lower() for r in llm.seen_tool_results)

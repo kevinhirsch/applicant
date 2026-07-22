@@ -282,13 +282,7 @@ class ChatToolbox:
                 "I won't save that as a standing instruction — a note can't grant me "
                 "permission to submit, create accounts, or skip your review."
             )
-        # D3: classify - general preferences route directly to A0's memory, job facts go through curation
-        is_general = _is_general_preference(text)
-        if is_general and self._agent_memory is not None and hasattr(self._agent_memory, 'memory'):
-            kind = KIND_USER
-            entry = MemoryEntry(text=text, kind=kind, campaign_id=self._campaign_str())
-            self._agent_memory.memory.add(entry)
-            return "Noted! (saved to your personal notes)"
+
         kind = KIND_USER if args.get("about_user") else KIND_ENVIRONMENT
         result = self._curation.stage_memory(
             text, kind=kind, campaign_id=self._campaign_str()
