@@ -18,9 +18,9 @@ Note: `origin/main` also moved externally during the session to `3b83ed7bb`
 unrelated PR-style commit not present in local history. Local main is therefore BEHIND origin/main
 by that lineage; merge before pushing (§3).
 
-## 2. Exact local ref positions at close (repo: `/a0/usr/projects/applicant` in container `§§secret(GITHUB_BOT_HANDLE)`)
+## 2. Exact local ref positions at close (repo: `/a0/usr/projects/applicant` in container `agent-zero`)
 
-- `claude/refactor-§§secret(GITHUB_BOT_HANDLE)-applicant-xn7xoc` (the program branch) — tip includes, newest first:
+- `claude/refactor-agent-zero-applicant-xn7xoc` (the program branch) — tip includes, newest first:
   - `271f97704` diagnostics preservation (this commit)
   - `638d6eec8` scripts/journey_via_sidebar.py (the gold-standard crawler)
   - `d43784555` HANDOFF.md 2026-07-22 revision
@@ -33,7 +33,7 @@ by that lineage; merge before pushing (§3).
   local main at close.
 - `_premerge_backup_main` — local main exactly as it was BEFORE the program merge (`c976ee264`).
   Delete only after the owner is happy with the merge.
-- `origin/claude/refactor-§§secret(GITHUB_BOT_HANDLE)-applicant-xn7xoc` — ~310 commits behind the local branch.
+- `origin/claude/refactor-agent-zero-applicant-xn7xoc` — ~310 commits behind the local branch.
 
 ## 3. To publish everything (owner, from any credentialed environment)
 
@@ -43,7 +43,7 @@ git fetch origin
 git checkout main
 git merge origin/main                 # brings in 3b83ed7bb + the MCP handoff commit(s); resolve HANDOFF.md by keeping local (identical content, different commits)
 git push origin main
-git push origin claude/refactor-§§secret(GITHUB_BOT_HANDLE)-applicant-xn7xoc
+git push origin claude/refactor-agent-zero-applicant-xn7xoc
 ```
 
 ## 4. Lost to the host reboot (context, not code)
@@ -65,9 +65,9 @@ and their disposition:
 - The production compose stack (project `docker`) — all up. **`docker-a0-1` (:8090) still runs the
   PRE-fix image.** First action next session: rebuild + `up -d --no-deps a0` (HANDOFF §5.3), then
   journey-crawl :8090.
-- `§§secret(GITHUB_BOT_HANDLE)` (:5080) — the coder, idle. Drive chats worth cleaning:
+- `agent-zero` (:5080) — the coder, idle. Drive chats worth cleaning:
   `iapiprefix`, `inullread`, `inullread2`, `ihandoffpush`, `ihandoffsync2`
-  (`~/§§secret(GITHUB_BOT_HANDLE)-ops/az-rmchat.sh <ctx>`).
+  (`~/agent-zero-ops/az-rmchat.sh <ctx>`).
 - All Claude-side monitors/watchers from the session are dead (reboot + session close) — re-arm the
   commit Monitor when driving resumes (HANDOFF §6.1).
 

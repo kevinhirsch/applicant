@@ -214,6 +214,13 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 
 ## 4. Phases & stories (index)
 
+> **Status sync 2026-07-22** (verified against the GitHub issues API): 30 az-port issues are
+> closed, 19 open. **DONE** below = the story's issue is closed with a commit-cited completion
+> note. Caveat: the build code lives on the build stream's **local, unpushed branch** in the A0
+> container (tip `271f9770`, ~310 ahead) — **closed ≠ merged to `origin/main`**; reconciliation is
+> a deliberate owner-supervised step. See `HANDOFF.md` §7/§11 and
+> `docs/ops/session-close-2026-07-22.md`.
+
 **Canonical issues per story:**
 
 - AZ0-1→6: #823 #824 #825 #826 #827 #828
@@ -225,43 +232,47 @@ Legend — **Target**: `A0-native` (exists, use as-is) · `plugin` (Applicant pl
 - AZ5-1→3: #851 #852 #853
 - AZ6-1→4: #854 #855 #856 #857 · **AZ6-5 = #671** (the existing PAG-1 gate, re-scoped — deliberately not duplicated) · AZ6-6/7: #858 #859
 - AZ7-1→4: #860 #861 #862 #863
+- FR-INTEL (model-routing suite, authored mid-build by the build stream — not in the original #822
+  set): #865 #866 #867 #868 #869 #870 #871 — **all closed**; spec doc
+  `docs/backlog/az-port-intelligence-routing.md` is on the build branch only (lands at
+  reconciliation)
 
 | ID | Story | Effort | Owner | Status |
 |---|---|---|---|---|
 | **Phase AZ-0 — Foundations** | | | | |
-| AZ0-1 | Vendor agent-zero subtree + vendor-sync script + round-trip proof | M | eng | — |
-| AZ0-2 | Compose integration: `a0` service joins the stack; `companion` demotion wiring | M | eng | — |
-| AZ0-3 | License/attribution ledger (Agent Zero s.r.o. MIT) + THIRD_PARTY/ACKNOWLEDGMENTS rows | S | eng | — |
-| AZ0-4 | Branding overlay (assets + name strings) + fail-closed branded-artifact CI check + denylist carve-out | M | eng | — |
-| AZ0-5 | Plugin skeleton (`a0-applicant/`) + build-time mount + hello-world panel via `x-extension` | M | eng | — |
-| AZ0-6 | **Seam proof**: engine MCP (SSE `/mcp`, `mcp` extra baked into the image — or `stdio` adapter) registered in A0; agent lists campaigns/pending; submit attempt refused server-side | M | eng | — |
+| AZ0-1 | Vendor agent-zero subtree + vendor-sync script + round-trip proof | M | eng | **DONE** |
+| AZ0-2 | Compose integration: `a0` service joins the stack; `companion` demotion wiring | M | eng | **DONE** |
+| AZ0-3 | License/attribution ledger (Agent Zero s.r.o. MIT) + THIRD_PARTY/ACKNOWLEDGMENTS rows | S | eng | **DONE** |
+| AZ0-4 | Branding overlay (assets + name strings) + fail-closed branded-artifact CI check + denylist carve-out | M | eng | **DONE** |
+| AZ0-5 | Plugin skeleton (`a0-applicant/`) + build-time mount + hello-world panel via `x-extension` | M | eng | **DONE** |
+| AZ0-6 | **Seam proof**: engine MCP (SSE `/mcp`, `mcp` extra baked into the image — or `stdio` adapter) registered in A0; agent lists campaigns/pending; submit attempt refused server-side | M | eng | **DONE — seam proof PASSED live** |
 | **Phase AZ-1 — OOBE parity** | | | | |
-| AZ1-1 | Model-connect bridge: A0 model gate/onboarding → engine `POST /setup/llm` (D2) | M | both | — |
-| AZ1-2 | Applicant OOBE plugin: welcome + 12-section resumable intake, `apply_missing[]` honest completion | L | eng | — |
+| AZ1-1 | Model-connect bridge: A0 model gate/onboarding → engine `POST /setup/llm` (D2) | M | both | **DONE** |
+| AZ1-2 | Applicant OOBE plugin: welcome + 12-section resumable intake, `apply_missing[]` honest completion | L | eng | **DONE** |
 | AZ1-3 | Base-résumé upload + parse-verify surface + font detect + LaTeX accept/reject | M | eng | — |
-| AZ1-4 | Feature-state gating layer in the plugin (4-state, engine-derived) + agent-profile deferral until `apply_ready` | M | eng | — |
+| AZ1-4 | Feature-state gating layer in the plugin (4-state, engine-derived) + agent-profile deferral until `apply_ready` | M | eng | **DONE** |
 | **Phase AZ-2 — Daily loop** | | | | |
 | AZ2-1 | Portal panel (pending actions + affordances) + A0 notification-center integration | L | eng | — |
-| AZ2-2 | Digest panel + approve/decline + feedback | M | eng | — |
-| AZ2-3 | Documents + redline review + H3 snapshot renderer + H4 provenance | L | eng | — |
-| AZ2-4 | Remote takeover embed + final-submit stop boundary + 2FA/account-step resume | L | eng | — |
+| AZ2-2 | Digest panel + approve/decline + feedback | M | eng | **DONE** |
+| AZ2-3 | Documents + redline review + H3 snapshot renderer + H4 provenance | L | eng | **DONE** |
+| AZ2-4 | Remote takeover embed + final-submit stop boundary + 2FA/account-step resume | L | eng | **DONE** |
 | AZ2-5 | Job Assistant integration into A0 chat (profile + engine-backed tools + chips) (D8) | L | both | — |
-| AZ2-6 | Health panel + global pause + honest degrade states (H2 anchors) | M | eng | — |
+| AZ2-6 | Health panel + global pause + honest degrade states (H2 anchors) | M | eng | **DONE** |
 | **Phase AZ-3 — Full surface parity (long tail)** | | | | |
-| AZ3-1 | Settings suite: tiers ladder, channels+quiet-hours, fonts, sandbox+automation, telemetry, campaign settings | L | eng | — |
+| AZ3-1 | Settings suite: tiers ladder, channels+quiet-hours, fonts, sandbox+automation, telemetry, campaign settings | L | eng | **DONE** |
 | AZ3-2 | Insight suite: tracker, results, activity+run-controls, gallery, compare, capabilities, trust | L | eng | — |
-| AZ3-3 | Mind panel + curation approvals (kept separate from A0 `_memory`) | M | eng | — |
-| AZ3-4 | Vault, Easy Apply, screening-answer library, interview prep, save-a-job, Today lens, switcher/shortcuts/demo/export/audit/update/debug | L | eng | — |
-| AZ3-5 | Dormant-surface preservation (desktop assist, aggressiveness) as present-but-grayed | S | eng | — |
-| AZ3-6 | Integrations settings: lane credentials re-home (email/calendar → companion) + Connections guidance (MCP plane vs lane plane, journey §5) | M | eng | — |
-| AZ3-7 | Per-surface help system: help affordance + plain-language instructions on every plugin panel, chat "how do I…?" answering from the same content, lens-12-style tests pinning it | L | eng | — |
+| AZ3-3 | Mind panel + curation approvals (kept separate from A0 `_memory`) | M | eng | **DONE** |
+| AZ3-4 | Vault, Easy Apply, screening-answer library, interview prep, save-a-job, Today lens, switcher/shortcuts/demo/export/audit/update/debug | L | eng | **DONE** |
+| AZ3-5 | Dormant-surface preservation (desktop assist, aggressiveness) as present-but-grayed | S | eng | **DONE** |
+| AZ3-6 | Integrations settings: lane credentials re-home (email/calendar → companion) + Connections guidance (MCP plane vs lane plane, journey §5) | M | eng | **DONE** |
+| AZ3-7 | Per-surface help system: help affordance + plain-language instructions on every plugin panel, chat "how do I…?" answering from the same content, lens-12-style tests pinning it | L | eng | **DONE** |
 | **Phase AZ-R — Bespoke UI redesign (D1; parallel workstream, starts after AZ-2)** | | | | |
-| AZR-1 | Fork `webui/` into `a0-webui/` + build-step application + documented cherry-pick workflow | M | eng | — |
+| AZR-1 | Fork `webui/` into `a0-webui/` + build-step application + documented cherry-pick workflow | M | eng | **DONE** |
 | AZR-2 | Applicant visual design system + redesign execution across shipped surfaces (incl. the D12 power-tools curation) | L | both | — |
 | AZR-3 | Upstream-UI cherry-pick drill: pull newer upstream, port one UI change into the fork, gates green | S | eng | — |
 | **Phase AZ-4 — Companion services** | | | | |
-| AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | — |
-| AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | — |
+| AZ4-1 | Companion headless hardening: strip public UI exposure, keep lanes A–D + internal token | M | eng | **DONE** |
+| AZ4-2 | Lane regression tests against companion (calendar write-back, email scan, research run) | M | eng | **DONE** |
 | AZ4-3 | ~~Replace email lane with the shell's email integration~~ | — | — | **SUPERSEDED by AZ7-2 (#861)** — the committed email-lane cutover |
 | **Phase AZ-5 — Safety & honesty proofs** | | | | |
 | AZ5-1 | Bypass negative test: A0 browser/shell cannot complete ATS login/fill/upload/submit around the engine | L | eng | — |
@@ -316,7 +327,7 @@ those instructions (journey blueprint §8; lens-12 help parity).
 | D19 | Memory routing for user-stated "remember this" | **DECIDED (owner, 2026-07-18): route by content** — job-search facts → engine mind via curation approval; general preferences → A0 memory instantly; the assistant names where each item landed (H1) |
 | D20 | PAG-1 dogfood timing | **DECIDED (owner, 2026-07-18): owner dogfoods from AZ-2** (daily loop) — feedback steers AZ-3/AZ-R; PAG-1 formally passes at AZ-6 |
 | D21 | Release identity | **DECIDED (owner, 2026-07-18): Applicant 2.0** — VERSION → 2.0.0 at the ship gate; changelog/docs relaunch; P4 GTM items refresh in AZ-6. New story AZ6-7 |
-| D22 | Process for the spec + build | **REVISED (owner, 2026-07-18): spec merged first** — #822 landed the locked spec in `main` (squash `910b281`) after all bot findings were resolved, so it stands immutable while the external coding agent builds. AZ-0 proceeds on the restarted working branch under a dedicated **AZ-0 PR**; from AZ-1 on, each increment is its own focused PR. (Original hold-open plan superseded by the owner at merge time) |
+| D22 | Process for the spec + build | **REVISED (owner, 2026-07-18): spec merged first** — #822 landed the locked spec in `main` (squash `910b281`) after all bot findings were resolved, so it stands immutable while the external coding agent builds. AZ-0 proceeds on the restarted working branch under a dedicated **AZ-0 PR**; from AZ-1 on, each increment is its own focused PR. (Original hold-open plan superseded by the owner at merge time) *[Post-fact 2026-07-22: AZ-0 completed and #823–828 closed, but the build happened on the A0 container's local branch, never pushed — the "AZ-0 PR" (#864) ended up carrying docs only and is merged/closed. The per-increment-PR plan was overtaken by events; reconciliation now follows `docs/ops/session-close-2026-07-22.md` §3.]* |
 | D23 | Shell-side secret storage (model keys in A0 `usr/settings.json`, plaintext at rest) | **DECIDED (owner, 2026-07-18): accept A0's posture** — self-hosted, single-user disk-trust; the encrypted-at-rest relaxation for shell-side secrets is **documented honestly** (H5) in security docs + settings help copy. Engine vault posture unchanged for engine-side credentials |
 | D24 | Language support at 2.0 | **DECIDED (owner, 2026-07-18): English-only** — all new UI/help strings built i18n-ready (no hardcoded strings) so locales can land post-2.0 without rework |
 | D25 | General-agent spend guardrails | **DECIDED (owner, 2026-07-18): soft daily budget + alert** — user-configurable, sensible default; crossing it notifies via the ladder and asks before continuing heavy work, never hard-kills mid-task; honest usage counters in settings. Engine's job-lane cost rules unchanged |
@@ -343,8 +354,11 @@ by the new shell via the adapted playtest harness — asserted at AZ6-1.
 
 ## 7. Suggested next increment
 
-**AZ0-1 + AZ0-5 + AZ0-6, landed on the dedicated AZ-0 PR** (per revised D22: the spec merged first
-via #822; the foundations build on the restarted working branch). AZ0-6 is the cheapest possible
-falsification of the whole strategy: if the agent can list campaigns over MCP and a submit attempt
-is refused server-side, every later phase builds on proven ground. From AZ-1 on, each increment is
-its own focused PR.
+*[Superseded 2026-07-22 — the original suggestion (AZ0-1 + AZ0-5 + AZ0-6 on the AZ-0 PR) is
+**done**: AZ0-6's seam proof passed live (the agent lists campaigns over MCP; a consequential
+submit attempt is refused server-side), so every later phase builds on proven ground.]*
+
+**Current next increment:** finish the open remnants — AZ1-3 #831, AZ2-1 #833, AZ2-5 #837,
+AZ3-2 #840 — then the AZ-5 gates (#851 bypass negative test, #852, #853 H1–H5 re-audit) ahead of
+the AZ-6 ship chain. Owner-supervised reconciliation of the build branch onto `origin/main`
+(`docs/ops/session-close-2026-07-22.md` §3) precedes or accompanies the ship gate.
