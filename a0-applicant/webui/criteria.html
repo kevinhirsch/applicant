@@ -184,8 +184,8 @@
   window.Alpine.data("criteriaPanel", () => ({
     campaigns: [],
     selectedCampaignId: "",
-    criteriaData: null,
-    signatureData: null,
+    criteriaData: { titles: [], locations: [], work_modes: [], keywords: [] },
+    signatureData: { facets: {}, samples_total: 0 },
     loading: true,
     fatalError: "",
     adjusting: false,
