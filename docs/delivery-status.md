@@ -1,5 +1,13 @@
 # Delivery Status
 
+> **Applicant 2.0 port (2026-07): tracked separately.** An Agent Zero-shell port of this product
+> ("Applicant 2.0") is in flight: spec merged to `main` (PRs #822/#864; decisions D1–D26), 30 of 49
+> port stories closed with the safety seam proven live — but the port build lives on an **unpushed
+> local branch** (owner-supervised reconciliation pending), so **everything below remains the
+> shipping product**: the front-door (`workspace/`) stays the public surface until the port's ship
+> gate (#857) executes. Port status: `docs/backlog/agent-zero-port.md` §4 · `HANDOFF.md` §11 ·
+> `docs/ops/session-close-2026-07-22.md`.
+
 Single source of "done" truth: a per-phase delivery summary for Applicant.
 **All phases are merged to `main`:** engine phases 0–4, a production-hardening remediation
 pass that followed an honest re-audit, the **front-door (Phase 5)** lift-and-shift of

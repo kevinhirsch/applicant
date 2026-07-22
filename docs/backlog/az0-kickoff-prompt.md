@@ -1,5 +1,12 @@
 # Starter prompt — hand the AZ-0 build to a coding agent
 
+> **HISTORICAL (retired 2026-07-22) — do not re-run.** Phase AZ-0 is **complete**: #823–828 are all
+> closed and the #828 seam proof **passed live** (campaigns listed over MCP; a consequential submit
+> refused server-side). The referenced "AZ-0 PR #864" is merged/closed (it ended up carrying docs
+> only — the build itself happened on the A0 container's local branch and was never pushed; see
+> `HANDOFF.md` §11 and `docs/ops/session-close-2026-07-22.md`). This file is preserved as the
+> record of the kickoff contract; for current next steps see `docs/backlog/agent-zero-port.md` §7.
+
 > Copy-paste the block below into the coding agent (an Agent Zero instance or any capable coding
 > agent) that will execute Phase AZ-0. It is self-contained: the agent needs no conversation
 > history, only repo access with push rights to the working branch and an environment that can run

@@ -15,6 +15,11 @@ Mandated by master spec §13: **Requirement ID → Work Package (phase) → BDD 
 > names the workspace surface exposing each requirement family. Where the distinction
 > matters (engine-internal vs. operator-reachable), it is called out.
 
+> **2026-07 note — Applicant 2.0 port:** an Agent Zero-shell port is in flight
+> (`docs/backlog/agent-zero-port.md`); its build lives on an unpushed local branch, so **this
+> matrix's front-door-reachability chain (`workspace/`) remains the shipping truth** until the
+> port's ship gate re-points it (that re-pointing is its own story, AZ6-3 #856, open).
+
 **Status (2026-06): all phases (0–5) are merged to `main`** — engine phases 0–4, the
 production-hardening remediation, and the **front-door (Phase 5)** lift-and-shift onto the
 workspace + the reachability re-audit. Every engine row below was re-verified against the

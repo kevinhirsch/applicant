@@ -1,7 +1,10 @@
 # Agent Zero + Applicant: Monorepo Plane Map & Integration Design
 
-> **Status: decision-support draft.** This maps the architectural "planes" for the agreed direction so
-> the trade-offs are concrete before code moves. It extends the doctrine in
+> **Status: adopted spec** (decisions D1–D26 recorded 2026-07-18, `docs/backlog/agent-zero-port.md`
+> §5; originally a decision-support draft). The build executed against this map through 2026-07-22 —
+> 30 az-port stories closed, the AZ0-6 seam proof **passed live** — on the build stream's local
+> branch (see `HANDOFF.md` §11 + `docs/ops/session-close-2026-07-22.md`). This maps the
+> architectural "planes" so the trade-offs are concrete. It extends the doctrine in
 > [`../HARVEST-INVENTORY.md`](../HARVEST-INVENTORY.md) (keep the moat, harvest behind seams) to the
 > general-agent + full-UI case that audit did not cover.
 >
@@ -9,8 +12,11 @@
 > this repo, both shipping together — **while maintaining updateability with upstream agent-zero to the
 > extent possible.**
 >
-> **Fork caveat:** agent-zero facts below describe upstream `agent0ai/agent-zero`. Verify
-> `kevinhirsch/agent-zero`'s deltas and its exact license before lifting.
+> **Fork caveat — RESOLVED 2026-07-22:** agent-zero facts below describe upstream
+> `agent0ai/agent-zero`. The `kevinhirsch/agent-zero` fork was verified a **pristine upstream
+> mirror** (single `main` = upstream tip `d1d48bc`, no fork-local commits, no extra branches/tags) —
+> zero deltas to account for. License: MIT, © 2025 Agent Zero, s.r.o.; the commercial white-label
+> confirmation is the owner decision tracked in **#722**.
 
 ## The two codebases, one line each
 

@@ -43,6 +43,12 @@ résumé, key, and submissions. Don't conflate their ordering.
 
 ## Index — all stories at a glance
 
+> **Companion track:** the **Applicant 2.0 / Agent Zero port** backlog (stories AZ0-1…AZ7-4 +
+> FR-INTEL, issues #823–#872) lives in `docs/backlog/agent-zero-port.md` §4 under the same
+> universal DoR/DoD. As of 2026-07-22: 30 port stories closed (on the build stream's unpushed
+> local branch — see `HANDOFF.md` §11), 19 open. The launch gates below (PAG-1, P2-1, P2-4) still
+> gate the port's ship chain (AZ6-5 **is** #671).
+
 | ID | Story | Effort | Owner | Status |
 |----|-------|--------|-------|--------|
 | P0-1 | Window-chrome baseline merged | S | eng | DONE |
