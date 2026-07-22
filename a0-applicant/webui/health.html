@@ -81,6 +81,8 @@
 </div>
 
 <script>
+  (() => {
+  (() => {
   const _apiP = import("/js/api.js");
 
   window.Alpine.data("healthPanel", () => ({
@@ -146,4 +148,6 @@
       await this.doGlobal("resume");
     }
   }));
+  })();
+  })();
 </script>

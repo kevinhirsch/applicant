@@ -67,6 +67,8 @@
 </div>
 
 <script>
+  (() => {
+  (() => {
   const _apiP = import("/js/api.js");
   const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
@@ -120,4 +122,6 @@
       await this.loadCampaigns();
     },
   }));
+  })();
+  })();
 </script>

@@ -176,6 +176,8 @@
 </div>
 
 <script>
+  (() => {
+  (() => {
   const _apiP = import("/js/api.js");
   const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
   const getCsrfToken = async (...a) => (await _apiP).getCsrfToken(...a);
@@ -309,4 +311,6 @@
       catch { return (this.SECTIONS.map(s => s.id).filter(id => !this.isDone(id))); }
     },
   }));
+  })();
+  })();
 </script>
