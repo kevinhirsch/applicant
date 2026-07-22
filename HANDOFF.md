@@ -396,8 +396,8 @@ Both use the branch name `claude/refactor-agent-zero-applicant-xn7xoc`, but on *
 - **`origin/claude/refactor-agent-zero-applicant-xn7xoc`** (tip `13fbb71`) holds **only the spec
   stream's 2 housekeeping commits** — it is *not* the build.
 
-**Correction of record (so no one repeats it):** the spec stream spent ~3 days polling **origin PR
-#864** and reported it "idle" ~25 times while the build was in fact progressing on the **local**
+**Correction of record (so no one repeats it):** the spec stream spent ~3 days polling **origin
+PR #864** and reported it "idle" ~25 times while the build was in fact progressing on the **local**
 branch. Origin never saw the build (no push creds, §7). **To gauge build progress, read the closed
 issues' completion notes and the container's local branch — never an origin PR.** #822/#864 carried
 **docs only** (verified: `3b83ed7` = 2 files); neither merged any build code to `main`.
