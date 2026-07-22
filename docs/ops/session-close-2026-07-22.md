@@ -89,3 +89,15 @@ and their disposition:
 3. Verify `origin/main` got the close-time MCP upload (this doc + scripts); if not, re-dispatch A0.
 4. Close the journey-arc panel issues + #854 via A0's github MCP (evidence: HANDOFF §4.4).
 5. Re-arm the commit Monitor and resume the backlog pipeline (HANDOFF §6.1, §10).
+
+## 8. Addendum — state of the origin/main mirror of this upload (verified at close)
+
+The MCP upload landed as `fa5b56d5e` on origin/main: **7/9 files byte-identical**. Two differ, both
+benign, both to be overwritten by the owner's credentialed push of local main:
+- `docs/ops/session-close-2026-07-22.md` (this file): A0's secrets-masker substituted a
+  `§§secret(...)` placeholder for the literal coder-container name in 5 places in the ORIGIN copy
+  (the masker rewrites file contents before A0's model sees them, so an A0 re-upload cannot fix it).
+  THIS local copy is canonical.
+- `scripts/diagnostics/journey_crawl.py`: origin copy lost one trailing blank line. Cosmetic.
+When pushing (§3), these two paths (and HANDOFF.md, identical content but different commits) should
+resolve to the LOCAL versions.
