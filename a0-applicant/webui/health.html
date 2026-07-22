@@ -80,70 +80,70 @@
   </template>
 </div>
 
-<script type="module">
-  import { callJsonApi } from "/js/api.js";
+<script>
+  const _apiP = import("/js/api.js");
 
-  document.addEventListener("alpine:init", () => {
-    window.Alpine.data("healthPanel", () => ({
-      capabilities: [],
-      loading: true,
-      fatalError: "",
-      globalBusy: false,
-      globalResults: [],
-      globalSummary: { ok: 0, fail: 0 },
+  window.Alpine.data("healthPanel", () => ({
+    capabilities: [],
+    loading: true,
+    fatalError: "",
+    globalBusy: false,
+    globalResults: [],
+    globalSummary: { ok: 0, fail: 0 },
 
-      async init() {
-        await this.loadCapabilities();
-      },
+    async init() {
+      await this.loadCapabilities();
+    },
 
-      async loadCapabilities() {
-        this.loading = true;
-        this.fatalError = "";
-        const r = await callJsonApi("health", { action: "capabilities" });
-        if (!r || !r.ok) {
-          this.fatalError = (r && r.error) || "Couldn't reach the health engine.";
-          this.capabilities = [];
-        } else {
-          this.capabilities = (r.data && r.data.capabilities) || (r.data && r.data.items) || (r.data && Array.isArray(r.data) ? r.data : []) || [];
-        }
-        this.loading = false;
-      },
-
-      async doGlobal(action) {
-        this.globalBusy = true;
-        this.globalResults = [];
-        this.globalSummary = { ok: 0, fail: 0 };
-
-        const listR = await callJsonApi("campaigns", { action: "list" });
-        const campaigns = (listR && listR.ok && listR.data && listR.data.campaigns) || [];
-
-        const results = [];
-        for (const c of campaigns) {
-          const rr = await callJsonApi("agent_runs", { action: action, campaign_id: c.id });
-          results.push({
-            campaign: c.name || c.id,
-            action: action,
-            ok: !!(rr && rr.ok),
-            status: (rr && rr.ok) ? "OK" : "FAIL",
-            error: (!rr || !rr.ok) ? ((rr && rr.error) || "request failed") : null
-          });
-        }
-
-        this.globalResults = results;
-        this.globalSummary = {
-          ok: results.filter(r => r.ok).length,
-          fail: results.filter(r => !r.ok).length
-        };
-        this.globalBusy = false;
-      },
-
-      async pauseAll() {
-        await this.doGlobal("pause");
-      },
-
-      async resumeAll() {
-        await this.doGlobal("resume");
+    async loadCapabilities() {
+      this.loading = true;
+      this.fatalError = "";
+      const { callJsonApi } = await _apiP;
+      const r = await callJsonApi("health", { action: "capabilities" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the health engine.";
+        this.capabilities = [];
+      } else {
+        this.capabilities = (r.data && r.data.capabilities) || (r.data && r.data.items) || (r.data && Array.isArray(r.data) ? r.data : []) || [];
       }
-    }));
-  });
+      this.loading = false;
+    },
+
+    async doGlobal(action) {
+      this.globalBusy = true;
+      this.globalResults = [];
+      this.globalSummary = { ok: 0, fail: 0 };
+
+      const { callJsonApi } = await _apiP;
+      const listR = await callJsonApi("campaigns", { action: "list" });
+      const campaigns = (listR && listR.ok && listR.data && listR.data.campaigns) || [];
+
+      const results = [];
+      for (const c of campaigns) {
+        const rr = await callJsonApi("agent_runs", { action: action, campaign_id: c.id });
+        results.push({
+          campaign: c.name || c.id,
+          action: action,
+          ok: !!(rr && rr.ok),
+          status: (rr && rr.ok) ? "OK" : "FAIL",
+          error: (!rr || !rr.ok) ? ((rr && rr.error) || "request failed") : null
+        });
+      }
+
+      this.globalResults = results;
+      this.globalSummary = {
+        ok: results.filter(r => r.ok).length,
+        fail: results.filter(r => !r.ok).length
+      };
+      this.globalBusy = false;
+    },
+
+    async pauseAll() {
+      await this.doGlobal("pause");
+    },
+
+    async resumeAll() {
+      await this.doGlobal("resume");
+    }
+  }));
 </script>
