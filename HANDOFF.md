@@ -435,10 +435,10 @@ tags, on-demand sync.
 ### 11.4 Backlog audit reconciliation (2026-07-22, cross-checked against GitHub)
 
 - **38 open · 30 az-port closed** (verified via the issues API). The build stream closed all of
-  **AZ-0** (#823–828, incl. the #828 seam gate), **AZ-1** (#829–832 + the FR-INTEL suite #865–871),
-  most of **AZ-2** (#834–836,838), most of **AZ-3** (#839,841–845), **AZ-4** (#849,850), **AZR-1**
-  (#846), and the real deploy bug it found and fixed (#872, the `fastapi_mcp` API-mismatch that had
-  blocked the seam).
+  **AZ-0** (#823–828, incl. the #828 seam gate), **AZ-1 except AZ1-3** (#829, #830, #832 + the
+  FR-INTEL suite #865–871), most of **AZ-2** (#834–836,838), most of **AZ-3** (#839,841–845),
+  **AZ-4** (#849,850), **AZR-1** (#846), and the real deploy bug it found and fixed (#872, the
+  `fastapi_mcp` API-mismatch that had blocked the seam).
 - **Still open** (the build stream's §8 is the authority on why): AZ1-3 #831, AZ2-1/2-5 remnants
   (#833,837), AZ3-2 #840, AZR-2/3 (#847,848), AZ5 gates (#851–853), AZ6 (#854–859), AZ7 (#860–863),
   plus the retained road-to-market track (#654,671,672,681,684–686,698–708,716–718,722) and #145.
