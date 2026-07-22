@@ -167,7 +167,7 @@
         <template x-for="(entry, i) in logsData.entries" :key="i">
           <div class="log-entry">
             <span x-text="entry.timestamp || entry.time || ''"></span>
-            <span x-show="entry.level || entry.severity" style="font-weight:600">[<span x-text="(entry.level || entry.severity).toUpperCase()"></span>]</span>
+            <span x-show="entry.level || entry.severity" style="font-weight:600">[<span x-text="((entry.level || entry.severity) || 'info').toUpperCase()"></span>]</span>
             <span x-text="entry.message || entry.msg || JSON.stringify(entry)"></span>
           </div>
         </template>
@@ -277,9 +277,10 @@
       const r = await callJsonApi("ops", { action: "history", campaign_id: cid });
       if (!r || !r.ok) {
         this.historyError = (r && r.error) || "Failed to load history.";
-        this.historyData = null;
+        this.historyData = { applications: [] };
       } else {
-        this.historyData = r.data || null;
+        this.historyData = (r && r.data) || {};
+        this.historyData.applications = this.historyData.applications || [];
       }
       this.historyLoading = false;
     },
@@ -290,9 +291,10 @@
       const r = await callJsonApi("ops", { action: "detections", campaign_id: cid });
       if (!r || !r.ok) {
         this.detectionsError = (r && r.error) || "Failed to load detections.";
-        this.detectionsData = null;
+        this.detectionsData = { detections: [] };
       } else {
-        this.detectionsData = r.data || null;
+        this.detectionsData = (r && r.data) || {};
+        this.detectionsData.detections = this.detectionsData.detections || [];
       }
       this.detectionsLoading = false;
     },
@@ -314,9 +316,10 @@
       const r = await callJsonApi("ops", { action: "logs" });
       if (!r || !r.ok) {
         this.logsError = (r && r.error) || "Failed to load logs.";
-        this.logsData = null;
+        this.logsData = { entries: [] };
       } else {
-        this.logsData = r.data || null;
+        this.logsData = (r && r.data) || {};
+        this.logsData.entries = this.logsData.entries || [];
       }
       this.logsLoading = false;
     }

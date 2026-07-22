@@ -142,10 +142,10 @@
           <template x-for="(facet, roleName) in signatureData.facets" :key="roleName">
             <div class="signature-facet">
               <h3 x-text="roleName"></h3>
-              <div class="hr-text" x-show="facet.signature" x-text="facet.signature"></div>
+              <div class="hr-text" x-show="facet?.signature" x-text="facet?.signature"></div>
               <div class="meta">
-                <span x-show="facet.samples_count !== undefined">📄 <span x-text="facet.samples_count"></span> samples</span>
-                <span x-show="facet.exploration_budget !== undefined">&nbsp;·&nbsp;🔬 budget: <span x-text="facet.exploration_budget"></span></span>
+                <span x-show="facet?.samples_count !== undefined">📄 <span x-text="facet?.samples_count"></span> samples</span>
+                <span x-show="facet?.exploration_budget !== undefined">&nbsp;·&nbsp;🔬 budget: <span x-text="facet?.exploration_budget"></span></span>
               </div>
             </div>
           </template>
@@ -226,15 +226,23 @@
 
       if (!criteriaRes || !criteriaRes.ok) {
         this.fatalError = (criteriaRes && criteriaRes.error) || "Couldn't reach the criteria engine.";
-        this.criteriaData = null;
+        this.criteriaData = {};
       } else {
-        this.criteriaData = criteriaRes.data || null;
+        this.criteriaData = (criteriaRes && criteriaRes.data) || {};
+        const d = this.criteriaData;
+        d.titles = d.titles || [];
+        d.locations = d.locations || [];
+        d.work_modes = d.work_modes || [];
+        d.keywords = d.keywords || [];
       }
 
       if (sigRes && sigRes.ok) {
-        this.signatureData = sigRes.data || null;
+        this.signatureData = (sigRes && sigRes.data) || {};
+        const sd = this.signatureData;
+        sd.facets = sd.facets || {};
+        sd.samples_total = sd.samples_total || 0;
       } else {
-        this.signatureData = null;
+        this.signatureData = { facets: {}, samples_total: 0 };
       }
 
       this.loading = false;
