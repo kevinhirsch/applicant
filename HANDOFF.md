@@ -389,7 +389,7 @@ As of 2026-07-22 ~02:45 local:
 | Stream | What it did | Where its output lives |
 |---|---|---|
 | **Spec stream** (this section's author) | Authored the strategy + product spec; recorded 26 owner decisions; filed the 60-issue backlog; merged the spec docs to `main` via PRs #822 and #864. **Wrote no build code.** | `origin/main` (durable, reviewed) |
-| **Build stream** (author of §1–§10) | Drove A0 (the coder at :5080) to build the port, closed ~25 issues with real commits, found/fixed the three journey bugs (§4), authored FR-INTEL (#865–871), wrote this HANDOFF. | **local unpushed branch** in the A0 container (`21470f8f2`, 307 ahead — see §7) |
+| **Build stream** (author of §1–§10) | Drove A0 (the coder at :5080) to build the port, closed ~25 issues with real commits, found/fixed the three journey bugs (§4), authored FR-INTEL (#865–871), wrote this HANDOFF. | **local unpushed branch** in the A0 container (tip `271f9770` at close, ~310 ahead — see §7 and `docs/ops/session-close-2026-07-22.md` §2) |
 
 Both use the branch name `claude/refactor-agent-zero-applicant-xn7xoc`, but on **different checkouts**:
 - the **build** is the local branch inside `agent-zero` (`/a0/usr/projects/applicant`), never pushed;
@@ -398,8 +398,11 @@ Both use the branch name `claude/refactor-agent-zero-applicant-xn7xoc`, but on *
 
 **Correction of record (so no one repeats it):** the spec stream spent ~3 days polling **origin
 PR #864** and reported it "idle" ~25 times while the build was in fact progressing on the **local**
-branch. Origin never saw the build (no push creds, §7). **To gauge build progress, read the closed
-issues' completion notes and the container's local branch — never an origin PR.** #822/#864 carried
+branch. Origin never saw the build *code* — no git push credentials exist in the container or host
+(deliberate, §7); individual docs/scripts DO land on `origin/main` via **A0's github-MCP upload
+path** (how `8e11153` and `fa5b56d5` arrived — note that path **bypasses the PR CI gates**). **To
+gauge build progress, read the closed issues' completion notes and the container's local branch —
+never an origin PR.** #822/#864 carried
 **docs only** (verified: `3b83ed7` = 2 files); neither merged any build code to `main`.
 
 ### 11.2 What is durably on `origin/main` (the reviewed spec — the build stream's map)
@@ -412,6 +415,9 @@ issues' completion notes and the container's local branch — never an origin PR
   `docs/backlog/az0-kickoff-prompt.md` (the coding-agent kickoff contract).
 - **#864 (`3b83ed7`)** — D22 revision (spec-first merge) + kickoff re-point.
 - **`8e11153`** — this HANDOFF (build stream).
+- **`fa5b56d5`** — the build stream's close-out: `docs/ops/session-close-2026-07-22.md` (exact refs
+  at close, the publish procedure, verification ground truth) + the preserved diagnostic probes
+  (`scripts/diagnostics/`, `scripts/journey_via_sidebar.py`) — landed via the MCP upload path.
 - The build itself (`agent-zero/` subtree, `a0-applicant/`, `a0-webui/`, `branding/`) is **NOT on
   `origin/main`** — it is the 307-commit local branch (§7).
 
@@ -434,7 +440,8 @@ tags, on-demand sync.
 
 ### 11.4 Backlog audit reconciliation (2026-07-22, cross-checked against GitHub)
 
-- **38 open · 30 az-port closed** (verified via the issues API). The build stream closed all of
+- **38 open · 30 az-port closed** (verified via the issues API; §1's "25 closed" is the build
+  stream's close-pipeline batch count — the label-verified GitHub total is 30). The build stream closed all of
   **AZ-0** (#823–828, incl. the #828 seam gate), **AZ-1 except AZ1-3** (#829, #830, #832 + the
   FR-INTEL suite #865–871), most of **AZ-2** (#834–836,838), most of **AZ-3** (#839,841–845),
   **AZ-4** (#849,850), **AZR-1** (#846), and the real deploy bug it found and fixed (#872, the
@@ -447,8 +454,9 @@ tags, on-demand sync.
   **AZ6-5 = #671** (the existing PAG-1 gate, not duplicated).
 - **FR-INTEL provenance:** #865–871 were authored **by the build stream mid-build** (not in the
   original #822 spec) — the local↔cloud model-routing doctrine that keeps paid tokens for judgment
-  and free local Qwen for typing (spec: `docs/backlog/az-port-intelligence-routing.md`). Treat that
-  doc as a first-class spec addendum alongside the #822 set.
+  and free local Qwen for typing (spec: `docs/backlog/az-port-intelligence-routing.md` — **on the
+  build branch only, not yet on `origin/main`**; the reference resolves at reconciliation). Treat
+  that doc as a first-class spec addendum alongside the #822 set.
 
 ### 11.5 Safety-line status (the product's identity — verify it never regresses)
 
@@ -464,7 +472,8 @@ tags, on-demand sync.
 
 The spec is on `origin/main` (§11.2). The build is functionally done and browser-verified but lives
 on an **unpushed local branch** (§7) and is **not** on `origin/main`; reconciliation is a deliberate,
-owner-supervised step. Progress is tracked by **closed issues + their commit-cited completion notes**,
+owner-supervised step — `docs/ops/session-close-2026-07-22.md` is the second pickup doc (exact refs
+at close + the §3 publish procedure). Progress is tracked by **closed issues + their commit-cited completion notes**,
 not by any origin PR. The piloting model is **Claude specs/verifies/steers, A0 writes the code**
 (§6). The remaining work is the still-open chains in §11.4 (drive via §6.1), the owner unlocks (§2),
 and — before any launch — the AZ5-1 bypass test, the H1–H5 re-audit, and PAG-1 (§11.5).
