@@ -2,79 +2,95 @@
 
 > The port of the Applicant engine onto the Agent Zero (A0) shell. This document is the single
 > pick-up point: current state, what's blocked on whom, turnkey runbooks, architecture, ops tooling,
-> and the hard-won gotchas. Written 2026-07-21.
+> and the hard-won gotchas. Originally written 2026-07-21; **this revision 2026-07-22** adds the
+> user-journey debugging arc (three product-wide frontend bugs found + fixed + browser-verified
+> against a fully wired deployment), the end-to-end deployment recipe, and the current git topology.
 
 ---
 
 ## TL;DR
 
-Applicant 2.0 is **functionally built and validated against the live engine.** The A0-shell surface
-layer (35 panels), the intelligence-routing config, ship tooling, and the mock data-lane basis are all
-in and green. **Completing it is now ~90% three unlocks only you can provide** — not more coding:
+Applicant 2.0 is **functionally built and now verified end-to-end in a real browser against the live
+engine**: 19/20 sidebar journey panels open clean *with real engine data* in a wired deployment
+(the 20th is a test-harness click artifact, not a product bug — see §4.4). Getting here required
+finding and fixing **three product-wide frontend bugs that no source-level test could see**
+(§4.1–4.3) — they are the most important new knowledge in this document.
 
-1. **`GITHUB_TOKEN`** → close the ~21 verified-done issues (the only thing that drops the open count).
-2. **`API_KEY_OTHER` (+ engine `LLM_API_KEY`)** → wake A0's cloud tier *and* the engine's Plane-B LLM.
-3. **Mailbox/calendar credentials** → the real email/calendar lanes (a mock basis already exists).
+State of the world:
 
-Everything else is either gated on those, owned by you (business/legal), or minor polish.
-
-**Verification (2026-07-21):** unit suite **7895 passed** at the known 2-failure baseline
-(`test_prod_compose_env_file` + `test_deploy_hardening_lens04` — the ONLY allowed failures, pre-existing);
-integration **42 passed + 11 cleanly skipped** (the skips are the companion-gated lane-regression tests);
-**39/39 a0-applicant panels render clean in a real browser** (Playwright). Branch:
-`claude/refactor-agent-zero-applicant-xn7xoc` (local only — never pushed).
-
----
-
-## 1. The three unlocks (critical path) — turnkey runbooks
-
-### 1a. `GITHUB_TOKEN` → close the done issues
-- **Rotate** your PAT first, then `export GITHUB_TOKEN=<rotated>`.
-- **Turnkey:** `~/agent-zero-ops/close-done-issues.sh` — dry-run by default (prints exactly what it would
-  do); `close-done-issues.sh --confirm` posts an evidence comment + closes all **21** verified-done issues
-  (list + evidence baked into the script; mapped by DELIVERABLE since the FR-INTEL commit #s were scrambled).
-- Underlying tool: `~/agent-zero-ops/gh-issue.py` (reads `GITHUB_TOKEN`/`GH_TOKEN` from env only; never prints secrets).
-- The close-ready list is in §3. (#838/#839/#842 are near-close-ready — NOT in the auto-close set; they have
-  deferred sub-items, so review + close those individually once the cloud coder finishes them.)
-
-### 1b. LLM key → engine Plane-B **and** A0's cloud coder (ONE key, two places)
-Both are OpenAI-compatible; use the rotated DeepSeek key.
-- **Engine (Plane B — material generation, curation, mind bridge):** `LLM_PROVIDER=openai`
-  `LLM_BASE_URL=https://api.deepseek.com/v1` `LLM_MODEL=deepseek-chat` `LLM_API_KEY=<key>`.
-  **⚠️ Do NOT put these in the repo root `.env`** — the pytest suite loads it via pydantic Settings and
-  the `llm_configured` tests break (20 failures, seen 2026-07-21). Inject them into the **engine
-  CONTAINER** instead: add them to the `api` service's `environment:` in `docker/docker-compose.yml`
-  (which currently uses inline env, not `env_file`), or a container-only env file, and also add
-  `secrets/` to `.dockerignore` (root-owned → breaks the build context). Then recreate `docker-api-1`.
-  Plane B is only needed for #145 / live material generation — not for the shell or the cloud coder.
-- **A0's cloud coder/overseer — ACTIVATED 2026-07-21 (was the cause of all-session local grinding).**
-  A0's LIVE model config had every agent on `{"model_preset":"Default"}` (local Qwen) — the FR-INTEL
-  topology was only a repo spec, never applied to A0. Fix (all `.bak`-backed): (1) `API_KEY_OTHER=<key>`
-  in `/a0/usr/.env`; (2) `/a0/usr/plugins/_model_config/config.json` → `{"model_preset":"DeepSeek-Chat"}`
-  (overseer); (3) `/a0/usr/agents/coder/plugins/_model_config/config.json` → `{"model_preset":"DeepSeek-Flash"}`;
-  (4) `docker restart agent-zero`. VERIFIED: GPU stays 0% while drives progress = cloud. Panels now land
-  in ONE clean drive (the automation-prefs panel that stalled twice on local built in one cloud drive).
-  **LESSON: keep A0's live `_model_config` in sync with the repo topology spec.** Revert to local:
-  restore the `.bak-pre-cloud*` files + restart.
-- **Why it matters:** the local Qwen-27B converges on small/contract units but **over-explores and
-  grinds/stalls on multi-file panel work** (multiple incidents this session — one file took 64 min).
-  The cloud key is *the* accelerator for all remaining panel/gap-fill work.
-
-### 1c. Mailbox/calendar creds → the real lanes
-- A **mock backend already exists** (`src/applicant/adapters/workspace/mock_workspace_client.py`,
-  toggle `LANE_BACKEND=mock`) with fixture rejection/interview/offer emails + a fake calendar (read +
-  write-back + de-dup). Lane logic is real and testable **without creds** (see `tests/unit/test_lane_mock_backend.py`).
-- **Real Gmail** (docs: `docs/backlog/lane-mock-and-real-creds.md`): IMAP app-password + `imap.gmail.com:993`
-  / SMTP `smtp.gmail.com:587`; Google Calendar via CalDAV/OAuth. Configure on the **companion** (it owns
-  the IMAP/CalDAV clients; the engine reaches it over the internal-token channel). The same lane code +
-  tests then run against the real backend.
-- **Companion onboarding:** the companion (`docker-companion-1`) is up but its API returns 401 /
-  "Setup required" — it needs a first-run account/login before its memory substrate (the mind bridge,
-  #145) is usable. That account step is **yours** (Claude is prohibited from creating accounts / entering passwords/keys).
+- **Backlog:** 63 → **38 open** (25 closed + verified this program). The former "big blocker" —
+  no browser-testing deployment for panel work — is **RESOLVED** (§5). The AZ5/AZ6/AZ7 chains are
+  unblocked.
+- **Branch:** everything lives on `claude/refactor-agent-zero-applicant-xn7xoc`
+  (local tip `21470f8f2`). Local branch is **307 commits ahead** of its pushed copy on origin;
+  local `main` is 192 ahead / 1 behind `origin/main`. Reconciliation is a deliberate, owner-approved
+  step (§7) — do not casually push or merge.
+- **Production gap:** the compose stack's `docker-a0-1` (:8090) still runs a **pre-fix image**.
+  One rebuild command rolls all three bug-fixes out (§5.3).
+- **The remaining unlocks are unchanged** and are yours (credentials/business): GitHub token for
+  issue ops, LLM key placement, mailbox/calendar credentials, companion first-run (§2).
 
 ---
 
-## 2. Architecture — the running stack
+## 1. The two products — NEVER conflate them
+
+- **Agent Zero** = the personal agentic *coding tool* at `localhost:5080` (container `agent-zero`).
+  It must stay pristine base-A0. It is also the upstream that Applicant tracks
+  (`upstream` remote = `agent0ai/agent-zero`).
+- **Applicant** = a standalone product: a HUGE fork of A0 (`github.com/kevinhirsch/applicant`) that
+  takes A0's MIT frontend and reshapes it. Own repo, own container images, own deployment.
+- **Never mount Applicant code into the personal A0.** (A plugin-symlink once made base A0 render the
+  Applicant UI — removed 2026-07-21. Do not repeat.) Applicant UI testing gets its OWN containers (§5).
+- The A0 *tool* is also the **coder**: Claude pilots (specs/verifies/steers), A0 writes all Applicant
+  code (see §6). Repo checkout lives at `/a0/usr/projects/applicant` inside `agent-zero`
+  (host path `/home/kevin/agent-zero/agent-zero/usr/projects/applicant`, root-owned — read/edit it
+  via `docker exec`, not from the host).
+
+---
+
+## 2. The owner unlocks (critical path) — turnkey runbooks
+
+### 2a. `GITHUB_TOKEN` / issue ops
+- Issue closes this program went through **A0's github MCP** (no PAT in any shell — decision:
+  keep it that way). For bulk closes, dispatch A0 with the issue list + evidence comments.
+- If you do export a PAT: rotate first; `~/agent-zero-ops/gh-issue.py` reads `GITHUB_TOKEN`/`GH_TOKEN`
+  from env only and never prints secrets. GOTCHA: GitHub's **GraphQL and REST-core rate limits reset on
+  separate clocks** — when `gh issue close` (GraphQL) is exhausted, `gh api -X PATCH
+  repos/kevinhirsch/applicant/issues/N -f state=closed -f state_reason=completed` (REST) still works.
+
+### 2b. LLM key → engine Plane-B and A0's cloud tier (ONE key, two places)
+- **Engine (Plane B):** `LLM_PROVIDER=openai`, `LLM_BASE_URL=https://api.deepseek.com/v1`,
+  `LLM_MODEL=deepseek-chat`, `LLM_API_KEY=<key>`. **Do NOT put these in the repo root `.env`** —
+  pydantic Settings loads it and 20 `llm_configured` tests break. Inject into the **api container's**
+  `environment:` in `docker/docker-compose.yml`, then recreate `docker-api-1`. Needed only for live
+  material generation (#145 etc.), not for the shell.
+- **A0's model tiering — CURRENT LIVE STATE (post-revert):** the 2026-07-21 "everything to cloud"
+  global swap was **REVERTED**. A0 now runs the §0.3 reference topology
+  (`docs/backlog/az-port-intelligence-routing.md`): overseer `agent0` = DeepSeek-Chat;
+  `coder`/`explorer`/`test-engineer` = **Default preset (local Qwen3.6-27B @ 10.0.1.225:8000)**;
+  `reviewer`/`security-auditor`/`coder-cloud`/`explorer-cloud` = DeepSeek-Flash; `debugger` =
+  DeepSeek-Pro. Live config = `/a0/usr/agents/<name>/plugins/_model_config/config.json`
+  (backups: `.bak-pre-localfix`, `.bak-pre-cloud`). **Keep the live `_model_config` in sync with the
+  repo topology spec** — the original all-local grind happened because the spec was never applied.
+- Local Qwen converges on small/contract units but over-explores on multi-file panel work — keep
+  drives small; escalate hard units to the cloud profiles.
+
+### 2c. Mailbox/calendar credentials → real lanes
+- Mock backend exists (`src/applicant/adapters/workspace/mock_workspace_client.py`,
+  `LANE_BACKEND=mock`) — lane logic is testable without creds.
+- Real Gmail/CalDAV go on the **companion** (it owns IMAP/CalDAV; engine reaches it via the
+  internal-token channel). Docs: `docs/backlog/lane-mock-and-real-creds.md`.
+- **Decision of record (2026-07-21):** credentials are **self-served by the owner via the UI**
+  (Connections panel, build #844) — Claude/A0 never handle them. Companion first-run setup is to be
+  cracked programmatically where possible; the account/password step itself is the owner's.
+
+### 2d. Business/owner items (locked decisions)
+- Product name = **"Applicant"** — locked; never re-ask business items.
+- Owner-held issues — **never touch**: #671, #672, #698–700, #706–708, #716–718, #722.
+
+---
+
+## 3. Architecture — the running stack
 
 ```
                          HOST (docker, network: docker_default)
@@ -84,126 +100,276 @@ Both are OpenAI-compatible; use the rotated DeepSeek key.
   │     /api/campaigns,/api/tracker,/api/setup/*,...      │ /api/applicant/    │
   │        ▲                                              ▼ internal/*         │
   │        │ ENGINE_URL=http://api:8000        docker-companion-1 (:7000)      │
-  │        │ (resolves only if A0 is on             workspace/mailbox/caldav   │
-  │        │  docker_default — ensure-engine-net.sh)     "Setup required" 401  │
-  │  docker-postgres-1   docker-chromadb-1   docker-searxng-1                  │
+  │        │ (resolves only on docker_default —     workspace/mailbox/caldav   │
+  │        │  ensure-engine-net.sh)                 "Setup required" 401       │
+  │  docker-postgres-1  docker-chromadb-1  docker-searxng-1  docker-ntfy-1    │
+  │  docker-a0-1 (PRODUCTION Applicant shell :8090 → 80) ← REBUILD PENDING §5.3│
   └────────┼───────────────────────────────────────────────────────────────┬─┘
            │ (a0-applicant proxies forward here)                            │
   ┌────────┼──────────────────────────────┐              lanes: engine ──► companion
-  │  agent-zero container (A0 SHELL :80)   │              (email/calendar/research)
-  │   35 a0-applicant panels ◄─callJsonApi─┤              mock: LANE_BACKEND=mock
-  │   overseer agent0 + coders (Qwen local │              real: mailbox/caldav creds
-  │     until API_KEY_OTHER → DeepSeek cloud)              (companion-side, yours)
+  │  agent-zero container (A0 CODER :5080) │              mock: LANE_BACKEND=mock
+  │   repo at /a0/usr/projects/applicant   │              real: creds (owner, via UI)
+  │   overseer DeepSeek + local Qwen coder │
   └────────────────────────────────────────┘
+  applicant-e2e (:8091) = disposable wired test instance, §5.2
 ```
 
-
-**Two model planes (FR-INTEL suite defines them, all as version-controlled contracts under `config/`):**
-- **Plane A — shell/agent models:** A0's overseer + workers. 9 profiles → 3 tiers
-  (`config/intel_tiers.yaml`): agent0/reviewer/security/*-cloud → cloud-flash; coder/explorer/test-engineer
-  → local-fast; debugger → cloud-pro. Governed by `config/intel_{envelope,routing,escalation,orchestration,sampling,planes}.yaml`.
-- **Plane B — engine LLM calls:** parse-verify, tailoring, screening, viability_scoring. Engine tier-ladder.
-- Disjoint ownership is pinned in `config/intel_planes.yaml`.
-
-**The running containers (host, `docker/docker-compose.yml`, network `docker_default`):**
-`docker-api-1` (engine, :8000, healthy), `docker-companion-1` (workspace/companion, :7000), `docker-postgres-1`,
-`docker-chromadb-1`, `docker-searxng-1`. Engine is pre-wired for the bridge (`MIND_BACKEND=bridge`,
-`APPLICANT_INTERNAL_TOKEN`, `WORKSPACE_URL=http://companion:7000`).
-
-**A0 shell** runs in the `agent-zero` container on port 80, serving the a0-applicant panels
-(`window.openModal('/plugins/applicant/webui/<panel>.html')`).
-
-**Critical wiring (do NOT lose):** the a0-applicant proxies default to `ENGINE_URL=http://api:8000`,
-which only resolves if `agent-zero` is on the `docker_default` network. This was fixed with
-`docker network connect docker_default agent-zero` (survives restart, NOT container recreation).
-Re-establish after any A0 recreation with **`~/agent-zero-ops/ensure-engine-net.sh`** (idempotent).
-Alternatively set `ENGINE_URL=http://172.17.0.1:8000` (docker0 bridge). With this, proxies hit the
-real engine — verified: `campaigns.list`/`tracker.board` → 200 with live data; all 35 panels function against it.
+- **Two model planes** (FR-INTEL contracts under `config/intel_*.yaml`): Plane A = shell/agent
+  models (9 profiles → 3 tiers); Plane B = engine LLM calls. Disjoint ownership pinned in
+  `config/intel_planes.yaml`.
+- **Fork image:** `docker/Dockerfile.a0` = `FROM agent0ai/agent-zero:v2.4` +
+  `COPY a0-applicant/ /a0/plugins/applicant/` + branding overlay. `/a0/plugins` is unmasked image
+  content (the `a0-data:/a0/usr` volume masks `/a0/usr` on first boot — a plugin under `/a0/usr/plugins`
+  would be masked; that's why the image copies into `/a0/plugins`). `get_plugin_roots()` scans both.
+- **Panel loading path:** sidebar launchers (defined in
+  `a0-applicant/extensions/webui/sidebar-quick-actions-main-start/hello-world.html`) call
+  `window.openModal('/plugins/applicant/webui/<panel>.html')` → `openModal` (`webui/js/modals.js:262`)
+  → `importComponent` (`webui/js/components.js:11`).
+- **Critical wiring:** a0-applicant proxies default to `ENGINE_URL=http://api:8000`, which resolves
+  only if the calling container is on `docker_default`. After recreating any shell container, run
+  `~/agent-zero-ops/ensure-engine-net.sh` (idempotent) or pass `--network docker_default`.
 
 ---
 
-## 3. What's built + verified — CLOSE-READY the moment the token is set (~21)
+## 4. ⭐ THE JOURNEY-DEBUG ARC (2026-07-21→22) — three product-wide frontend bugs
 
-- **FR-INTEL suite (7):** #865 #866 #867 #868 #869 #870 #871 — intelligence-routing/tiering contracts
-  (`config/intel_*.yaml` + `src/applicant/ports/intel/{envelope,routing}.py`), byte-verified vs the
-  reference deployment.
-- **Gates (4):** #851 #852 (closed 2 real prompt-injection vulns) #853 #854.
-- **Surfaces/tooling (7):** #843 (dormant preservation) #845 (help system A+B) #850 (lane regression tests)
-  #856 (traceability gate) #859 (release-readiness gate) #846 (a0-webui build-time overlay) #849 (companion
-  headless hardening).
-- **Gap-fill (this session) → now CLOSE-READY (3):** #838 (health + global pause), #839 (full settings
-  suite: channels/tiers/privacy/automation-prefs panels — the last built on cloud), #842 (vault/easy_apply/
-  screening/today/ops/audit-export/save-a-job/shortcuts/interview-prep/demo-data all built; campaign-switcher
-  skipped as redundant — 19 panels already have in-body campaign pickers).
+Every one of these was invisible to source-assert tests AND to the standalone panel-render harness.
+They only surfaced by driving the *real shell* in a *real browser* through the *real sidebar* against
+a *wired backend*. Understand all three before touching panel code.
 
-Plus infra/quality not tied to a single issue: the **A0-shell playtest harness**
-(`scripts/playtest_panels.py`) that renders every panel in a real browser (found + fixed real render
-bugs source-asserts missed); the **mock lane backend**; the **real-integration proxy smoke + write-path tests**.
+### 4.1 Modal-init bug (~30 panels) — commits `4130aa3bb`, `06bda0eb3`, `8882eb57a`, `3ca6dad76`
+- **Symptom:** every panel opened via the sidebar threw `"<name>Panel is not defined"`; panels only
+  worked when loaded standalone (which is all the old harness ever tested).
+- **Root cause:** panels registered Alpine data inside `<script type="module">` behind
+  `document.addEventListener("alpine:init", ...)`. The shell's `importComponent` executes inline
+  module scripts via **async `import(blobUrl)`** — by the time they run, Alpine has already mounted
+  the modal and `alpine:init` has already fired. Standalone full-page loads don't have this timing.
+- **Fix pattern (now the house style for every panel):** a **non-module** `<script>` wrapped in an
+  IIFE that registers synchronously:
+  ```html
+  <script>
+  (() => {
+    const _apiP = import("/js/api.js");
+    const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi(
+      (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+    window.Alpine.data("healthPanel", () => ({ /* ... */ }));
+  })();
+  </script>
+  ```
+  The IIFE is REQUIRED — non-module top-level `const`s collide globally across panels
+  (`"_apiP already declared"`). Reference implementations: `documents.html`, `today.html`.
+
+### 4.2 API-prefix bug (all 38 API-calling panels) — commit `e70891408`
+- **Symptom:** in a wired deployment every panel's data fetch 404'd; panels showed empty/error states
+  even though the engine was healthy.
+- **Root cause:** A0 serves **plugin** api handlers at `/api/plugins/<plugin>/<handler>` —
+  `helpers/api.py:206-268` registers one Flask rule `/api/<path:path>`; a bare path resolves only
+  against the **built-in `/a0/api/*.py`** handlers, and plugin lookup triggers only when the path
+  starts with `plugins/`. All panels called `callJsonApi("campaigns")` → `/api/campaigns` → 404.
+  Built-in plugins (`_memory`, `_time_travel`) avoid this via an `apiPath()` helper the fork never used.
+- **Red herrings to avoid re-chasing:** `/api/health` returns 200 *without* the fix because a
+  **built-in** `/a0/api/health.py` shadows the applicant one (gitinfo payload, not ours).
+  Test-importing handlers with `/usr/bin/python3` fails on `flask` — that's the wrong interpreter;
+  A0's runtime python is `/opt/venv-a0/bin/python` and imports all 43 handlers cleanly.
+- **Fix:** the per-panel `callJsonApi` wrapper prepends `plugins/applicant/` (see 4.1 snippet) —
+  38 files, call sites untouched. Verified: `/api/plugins/applicant/campaigns` → 200 with live
+  campaign rows from postgres.
+
+### 4.3 Null-init bug (criteria, ops; pattern applies everywhere) — commits `16c20d84b`, `21470f8f2` (+ `51e61dad4` for tracker/research)
+- **Symptom:** `Cannot read properties of null (reading 'titles'/'entries'/…)` at panel open, even
+  with data-guards in the load methods.
+- **Root cause (subtle):** **`x-show` only toggles CSS display — Alpine still evaluates every child
+  binding.** An `x-for="t in criteriaData.titles"` inside a hidden `x-show` block dereferences
+  `criteriaData` at *initial mount*, before any `load()` method has run. So post-load normalization
+  (which A0's coder correctly wrote, twice) can never fix it.
+- **Fix pattern:** initialize every x-data field to its real empty *shape*, never `null`:
+  `criteriaData: { titles: [], locations: [], work_modes: [], keywords: [] }`,
+  `signatureData: { facets: {}, samples_total: 0 }`, `historyData: { applications: [] }`,
+  `detectionsData: { detections: [] }`, `logsData: { entries: [] }` — plus keep the load-method
+  normalization (`d.titles = d.titles || []`) for the post-fetch path.
+- **Rule for new panels:** no `x-data` field that a template dereferences may start as `null`.
+
+### 4.4 Verification result (the current ground truth)
+- Journey crawl (real login → click each of 21 sidebar launchers → capture pageerrors) against the
+  wired `applicant-e2e` instance: **19/20 panels CLEAN with real engine data**
+  (Setup, Today, Documents, Connections, Vault, Tiers, Health, Mind, Tracker, Screening, Campaigns,
+  Profile, Model Endpoints, Easy Apply, Criteria, Ops, Research, Automation, Save a Job — and Digest,
+  which was clean in the first post-fix crawl).
+- **Digest "CLICK-FAIL" in later crawls is a harness artifact:** the crawler clicks launchers by
+  visible text and intermittently can't click "Digest" mid-sequence (modal overlay timing). The
+  launcher exists and is correct (`hello-world.html`, `openModal('/plugins/applicant/webui/digest.html')`)
+  and the panel opened clean when the click landed. A `Chat` CLICK-FAIL is the same artifact
+  (label-text ambiguity).
+- Remaining known noise: `err_no_message` from the older panel harness is a NOISY metric (mix of
+  panels that don't try/catch `callJsonApi`'s **throw** — it throws on error, `api.js:44`, it does not
+  return `{ok:false}` — and static panels with no API calls). Do not chase it to 0; fix by adding
+  try/catch per panel opportunistically (pattern: `today.html` loadItems).
 
 ---
 
-## 4. Gated / remaining engineering (built the moment the unlock lands)
+## 5. Deployments + test instances (the former "big blocker", now solved)
 
-- **Needs LLM key (1b):** #145 mind-bridge verification; #839 automation-prefs (15-field form — cloud coder).
-- **Needs mailbox/calendar creds (1c):** #844 real config-write + live round-trip; #861 email cutover; #862 calendar cutover.
-- **Needs a provider choice + live infra:** #860 MCP-provider adapter (contract slice was attempted); #863 credentials-collapse.
-- **Ship-gate + go-ahead:** #857 front-door retirement *execution* (runbook + tested rollback + readiness
-  gate are DONE — `docs/ops/front-door-retirement.md`); #858 workspace-migration *execution* (per-entity
-  matrix contract is DONE — `config/migration_matrix.yaml`, D15/D19 invariants pinned).
-- **Owner/business (yours):** ToS #672, pricing/name/cohort/launch #698–708, key-rotation #718, license #722, deferred #716/#717.
-- **Minor polish (low value; save for cloud coder):** #842 shortcuts overlay / demo banner / campaign-switcher-in-headers.
+### 5.1 Production compose stack (project `docker`, fork's `docker/docker-compose.prod.yml`)
+`docker-a0-1` (Applicant shell, :8090→80, image `applicant/a0:latest`), `docker-api-1` (engine :8000),
+`docker-companion-1` (:7000), `docker-postgres-1`, `docker-chromadb-1`, `docker-searxng-1`,
+`docker-ntfy-1`, `docker-updater-1`. The stack auto-restarts on reboot. `.env` at the fork root is
+root-owned — drive compose with `sudo -n docker compose --env-file .env -f docker/docker-compose.prod.yml …`.
 
----
+### 5.2 Disposable wired e2e instance (the panel-verification workhorse)
+```bash
+cd /home/kevin/agent-zero/agent-zero/usr/projects/applicant
+sudo -n docker compose --env-file .env -f docker/docker-compose.prod.yml build a0
+docker rm -f applicant-e2e; docker run -d --name applicant-e2e -p 8091:80 \
+  --network docker_default \
+  -e AUTH_LOGIN=e2etest -e AUTH_PASSWORD=e2etestpw123456 \
+  -e ENGINE_URL=http://api:8000 -e COMPANION_URL=http://companion:7000 \
+  -e A0_SET_MCP_SERVERS='{"mcpServers":{"applicant-engine":{"url":"http://api:8000/mcp","type":"sse","disabled":false}}}' \
+  applicant/a0:latest
+```
+Boots in ~20-25s (poll `/login` for HTTP 200 before testing — a too-early crawl reports 0/0 CLEAN).
+Known creds because A0's `get_dotenv_value` = `os.getenv(key, default)` — env vars override `.env`.
+There is also a lighter mount-based variant (`applicant-panels` on :5081, ro-mount of `a0-applicant/`
+over `/a0/plugins/applicant`) for pure UI iteration without a rebuild.
 
-## 5. Ops tooling + how to drive A0
+### 5.3 ⚠️ PENDING: roll the fixes into production
+`docker-a0-1` still runs a pre-journey-fix image. When ready:
+```bash
+cd /home/kevin/agent-zero/agent-zero/usr/projects/applicant
+sudo -n docker compose --env-file .env -f docker/docker-compose.prod.yml build a0
+sudo -n docker compose --env-file .env -f docker/docker-compose.prod.yml up -d --no-deps a0
+```
+Then re-run the journey crawl against :8090 to confirm.
 
-Everything lives in `~/agent-zero-ops/`:
-- **`az-send.sh "<spec>" "<ctx>"`** — fire a drive to A0 (plain `docker exec -i`, NOT sudo — sudo fails
-  silently in detached shells). Spec discipline: keep units SMALL (proxy + panel + 1 test + sidebar =
-  reliable; adding help/traceability/playtest to the same drive = grind). Do consistency (traceability
-  row + help affordance + help_content entry) as a tiny follow-up drive. Always tell it "you are already
-  on the correct branch; ZERO git branch/checkout/switch; only add + commit."
-- **`az-rmchat.sh <ctx>`** — remove a drive chat (frees the GPU; orphaned generations drain in ~1 min).
-- **`ensure-engine-net.sh`** — re-attach A0 to the engine network (see §2).
-- **`gh-issue.py`** — safe issue close/comment (env-token only).
-- **Verify visual work yourself:** `PLAYWRIGHT_BROWSERS_PATH=/a0/tmp/playwright FRONTDOOR_URL=http://localhost:80
-  /opt/venv-a0/bin/python scripts/playtest_panels.py` → `playtest-panels-results.json`. The project `.venv`
-  has NO playwright; A0's `/opt/venv-a0` does.
-- **Drive loop:** a `Monitor` on `git for-each-ref refs/heads` (plain `docker exec`) pings on every commit;
-  react on commits, not timers. Verify each commit against reality (run its tests + full suite; the local
-  overseer's own gate is not trusted). Test runner is `.venv/bin/pytest` (NOT `/opt/venv-a0`).
-- **A0 parity patches applied this program** (in `/a0/usr/agents/*/prompts/*` + `_guardrails`, all `.bak`-backed):
-  whole-spec delivery, streaming-gate + commit-before-gate, port-from-source, exact-engine-paths,
-  no-credential-hunting, no-branch-switching, phantom-0-collect guard, R6/R9 size-route doctrine,
-  playtest-verify-visual, destructive-command classifier (blocks git branch ops + `reset --hard`).
-
----
-
-## 6. Hard-won gotchas / lessons
-
-- **Local Qwen limits:** great on small/contract units; over-explores → grinds/stalls on multi-file panel
-  work. Keep drives tiny; the cloud key (1b) is the fix. Liveness ≠ progress: diff msg-mtime + file set +
-  bytes over time — GPU% alone lies (a runaway is 100% busy, 0% productive).
-- **Worktree-branch confusion:** drives in a git worktree try `git branch/checkout` (blocked by the guard)
-  → commit to a DANGLING state or stall. Prefer **single drives on the main tree** for reliability; if you
-  must parallelize, cap at ~2–3 and verify each committed to ITS branch. Recover a dangling commit with
-  `git checkout <sha> -- <file>` (host-side; the guard doesn't apply to direct docker exec).
-- **Source-assert ≠ works:** the playtest caught real JS bugs (undefined `.data`, `const` without
-  initializer) that green source-assert tests missed. Playtest every panel.
-- **Harness fidelity:** `playtest_panels.py` loads panels standalone, so shell globals (`window.openModal`)
-  are stubbed — an unstubbed one is a harness false-positive, not a product bug (investigate before filing).
-- **The 2 baseline test failures** (`test_prod_compose_env_file`, `test_deploy_hardening_lens04`) are
-  pre-existing and the ONLY allowed failures — never "fix" or count them.
-- **Secrets:** never write/echo API keys; the DeepSeek + OpenRouter keys shared in chat this session
-  should be rotated. Claude cannot enter keys/passwords/accounts — those steps are yours.
+### 5.4 Verification tooling (all run from the `agent-zero` container — it has playwright)
+- **`/a0/tmp/journey_via_sidebar.py`** (source: session scratchpad `journey_via_sidebar.py`) — the
+  gold-standard check: real login (env `JBASE`/`JUSER`/`JPW`), clicks all 21 sidebar launchers,
+  captures per-panel pageerrors. Run:
+  `docker exec -e JBASE=http://applicant-e2e:80 -e JUSER=… -e JPW=… -e PLAYWRIGHT_BROWSERS_PATH=/a0/tmp/playwright agent-zero /opt/venv-a0/bin/python /a0/tmp/journey_via_sidebar.py`
+- **`scripts/playtest_panels.py`** — standalone render + error-injection harness (stubs shell
+  globals). Good for per-panel iteration; remember its two blind spots: it cannot see modal-timing
+  bugs (4.1) and it false-positives on unstubbed shell globals.
+- **`scripts/playtest_crawl.py`** — front-door monkey/crawl.
+- Chromium lives at `/a0/tmp/playwright` (base container only — fresh instances don't have it, which
+  is why crawls run *from* `agent-zero` *against* the target instance over the docker network).
+- Project `.venv` has NO playwright; use `/opt/venv-a0/bin/python` for browser work,
+  `.venv/bin/pytest` for the test suite.
 
 ---
 
-## 7. Recommended next sequence
+## 6. Driving A0 (the coder) — pipeline + discipline
 
-1. Rotate keys → set `GITHUB_TOKEN` (I close ~21) → set `API_KEY_OTHER` + engine `LLM_API_KEY` (unblocks
-   cloud coder + Plane B) → onboard the companion → add mailbox/calendar creds.
-2. With the cloud coder live: automation-prefs + any minor chrome in single fast drives.
-3. With companion + LLM: verify #145 mind bridge; build #844 live + #861/#862 lane cutovers vs the mock→real seam.
-4. Business/legal decisions in parallel (yours).
-5. Ship: #857 retirement + #858 migration execution with your sign-off.
+### 6.1 The working pipeline
+1. **Scope** batches with cost-routed Claude Workflows (sonnet agents; one per issue) → per-issue
+   `{already_done, gap, a0_spec, acceptance_oracle, effort, needs_visual, blocked_on}`.
+2. **Close** already-done issues (via A0's github MCP; see §2a for rate-limit fallbacks).
+3. **Dispatch** gaps to A0 **serially** (concurrent drives cross-stage `git add -A` commits):
+   session-login + CSRF → `POST /api/message_async` with a fresh `context` per task. Helper:
+   `~/agent-zero-ops/az-send.sh "<spec>" "<ctx>"`. Plain `docker exec` — **never `sudo docker exec`
+   in detached shells** (fails silently).
+4. **Verify every commit:** `git show --stat` must be fork-only (never `/a0/usr/agents` or
+   `/a0/usr/plugins`); run the unit's acceptance oracle; **browser-verify anything visual** (§5.4).
+5. **Full-suite gate** per batch: `.venv/bin/pytest -q`; baseline = the known pre-existing env/doc
+   failures ONLY (`test_prod_compose_env_file`, `test_deploy_hardening_lens04`, + the documented
+   compose/doc-drift set). Never "fix" the baseline failures; never accept new ones.
+6. React on **commits, not timers**: a Monitor on the repo HEAD pings per commit; keep a ~1500s
+   stall safety-net. `az-rmchat.sh <ctx>` frees the GPU after a drive.
+
+### 6.2 Spec discipline (what makes local Qwen reliable)
+- Small units: proxy + panel + 1 test (+ sidebar wire-in as a separate tiny drive).
+- Always include: work ONLY in `/a0/usr/projects/applicant`; ZERO `git branch/checkout/switch`;
+  exact engine paths (coders confabulate paths — e.g. `/api/auth` vs `/api/admin`); the exact
+  commit-message text; a runnable VERIFY command with expected output.
+- **When A0 misses the same root cause twice, stop re-dispatching and fix it directly** (the
+  standing "mechanical fix" exception) — e.g. the 4.3 initializer fix was 5 surgical lines after two
+  A0 attempts normalized post-load only.
+- A0 parity patches applied to the coder profiles (all `.bak`-backed, in `/a0/usr/agents/*/prompts` +
+  `_guardrails`): whole-spec delivery, commit-before-gate, exact-engine-paths, no-credential-hunting,
+  no-branch-switching, destructive-command classifier, playtest-verify-visual, size-route doctrine.
+
+### 6.3 Verified A0 gotchas
+- A0 file-rewrites can **drop the executable bit** (broke `backup.sh`/`restore.sh`; fixed via
+  `git update-index --chmod=+x`, commit `86d237699`). Check `git ls-files -s` after script edits.
+- A per-issue oracle can pass while a cross-cutting test breaks — the batch full-suite gate is
+  non-negotiable (caught the #836 gate regression and 4 registry regressions).
+- The DeepSeek overseer once correctly **refused** a mis-scoped issue rather than hallucinate a
+  commit — trust but verify every commit's scope.
+- Heredoc-fed `docker exec -i … python -` sometimes silently delivers an empty script (observed
+  twice). **Always write scripts to a file, `docker cp` in, then execute** — and verify effects
+  (e.g. `git diff --stat`) rather than trusting echoed OKs.
+
+---
+
+## 7. Git topology + reconciliation (read before pushing ANYTHING)
+
+As of 2026-07-22 ~02:45 local:
+
+| ref | state |
+|---|---|
+| `claude/refactor-agent-zero-applicant-xn7xoc` (local) | tip `21470f8f2` — ALL program work; 307 ahead of its origin copy |
+| `main` (local) | `4257ded85` — 192 ahead / 1 behind `origin/main`; branch is 121 ahead of it |
+| `origin/main` | `910b281d8` — has 1 commit local main lacks; NOT an ancestor of the branch (diverged) |
+| `upstream` | `agent0ai/agent-zero` — for future A0-release reconciliation into the fork |
+
+- **No credentials exist in the container or host shells to push** (deliberate). Pushes/API commits
+  go through A0's github MCP on explicit owner instruction only.
+- Reconciliation order when the owner wants it: (1) land the branch → local `main` (merge —
+  **never `git reset --hard`**; prefer `--ff-only` where possible), (2) reconcile the 1
+  divergent `origin/main` commit, (3) push. Review the 307-commit delta before any public push.
+- The recent-history commits that matter for review: `e70891408` (api-prefix, 38 files),
+  `51e61dad4` + `16c20d84b` + `21470f8f2` (null-safety), `3ca6dad76`/`8882eb57a`/`06bda0eb3`/`4130aa3bb`
+  (modal-init, ~30 files), `0f2a95db9` (gate-test fix), `86d237699` (+x restore).
+
+---
+
+## 8. Backlog state (38 open)
+
+- **Now unblocked by §5 (former browser-deployment blocker):** the ~13 panel issues
+  (az-2 #833–837 remnants, az-3 #839–845 remnants, AZ1-3 #831) and, downstream of them, the AZ5
+  gates (#851–853 remnants), AZ6 release-eng (#854–859), AZ7 lanes (#860–863).
+  #854 ("adapt playtest to A0 shell") is effectively DONE in spirit by `journey_via_sidebar.py` —
+  fold that script in and close.
+- **Deferred pending owner decisions:** Applicant assistant persona (`agents/applicant/`) — unblocks
+  #837/#851/#852; Portal #833; visual identity #847; upstream cherry-pick drill #848.
+- **Owner/business:** ToS #672, pricing/cohort/launch #698–708, key-rotation #718, license #722,
+  #716/#717 last. Plus ops-tail P-issues #654/#684/#686/#703 and #681 (docs close-out, needs Actions
+  API). #145/#685 blocked on #841/#723.
+- Full per-issue reasons: session scratchpad `deferred.tsv`.
+- **Never touch:** #671, #672, #698–700, #706–708, #716–718, #722 (owner-held).
+
+---
+
+## 9. Hard-won gotchas (cumulative — the ones that cost hours)
+
+1. `x-show` hides, it does not gate evaluation — x-data fields must init to their empty shape (§4.3).
+2. Plugin APIs live at `/api/plugins/<plugin>/<handler>`; bare `/api/<name>` = built-ins only (§4.2).
+3. Shell modals run inline module scripts async — Alpine registration must be sync + IIFE (§4.1).
+4. `callJsonApi` **throws** on error (`api.js:44`); guards must try/catch, an `else` never runs (§4.4).
+5. Built-in `/a0/api/health.py` shadows the plugin's health handler — test with a handler that has no
+   built-in namesake (§4.2).
+6. Test imports with `/opt/venv-a0/bin/python`, never system python3 (§4.2).
+7. Standalone-render harnesses cannot see shell-timing bugs; the sidebar journey crawl can (§4.4).
+8. A crawl against a still-booting instance reports 0/0 CLEAN — always gate on `/login` → 200 (§5.2).
+9. `sudo docker exec` in detached shells fails silently — plain `docker exec` (§6.1).
+10. Heredoc-fed container python can silently no-op — file + `docker cp` + verify effects (§6.3).
+11. A0 rewrites can drop +x bits (§6.3).
+12. GraphQL vs REST rate-limit clocks are separate (§2a).
+13. Fork files are root-owned on the host — all repo IO via `docker exec` (§1).
+14. Env vars override `.env` (`get_dotenv_value` = `os.getenv`) — that's how test instances get known
+    creds without touching secrets (§5.2).
+15. GPU% alone lies about drive progress — diff message mtimes + file sets over time (§6.2).
+16. The 2 baseline test failures are the ONLY allowed ones — never fix, never count (§6.1).
+17. Keys pasted in any chat this program should be rotated; Claude never handles credentials (§2c/2d).
+
+---
+
+## 10. Recommended next sequence
+
+1. **Roll production:** rebuild + `up -d --no-deps a0` (§5.3), journey-crawl :8090 to confirm.
+2. **Close the journey-arc issues** via A0's github MCP: the panel issues proven clean in §4.4,
+   plus fold `journey_via_sidebar.py` into #854 and close it.
+3. **Resume the backlog pipeline** (§6.1) on the now-unblocked chains: remaining az-2/az-3 remnants →
+   AZ5 gates → AZ6 release-eng → AZ7 lanes. Cost-route scoping; serial dispatch; browser-verify visuals.
+4. **Owner unlocks in parallel** (§2): companion first-run, creds via Connections UI, LLM key
+   placement, business decisions.
+5. **Reconciliation + ship** (§7 order, owner-supervised): branch → main → push; then #857 front-door
+   retirement + #858 workspace migration execution with sign-off.
