@@ -21,7 +21,7 @@
   .asavejob .instructions{font-size:.85rem;color:var(--color-text-secondary,#6b7683);margin-bottom:1rem;padding:8px 12px;background:var(--color-panel,#f2f5f7);border-radius:8px;border:1px solid var(--color-border,#d8e0e6)}
 </style>
 
-<div class="asavejob" x-data="window.Alpine.data('asavejob')">
+<div class="asavejob" x-data="asavejob()">
   <h1>Save a Job <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=savejob')" title="Help for save a job">?</button></h1>
   <p class="sub">Paste a job posting URL to add it to a campaign</p>
 
@@ -66,8 +66,10 @@
   </template>
 
   <script>
-  (function() {
-    if (typeof window.Alpine !== 'undefined') window.Alpine.data('asavejob', () => ({
+  (() => {
+    const _apiP = import("/js/api.js");
+    const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
+    window.Alpine.data("asavejob", () => ({
       campaigns: [],
       campaignId: '',
       url: '',

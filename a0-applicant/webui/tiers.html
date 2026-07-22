@@ -25,7 +25,7 @@
   .atiers .save-msg{color:var(--color-success-text,#1a7d1a);font-size:.82rem;padding:6px 0}
 </style>
 
-<div class="atiers" x-data="window.Alpine.data('atiers')">
+<div class="atiers" x-data="atiers()">
   <h1>Tiers <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=tiers')" title="Help for tiers">?</button></h1>
   <p class="sub">Model escalation ladder</p>
 
@@ -110,8 +110,10 @@
     </div>
   </div>
     <script>
-  (function() {
-    if (typeof window.Alpine !== 'undefined') window.Alpine.data('atiers', () => ({
+  (() => {
+    const _apiP = import("/js/api.js");
+    const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
+    window.Alpine.data("atiers", () => ({
       tiers: [],
       loading: false,
       fatalError: '',

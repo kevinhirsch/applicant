@@ -23,7 +23,7 @@
   .aauto .success{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
 </style>
 
-<div class="aauto" x-data="window.Alpine.data('aauto')">
+<div class="aauto" x-data="aauto()">
   <h1>Automation <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=automation')" title="Help for automation">?</button></h1>
   <p class="sub">Configure automation preferences for the applicant engine</p>
 
@@ -301,8 +301,10 @@
   </template>
 
   <script>
-  (function() {
-    if (typeof window.Alpine !== 'undefined') window.Alpine.data('aauto', () => ({
+  (() => {
+    const _apiP = import("/js/api.js");
+    const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
+    window.Alpine.data("aauto", () => ({
       fields: {},
       loading: false,
       saving: false,

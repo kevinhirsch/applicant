@@ -38,7 +38,7 @@
   .aconnections .two-plane p{margin:0}
 </style>
 
-<div class="aconnections" x-data="window.Alpine.data('aconnections')">
+<div class="aconnections" x-data="aconnections()">
   <h1>Integrations <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=connections')" title="Help for integrations">?</button></h1>
   <p class="sub">Email &amp; Calendar for your job search</p>
 
@@ -194,10 +194,12 @@
   </template>
 </div>
 
-<script type="module">
-import { callJsonApi } from '/js/api.js';
+<script>
+(() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (...a) => (await _apiP).callJsonApi(...a);
 
-window.Alpine.data('aconnections', () => ({
+window.Alpine.data("aconnections", () => ({
   loading: true,
   fatalError: '',
   emailAccounts: [],
@@ -440,4 +442,5 @@ window.Alpine.data('aconnections', () => ({
     }
   },
 }));
+})();
 </script>
