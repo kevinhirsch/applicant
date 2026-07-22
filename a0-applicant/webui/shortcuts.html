@@ -37,12 +37,13 @@
     .help-btn:hover { background: #3651d4; }
   </style>
 </head>
-<body x-data>
+<body x-data="shortcutsPanel()">
   <div class="help-bar">
     <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=shortcuts')" title="Help for keyboard shortcuts">?</button>
   </div>
 
   <h1>Keyboard Shortcuts</h1>
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
   <!-- Shell Shortcuts -->
   <div class="shortcut-group">
@@ -120,5 +121,15 @@
       </ul>
     </div>
   </div>
+
+<script>
+  if (typeof window.Alpine !== 'undefined') window.Alpine.data('shortcutsPanel', () => ({
+    fatalError: '',
+    init() {
+      this.fatalError = '';
+      // Static page — no API calls
+    }
+  }));
+</script>
 </body>
 </html>

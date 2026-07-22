@@ -15,8 +15,9 @@
   .aconfig .help-btn:hover{color:var(--color-primary,#4361ee);border-color:var(--color-primary,#4361ee)}
 </style>
 
-<div class="aconfig">
+<div class="aconfig" x-data="aconfigPanel()">
   <h1>Settings</h1>
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
   <p class="sub">Configure the applicant engine to your preferences</p>
 
   <div class="help-row">
@@ -65,4 +66,17 @@
       <div class="card-desc">In-app notification preferences and history</div>
     </div>
   </div>
+<script>
+(function() {
+  if (typeof window.Alpine !== 'undefined') window.Alpine.data('aconfigPanel', () => ({
+    fatalError: '',
+    loading: false,
+
+    async init() {
+      this.fatalError = '';
+      // Static hub — no API calls; always passive
+    }
+  }));
+})();
+</script>
 </div>

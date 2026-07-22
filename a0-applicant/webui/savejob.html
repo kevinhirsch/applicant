@@ -34,7 +34,7 @@
     <span class="spinner"></span> Loading campaigns...
   </div>
 
-  <div x-show="error && !loading" class="err" x-text="error"></div>
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
   <template x-if="!loading">
     <div>
@@ -72,7 +72,7 @@
       campaignId: '',
       url: '',
       loading: false,
-      error: '',
+      fatalError: '',
       saving: false,
       saveError: '',
       saveMessage: '',
@@ -83,7 +83,7 @@
 
       async loadCampaigns() {
         this.loading = true;
-        this.error = '';
+        this.fatalError = '';
         try {
           const res = await callJsonApi('campaigns', { action: 'list' });
           if (res.ok) {
@@ -92,10 +92,10 @@
               this.campaignId = this.campaigns[0].id;
             }
           } else {
-            this.error = res.error || 'Failed to load campaigns';
+            this.fatalError = res.error || 'Failed to load campaigns';
           }
         } catch(e) {
-          this.error = 'Network error loading campaigns';
+          this.fatalError = 'Network error loading campaigns';
         } finally {
           this.loading = false;
         }

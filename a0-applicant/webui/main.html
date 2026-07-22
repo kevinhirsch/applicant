@@ -41,9 +41,7 @@
 
   <template x-if="loading"><p class="muted">Loading your setup…</p></template>
 
-  <template x-if="!loading && fatalError">
-    <div class="err" x-text="fatalError"></div>
-  </template>
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
   <template x-if="!loading && !fatalError">
     <div>

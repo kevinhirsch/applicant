@@ -92,6 +92,8 @@
       </div>
     </template>
 
+    <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
     <template x-if="!historyLoading">
       <div>
         <template x-if="historyItems.length === 0">
