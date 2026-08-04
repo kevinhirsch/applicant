@@ -107,3 +107,28 @@ class TestSaveJobCallsEngineIntake:
         tb = _toolbox(intake_service=_FakeIntake({"saved": True}))
         out = tb.dispatch("save_job", "{}")
         assert "URL" in out
+
+
+class TestChatServiceWiresIntake:
+    """ChatService passes intake_service through to ChatToolbox so save_job registers live."""
+
+    @pytest.mark.unit
+    def test_chat_service_with_intake_registers_save_job(self) -> None:
+        from applicant.application.services.chat_service import ChatService
+
+        fake = _FakeIntake({"saved": True})
+        svc = ChatService(
+            attribute_service=None,
+            intake_service=fake,
+        )
+        assert svc._intake_service is fake
+
+    @pytest.mark.unit
+    def test_chat_service_without_intake_degrades(self) -> None:
+        from applicant.application.services.chat_service import ChatService
+
+        svc = ChatService(
+            attribute_service=None,
+            intake_service=None,
+        )
+        assert svc._intake_service is None

@@ -289,6 +289,7 @@ class ChatService:
         desktop_operable=False,
         chat_tools="off",
         onboarding=None,
+        intake_service=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -355,6 +356,7 @@ class ChatService:
         # stages memory/skill writes; ``computer_use``/``desktop_operable`` gate the
         # bounded desktop tool (offered only when a driver is operable).
         self._curation_service = curation_service
+        self._intake_service = intake_service
         self._tool_registry = tool_registry
         self._computer_use = computer_use
         self._desktop_operable = bool(desktop_operable)
@@ -603,6 +605,7 @@ class ChatService:
             campaign_id=campaign_id,
             agent_memory=self._agent_memory,
             curation_service=self._curation_service,
+            intake_service=self._intake_service,
             tool_registry=self._tool_registry,
             computer_use=self._computer_use,
             desktop_operable=self._desktop_operable,

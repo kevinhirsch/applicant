@@ -1169,6 +1169,7 @@ def build_container(settings: Settings | None = None) -> Container:
         # assistant proactively gathers the apply essentials in chat and is truthful that
         # it can't begin applying until they're present (FR-CHAT-1 / FR-ONBOARD).
         onboarding=onboarding_service,
+        intake_service=intake_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -1864,6 +1865,7 @@ def build_container(settings: Settings | None = None) -> Container:
             chat_tools=(settings.chat_tools or "off").strip().lower(),
             # Apply-readiness gate source for the proactive essentials-gathering in chat.
             onboarding=rs_onboarding,
+            intake_service=rs_intake,
         )
         rs_chat._scheduler = scheduler
         from applicant.application.services.post_submission_service import PostSubmissionService
