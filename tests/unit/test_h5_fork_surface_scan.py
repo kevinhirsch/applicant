@@ -2,8 +2,9 @@
 
 Sweeps the same denylist as test_h5_calibrated_copy.py but targets the fork's
 user-facing surfaces: every *.html under a0-applicant/webui/, the agent
-guidance markdown at a0-applicant/prompts/agent_guidance.md, and every persona
-overlay *.md under a0-applicant/agents/applicant/prompts/.
+guidance markdown at a0-applicant/prompts/agent_guidance.md, every persona
+overlay *.md under a0-applicant/agents/applicant/prompts/, and the per-surface
+help copy in a0-applicant/config/help_content.yaml.
 
 HTML files are pre-processed: HTML comments are removed, then JS-style comments
 (// and /* */) are stripped so that inline <script> blocks and engineering
@@ -15,10 +16,13 @@ from __future__ import annotations
 import pathlib
 import re
 
+import yaml
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FORK_WEBUI = _REPO_ROOT / "a0-applicant" / "webui"
 _FORK_GUIDANCE = _REPO_ROOT / "a0-applicant" / "prompts" / "agent_guidance.md"
 _FORK_PERSONA_OVERLAYS = _REPO_ROOT / "a0-applicant" / "agents" / "applicant" / "prompts"
+_FORK_HELP_CONTENT = _REPO_ROOT / "a0-applicant" / "config" / "help_content.yaml"
 
 # ── The denylist (verbatim copy from test_h5_calibrated_copy.py) ─────────────
 
@@ -141,6 +145,36 @@ def _find_overclaims(text: str, where: str) -> list[str]:
     return hits
 
 
+def _iter_yaml_strings(node: object) -> list[tuple[str, str]]:
+    """Yield (text, where) for every scalar string value in a YAML document."""
+    out: list[tuple[str, str]] = []
+    if isinstance(node, str):
+        out.append((node, "help_content.yaml"))
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            key_label = f"help_content.yaml[{key}]"
+            if isinstance(value, str):
+                out.append((value, key_label))
+            elif isinstance(value, list):
+                for i, item in enumerate(value):
+                    if isinstance(item, str):
+                        out.append((item, f"{key_label}[{i}]"))
+                    else:
+                        out.extend(
+                            (text, f"{key_label}[{i}]")
+                            for text, _ in _iter_yaml_strings(item)
+                        )
+            elif isinstance(value, (dict, list)):
+                out.extend((text, key_label) for text, _ in _iter_yaml_strings(value))
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            if isinstance(item, str):
+                out.append((item, f"help_content.yaml[{i}]"))
+            else:
+                out.extend((text, f"help_content.yaml[{i}]") for text, _ in _iter_yaml_strings(item))
+    return out
+
+
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 def test_fork_surfaces_exist() -> None:
@@ -150,6 +184,9 @@ def test_fork_surfaces_exist() -> None:
     assert _FORK_GUIDANCE.exists(), "a0-applicant/prompts/agent_guidance.md not found — path may have changed"
     persona_files = sorted(_FORK_PERSONA_OVERLAYS.glob("*.md"))
     assert persona_files, "a0-applicant/agents/applicant/prompts/ has no *.md files — glob path may have changed"
+    assert _FORK_HELP_CONTENT.exists(), (
+        "a0-applicant/config/help_content.yaml not found — path may have changed"
+    )
 
 
 def test_no_overclaims_in_fork_surfaces() -> None:
@@ -172,6 +209,11 @@ def test_no_overclaims_in_fork_surfaces() -> None:
     for path in sorted(_FORK_PERSONA_OVERLAYS.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         hits.extend(_find_overclaims(text, path.name))
+
+    # Scan help_content.yaml: every scalar string value (title, steps, prerequisites)
+    help_doc = yaml.safe_load(_FORK_HELP_CONTENT.read_text(encoding="utf-8"))
+    for text, where in _iter_yaml_strings(help_doc):
+        hits.extend(_find_overclaims(text, where))
 
     assert not hits, (
         "Overclaiming copy in fork surfaces (H5):\n" + "\n".join(hits)

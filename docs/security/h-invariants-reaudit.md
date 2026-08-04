@@ -139,9 +139,11 @@ None. The proxy is a pure pass-through. The engine handles `checked: false` with
 
 ## H5 — Calibrated Copy
 
-**Verdict: HOLDS with ONE GAP**
+**Verdict: HOLDS**
 
 **Definition:** Every promise in the UI is audited against actual capability state.
+
+The static UI-copy gap is now closed: the H5 overclaim denylist runs over the plugin webui strings, the agent_guidance overlay, the applicant persona overlay, and `a0-applicant/config/help_content.yaml` via `tests/unit/test_h5_fork_surface_scan.py` (audit re-run green).
 
 ### Evidence
 
@@ -174,7 +176,7 @@ This derivation is transparent (it only uses engine data as inputs) and correctl
 ### Other findings
 
 - **Missing proxies**: `synthesize.py`, `tunnel_proxy.py`, and `plugins.py` are mentioned in the task spec but do not exist in the codebase. If these surfaces are planned, the overclaim check should be applied to their UI strings before implementation.
-- **Overclaim denylist**: The plugin's own UI strings (in `a0-applicant/webui/` and `a0-applicant/prompts/`) should be audited against the same denylist used in the engine-side H5 test. This current audit reviews the API proxies, not the static UI strings — a separate pass is needed for full coverage.
+- **Overclaim denylist**: The plugin's own static UI strings (`a0-applicant/webui/`, `a0-applicant/prompts/agent_guidance.md`, the applicant persona overlays, and `a0-applicant/config/help_content.yaml`) are audited against the same denylist used in the engine-side H5 test by `tests/unit/test_h5_fork_surface_scan.py` — the static UI-copy gap is closed.
 
 ---
 
@@ -186,10 +188,10 @@ This derivation is transparent (it only uses engine data as inputs) and correctl
 | H2 — No silent underdelivery | **HOLDS** | None |
 | H3 — Full-fidelity review | **HOLDS** | None |
 | H4 — Visible provenance | **HOLDS** | None |
-| H5 — Calibrated copy | **HOLDS WITH GAP** | `features.py` client-side state computation; plugin UI strings not audited |
+| H5 — Calibrated copy | **HOLDS** | `features.py` client-side state computation (mitigated above); static UI-copy gap closed by automated denylist scan |
 
 ### Remediation items
 
 1. **P1** — Add engine endpoint `/api/features/sections` to compute section states, making `features.py` a pure `_forward()` proxy
-2. **P2** — Audit static plugin UI copy (`a0-applicant/webui/`, `a0-applicant/prompts/`) against the H5 overclaim denylist
+2. **P2** — ~~Audit static plugin UI copy (`a0-applicant/webui/`, `a0-applicant/prompts/`) against the H5 overclaim denylist~~ **CLOSED** — covered by `tests/unit/test_h5_fork_surface_scan.py`, which now also scans `a0-applicant/config/help_content.yaml`
 3. **P3** — Verify whether `synthesize.py`, `tunnel_proxy.py`, `plugins.py` surfaces are needed; if so, implement with H1-H5 compliance from day one
