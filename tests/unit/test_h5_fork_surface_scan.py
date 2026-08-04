@@ -1,8 +1,9 @@
 """H5 — Honesty: overclaim-denylist scan over fork user-facing surfaces (AZ5-3 slice).
 
 Sweeps the same denylist as test_h5_calibrated_copy.py but targets the fork's
-user-facing surfaces: every *.html under a0-applicant/webui/ and the agent
-guidance markdown at a0-applicant/prompts/agent_guidance.md.
+user-facing surfaces: every *.html under a0-applicant/webui/, the agent
+guidance markdown at a0-applicant/prompts/agent_guidance.md, and every persona
+overlay *.md under a0-applicant/agents/applicant/prompts/.
 
 HTML files are pre-processed: HTML comments are removed, then JS-style comments
 (// and /* */) are stripped so that inline <script> blocks and engineering
@@ -17,6 +18,7 @@ import re
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FORK_WEBUI = _REPO_ROOT / "a0-applicant" / "webui"
 _FORK_GUIDANCE = _REPO_ROOT / "a0-applicant" / "prompts" / "agent_guidance.md"
+_FORK_PERSONA_OVERLAYS = _REPO_ROOT / "a0-applicant" / "agents" / "applicant" / "prompts"
 
 # ── The denylist (verbatim copy from test_h5_calibrated_copy.py) ─────────────
 
@@ -146,10 +148,12 @@ def test_fork_surfaces_exist() -> None:
     html_files = sorted(_FORK_WEBUI.glob("*.html"))
     assert html_files, "a0-applicant/webui/ has no *.html files — glob path may have changed"
     assert _FORK_GUIDANCE.exists(), "a0-applicant/prompts/agent_guidance.md not found — path may have changed"
+    persona_files = sorted(_FORK_PERSONA_OVERLAYS.glob("*.md"))
+    assert persona_files, "a0-applicant/agents/applicant/prompts/ has no *.md files — glob path may have changed"
 
 
 def test_no_overclaims_in_fork_surfaces() -> None:
-    """Scan all fork webui HTML and agent_guidance.md for overclaim patterns."""
+    """Scan all fork webui HTML, agent_guidance.md, and persona overlays for overclaim patterns."""
     hits: list[str] = []
 
     # Scan HTML files: strip HTML comments, then JS comments
@@ -163,6 +167,11 @@ def test_no_overclaims_in_fork_surfaces() -> None:
     if _FORK_GUIDANCE.exists():
         text = _FORK_GUIDANCE.read_text(encoding="utf-8")
         hits.extend(_find_overclaims(text, "agent_guidance.md"))
+
+    # Scan persona overlay markdown: raw text only
+    for path in sorted(_FORK_PERSONA_OVERLAYS.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        hits.extend(_find_overclaims(text, path.name))
 
     assert not hits, (
         "Overclaiming copy in fork surfaces (H5):\n" + "\n".join(hits)
