@@ -84,6 +84,7 @@ class ChatToolbox:
         tool_registry=None,
         computer_use=None,
         desktop_operable: bool = False,
+        intake_service=None,
     ) -> None:
         self._campaign_id = campaign_id
         self._agent_memory = agent_memory
@@ -93,6 +94,7 @@ class ChatToolbox:
         # Desktop assist is offered ONLY when a driver is operable (FR-CUA). Default
         # off: the bounded ``desktop`` tool is not even advertised to the model.
         self._desktop_operable = bool(desktop_operable and computer_use is not None)
+        self._intake = intake_service
 
     # --- schema collection (FR-MIND-6) ------------------------------------
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -164,6 +166,16 @@ class ChatToolbox:
                 },
                 ["query"],
             ))
+        if self._intake_available():
+            schemas.append(_fn(
+                "save_job",
+                "Save a job posting URL into the campaign's intake pipeline. The engine "
+                "will score and tag it; the result is reported honestly.",
+                {
+                    "url": {"type": "string", "description": "The job posting URL to save."},
+                },
+                ["url"],
+            ))
         if self._desktop_operable:
             schemas.append(_fn(
                 "desktop",
@@ -227,6 +239,9 @@ class ChatToolbox:
             and self._registry_on()
         )
 
+    def _intake_available(self) -> bool:
+        return self._intake is not None and self._registry_on()
+
     def has_tools(self) -> bool:
         """True when at least one tool is offerable (so the loop is worth entering)."""
         return bool(self.tool_schemas())
@@ -258,6 +273,7 @@ class ChatToolbox:
             "save_playbook": self._save_playbook,
             "update_playbook": self._update_playbook,
             "recall": self._recall,
+            "save_job": self._save_job,
             "desktop": self._desktop,
         }.get(name)
         if handler is None:
@@ -355,6 +371,49 @@ class ChatToolbox:
         if not lines:
             return "I didn't find anything relevant in my past runs."
         return "Here's what I found in my past runs:\n" + "\n".join(lines)
+
+    def _save_job(self, args: dict) -> str:
+        """Save one job URL through the ENGINE intake use-case (the same service
+        the /api/intake router calls) and report what the engine returned — never
+        fabricating a save.
+
+        Consequential job actions go through the engine gate (apply-readiness
+        review); this only captures the URL into the campaign's reviewed intake
+        pipeline, exactly like the direct-URL intake endpoint.
+        """
+        if not self._intake_available():
+            return "I can't save jobs to your intake pipeline right now."
+        url = (args.get("url") or "").strip()
+        if not url:
+            return "I need a job posting URL to save."
+        campaign_id = self._campaign_str()
+        if not campaign_id:
+            return "I can't save that job without a campaign to attach it to."
+        try:
+            result = self._intake.save_url(campaign_id, url)
+        except Exception as exc:
+            log.info("chat_save_job_failed", url=url, error=str(exc))
+            return "I couldn't save that job through the engine — I left it untouched."
+        if not isinstance(result, dict):
+            return "The engine didn't return a usable result for that save — I left it untouched."
+        if result.get("duplicate"):
+            title = result.get("title") or "the posting"
+            company = result.get("company") or "that company"
+            return f"That job is already in your pipeline — {title} at {company} is already tracked."
+        if not result.get("saved"):
+            return "The engine did not confirm that save — I left it untouched."
+        title = result.get("title") or url
+        company = result.get("company") or "that company"
+        parts = [f"I saved '{title}' at {company} into your intake pipeline."]
+        score = result.get("viability_score")
+        if score is not None:
+            parts.append(f"Engine viability score: {score}.")
+        if result.get("fetched") is False:
+            parts.append("The page itself wasn't read; the row was derived from the link alone.")
+        note = result.get("note")
+        if note:
+            parts.append(str(note))
+        return " ".join(parts)
 
     def _desktop(self, args: dict) -> str:
         if not self._desktop_operable:
