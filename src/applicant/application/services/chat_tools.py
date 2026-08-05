@@ -299,13 +299,26 @@ class ChatToolbox:
                 "permission to submit, create accounts, or skip your review."
             )
 
-        kind = KIND_USER if args.get("about_user") else KIND_ENVIRONMENT
+        # D19 memory routing (AZ2-5 H1): classify the note and name the destination.
+        # A note is a GENERAL PREFERENCE when the caller flags it as about the user
+        # OR the heuristic says so; otherwise it is a JOB-SEARCH FACT.
+        if args.get("about_user") or _is_general_preference(text):
+            kind = KIND_USER
+            campaign_id = None  # GLOBAL scope: A0 user memory (user/USER.md tier)
+        else:
+            kind = KIND_ENVIRONMENT
+            campaign_id = self._campaign_str()  # CAMPAIGN scope: engine mind
+
         result = self._curation.stage_memory(
-            text, kind=kind, campaign_id=self._campaign_str()
+            text, kind=kind, campaign_id=campaign_id
         )
         if getattr(result, "auto_applied", 0):
-            return "Noted, and saved to memory."
-        return "Noted. I've put it up for your approval before it goes into memory."
+            if kind == KIND_USER:
+                return "Noted, and saved that to my own memory (your preferences)."
+            return "Noted, and saved that with your job profile in the engine's memory."
+        if kind == KIND_USER:
+            return "Noted. I've put that in my own memory (your preferences), pending your approval."
+        return "Noted. I've put that with your job profile in the engine's memory, pending your approval."
 
     def _forget(self, args: dict) -> str:
         if not self._memory_available():
