@@ -108,7 +108,8 @@ class JobSpyClient(Protocol):
     """Marked network boundary over python-jobspy ``scrape_jobs`` (FR-DISC-2/4)."""
 
     def scrape(self, *, site: str, search_term: str, location: str | None,
-               results_wanted: int, proxies: list[str] | None) -> list[dict]:
+               results_wanted: int, proxies: list[str] | None,
+               is_remote: bool = False, country_indeed: str | None = None) -> list[dict]:
         """Return raw normalized-ish dict rows for one board (zero LLM tokens)."""
         ...
 
@@ -290,6 +291,10 @@ class JobSpySource:
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         location = criteria.locations[0] if criteria.locations else None
+        # US-remote scoping (FR-DISC): "Remote"/unset is not a jobspy PLACE; default to
+        # the US and request remote-only so discovery yields US-remote roles.
+        if not location or location.strip().lower() in ("remote", "anywhere", "us remote"):
+            location = "United States"
         # H2 (no silent underdelivery): a swallowed fetch failure must stay
         # observable — the aggregator reads ``last_error`` after each fetch so a
         # failed board is reported as *failed*, never as merely empty.
@@ -301,6 +306,8 @@ class JobSpySource:
                 location=location,
                 results_wanted=self._results_wanted,
                 proxies=self._proxy.as_list(),
+                is_remote=True,
+                country_indeed="usa",
             )
         except Exception as exc:  # a flaky board must never crash the whole run
             log.warning("discovery_source_failed", source=self.key, error=str(exc))

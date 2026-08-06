@@ -70,6 +70,8 @@ class LiveJobSpyClient:
         location: str | None,
         results_wanted: int,
         proxies: list[str] | None,
+        is_remote: bool = False,
+        country_indeed: str | None = None,
     ) -> list[dict]:
         from jobspy import scrape_jobs  # lazy: real network dependency
 
@@ -79,6 +81,8 @@ class LiveJobSpyClient:
             location=location,
             results_wanted=results_wanted,
             proxies=proxies,
+            is_remote=is_remote,
+            country_indeed=country_indeed or "usa",
         )
         if df is None or len(df) == 0:
             return []
@@ -264,6 +268,8 @@ class FakeJobSpyClient:
         location: str | None,
         results_wanted: int,
         proxies: list[str] | None,
+        is_remote: bool = False,
+        country_indeed: str | None = None,
     ) -> list[dict]:
         return list(self._rows_by_site.get(site, []))[:results_wanted]
 
