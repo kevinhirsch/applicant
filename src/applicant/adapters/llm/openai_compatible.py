@@ -25,6 +25,7 @@ injected ``httpx`` transport.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable
 from typing import Any
@@ -610,6 +611,7 @@ class OpenAICompatibleLLM:
         raw_messages = [_raw_message(m) for m in messages]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
         payload = self._apply_prefix_cache(profile, payload)
+        payload = self._apply_thinking_toggle(payload)
 
         text, raw = self._post_openai(tier, url, payload)
         usage = _sum_usage(None, profile.usage_extractor(raw))
@@ -626,6 +628,7 @@ class OpenAICompatibleLLM:
                     fb_raw_messages = [_raw_message(m) for m in fb_messages]
                     fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
                     fb_payload = self._apply_prefix_cache(profile, fb_payload)
+                    fb_payload = self._apply_thinking_toggle(fb_payload)
                     text, raw = self._post_openai(tier, url, fb_payload)
                     # The fallback is a SECOND real wire call — fold its usage into the
                     # running total rather than discarding the first call's tokens (P1-6).
@@ -696,6 +699,7 @@ class OpenAICompatibleLLM:
         raw_messages = [_ollama_message(m) for m in msgs]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
         payload = self._apply_prefix_cache(profile, payload)
+        payload = self._apply_thinking_toggle(payload)
 
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
@@ -733,6 +737,18 @@ class OpenAICompatibleLLM:
             return payload
         marked = profile.mark_prefix_cache(payload)
         return marked if isinstance(marked, dict) else payload
+
+    def _apply_thinking_toggle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Opt-in: when the env var ``LLM_DISABLE_THINKING`` is truthy, ask an
+        OpenAI-compatible server to skip a reasoning model's think pass. Qwen3 /
+        vLLM honor ``chat_template_kwargs.enable_thinking``. OFF by default, so a
+        provider that rejects the field is never sent it (byte-identical to before).
+        """
+        if os.getenv("LLM_DISABLE_THINKING", "").strip().lower() in ("1", "true", "yes", "on"):
+            ck = payload.setdefault("chat_template_kwargs", {})
+            if isinstance(ck, dict):
+                ck["enable_thinking"] = False
+        return payload
 
     # Specific phrases / error codes that signal a real context-window overflow.
     # The bare substring "context" is intentionally absent — a content-filter
@@ -896,6 +912,7 @@ class OpenAICompatibleLLM:
         if max_tokens:
             payload["max_tokens"] = max_tokens
         payload = self._apply_prefix_cache(profile, payload)
+        payload = self._apply_thinking_toggle(payload)
 
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
