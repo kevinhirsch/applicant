@@ -54,6 +54,7 @@
         </div>
       </div>
       <div class="actions">
+        <button class="btn primary" x-show="hasAffordance(item.kind)" @click="openAffordance(item.kind)" x-text="affordanceLabel(item.kind)"></button>
         <button class="btn" @click="resolveItem(item.id)" :disabled="busy">Resolve</button>
         <button class="btn" @click="snoozeItem(item.id)" :disabled="busy">Snooze</button>
       </div>
@@ -81,6 +82,16 @@
     busy: false,
     showSnoozed: false,
     campaignId: "__system__",
+    KIND_AFFORDANCE: {
+      digest_approval: { label: "Review in Digest", panel: "digest.html" },
+      material_review: { label: "Review material", panel: "documents.html" },
+      final_approval:  { label: "Review & approve", panel: "documents.html" },
+      missing_attr:    { label: "Add detail",     panel: "attributes.html" },
+      integral_change: { label: "Review change",   panel: "compare.html" },
+    },
+    affordanceLabel(kind) { const a = this.KIND_AFFORDANCE[kind]; return a ? a.label : ""; },
+    hasAffordance(kind) { return !!this.KIND_AFFORDANCE[kind]; },
+    openAffordance(kind) { const a = this.KIND_AFFORDANCE[kind]; if (a) window.openModal("/plugins/applicant/webui/" + a.panel); },
 
     async init() {
       await this.loadItems();
