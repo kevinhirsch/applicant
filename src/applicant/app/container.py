@@ -1608,6 +1608,7 @@ def build_container(settings: Settings | None = None) -> Container:
             agent_memory=agent_memory,
         )
         cs = CriteriaService(tick_storage, llm)
+        _tick_onboarding.set_criteria_service(cs)  # CONC-2 fix: per-tick onboarding must see criteria for the apply-readiness gate (mirrors boot 1308)
         # RT Phase 3: the per-tick run recorder fans the live ``agent`` event — this
         # is the path the 24/7 scheduler drives, so it is what surfaces a running
         # agent's progress to the operator's tabs in realtime.
