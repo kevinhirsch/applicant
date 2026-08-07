@@ -14,6 +14,11 @@ import { store as tasksStore } from "/components/sidebar/tasks/tasks-store.js";
 import { store as syncStore } from "/components/sync/sync-store.js";
 import { store as chatInputStore } from "/components/chat/input/input-store.js";
 
+// Single-conversation redesign (FR-AUTO): one fixed, always-on conversation.
+// This literal MUST match vendored helpers/api.py and the a0-applicant extension
+// CANONICAL_CONTEXT_ID, so client and server can never drift to a sibling context.
+const CANONICAL_CONTEXT_ID = "main";
+
 const model = {
   contexts: [],
   selected: "",
@@ -32,22 +37,10 @@ const model = {
   init() {
     this.loggedIn = Boolean(window.runtimeInfo && window.runtimeInfo.loggedIn);
 
-    // URL parameter takes priority (e.g. ?ctxid=abc from "open in new window")
-    const urlParams = new URL(window.location.href).searchParams;
-    const urlCtxId = urlParams.get("ctxid");
-    if (urlCtxId) {
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete("ctxid");
-      window.history.replaceState({}, "", cleanUrl);
-      this.selectChat(urlCtxId);
-      return;
-    }
-
-    // Initialize from sessionStorage
-    const lastSelectedChat = sessionStorage.getItem("lastSelectedChat");
-    if (lastSelectedChat) {
-      this.selectChat(lastSelectedChat);
-    }
+    // Single-conversation redesign: always select the one canonical context.
+    // There is no "no context" state and no sibling selection via ?ctxid= or
+    // sessionStorage anymore — both would let the UI drift off the canonical id.
+    this.selectChat(CANONICAL_CONTEXT_ID);
   },
 
   // Update contexts from polling
@@ -158,23 +151,11 @@ const model = {
     }
   },
 
-  // Create new chat
+  // Single-conversation redesign: "new chat" is a no-op that stays on the one
+  // canonical context. Never POST /chat_create — the backend hook also forces
+  // any minted USER context onto the canonical id.
   async newChat() {
-    try {
-
-      // first create a new chat on the backend
-      const response = await sendJsonData("/chat_create", {
-        current_context: this.selected
-      });
-
-      if (response.ok) {
-        this.selectChat(response.ctxid);
-        return;
-      }
-
-    } catch (e) {
-      toastFetchError("Error creating new chat", e);
-    }
+    this.selectChat(CANONICAL_CONTEXT_ID);
   },
 
   deselectChat(){

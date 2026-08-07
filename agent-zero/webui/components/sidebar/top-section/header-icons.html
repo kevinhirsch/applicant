@@ -125,16 +125,6 @@
         </button>
 
         <div class="quick-actions-accordion-panel" x-show="$store.sidebar.isSectionOpen('chatActions')" style="display: none;">
-          <button class="dropdown-item" @click="$store.chats.newChat(); $store.sidebar.menuClose()">
-            <span class="material-symbols-outlined">chat_add_on</span>
-            <span>New Chat</span>
-          </button>
-
-          <button class="dropdown-item" @click="$store.chats.loadChats(); $store.sidebar.menuClose()">
-            <span class="material-symbols-outlined">folder_open</span>
-            <span>Load Chat</span>
-          </button>
-
           <button class="dropdown-item" x-show="$store.chats.selected" @click="$store.chats.saveChat(); $store.sidebar.menuClose()">
             <span class="material-symbols-outlined">save</span>
             <span>Save Chat</span>

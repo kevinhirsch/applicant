@@ -26,6 +26,12 @@ from helpers import files, cache
 
 ThreadLockType = Union[threading.Lock, threading.RLock]
 
+# Single-conversation redesign (FR-AUTO): one fixed conversation per install.
+# This literal MUST match webui/components/sidebar/chats/chats-store.js and the
+# a0-applicant extension CANONICAL_CONTEXT_ID, so every layer resolves to the
+# same context and no sibling can ever be minted.
+CANONICAL_CONTEXT_ID = "main"
+
 CACHE_AREA = "api_handlers(api)"
 cache.toggle_area(CACHE_AREA, False)  # cache off for now
 
@@ -101,12 +107,10 @@ class ApiHandler:
     def use_context(self, ctxid: str, create_if_not_exists: bool = True):
         with self.thread_lock:
             if not ctxid:
-                first = AgentContext.first()
-                if first:
-                    AgentContext.use(first.id)
-                    return first
-                context = AgentContext(config=initialize_agent(), set_current=True)
-                return context
+                # Single-conversation redesign (FR-UX): an empty context id must
+                # never resolve to an arbitrary "first" context or a fresh random
+                # one. Collapse onto the single canonical conversation instead.
+                ctxid = CANONICAL_CONTEXT_ID
             got = AgentContext.use(ctxid)
             if got:
                 return got
