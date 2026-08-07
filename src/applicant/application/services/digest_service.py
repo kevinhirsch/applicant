@@ -367,8 +367,6 @@ class DigestService:
             # viability threshold — the user asked for it explicitly, so the digest
             # keeps it and says (honestly) how it scored instead.
             user_added = (posting.source_key or "") == USER_ADDED_SOURCE_KEY
-            if getattr(posting, "viability_score", None) is None and not user_added:
-                continue  # digest is a fast READ: never LLM-score here; the tick scores the backlog
             row = {
                 "posting_id": posting.id,
                 "title": posting.title,

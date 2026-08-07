@@ -21,6 +21,7 @@ a ``ProxyConfig`` seam threaded into every network client without committing to 
 
 from __future__ import annotations
 
+import inspect
 import time as _time
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
@@ -320,24 +321,48 @@ class JobSpySource:
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         location = criteria.locations[0] if criteria.locations else None
         # US-remote scoping (FR-DISC): "Remote"/unset is not a jobspy PLACE; default to
-        # the US and request remote-only so discovery yields US-remote roles.
-        if not location or location.strip().lower() in ("remote", "anywhere", "us remote"):
+        # the US and request remote-only ONLY when the caller didn't state a region --
+        # an explicit non-US location (UK/Germany/etc.) must reach ITS OWN country/board,
+        # never be silently forced into US-remote-only.
+        us_remote_default = not location or location.strip().lower() in (
+            "remote", "anywhere", "us remote",
+        )
+        if us_remote_default:
             location = "United States"
         # H2 (no silent underdelivery): a swallowed fetch failure must stay
         # observable — the aggregator reads ``last_error`` after each fetch so a
         # failed board is reported as *failed*, never as merely empty.
         self.last_error: str | None = None
+        scrape_kwargs: dict = dict(
+            site=self.site,
+            search_term=_search_term(criteria),
+            location=location,
+            results_wanted=self._results_wanted,
+            proxies=self._proxy.as_list(),
+        )
+        # cf25c17be's freshness window applies to every fetch; US-remote scoping only
+        # applies when we defaulted the location ourselves.
+        extra_kwargs: dict = {"hours_old": 336}  # ~2 weeks: keep the pool FRESH
+        if us_remote_default:
+            extra_kwargs["is_remote"] = True
+            extra_kwargs["country_indeed"] = "usa"
+        # These jobspy-specific extras are OPTIONAL on the JobSpyClient Protocol --
+        # only pass the ones the injected client's scrape() actually declares, so a
+        # lightweight/legacy test double without a **kwargs catch-all is never handed
+        # an unexpected keyword argument (which would otherwise misreport a healthy
+        # board as SOURCE_ERROR instead of SOURCE_OK).
         try:
-            rows = self._client.scrape(
-                site=self.site,
-                search_term=_search_term(criteria),
-                location=location,
-                results_wanted=self._results_wanted,
-                proxies=self._proxy.as_list(),
-                is_remote=True,
-                country_indeed="usa",
-                hours_old=336,  # ~2 weeks: keep the pool FRESH so we surface recent roles early
-            )
+            sig_params = inspect.signature(self._client.scrape).parameters
+        except (TypeError, ValueError):
+            sig_params = {}
+        accepts_all_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig_params.values()
+        )
+        for key, value in extra_kwargs.items():
+            if accepts_all_kwargs or key in sig_params:
+                scrape_kwargs[key] = value
+        try:
+            rows = self._client.scrape(**scrape_kwargs)
         except Exception as exc:  # a flaky board must never crash the whole run
             log.warning("discovery_source_failed", source=self.key, error=str(exc))
             self.last_error = str(exc)
