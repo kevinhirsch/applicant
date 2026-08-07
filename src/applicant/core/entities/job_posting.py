@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from applicant.core.ids import CampaignId, JobPostingId
 
@@ -35,4 +36,8 @@ class JobPosting:
     # Durable viability scoring (FR-DIG-4): persisted so the digest rationale survives
     # restart and is not recomputed every run. ``None`` until the posting is scored.
     viability_score: float | None = None
+    #: Freshness signals for recency-aware ranking (FR-DISC): first_seen = when
+    #: discovery first saw it; date_posted = board-reported post date. None = legacy.
+    first_seen: datetime | None = None
+    date_posted: datetime | None = None
     rationale: dict = field(default_factory=dict)

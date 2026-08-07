@@ -206,6 +206,31 @@ def _clip(value: str | None, limit: int) -> str | None:
     return value[:limit]
 
 
+def _now_utc():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _parse_posted_date(v):
+    """Best-effort parse of a board 'date_posted' -> tz-aware datetime, else None."""
+    if v is None:
+        return None
+    import datetime as _dt
+    try:
+        if isinstance(v, _dt.datetime):
+            return v if v.tzinfo else v.replace(tzinfo=_dt.timezone.utc)
+        if isinstance(v, _dt.date):
+            return _dt.datetime(v.year, v.month, v.day, tzinfo=_dt.timezone.utc)
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "nat", "none", "null"):
+            return None
+        s = s.replace("Z", "+00:00")
+        d = _dt.datetime.fromisoformat(s[:19] if ("T" in s or " " in s) else s)
+        return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
+    except Exception:
+        return None
+
+
 def normalize_row(
     raw: dict, campaign_id: CampaignId, source_key: str
 ) -> JobPosting | None:
@@ -237,6 +262,8 @@ def normalize_row(
         description=_clean(raw.get("description")) or "",
         source_key=source_key,
         easy_apply=detect_easy_apply(raw),
+        first_seen=_now_utc(),
+        date_posted=_parse_posted_date(raw.get("date_posted") or raw.get("date")),
     )
 
 

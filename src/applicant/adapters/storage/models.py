@@ -159,6 +159,10 @@ class JobPostingModel(Base):
     viability_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     rationale: Mapped[dict] = mapped_column(JSONType, default=dict)
     description: Mapped[str] = mapped_column(Text, default="")
+    # Freshness (recency-aware ranking): first_seen = when discovery first saw it;
+    # date_posted = board-reported post date. Nullable; legacy rows are NULL.
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    date_posted: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # 8 -------------------------------------------------------------------------

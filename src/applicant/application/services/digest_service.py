@@ -259,6 +259,29 @@ class DigestService:
         except Exception:
             return None
 
+    @staticmethod
+    def _recency_bonus(posting) -> float:
+        """Freshness boost (points on the 0-100 fit scale) so fresh high-fit roles rank
+        UP — the fix for 'I find the right jobs at the wrong time'. +15 if <2d, +10 <7d,
+        +5 <14d, else 0. Uses date_posted, else first_seen; None -> 0 (legacy rows)."""
+        import datetime as _dt
+        ref = getattr(posting, "date_posted", None) or getattr(posting, "first_seen", None)
+        if ref is None:
+            return 0.0
+        try:
+            if ref.tzinfo is None:
+                ref = ref.replace(tzinfo=_dt.timezone.utc)
+            age_days = (_dt.datetime.now(_dt.timezone.utc) - ref).total_seconds() / 86400.0
+        except Exception:
+            return 0.0
+        if age_days < 2:
+            return 15.0
+        if age_days < 7:
+            return 10.0
+        if age_days < 14:
+            return 5.0
+        return 0.0
+
     def build_digest(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> list[dict]:
@@ -289,7 +312,12 @@ class DigestService:
             # digest row itself carries a plain-language warning BEFORE approval. A
             # warning never excludes a row from the digest (unlike the pipeline block).
             row["warnings"] = self._presubmit_warnings(campaign_id, posting)
+            row["_recency"] = self._recency_bonus(posting)
             rows.append(row)
+        # Recency-aware rank-stacking (FR-DISC): best FIT first, lifted by a freshness
+        # boost so newly-appeared high-fit roles float to the very top. Fit dominates;
+        # freshness breaks ties and surfaces recent roles early ('not late').
+        rows.sort(key=lambda r: (r.get("viability_score") or 0) + r.get("_recency", 0.0), reverse=True)
         return rows
 
     def _scored_pairs(

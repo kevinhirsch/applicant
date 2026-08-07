@@ -114,6 +114,8 @@ def _posting_to_entity(row: m.JobPostingModel) -> JobPosting:
         source_key=row.source_key,
         easy_apply=bool(row.easy_apply),
         viability_score=row.viability_score,
+        first_seen=getattr(row, "first_seen", None),
+        date_posted=getattr(row, "date_posted", None),
         rationale=dict(row.rationale or {}),
     )
 
@@ -394,6 +396,8 @@ class JobPostingRepo:
                 easy_apply=bool(posting.easy_apply),
                 description=posting.description,
                 viability_score=posting.viability_score,
+                first_seen=getattr(posting, "first_seen", None),
+                date_posted=getattr(posting, "date_posted", None),
                 rationale=posting.rationale,
             )
         )
