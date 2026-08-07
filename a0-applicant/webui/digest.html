@@ -56,7 +56,6 @@
     <div class="item">
       <div class="info">
         <div class="title" x-text="row.title"></div>
-        <div class="role" x-show="row.title" x-text="row.title"></div>
         <div class="score" x-show="row.viability_score !== undefined && row.viability_score !== null" x-text="'Score: ' + row.viability_score"></div>
         <div class="why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
         <div class="feedback-row" x-show="!feedbackResult[row.posting_id]">
