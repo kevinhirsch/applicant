@@ -28,6 +28,11 @@
   .adigest .item .decline-row{display:flex;gap:4px;align-items:center;margin-top:4px}
   .adigest .item .decline-row input{width:100px;padding:3px 6px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.75rem}
   .adigest .recap-box{background:var(--color-panel,#f2f5f7);border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:.85rem;line-height:1.4;white-space:pre-wrap}
+  .adigest .feedback-row{display:flex;gap:4px;align-items:center;margin-top:6px}
+  .adigest .feedback-row input{flex:1;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.75rem}
+  .adigest .fb-btn{padding:3px 8px;font-size:.85rem;line-height:1}
+  .adigest .feedback-err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:6px;padding:4px 8px;font-size:.72rem;margin-top:4px}
+  .adigest .feedback-confirm{background:var(--color-success-bg,#e8f8ef);color:var(--color-success-text,#1a7a3a);border-radius:6px;padding:4px 8px;font-size:.72rem;margin-top:4px}
 </style>
 
 <div class="adigest" x-data="digestPanel()">
@@ -54,6 +59,22 @@
         <div class="role" x-show="row.role" x-text="row.role"></div>
         <div class="score" x-show="row.score !== undefined && row.score !== null" x-text="'Score: ' + row.score"></div>
         <div class="why" x-show="row.why" x-text="row.why"></div>
+        <div class="feedback-row" x-show="!feedbackResult[row.posting_id]">
+          <input type="text" class="feedback-input"
+                 x-model="(postingFeedback[row.posting_id] = postingFeedback[row.posting_id] || {text:'',sentiment:null}).text"
+                 placeholder="What do you think of this one?"
+                 :disabled="feedbackBusy[row.posting_id]">
+          <button class="btn fb-btn" title="Like"
+                  @click="submitPostingFeedback(row.posting_id, 'positive')"
+                  :disabled="feedbackBusy[row.posting_id] || !((postingFeedback[row.posting_id]||{}).text||'').trim()">👍</button>
+          <button class="btn fb-btn" title="Dislike"
+                  @click="submitPostingFeedback(row.posting_id, 'negative')"
+                  :disabled="feedbackBusy[row.posting_id] || !((postingFeedback[row.posting_id]||{}).text||'').trim()">👎</button>
+        </div>
+        <div class="feedback-err" x-show="feedbackError[row.posting_id]" x-text="feedbackError[row.posting_id]"></div>
+        <div class="feedback-confirm" x-show="feedbackResult[row.posting_id]">
+          ✓ Feedback saved<template x-if="(feedbackResult[row.posting_id].likes||[]).length"><span> · likes: <span x-text="feedbackResult[row.posting_id].likes.join(', ')"></span></span></template><template x-if="(feedbackResult[row.posting_id].dislikes||[]).length"><span> · dislikes: <span x-text="feedbackResult[row.posting_id].dislikes.join(', ')"></span></span></template>
+        </div>
       </div>
       <div class="actions">
         <button class="btn" @click="approve(row.application_id)" :disabled="busy">Approve</button>
@@ -86,6 +107,11 @@
     busy: false,
     recapMessage: "",
     declineReasons: {},
+    campaignId: "__system__",
+    postingFeedback: {},
+    feedbackBusy: {},
+    feedbackResult: {},
+    feedbackError: {},
 
     async init() {
       await this.load();
@@ -101,6 +127,7 @@
         this.rows = [];
       } else {
         this.rows = (r.data && r.data.rows) || [];
+        this.campaignId = (r.data && r.data.campaign_id) || "__system__";
         this.sourceShortfalls = (r.data && r.data.source_shortfalls) || [];
         if (r.data && r.data.empty_day_note) {
           this.rows = [];
@@ -128,6 +155,26 @@
       this.declineReasons[applicationId] = "";
       this.busy = false;
       await this.load();
+    },
+
+    async submitPostingFeedback(postingId, sentiment) {
+      const draft = this.postingFeedback[postingId] || {};
+      const text = (draft.text || "").trim();
+      if (!text) return;
+      this.feedbackBusy = { ...this.feedbackBusy, [postingId]: true };
+      this.feedbackError[postingId] = "";
+      const r = await callJsonApi("feedback", {
+        action: "posting", campaign_id: this.campaignId,
+        posting_id: postingId, sentiment: sentiment, text: text,
+      });
+      this.feedbackBusy = { ...this.feedbackBusy, [postingId]: false };
+      if (!r || !r.ok) {
+        this.feedbackError[postingId] = (r && r.error) || "Feedback failed to save.";
+        this.feedbackResult[postingId] = null;
+      } else {
+        this.feedbackResult[postingId] = r.data || {};
+        this.postingFeedback[postingId] = { text: "", sentiment: null };
+      }
     },
 
     async recap() {

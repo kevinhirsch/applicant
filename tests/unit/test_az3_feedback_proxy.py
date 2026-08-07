@@ -127,3 +127,17 @@ class TestFeedbackProxy:
         r = mod.dispatch({"action": "zoom"})
         assert r["ok"] is False and r["status"] == 400
         assert "unknown feedback action" in r["error"]
+
+    def test_posting_forwards_post_with_body(self, mod):
+        seen = {}
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path, body=body)
+            return {"ok": True, "status": 200, "data": {}}
+        with patch.object(mod, "_forward", fake):
+            mod.dispatch({
+                "action": "posting", "campaign_id": "c1", "posting_id": "p1",
+                "sentiment": "negative", "text": "too much travel",
+            })
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/feedback/posting"
+        assert seen["body"] == {"campaign_id": "c1", "posting_id": "p1", "sentiment": "negative", "text": "too much travel"}

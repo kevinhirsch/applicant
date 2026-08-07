@@ -58,3 +58,8 @@ class TestDigestPanel:
         assert "Review" in html, "The deep-link button should be labeled 'Review'"
         # Confirm the link is per-row (in the actions div or with template x-for)
         assert 'x-for="row in rows"' in html, "Must be inside the row template"
+
+    def test_posting_feedback_wired(self, html):
+        assert 'callJsonApi("feedback",' in html
+        assert 'action: "posting"' in html
+        assert 'posting_id:' in html and 'sentiment:' in html

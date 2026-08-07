@@ -60,6 +60,15 @@ def dispatch(input: dict) -> dict:
         }
         return _forward("POST", "/api/feedback/survey", body)
 
+    if action == "posting":
+        body = {
+            "campaign_id": cid,
+            "posting_id": input.get("posting_id"),
+            "sentiment": input.get("sentiment", "positive"),
+            "text": input.get("text"),
+        }
+        return _forward("POST", "/api/feedback/posting", body)
+
     return {"ok": False, "status": 400, "error": f"unknown feedback action {action!r}"}
 
 
