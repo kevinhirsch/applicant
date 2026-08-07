@@ -469,7 +469,13 @@ BUILD_TARGETS=()
 [[ "${REBUILD_COMPANION}" -eq 1 ]] && BUILD_TARGETS+=("companion")
 [[ "${REBUILD_API}" -eq 1 ]] && BUILD_TARGETS+=("api")
 if [[ "${#BUILD_TARGETS[@]}" -gt 0 ]]; then
-  run docker compose -f "${COMPOSE_FILE}" build "${BUILD_TARGETS[@]}"
+  # Build ONE image at a time (never all in parallel): a parallel build of
+  # a0+companion+api alongside the still-running stack OOM-killed the host mid-deploy
+  # (2026-08-07, exit 137 on updater+api). Sequential caps peak memory to a single
+  # image build. Slower, but a deploy that finishes beats one that OOMs half-way.
+  for _bt in "${BUILD_TARGETS[@]}"; do
+    run docker compose -f "${COMPOSE_FILE}" build "${_bt}"
+  done
 else
   log "    No image inputs changed — both local images already current, skipping build."
 fi
