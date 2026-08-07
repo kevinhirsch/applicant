@@ -884,11 +884,22 @@ def build_container(settings: Settings | None = None) -> Container:
     discovery_rss_feeds = tuple(
         f.strip() for f in settings.discovery_rss_feeds.split(",") if f.strip()
     )
+    # Keyless ATS directory sources (NFR-EXT-1): same operator-supplied
+    # comma-separated shape as feeds/proxies, threaded into the discovery adapter
+    # (which never imports app.config itself).
+    discovery_greenhouse_boards = tuple(
+        t.strip() for t in settings.discovery_greenhouse_boards.split(",") if t.strip()
+    )
+    discovery_lever_companies = tuple(
+        c.strip() for c in settings.discovery_lever_companies.split(",") if c.strip()
+    )
     discovery = build_default_discovery(
         live=settings.discovery_live,
         searxng_url=settings.searxng_url,
         proxies=discovery_proxies,
         rss_feeds=discovery_rss_feeds,
+        greenhouse_boards=discovery_greenhouse_boards,
+        lever_companies=discovery_lever_companies,
     )
     # P1-9: single-URL posting fetcher for the paste-a-URL/bookmarklet intake.
     # Same live/fake split as the discovery clients above (FR-DISC-4 hermeticity):

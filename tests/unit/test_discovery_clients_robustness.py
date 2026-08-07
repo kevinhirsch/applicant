@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import httpx
 
-from applicant.adapters.discovery.clients import LiveRssClient, LiveSearxngClient
+from applicant.adapters.discovery.clients import (
+    LiveGreenhouseClient,
+    LiveLeverClient,
+    LiveRssClient,
+    LiveSearxngClient,
+)
 
 
 def _patch_httpx(monkeypatch, handler):
@@ -127,3 +132,125 @@ def test_rss_uses_link_text(monkeypatch):
     _patch_httpx(monkeypatch, handler)
     rows = LiveRssClient().fetch_items(feed_url="https://feed.test/rss", proxies=None)
     assert rows[0]["url"] == "https://jobs.test/platform"
+
+
+def test_greenhouse_request_is_bounded_by_explicit_timeout(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(
+            200,
+            json={"jobs": []},
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    LiveGreenhouseClient(timeout=7.0).fetch_jobs(token="acme", proxies=None)
+    assert seen["timeout"]["read"] == 7.0
+    assert seen["timeout"]["connect"] is not None
+
+
+def test_greenhouse_falsy_timeout_falls_back_to_default():
+    from applicant.adapters.discovery.clients import _DEFAULT_HTTP_TIMEOUT
+
+    assert LiveGreenhouseClient(timeout=0)._timeout == _DEFAULT_HTTP_TIMEOUT
+    assert LiveGreenhouseClient(timeout=None)._timeout == _DEFAULT_HTTP_TIMEOUT
+
+
+def test_greenhouse_malformed_response_raises(monkeypatch):
+    # A non-JSON / non-dict Greenhouse payload must raise a clear ValueError rather
+    # than silently returning garbage the normalizer cannot handle.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>oops</html>", headers={"content-type": "text/html"})
+
+    _patch_httpx(monkeypatch, handler)
+    try:
+        LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-JSON Greenhouse response")
+
+    def handler2(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"notjobs": "x"}, headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler2)
+    try:
+        LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for Greenhouse response missing jobs list")
+
+
+def test_greenhouse_valid_json_parses_jobs(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"jobs": [{"title": "Role", "absolute_url": "https://gh.test/1"}]},
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    assert LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None) == [
+        {"title": "Role", "absolute_url": "https://gh.test/1"}
+    ]
+
+
+def test_lever_request_is_bounded_by_explicit_timeout(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json=[], headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler)
+    LiveLeverClient(timeout=7.0).fetch_postings(company="acme", proxies=None)
+    assert seen["timeout"]["read"] == 7.0
+    assert seen["timeout"]["connect"] is not None
+
+
+def test_lever_falsy_timeout_falls_back_to_default():
+    from applicant.adapters.discovery.clients import _DEFAULT_HTTP_TIMEOUT
+
+    assert LiveLeverClient(timeout=0)._timeout == _DEFAULT_HTTP_TIMEOUT
+    assert LiveLeverClient(timeout=None)._timeout == _DEFAULT_HTTP_TIMEOUT
+
+
+def test_lever_malformed_response_raises(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json", headers={"content-type": "text/plain"})
+
+    _patch_httpx(monkeypatch, handler)
+    try:
+        LiveLeverClient().fetch_postings(company="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-JSON Lever response")
+
+    def handler2(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"notarray": True}, headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler2)
+    try:
+        LiveLeverClient().fetch_postings(company="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-array Lever response")
+
+
+def test_lever_valid_json_parses_postings(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"text": "Role", "hostedUrl": "https://lever.test/1"}],
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    assert LiveLeverClient().fetch_postings(company="acme", proxies=None) == [
+        {"text": "Role", "hostedUrl": "https://lever.test/1"}
+    ]

@@ -396,6 +396,13 @@ class Settings(BaseSettings):
     # hardcoded default feed (factory.py's ``RSS_FEEDS``) -- empty (the
     # default) keeps today's hardcoded-only behavior byte-identical.
     discovery_rss_feeds: str = Field(default="", alias="DISCOVERY_RSS_FEEDS")
+    # Keyless ATS directory sources (NFR-EXT-1): comma-separated Greenhouse board
+    # tokens / Lever company slugs an operator can add without a code change.
+    # Each token/company becomes one toggleable discovery source in factory.py
+    # (appended ALONGSIDE the hardcoded registry) -- empty (the default)
+    # registers zero ATS sources and keeps discovery byte-identical to before.
+    discovery_greenhouse_boards: str = Field(default="", alias="DISCOVERY_GREENHOUSE_BOARDS")
+    discovery_lever_companies: str = Field(default="", alias="DISCOVERY_LEVER_COMPANIES")
 
     # Browser egress (FR-STEALTH-4). The automation MUST egress via the user's
     # residential connection. "direct" (default) uses the host's own connection;

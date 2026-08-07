@@ -123,6 +123,42 @@ class TestLiveSourcesOffline:
         src = JobSpySource(site="indeed", client=Boom())
         assert src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id)) == []
 
+    def test_greenhouse_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeGreenhouseClient
+        from applicant.adapters.discovery.jobspy_searxng import GreenhouseSource
+
+        src = GreenhouseSource(client=FakeGreenhouseClient(), token="acme", key="greenhouse:acme")
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "greenhouse:acme"
+        assert posting.title == "Senior Backend Engineer"
+        assert posting.company == "acme"  # configured token is the display name
+        assert posting.source_url == "https://boards.greenhouse.test/acme/senior-backend"
+        assert posting.location == "Remote (US)"
+        assert posting.date_posted is not None
+        assert posting.work_mode is None  # Greenhouse payload has no work-mode signal
+
+    def test_lever_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeLeverClient
+        from applicant.adapters.discovery.jobspy_searxng import LeverSource
+
+        src = LeverSource(client=FakeLeverClient(), company="acme", key="lever:acme")
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "lever:acme"
+        assert posting.title == "Senior Product Engineer"
+        assert posting.company == "acme"  # configured slug is the display name
+        assert posting.source_url == "https://jobs.lever.co/acme/1"
+        assert posting.location == "San Francisco, CA"
+        assert posting.work_mode == "hybrid"  # workplaceType normalized
+        # Lever createdAt is epoch milliseconds: 1700000000000 ms -> 2023-11-14.
+        assert posting.date_posted is not None
+        assert posting.date_posted.year == 2023
+        assert posting.date_posted.month == 11
+        assert posting.date_posted.day == 14
+
     def test_proxy_hook_threads_through(self, campaign_id):
         # FR-DISC-6: a configured proxy is passed to the client; default is none.
         from applicant.adapters.discovery.jobspy_searxng import JobSpySource, ProxyConfig

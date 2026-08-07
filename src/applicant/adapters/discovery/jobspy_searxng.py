@@ -26,6 +26,7 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from applicant.adapters.discovery.clients import GreenhouseClient, LeverClient
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
@@ -463,6 +464,136 @@ class RssSource:
                 continue
             out.append(posting)
         return out
+
+
+
+class GreenhouseSource:
+    """Keyless Greenhouse board discovery source (NFR-EXT-1).
+
+    Fetches every live job from one Greenhouse board token via the
+    ``GreenhouseClient`` seam and normalizes rows to ``JobPosting``. Criteria are
+    used ONLY for the post-fetch ``_matches`` filter, never to build the request
+    (fixed per-company endpoint, exactly like ``RssSource``).
+    """
+
+    def __init__(
+        self,
+        *,
+        client: GreenhouseClient,
+        token: str,
+        key: str = "greenhouse",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._token = token
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(token=self._token, proxies=None)
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_greenhouse_job(raw, self._token)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_greenhouse_job(raw: dict, token: str) -> dict:
+    """Flatten a Greenhouse API job dict to the ``normalize_row`` shape.
+
+    ``normalize_row`` does ``str(raw.get("location"))`` with no dict-unwrapping, so
+    the nested Greenhouse location object is resolved to its ``name`` here. The board
+    payload has no company field, so the configured board token is used as the
+    company/display name. Salary/easy-apply are left absent (False default).
+    """
+    location = raw.get("location") or {}
+    return {
+        "title": raw.get("title"),
+        "company": token,
+        "job_url": raw.get("absolute_url"),
+        "location": location.get("name") if isinstance(location, dict) else location,
+        "description": raw.get("content", ""),
+        "date_posted": raw.get("updated_at"),
+    }
+
+
+class LeverSource:
+    """Keyless Lever company posting discovery source (NFR-EXT-1).
+
+    Fetches every live posting for one Lever company via the ``LeverClient`` seam
+    and normalizes rows to ``JobPosting``. Criteria are used ONLY for the post-fetch
+    ``_matches`` filter, never to build the request (fixed company endpoint).
+    """
+
+    def __init__(
+        self,
+        *,
+        client: LeverClient,
+        company: str,
+        key: str = "lever",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._company = company
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_postings(company=self._company, proxies=None)
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_lever_posting(raw, self._company)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_lever_posting(raw: dict, company: str) -> dict:
+    """Flatten a Lever API posting dict to the ``normalize_row`` shape.
+
+    Lever ``createdAt`` is epoch MILLISECONDS; ``_parse_posted_date`` accepts
+    ISO/datetime but not bare ints, so convert to a tz-aware UTC datetime before
+    ``normalize_row``. The posting payload has no company field, so the configured
+    company slug is used as the company/display name.
+    """
+    created_ms = raw.get("createdAt")
+    date_posted = None
+    if isinstance(created_ms, (int, float)) and not isinstance(created_ms, bool):
+        try:
+            import datetime as _dt
+
+            date_posted = _dt.datetime.fromtimestamp(created_ms / 1000.0, tz=_dt.timezone.utc)
+        except Exception:
+            date_posted = None
+    if date_posted is None and created_ms is not None:
+        date_posted = created_ms
+    categories = raw.get("categories") or {}
+    return {
+        "title": raw.get("text"),
+        "company": company,
+        "job_url": raw.get("hostedUrl") or raw.get("applyUrl"),
+        "location": categories.get("location") if isinstance(categories, dict) else categories,
+        "work_mode": raw.get("workplaceType"),
+        "description": raw.get("descriptionPlain") or raw.get("description", ""),
+        "date_posted": date_posted,
+    }
 
 
 @runtime_checkable

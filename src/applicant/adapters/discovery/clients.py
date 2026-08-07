@@ -13,6 +13,7 @@ committed; ``None`` means direct egress.
 from __future__ import annotations
 
 import json
+from typing import Protocol
 
 from applicant.observability.logging import get_logger
 
@@ -325,3 +326,148 @@ class FakeRssClient:
 
     def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
         return list(self._items)
+
+
+# --- ATS board clients (Greenhouse + Lever; keyless directory feeds) ------
+class GreenhouseClient(Protocol):
+    """Marked network boundary over the Greenhouse board API (FR-DISC-2/4)."""
+
+    def fetch_jobs(self, *, token: str, proxies: list[str] | None) -> list[dict]:
+        """Return raw job dicts from one Greenhouse board (zero LLM tokens)."""
+        ...
+
+
+class LiveGreenhouseClient:
+    """Real Greenhouse board API client (FR-DISC-2/4).
+
+    Fetches ``https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true``
+    and returns the raw ``jobs`` list. Like every live discovery client it is
+    network-only and never used in the default offline lane.
+    """
+
+    def __init__(self, *, timeout: float = _DEFAULT_HTTP_TIMEOUT) -> None:
+        # Never allow an unbounded client: fall back to the explicit default when a
+        # caller passes None/0 so a hung board API can't wedge the discovery run.
+        self._timeout = timeout or _DEFAULT_HTTP_TIMEOUT
+
+    def fetch_jobs(self, *, token: str, proxies: list[str] | None) -> list[dict]:
+        import httpx  # lazy
+
+        proxy = proxies[0] if proxies else None
+        with httpx.Client(timeout=self._timeout, proxy=proxy) as client:
+            resp = client.get(
+                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
+                params={"content": "true"},
+            )
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except (ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f"Greenhouse returned non-JSON response: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("Greenhouse jobs response must be a JSON object")
+        jobs = data.get("jobs")
+        if not isinstance(jobs, list):
+            raise ValueError("Greenhouse jobs response missing a jobs list")
+        return jobs
+
+
+class FakeGreenhouseClient:
+    """Offline stand-in for the Greenhouse board API — exercises ``GreenhouseSource``."""
+
+    def __init__(self, jobs: list[dict] | None = None) -> None:
+        self._jobs = jobs if jobs is not None else self._default_jobs()
+
+    @staticmethod
+    def _default_jobs() -> list[dict]:
+        return [
+            {
+                "title": "Senior Backend Engineer",
+                "location": {"name": "Remote (US)"},
+                "absolute_url": "https://boards.greenhouse.test/acme/senior-backend",
+                "content": "Python, FastAPI, Postgres.",
+                "updated_at": "2024-01-15T10:00:00Z",
+            },
+            {
+                "title": "Staff Platform Engineer",
+                "location": {"name": "Austin, TX"},
+                "absolute_url": "https://boards.greenhouse.test/acme/staff-platform",
+                "content": "Kubernetes, Go.",
+                "updated_at": "2024-01-14T09:00:00Z",
+            },
+        ]
+
+    def fetch_jobs(self, *, token: str, proxies: list[str] | None) -> list[dict]:
+        return list(self._jobs)
+
+
+class LeverClient(Protocol):
+    """Marked network boundary over the Lever postings API (FR-DISC-2/4)."""
+
+    def fetch_postings(self, *, company: str, proxies: list[str] | None) -> list[dict]:
+        """Return raw posting dicts from one Lever company (zero LLM tokens)."""
+        ...
+
+
+class LiveLeverClient:
+    """Real Lever postings API client (FR-DISC-2/4).
+
+    Fetches ``https://api.lever.co/v0/postings/{company}?mode=json`` and returns the
+    raw postings list. Network-only; the default lane uses ``FakeLeverClient``.
+    """
+
+    def __init__(self, *, timeout: float = _DEFAULT_HTTP_TIMEOUT) -> None:
+        # Never allow an unbounded client: fall back to the explicit default when a
+        # caller passes None/0 so a hung postings API can't wedge the discovery run.
+        self._timeout = timeout or _DEFAULT_HTTP_TIMEOUT
+
+    def fetch_postings(self, *, company: str, proxies: list[str] | None) -> list[dict]:
+        import httpx  # lazy
+
+        proxy = proxies[0] if proxies else None
+        with httpx.Client(timeout=self._timeout, proxy=proxy) as client:
+            resp = client.get(
+                f"https://api.lever.co/v0/postings/{company}",
+                params={"mode": "json"},
+            )
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except (ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f"Lever returned non-JSON response: {exc}") from exc
+        if not isinstance(data, list):
+            raise ValueError("Lever postings response must be a JSON array")
+        return data
+
+
+class FakeLeverClient:
+    """Offline stand-in for the Lever postings API — exercises ``LeverSource``."""
+
+    def __init__(self, postings: list[dict] | None = None) -> None:
+        self._postings = postings if postings is not None else self._default_postings()
+
+    @staticmethod
+    def _default_postings() -> list[dict]:
+        return [
+            {
+                "text": "Senior Product Engineer",
+                "categories": {"location": "San Francisco, CA"},
+                "workplaceType": "hybrid",
+                "hostedUrl": "https://jobs.lever.co/acme/1",
+                "applyUrl": "https://jobs.lever.co/acme/1/apply",
+                "descriptionPlain": "Build products with Python and FastAPI.",
+                "createdAt": 1700000000000,
+            },
+            {
+                "text": "DevOps Engineer",
+                "categories": {"location": "Remote"},
+                "workplaceType": "remote",
+                "hostedUrl": "https://jobs.lever.co/acme/2",
+                "applyUrl": "https://jobs.lever.co/acme/2/apply",
+                "descriptionPlain": "Cloud infrastructure.",
+                "createdAt": 1700000000000,
+            },
+        ]
+
+    def fetch_postings(self, *, company: str, proxies: list[str] | None) -> list[dict]:
+        return list(self._postings)
