@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import uuid
+import time
 import urllib.error
 import urllib.request
 
@@ -55,10 +56,50 @@ def forward(cid: str, file_bytes: bytes, filename: str, timeout: int = 120) -> d
         return {"ok": False, "status": 0, "error": f"{type(e).__name__}: {e}"}
 
 
+_ACTIVE_CAMPAIGN_CACHE: dict = {"id": None, "ts": 0.0}
+_ACTIVE_CAMPAIGN_TTL_S = 30
+
+
+def _forward_get(path: str) -> dict:
+    """GET call to the engine; return a normalized ``{ok, status, data|error}`` envelope (never raises)."""
+    req = urllib.request.Request(f"{_engine()}{path}", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read().decode() or "{}"
+            return {"ok": True, "status": r.status, "data": json.loads(raw) if raw.strip() else {}}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "status": e.code, "error": e.read().decode()[:300]}
+    except Exception as e:
+        return {"ok": False, "status": 0, "error": f"{type(e).__name__}: {e}"}
+
+
+def _resolve_campaign_id(raw: str | None) -> str:
+    """Map missing/'__system__' campaign_id to the single active campaign (MVP is
+    single-campaign). Explicit non-system ids pass through. Fails CLOSED to the raw
+    value on ANY problem (no campaign yet / engine down / pre-onboarding gate) so the
+    pre-onboarding __system__ flow is unaffected."""
+    cid = str(raw or "__system__").strip() or "__system__"
+    if cid != "__system__":
+        return cid
+    now = time.time()
+    if _ACTIVE_CAMPAIGN_CACHE["id"] and (now - _ACTIVE_CAMPAIGN_CACHE["ts"]) < _ACTIVE_CAMPAIGN_TTL_S:
+        return _ACTIVE_CAMPAIGN_CACHE["id"]
+    result = _forward_get("/api/campaigns")
+    campaigns = result.get("data") if result.get("ok") else None
+    if isinstance(campaigns, list) and campaigns:
+        active = next((c for c in campaigns if isinstance(c, dict) and c.get("active")), campaigns[0])
+        resolved = active.get("id") if isinstance(active, dict) else None
+        if resolved:
+            _ACTIVE_CAMPAIGN_CACHE["id"] = resolved
+            _ACTIVE_CAMPAIGN_CACHE["ts"] = now
+            return resolved
+    return cid
+
+
 class BaseResume(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
         """Extract file, then forward to engine with a 120 s timeout to accommodate the LLM parse-verify+fallback."""
-        cid = str((input or {}).get("campaign_id") or "__system__").strip() or "__system__"
+        cid = _resolve_campaign_id((input or {}).get("campaign_id"))
 
         # Try Flask-style file upload from the request object
         file = request.files.get("file") if hasattr(request, "files") else None

@@ -125,6 +125,45 @@ def test_default_action_when_no_action(mod):
     assert seen == {"method": "GET", "path": "/api/digest/__system__"}
 
 
+def test_missing_campaign_resolves_to_active_campaign(mod):
+    seen = []
+    campaigns = [
+        {"id": "c_old", "active": False},
+        {"id": "e827b520afcf4018ad48152b06e1ee84", "active": True},
+        {"id": "c_other", "active": False},
+    ]
+
+    def fake(method, path, body=None, timeout=10):
+        seen.append((method, path))
+        if path == "/api/campaigns":
+            return {"ok": True, "status": 200, "data": campaigns}
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({"action": "get"})
+    assert r == {"ok": True, "status": 200, "data": {}}
+    assert seen[0] == ("GET", "/api/campaigns")
+    assert seen[-1] == ("GET", "/api/digest/e827b520afcf4018ad48152b06e1ee84")
+
+
+def test_active_campaign_resolution_is_cached(mod):
+    seen = []
+
+    def fake(method, path, body=None, timeout=10):
+        seen.append((method, path))
+        if path == "/api/campaigns":
+            return {"ok": True, "status": 200, "data": [{"id": "c1", "active": True}]}
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        mod.dispatch({"action": "get"})
+        mod.dispatch({"action": "get"})
+    assert seen[0] == ("GET", "/api/campaigns")
+    assert seen[1] == ("GET", "/api/digest/c1")
+    assert seen[2] == ("GET", "/api/digest/c1")
+    assert seen.count(("GET", "/api/campaigns")) == 1
+
+
 def test_approve_missing_application_id(mod):
     r = mod.dispatch({"action": "approve"})
     assert r["ok"] is False and r["status"] == 400
