@@ -31,6 +31,16 @@ FROM agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b
 # the /a0/usr volume). The subtree stays byte-pristine (additive overlay, D6).
 COPY a0-applicant/ /a0/plugins/applicant/
 
+# Install Applicant CORE OVERRIDES over the framework's baked /a0/api handlers.
+# These shadow specific upstream API endpoints that would otherwise break the fork
+# — e.g. self_update_schedule (upstream self-update pulls UPSTREAM agent-zero over
+# /a0 at restart). Plugin api/ handlers CANNOT shadow a core route by name
+# (helpers/api.py resolves built-in /a0/api first), so the override is copied
+# directly onto /a0/api at build time (baked /a0 is not re-synced at normal startup,
+# so this persists). Source lives in the plugin bundle for versioning.
+RUN mkdir -p /a0/api && cp -f /a0/plugins/applicant/core-overrides/api/*.py /a0/api/ && \
+    echo 'Applicant core-overrides installed:' && ls -1 /a0/api/self_update_schedule.py
+
 # AZ0-4/846: Apply branded a0-webui overlay at image-build time so the shipped
 # image carries the white-labeled webui (not just exercised by CI scratch-dir
 # checks). The branding script copies a0-webui/ files onto /a0/webui/ and runs
