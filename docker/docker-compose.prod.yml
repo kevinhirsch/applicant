@@ -240,6 +240,7 @@ services:
       # plain cloud-first ladder. The remaining flags below default OFF/safe.
       LLM_SMART_ROUTING: ${LLM_SMART_ROUTING:-true}
       LLM_SMART_ROUTING_PREFER_LOCAL: ${LLM_SMART_ROUTING_PREFER_LOCAL:-true}
+      LLM_DISABLE_THINKING: "true"
       # Company research → cover letters (#299): enrich generated cover letters with
       # capped/budgeted deep research about the employer. OFF by default: it widens
       # the truthfulness ground truth to the researched company facts and spends

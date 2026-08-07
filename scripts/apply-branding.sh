@@ -27,25 +27,16 @@ source "$SCRIPT_DIR/../branding/string-map.env"
 
 echo "Applying branded overlay '$APP_NAME' from $OVERLAY_DIR to $TARGET_DIR/webui"
 
-# Copy SVG assets from the overlay public dir
-if [ -d "$OVERLAY_DIR/public" ]; then
-  mkdir -p "$TARGET_DIR/webui/public"
-  cp "$OVERLAY_DIR/public/"*.svg "$TARGET_DIR/webui/public/"
-fi
-
-# Copy branded HTML files (index.html, login.html) from the overlay
-if [ -f "$OVERLAY_DIR/index.html" ]; then
-  cp "$OVERLAY_DIR/index.html" "$TARGET_DIR/webui/index.html"
-fi
-if [ -f "$OVERLAY_DIR/login.html" ]; then
-  cp "$OVERLAY_DIR/login.html" "$TARGET_DIR/webui/login.html"
-fi
-
-# Copy branded PWA manifest
-if [ -f "$OVERLAY_DIR/js/manifest.json" ]; then
-  mkdir -p "$TARGET_DIR/webui/js"
-  cp "$OVERLAY_DIR/js/manifest.json" "$TARGET_DIR/webui/js/manifest.json"
-fi
+# Recursively mirror the ENTIRE a0-webui/ overlay tree onto webui/, preserving
+# directory structure. This means ANY core webui file can be durably overridden
+# by placing a modified copy at a0-webui/<same-relative-path> (index.html,
+# login.html, js/manifest.json, public/*.svg AND nested files such as
+# components/welcome/welcome-screen.html). The base image is pinned to a fixed
+# upstream release, so vendored core files do not drift. README.md is excluded.
+# Supersedes the earlier explicit per-file copies (which this reproduces exactly
+# for index.html / login.html / js/manifest.json / public/*.svg).
+cp -a "$OVERLAY_DIR"/. "$TARGET_DIR/webui"/
+rm -f "$TARGET_DIR/webui/README.md"
 
 # AZ0-4/826: Apply string substitution to catch upstream component references
 # that leak the upstream codename into the shipped artifact.  This pass runs

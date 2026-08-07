@@ -1,0 +1,16 @@
+# The vendored agent-zero/ subtree is a stale REFERENCE copy of the upstream
+# framework; the shell image builds FROM agent0ai/agent-zero:v2.4 and never
+# COPYs this dir. Excluding it (and runtime junk) shrinks the build context
+# from ~929MB to a few MB and prevents accidental inclusion.
+agent-zero/
+.git/
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/node_modules/
+data/
+logs/
+tmp/
+*.bundle
+memory/
+.pytest_cache/
