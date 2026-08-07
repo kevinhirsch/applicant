@@ -6,7 +6,7 @@
   <title>Keyboard Shortcuts</title>
   <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
+    .ashortcuts { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
     h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
     .shortcut-group { border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
     .shortcut-header {
@@ -37,7 +37,7 @@
     .help-btn:hover { background: #3651d4; }
   </style>
 </head>
-<body x-data="shortcutsPanel()">
+<body class="ashortcuts" x-data="shortcutsPanel()">
   <div class="help-bar">
     <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=shortcuts')" title="Help for keyboard shortcuts">?</button>
   </div>

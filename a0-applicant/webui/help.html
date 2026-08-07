@@ -6,7 +6,7 @@
   <title>Help — Applications</title>
   <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
+    .ahelp { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
     h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
     .surface { border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
     .surface-header {
@@ -26,7 +26,7 @@
     .empty { text-align: center; padding: 2rem; color: #6b7280; font-size: 0.9rem; }
   </style>
 </head>
-<body x-data="window.Alpine.data('ahelp')" x-cloak>
+<body class="ahelp" x-data="window.Alpine.data('ahelp')" x-cloak>
   <h1>Help &amp; Instructions</h1>
   <p style="margin-bottom:1rem;font-size:0.85rem;color:#4b5563;">
     Select a surface below for quick guidance.
