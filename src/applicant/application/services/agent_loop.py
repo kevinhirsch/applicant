@@ -1905,9 +1905,9 @@ class AgentLoop:
             log.warning("material_variant_failed", application_id=str(app.id), error=str(exc))
         # Cover letter on demand (FR-RESUME-10) when the role/campaign warrants one.
         try:
-            if self._material.cover_letter_warranted(campaign_default=False):
+            if self._material.cover_letter_warranted(campaign_default=True):
                 self._material.generate_cover_letter(
-                    campaign.id, app.id, true_source, jd_terms, campaign_default=False
+                    campaign.id, app.id, true_source, jd_terms, campaign_default=True
                 )
                 summary["cover_letter"] = True
         except Exception as exc:  # pragma: no cover - defensive
