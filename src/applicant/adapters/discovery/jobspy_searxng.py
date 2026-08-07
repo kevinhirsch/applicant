@@ -101,7 +101,10 @@ class SourceCircuitBreaker:
     scrape attempt every single discovery run forever — the per-board rate
     limiter (``PerBoardRateLimiter``) only throttles *call frequency*, it does
     not notice a source is *reliably failing*. This breaker tracks consecutive
-    non-``SOURCE_OK`` outcomes per source key (``record``); once a source hits
+    REAL-failure outcomes per source key (``record``) — the caller passes
+    ``ok=True`` for both ``SOURCE_OK`` and a genuinely empty ``SOURCE_EMPTY``
+    run (a quiet/low-volume board is not a failure), so only actual errors
+    count toward opening. Once a source hits
     ``failure_threshold`` consecutive failures, the breaker "opens" and
     ``allow()`` returns ``False`` for ``cooldown_seconds`` — the caller skips
     ``source.fetch()`` entirely and records a ``SOURCE_COOLDOWN`` outcome
@@ -884,7 +887,10 @@ class JobSpySearxngDiscovery:
             # via ``last_error`` — distinguish "failed" from genuinely "empty".
             error = getattr(source, "last_error", None)
             status = SOURCE_ERROR if error else (SOURCE_OK if found else SOURCE_EMPTY)
-            self._circuit_breaker.record(key, ok=(status == SOURCE_OK))
+            # Breaker counts only REAL failures (SOURCE_ERROR) toward opening —
+            # a genuinely empty run (SOURCE_EMPTY) is not a failure, it's a
+            # quiet/low-volume source, so it resets the streak just like OK.
+            self._circuit_breaker.record(key, ok=(status in (SOURCE_OK, SOURCE_EMPTY)))
             outcomes.append(
                 {
                     "source_key": key,

@@ -14,7 +14,7 @@ from applicant.adapters.discovery.jobspy_searxng import (
 )
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, new_id
-from applicant.core.rules.underdelivery import SOURCE_COOLDOWN, SOURCE_OK
+from applicant.core.rules.underdelivery import SOURCE_COOLDOWN, SOURCE_EMPTY, SOURCE_OK
 
 
 @pytest.fixture(autouse=True)
@@ -151,6 +151,20 @@ class TestSourceCircuitBreaker:
             self.last_error = "board says no"
             return []
 
+    class _AlwaysEmptySource:
+        """Returns zero results with NO ``last_error`` -- a genuinely quiet
+        board (e.g. a Lever company with no current matching roles), as
+        opposed to ``_AlwaysFailingSource`` which fails (sets ``last_error``)."""
+
+        key = "quiet"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch(self, campaign_id, criteria):
+            self.calls += 1
+            return []
+
     def test_opens_after_threshold_consecutive_failures_and_skips_fetch(self):
         cid = CampaignId(new_id())
         criteria = SearchCriteria(campaign_id=cid)
@@ -173,6 +187,32 @@ class TestSourceCircuitBreaker:
                 "error": None,
             }
         ]
+
+    def test_repeated_source_empty_does_not_open_the_breaker(self):
+        """A genuinely empty run (SOURCE_EMPTY: no last_error, zero results)
+        is NOT a real failure -- only SOURCE_ERROR (and the rate-limit/cooldown
+        skips) should count toward opening. A quiet/low-volume source must
+        keep being attempted every run instead of getting cooled down for the
+        full window like a hard-blocked board."""
+        cid = CampaignId(new_id())
+        criteria = SearchCriteria(campaign_id=cid)
+        source = self._AlwaysEmptySource()
+        breaker = SourceCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
+        disc = JobSpySearxngDiscovery(sources=[source], circuit_breaker=breaker)
+
+        for _ in range(5):
+            disc.search(cid, criteria)
+
+        assert source.calls == 5  # fetch attempted every run -- breaker never opened
+        assert disc.last_source_outcomes == [
+            {
+                "source_key": "quiet",
+                "status": SOURCE_EMPTY,
+                "found": 0,
+                "error": None,
+            }
+        ]
+        assert breaker.is_open("quiet") is False
 
     def test_a_healthy_source_never_trips_the_breaker(self):
         cid = CampaignId(new_id())
