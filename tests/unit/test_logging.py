@@ -1,3 +1,4 @@
+import itertools
 import pytest
 
 from applicant.observability import logging as logging_mod
@@ -263,6 +264,7 @@ class TestCaptureLogAndRecentLogs:
     @pytest.fixture(autouse=True)
     def clear_ring(self):
         logging_mod._LOG_RING.clear()
+        logging_mod._SEQ = itertools.count(1)
         yield
 
     def test_capture_log_appends_event(self):
@@ -319,6 +321,44 @@ class TestCaptureLogAndRecentLogs:
         logging_mod._capture_log(None, "info", {"val": 42})
         logs = logging_mod.recent_logs()
         assert logs[0]["val"] == 42
+
+    def test_capture_log_stamps_seq(self):
+        """Every captured entry carries a monotonic seq cursor (FR-LOG-3)."""
+        logging_mod._capture_log(None, "info", {"msg": "a"})
+        logging_mod._capture_log(None, "info", {"msg": "b"})
+        logs = logging_mod.recent_logs()
+        assert [l["seq"] for l in logs] == [1, 2]
+
+    def test_recent_logs_since_seq_filters_newer(self):
+        """since_seq returns only entries strictly newer than the cursor (FR-LOG-3)."""
+        for i in range(10):
+            logging_mod._capture_log(None, "info", {"i": i})
+        max_seq = logging_mod.recent_logs()[-1]["seq"]
+        older = logging_mod.recent_logs()[0]["seq"]
+        logging_mod._capture_log(None, "info", {"i": "after"})
+        logs = logging_mod.recent_logs(since_seq=max_seq)
+        assert len(logs) == 1
+        assert logs[0]["seq"] == max_seq + 1
+        assert logs[0]["i"] == "after"
+        # everything older than the cursor is excluded
+        assert all(l["seq"] > older for l in logging_mod.recent_logs(since_seq=older))
+
+    def test_recent_logs_since_seq_newest_last_ordering(self):
+        """Filtered results keep newest-last ordering (FR-LOG-3)."""
+        for i in range(6):
+            logging_mod._capture_log(None, "info", {"i": i})
+        max_seq = logging_mod.recent_logs()[-1]["seq"]
+        logging_mod._capture_log(None, "info", {"i": 6})
+        logging_mod._capture_log(None, "info", {"i": 7})
+        logs = logging_mod.recent_logs(since_seq=max_seq)
+        assert [l["seq"] for l in logs] == [max_seq + 1, max_seq + 2]
+
+    def test_recent_logs_since_seq_none_returns_all(self):
+        """since_seq=None keeps the existing full-list behavior (FR-LOG-3)."""
+        for i in range(3):
+            logging_mod._capture_log(None, "info", {"i": i})
+        logs = logging_mod.recent_logs()
+        assert [l["seq"] for l in logs] == [1, 2, 3]
 
 
 class TestToJsonable:
