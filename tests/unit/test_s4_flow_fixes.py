@@ -810,9 +810,9 @@ def test_admin_logs_negative_limit_is_floored_to_zero():
         captured: dict = {}
         real = app.state.container.admin_query_service.logs
 
-        def _spy(limit):
+        def _spy(limit, since_seq=None):
             captured["limit"] = limit
-            return real(limit)
+            return real(limit, since_seq)
 
         app.state.container.admin_query_service.logs = _spy
         r = client.get("/api/admin/logs?limit=-7")

@@ -37,13 +37,13 @@ THEME_LINK_HREF = "/plugins/applicant/webui/applicant-theme.css"
 # Backend-only API proxies (no corresponding WebUI panel)
 BACKEND_ONLY = {
     "agent_runs", "base_resume", "features", "hello",
-    "local_only_status",
+    "local_only_status", "adminlogs",
     "onboarding", "pending", "update_panel",
 }
 
 # Frontend-only panels (no corresponding API proxy)
 FRONTEND_ONLY = {
-    "activity", "config", "main", "shortcuts", "today", "update",
+    "activity", "config", "debug", "main", "shortcuts", "today", "update",
 }
 
 # Panels intentionally excluded from the main sidebar
