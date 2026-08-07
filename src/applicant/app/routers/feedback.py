@@ -64,6 +64,13 @@ class IngestIn(BaseModel):
     observations: list[ObservationIn] = []
 
 
+class PostingFeedbackIn(BaseModel):
+    campaign_id: str
+    posting_id: str
+    sentiment: str = "positive"
+    text: str
+
+
 @router.get("")
 def index() -> dict:
     return {"surface": "feedback", "phase": 1, "status": "live"}
@@ -76,6 +83,19 @@ def freetext(body: FreeTextIn, feedback=Depends(get_feedback_service)) -> dict:
         body.campaign_id,  # type: ignore[arg-type]
         body.text,
         criteria_delta=body.criteria_delta,
+    )
+
+
+@router.post("/posting", status_code=201)
+def posting_feedback(body: PostingFeedbackIn, feedback=Depends(get_feedback_service)) -> dict:
+    """Per-posting free-text +/- feedback, LLM-parsed into learning (FR-FB-2)."""
+    from applicant.core.ids import CampaignId, JobPostingId
+
+    return feedback.submit_posting_feedback(
+        CampaignId(body.campaign_id),
+        JobPostingId(body.posting_id),
+        sentiment=body.sentiment,
+        text=body.text,
     )
 
 

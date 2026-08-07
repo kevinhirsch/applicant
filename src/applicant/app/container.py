@@ -1139,6 +1139,7 @@ def build_container(settings: Settings | None = None) -> Container:
         criteria=criteria_service,
         advanced_learning=advanced_learning_service,
         pending_actions=pending_actions_service,
+        llm=llm,
     )
     # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
     # routing integral changes through the shared confirmation gate (FR-FB-3).
@@ -1812,7 +1813,7 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         rs_feedback = FeedbackService(
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
-            pending_actions=rs_pas,
+            pending_actions=rs_pas, llm=llm,
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         # FR-AGENT-7: per-request, req-storage-bound run reader (read-only ``status``) so
