@@ -109,7 +109,8 @@ class JobSpyClient(Protocol):
 
     def scrape(self, *, site: str, search_term: str, location: str | None,
                results_wanted: int, proxies: list[str] | None,
-               is_remote: bool = False, country_indeed: str | None = None) -> list[dict]:
+               is_remote: bool = False, country_indeed: str | None = None,
+               hours_old: int | None = None) -> list[dict]:
         """Return raw normalized-ish dict rows for one board (zero LLM tokens)."""
         ...
 
@@ -281,7 +282,7 @@ class JobSpySource:
         site: str,
         client: JobSpyClient,
         proxy: ProxyConfig | None = None,
-        results_wanted: int = 25,
+        results_wanted: int = 100,
     ) -> None:
         self.site = site
         self.key = f"jobspy:{site}"
@@ -308,6 +309,7 @@ class JobSpySource:
                 proxies=self._proxy.as_list(),
                 is_remote=True,
                 country_indeed="usa",
+                hours_old=336,  # ~2 weeks: keep the pool FRESH so we surface recent roles early
             )
         except Exception as exc:  # a flaky board must never crash the whole run
             log.warning("discovery_source_failed", source=self.key, error=str(exc))
