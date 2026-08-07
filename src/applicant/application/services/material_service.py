@@ -1493,7 +1493,9 @@ class MaterialService:
                     essay=essay,
                 )
             )
+            self._storage.commit()
         except Exception:  # pragma: no cover - defensive; never break generation
+            self._storage.rollback()
             self._note_silent_degradation("material_service.py")
 
     def list_screening_answer_library(self, campaign_id: CampaignId) -> list[dict]:

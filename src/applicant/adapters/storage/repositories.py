@@ -973,7 +973,17 @@ class ScreeningAnswerLibraryRepo:
         self._s = session
 
     def upsert(self, entry: ScreeningAnswerLibraryEntry) -> None:
-        self._s.merge(
+        existing = self._s.scalars(
+            select(m.ScreeningAnswerLibraryModel)
+            .where(m.ScreeningAnswerLibraryModel.campaign_id == entry.campaign_id)
+            .where(m.ScreeningAnswerLibraryModel.question_key == entry.question_key)
+        ).first()
+        if existing is not None:
+            existing.question_text = entry.question_text
+            existing.answer_text = entry.answer_text
+            existing.essay = entry.essay
+            return
+        self._s.add(
             m.ScreeningAnswerLibraryModel(
                 id=entry.id,
                 campaign_id=entry.campaign_id,
