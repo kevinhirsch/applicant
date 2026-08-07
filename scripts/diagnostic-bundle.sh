@@ -29,7 +29,7 @@
 #   MANIFEST.txt            exactly what was collected vs skipped, and why
 #
 # This needs to run on the DEPLOY HOST (docker compose / the .env file live
-# there) — it is not reachable from inside the `api`/`applicant-ui` containers,
+# there) — it is not reachable from inside the `api`/`a0`/`companion` containers,
 # which have no Docker socket. Settings -> System in the front-door surfaces
 # this same command for anyone who prefers to copy it from the UI.
 set -euo pipefail
@@ -51,7 +51,7 @@ source "${REPO_ROOT}/scripts/lib/backup-common.sh"
 
 REDACT_CMD=(python3 "${REPO_ROOT}/scripts/lib/diagnostic_redact.py")
 
-SERVICES=(applicant-ui api postgres searxng chromadb ntfy)
+SERVICES=(a0 companion api postgres searxng chromadb ntfy)
 
 OUTPUT=""
 while [[ $# -gt 0 ]]; do

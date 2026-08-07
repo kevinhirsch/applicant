@@ -20,7 +20,7 @@
 #
 #   1. Provision the stack's containers WITHOUT letting them serve real work
 #      yet, so Postgres and the UI container exist to restore into:
-#        docker compose -f docker/docker-compose.prod.yml up -d postgres applicant-ui
+#        docker compose -f docker/docker-compose.prod.yml up -d postgres a0 companion
 #      (a fresh/empty postgres volume is fine — the dump's `--clean --if-exists`
 #      flags make the restore idempotent against an empty OR a partially-
 #      migrated schema.)
@@ -60,7 +60,7 @@ source "${REPO_ROOT}/scripts/lib/backup-common.sh"
 bkup_load_env "${ENV_FILE}"
 
 DB_SERVICE="postgres"
-UI_SERVICE="applicant-ui"
+UI_SERVICE="companion"
 API_SERVICE="api"
 A0_SERVICE="a0"
 DB_NAME="${POSTGRES_DB:-applicant}"

@@ -8,7 +8,14 @@
 # which hits a hard, deterministic conflict (requirements.txt vs requirements2.txt:
 # openai==1.99.5 / litellm ResolutionImpossible). Building FROM the release image
 # avoids re-resolving deps entirely and matches what actually runs in production.
-FROM agent0ai/agent-zero:v2.4
+# Pinned by immutable DIGEST, not the mutable `v2.4` tag: upstream periodically
+# REBUILDS the v2.4 tag from their `main` (baked CACHE_DATE proves it), so the tag
+# floats. Pinning the digest makes rebuilds reproducible (factory-reset / new host /
+# post-prune / CI) instead of pulling whatever v2.4 resolves to that day. Same
+# convention as docker/updater.Dockerfile + docker/Dockerfile. Digest = the v2.4
+# published 2026-07-10 (the version live currently runs). To bump: pull the new
+# tag, read its RepoDigest, update this line.
+FROM agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b600287818ac140bc
 
 # Engine MCP registration is injected at runtime via A0_SET_MCP_SERVERS
 # (see docker/docker-compose.prod.yml, AZ0-6/#828): a0 seeds its mcp_servers default

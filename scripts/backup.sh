@@ -52,7 +52,7 @@ source "${REPO_ROOT}/scripts/lib/backup-common.sh"
 bkup_load_env "${ENV_FILE}"
 
 DB_SERVICE="postgres"
-UI_SERVICE="applicant-ui"
+UI_SERVICE="companion"
 API_SERVICE="api"
 A0_SERVICE="a0"
 DB_NAME="${POSTGRES_DB:-applicant}"
@@ -138,7 +138,7 @@ log "2/5 Workspace data/ (front-door UI)"
 if bkup_export_workspace_data "${COMPOSE_FILE}" "${UI_SERVICE}" "${WORK_DIR}/workspace-data.tar.gz" "${APPLY}"; then
   HAS_WORKSPACE=1
 else
-  echo "    (warn) workspace data export failed (is the applicant-ui container up?) — the backup will NOT include workspace-data.tar.gz." >&2
+  echo "    (warn) workspace data export failed (is the companion container up?) — the backup will NOT include workspace-data.tar.gz." >&2
 fi
 
 log "3/5 Engine durable state (vault master key, checkpoints, fonts, browser profiles)"

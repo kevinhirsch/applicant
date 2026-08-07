@@ -186,14 +186,15 @@ auto_rollback() {
     echo "AUTO-RECOVERY FAILED: no pre-update snapshot at ${DEPLOY_SNAPSHOT}; refusing a partial DB-only rollback." >&2
     return 1
   fi
-  GIT_REV=""; API_IMAGE_ID=""; UI_IMAGE_ID=""
+  GIT_REV=""; API_IMAGE_ID=""; A0_IMAGE_ID=""; COMPANION_IMAGE_ID=""
   # shellcheck disable=SC1090
   source "${DEPLOY_SNAPSHOT}"
   # 1. Revert source to the snapshotted commit (git reset --hard; SELFTEST-guarded).
   [[ -n "${GIT_REV}" && -d "${REPO_ROOT}/.git" && "${APPLICANT_SELFTEST:-0}" != "1" ]] && run git -C "${REPO_ROOT}" reset --hard "${GIT_REV}"
   # 2. Re-point the images at their pre-update IDs (docker image tag …:previous).
   [[ -n "${API_IMAGE_ID}" ]] && run docker image tag applicant/api:previous applicant/api:latest
-  [[ -n "${UI_IMAGE_ID}" ]] && run docker image tag applicant/ui:previous applicant/ui:latest
+  [[ -n "${A0_IMAGE_ID}" ]] && run docker image tag applicant/a0:previous applicant/a0:latest
+  [[ -n "${COMPANION_IMAGE_ID}" ]] && run docker image tag applicant/companion:previous applicant/companion:latest
   # 3. Restore the most recent DB dump, then redeploy the reverted stack.
   local latest
   latest="$(ls -1t "${BACKUP_DIR}"/applicant-*.sql 2>/dev/null | head -n1 || true)"
@@ -257,7 +258,7 @@ _is_release_tag=0
 # What the sync changed drives the smart-skip below. Defaults are CONSERVATIVE:
 # rebuild BOTH images, back up, and migrate unless we can positively PROVE an input
 # is unchanged — so an aggressive skip can never miss a real change.
-REBUILD_API=1; REBUILD_UI=1; RUN_MIGRATE=1
+REBUILD_API=1; REBUILD_A0=1; REBUILD_COMPANION=1; RUN_MIGRATE=1
 OLD_REV=""; NEW_REV=""
 # APPLICANT_SELFTEST=1 skips the destructive git reset (set by the test suite so a
 # unit test can never hard-reset the working tree to origin/main).
@@ -287,22 +288,27 @@ fi
 if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" && -n "${NEW_REV}" ]]; then
   if [[ "${OLD_REV}" == "${NEW_REV}" ]]; then
     log "Already at origin/${APPLICANT_BRANCH} (${NEW_REV:0:12}) — nothing new to deploy."
-    REBUILD_API=0; REBUILD_UI=0; RUN_MIGRATE=0
+    REBUILD_API=0; REBUILD_A0=0; REBUILD_COMPANION=0; RUN_MIGRATE=0
   else
     CHANGED="$(git -C "${REPO_ROOT}" diff --name-only "${OLD_REV}" "${NEW_REV}" 2>/dev/null || true)"
     # Engine (api) image inputs — its source plus everything COPYed into its build.
-    grep -qE '^(src/|pyproject\.toml|uv\.lock|README\.md|alembic\.ini|workspace/|templates/|scripts/|docker/Dockerfile)' <<<"${CHANGED}" || REBUILD_API=0
-    # Front-door (applicant-ui) image inputs — the vendored app + its Dockerfile/entrypoint.
-    grep -qE '^workspace/' <<<"${CHANGED}" || REBUILD_UI=0
+    # Engine (api) image inputs. Match docker/Dockerfile EXACTLY (end-of-line or a
+    # non-'.' char next) so docker/Dockerfile.a0 does NOT wrongly trigger an api rebuild.
+    grep -qE '^(src/|pyproject\.toml|uv\.lock|README\.md|alembic\.ini|workspace/|templates/|scripts/|docker/Dockerfile($|[^.]))' <<<"${CHANGED}" || REBUILD_API=0
+    # A0 shell image inputs — Applicant plugin, branded webui overlay, branding, its Dockerfile + branding script.
+    grep -qE '^(a0-applicant/|a0-webui/|branding/|docker/Dockerfile\.a0|scripts/apply-branding\.sh)' <<<"${CHANGED}" || REBUILD_A0=0
+    # Companion (front-door workspace app) image inputs — its build context is ../workspace.
+    grep -qE '^workspace/' <<<"${CHANGED}" || REBUILD_COMPANION=0
     # Migrations — only a change under the Alembic versions dir adds/removes a revision.
     grep -qE '^src/applicant/adapters/storage/alembic/versions/' <<<"${CHANGED}" || RUN_MIGRATE=0
-    log "Changed since ${OLD_REV:0:12}: api=$([[ ${REBUILD_API} -eq 1 ]] && echo rebuild || echo skip), ui=$([[ ${REBUILD_UI} -eq 1 ]] && echo rebuild || echo skip), migrate=$([[ ${RUN_MIGRATE} -eq 1 ]] && echo yes || echo no)"
+    log "Changed since ${OLD_REV:0:12}: api=$([[ ${REBUILD_API} -eq 1 ]] && echo rebuild || echo skip), a0=$([[ ${REBUILD_A0} -eq 1 ]] && echo rebuild || echo skip), companion=$([[ ${REBUILD_COMPANION} -eq 1 ]] && echo rebuild || echo skip), migrate=$([[ ${RUN_MIGRATE} -eq 1 ]] && echo yes || echo no)"
   fi
   # Safety net: never skip building an image that does not yet exist (first deploy,
   # a pruned image, or a prior failed build). The skip is an optimization, not a
   # correctness gate.
-  docker image inspect applicant/api:latest >/dev/null 2>&1 || REBUILD_API=1
-  docker image inspect applicant/ui:latest  >/dev/null 2>&1 || REBUILD_UI=1
+  docker image inspect applicant/api:latest       >/dev/null 2>&1 || REBUILD_API=1
+  docker image inspect applicant/a0:latest        >/dev/null 2>&1 || REBUILD_A0=1
+  docker image inspect applicant/companion:latest >/dev/null 2>&1 || REBUILD_COMPANION=1
 
   # Migration-skip robustness (#19): the path-glob above only catches a NEW revision
   # file landing under the hardcoded versions/ dir — a path rename, a vendored
@@ -358,17 +364,20 @@ fi
 # pin the per-dump .images sibling for count-paired rotation.
 if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" ]]; then
   _api_prev="$(docker image inspect --format '{{.Id}}' applicant/api:latest 2>/dev/null || true)"
-  _ui_prev="$(docker image inspect --format '{{.Id}}' applicant/ui:latest 2>/dev/null || true)"
+  _a0_prev="$(docker image inspect --format '{{.Id}}' applicant/a0:latest 2>/dev/null || true)"
+  _companion_prev="$(docker image inspect --format '{{.Id}}' applicant/companion:latest 2>/dev/null || true)"
   [[ -n "${_api_prev}" ]] && docker image tag "${_api_prev}" applicant/api:previous >/dev/null 2>&1 || true
-  [[ -n "${_ui_prev}" ]] && docker image tag "${_ui_prev}" applicant/ui:previous >/dev/null 2>&1 || true
+  [[ -n "${_a0_prev}" ]] && docker image tag "${_a0_prev}" applicant/a0:previous >/dev/null 2>&1 || true
+  [[ -n "${_companion_prev}" ]] && docker image tag "${_companion_prev}" applicant/companion:previous >/dev/null 2>&1 || true
   {
     printf 'GIT_REV=%s\n' "${OLD_REV}"
     printf 'API_IMAGE_ID=%s\n' "${_api_prev}"
-    printf 'UI_IMAGE_ID=%s\n' "${_ui_prev}"
+    printf 'A0_IMAGE_ID=%s\n' "${_a0_prev}"
+    printf 'COMPANION_IMAGE_ID=%s\n' "${_companion_prev}"
   } >"${DEPLOY_SNAPSHOT}"
   # Pin a per-dump copy so rotation prunes the snapshot with its dump.
   [[ "${RUN_MIGRATE}" -eq 1 ]] && cp -f "${DEPLOY_SNAPSHOT}" "${DUMP_FILE%.sql}.images" 2>/dev/null || true
-  log "Snapshotted pre-update state for rollback: git ${OLD_REV:0:12}, images api/ui:previous."
+  log "Snapshotted pre-update state for rollback: git ${OLD_REV:0:12}, images api/a0/companion:previous."
 fi
 
 if [[ "${RUN_MIGRATE}" -eq 1 ]]; then
@@ -422,7 +431,8 @@ run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
 # caching already makes an unchanged rebuild cheap, but skipping avoids the build
 # context upload + cache check entirely. Both default to rebuild unless proven unchanged.
 BUILD_TARGETS=()
-[[ "${REBUILD_UI}" -eq 1 ]] && BUILD_TARGETS+=("applicant-ui")
+[[ "${REBUILD_A0}" -eq 1 ]] && BUILD_TARGETS+=("a0")
+[[ "${REBUILD_COMPANION}" -eq 1 ]] && BUILD_TARGETS+=("companion")
 [[ "${REBUILD_API}" -eq 1 ]] && BUILD_TARGETS+=("api")
 if [[ "${#BUILD_TARGETS[@]}" -gt 0 ]]; then
   run docker compose -f "${COMPOSE_FILE}" build "${BUILD_TARGETS[@]}"
@@ -455,7 +465,7 @@ else
 fi
 
 log "4/5 Restarting the stack on the freshly built images (built once in 2/5 — no rebuild)"
-# Plain `up -d` (no --build): step 2/5 already built applicant-ui + api from the
+# Plain `up -d` (no --build): step 2/5 already built a0 + companion + api from the
 # synced source, so re-passing --build here would rebuild AND re-export/unpack the
 # same images a second time — the slowest, disk-bound stage — for nothing.
 #

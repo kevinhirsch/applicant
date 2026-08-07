@@ -16,7 +16,7 @@
 #   2. docker compose down -v               (DESTROYS every named volume —
 #                                            Postgres data, workspace data/,
 #                                            fonts, checkpoints, everything)
-#   3. docker compose up -d postgres applicant-ui   (fresh, empty volumes)
+#   3. docker compose up -d postgres a0 companion   (fresh, empty volumes)
 #   4. scripts/restore.sh --apply --from <the backup step 1 just took>
 #   5. docker compose run --rm api uv run alembic upgrade head
 #   6. docker compose up -d                 (the full stack)
@@ -87,7 +87,7 @@ DRY RUN — the following destructive drill would run against:
 
   1. scripts/backup.sh --apply
   2. docker compose -f "\${COMPOSE_FILE}" down -v      # DESTROYS all named volumes
-  3. docker compose -f "\${COMPOSE_FILE}" up -d postgres applicant-ui
+  3. docker compose -f "\${COMPOSE_FILE}" up -d postgres a0 companion
   4. scripts/restore.sh --apply --from <the tarball step 1 produced>
   5. docker compose -f "\${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
   6. docker compose -f "\${COMPOSE_FILE}" up -d
@@ -112,8 +112,8 @@ log "    backup: ${BACKUP_FILE}"
 log "2/7 Destroying all named volumes (docker compose down -v)"
 docker compose -f "${COMPOSE_FILE}" down -v
 
-log "3/7 Bringing up fresh, empty postgres + applicant-ui"
-docker compose -f "${COMPOSE_FILE}" up -d postgres applicant-ui
+log "3/7 Bringing up fresh, empty postgres + a0 + companion"
+docker compose -f "${COMPOSE_FILE}" up -d postgres a0 companion
 
 log "4/7 Restoring from the backup just taken"
 if ! "${REPO_ROOT}/scripts/restore.sh" --apply --from "${BACKUP_FILE}"; then

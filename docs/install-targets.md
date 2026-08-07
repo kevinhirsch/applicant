@@ -24,7 +24,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/ma
 
 This bootstraps a checkout if run detached (curl-pipe-bash), installs Docker
 Engine + Compose v2 if missing (apt hosts), generates and persists credentials
-to `.env` (0600), builds the `applicant-ui` and `api` images, migrates the
+to `.env` (0600), builds the `a0`, `companion`, and `api` images, migrates the
 schema, brings up the full stack, and waits for a green health check —
 entirely without further CLI interaction (`NFR-ZEROCLI-1`); the rest of setup
 happens in the browser (the OOBE wizard).

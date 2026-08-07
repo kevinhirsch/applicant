@@ -832,12 +832,13 @@ if [[ "${APPLY}" -eq 1 && ! -f "${ENV_FILE}" ]]; then
 fi
 
 # --- Phase 3: build the images ----------------------------------------------
-# Build BOTH locally-built images (neither is published to a registry): the
-# front-door UI (built from ../workspace) and the engine api. Output streams
-# verbosely (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
-phase "Building the local images (front-door UI + engine api)"
+# Build ALL THREE locally-built images (none is published to a registry): the a0
+# shell (Applicant plugin + branded webui), the companion front-door (built from
+# ../workspace), and the engine api. Output streams verbosely
+# (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
+phase "Building the local images (a0 shell + companion + engine api)"
 ui_step "Streaming build output below (this is the long part — texlive + browsers)…"
-run_retry "Image build" dc -f "${COMPOSE_FILE}" build a0 api
+run_retry "Image build" dc -f "${COMPOSE_FILE}" build a0 companion api
 
 # --- Phase 4: migrate the schema BEFORE the api serves ----------------------
 # The engine queries app_config AS IT BOOTS, so the schema must exist first. Bring
