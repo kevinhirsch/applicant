@@ -1,0 +1,198 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- Debug panel — live engine diagnostics: log tail, scheduler status, discovery/scoring, LLM endpoint health. -->
+<style>
+  .adebug{max-width:820px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .adebug h1{font-size:1.5rem;margin:0 0 .25rem}
+  .adebug h2{font-size:1.1rem;margin:1rem 0 .5rem}
+  .adebug .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .adebug .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adebug .section{margin-bottom:1rem}
+  .adebug .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:.75rem;flex-wrap:wrap}
+  .adebug .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .adebug .btn:disabled{opacity:.5;cursor:not-allowed}
+  .adebug .log-view{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:8px 10px;font-family:monospace;font-size:.76rem;max-height:420px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+  .adebug .log-line{padding:2px 0;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .adebug .log-line.level-error{color:var(--color-danger-text,#9b1c1c)}
+  .adebug .log-line.level-warning{color:var(--color-warning-text,#856404)}
+  .adebug .info-box{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+  .adebug .info-box .row{display:flex;justify-content:space-between;align-items:center;padding:4px 0}
+  .adebug .info-box .row .label{font-size:.85rem;color:var(--color-text-secondary,#6b7683)}
+  .adebug .info-box .row .value{font-size:.85rem;font-weight:600}
+  .adebug table{width:100%;border-collapse:collapse;font-size:.85rem}
+  .adebug th,.adebug td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .adebug th{color:var(--color-text-secondary,#6b7683);font-weight:600;font-size:.8rem}
+  .adebug .badge-online{color:var(--color-success-text,#157347)}
+  .adebug .badge-offline{color:var(--color-danger-text,#9b1c1c)}
+  .adebug .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="adebug" x-data="debugPanel()">
+  <h1>🐞 Debug <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=debug')" title="Help for debug">?</button></h1>
+  <div class="sub">Live engine diagnostics</div>
+
+  <!-- Live log tail -->
+  <div class="section">
+    <h2>📜 Live log</h2>
+    <div class="toolbar">
+      <select x-model="levelFilter">
+        <option value="">All levels</option>
+        <option value="debug">Debug</option>
+        <option value="info">Info</option>
+        <option value="warning">Warning</option>
+        <option value="error">Error</option>
+      </select>
+      <input type="text" placeholder="Search…" x-model="search" style="flex:1;min-width:100px;padding:6px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font-size:.82rem">
+      <button class="btn" @click="paused = !paused" x-text="paused ? '▶ Resume' : '⏸ Pause'"></button>
+      <button class="btn" @click="lines = []">🗑 Clear</button>
+    </div>
+    <div class="log-view" x-ref="logView">
+      <template x-for="l in filteredLines" :key="l.seq">
+        <div class="log-line" :class="'level-' + (l.level || 'info')" x-text="formatLine(l)"></div>
+      </template>
+    </div>
+    <div class="err" x-show="logError" x-text="logError"></div>
+  </div>
+
+  <!-- Scheduler / agent-run status + discovery/scoring counts -->
+  <div class="section">
+    <div class="loading" x-show="statusLoading"><div class="spinner" style="display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:adebug-spin .6s linear infinite"></div><br>Loading status…</div>
+    @keyframes adebug-spin{to{transform:rotate(360deg)}}
+    <template x-if="!statusLoading">
+      <div>
+        <h2>⏱️ Scheduler &amp; run status</h2>
+        <div class="toolbar">
+          <select x-model="campaignId" @change="fetchStatus()" style="padding:6px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font-size:.82rem">
+            <template x-for="c in campaigns" :key="c.id || c.name">
+              <option :value="c.id || c.name" x-text="c.name || c.id"></option>
+            </template>
+          </select>
+        </div>
+        <div class="info-box" x-show="status">
+          <div class="row"><span class="label">Running</span><span class="value" x-text="status.scheduler && status.scheduler.running ? 'Yes' : 'No'"></span></div>
+          <div class="row" x-show="status.scheduler && status.scheduler.last_tick"><span class="label">Last tick</span><span class="value" x-text="status.scheduler.last_tick"></span></div>
+          <div class="row" x-show="status.scheduler && status.scheduler.next_tick"><span class="label">Next tick</span><span class="value" x-text="status.scheduler.next_tick"></span></div>
+          <div class="row" x-show="status.scheduler && status.scheduler.interval_seconds"><span class="label">Interval</span><span class="value" x-text="status.scheduler.interval_seconds + 's'"></span></div>
+          <div class="row" x-show="status.latest_intent"><span class="label">Latest intent</span><span class="value" x-text="status.latest_intent"></span></div>
+          <div class="row" x-show="status.applied_today !== undefined"><span class="label">Applied today</span><span class="value" x-text="status.applied_today + ' / ' + (status.daily_budget || '?')"></span></div>
+        </div>
+        <div class="info-box" x-show="status && status.latest_stats">
+          <h2 style="margin:0 0 .5rem;font-size:1.1rem">🔍 Discovery / scoring</h2>
+          <div class="row" x-show="status.latest_stats.discovered !== undefined"><span class="label">Discovered</span><span class="value" x-text="status.latest_stats.discovered"></span></div>
+          <div class="row" x-show="status.latest_stats.pipelines_started !== undefined"><span class="label">Pipelines started</span><span class="value" x-text="status.latest_stats.pipelines_started"></span></div>
+          <div class="row" x-show="status.latest_stats.handoffs !== undefined"><span class="label">Handoffs</span><span class="value" x-text="status.latest_stats.handoffs"></span></div>
+          <div class="row" x-show="status.latest_stats.completed !== undefined"><span class="label">Completed</span><span class="value" x-text="status.latest_stats.completed"></span></div>
+          <div class="row" x-show="status.latest_stats.llm_calls !== undefined"><span class="label">LLM calls</span><span class="value" x-text="status.latest_stats.llm_calls"></span></div>
+          <div class="row" x-show="status.latest_stats.tokens_in !== undefined"><span class="label">Tokens in/out</span><span class="value" x-text="status.latest_stats.tokens_in + ' / ' + (status.latest_stats.tokens_out || 0)"></span></div>
+          <div class="row" x-show="status.latest_stats.cost_usd_estimate !== undefined"><span class="label">Est. cost</span><span class="value" x-text="$" + status.latest_stats.cost_usd_estimate.toFixed(4)"></span></div>
+        </div>
+        <div class="err" x-show="statusError" x-text="statusError"></div>
+      </div>
+    </template>
+  </div>
+
+  <!-- LLM endpoint health -->
+  <div class="section">
+    <h2>🔌 LLM endpoints</h2>
+    <div class="toolbar">
+      <button class="btn" @click="fetchEndpoints()" :disabled="endpointLoading">↻ Refresh</button>
+    </div>
+    <div class="loading" x-show="endpointLoading && !endpoints.length">Loading endpoints…</div>
+    <table x-show="endpoints.length && !endpointLoading">
+      <thead><tr><th>Name</th><th>Base URL</th><th>Model type</th><th>Status</th></tr></thead>
+      <tbody>
+        <template x-for="ep in endpoints" :key="ep.name || ep.name">
+          <tr>
+            <td x-text="ep.name || ''"></td>
+            <td x-text="ep.base_url || ''"></td>
+            <td x-text="ep.model_type || ''"></td>
+            <td :class="ep.online ? 'badge-online' : 'badge-offline'" x-text="ep.online ? '● online' : '○ offline'"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <div class="err" x-show="endpointsError" x-text="endpointsError"></div>
+  </div>
+</div>
+
+<script>
+  (() => {
+  (() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+
+  window.Alpine.data("debugPanel", () => ({
+    // log tail state
+    lines: [], sinceSeq: null, paused: false, levelFilter: "", search: "",
+    logError: "", logTimerId: null,
+    // status state
+    campaigns: [], campaignId: "__system__", status: null, statusError: "", statusTimerId: null, statusLoading: true,
+    // endpoint state
+    endpoints: [], endpointsError: "", endpointLoading: false,
+
+    get filteredLines() {
+      return this.lines.filter(l =>
+        (!this.levelFilter || l.level === this.levelFilter) &&
+        (!this.search || JSON.stringify(l).toLowerCase().includes(this.search.toLowerCase()))
+      );
+    },
+    formatLine(l) {
+      const kv = Object.entries(l).filter(([k]) => !["event","level","timestamp","seq"].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join(" ");
+      return `${l.timestamp || ""} [${(l.level || "info").toUpperCase()}] ${l.event || ""} ${kv}`;
+    },
+
+    async init() {
+      await this.pollLogs();
+      this.logTimerId = setInterval(() => { if (!this.paused) this.pollLogs(); }, 2000);
+
+      const campR = await callJsonApi("campaigns", { action: "list" });
+      this.campaigns = (campR && campR.ok && campR.data && campR.data.campaigns) || [];
+      if (this.campaigns.length) this.campaignId = this.campaigns[0].id || this.campaigns[0].name;
+      await this.fetchStatus();
+      this.statusTimerId = setInterval(() => this.fetchStatus(), 5000);
+
+      await this.fetchEndpoints();
+    },
+
+    destroy() {
+      if (this.logTimerId) { clearInterval(this.logTimerId); this.logTimerId = null; }
+      if (this.statusTimerId) { clearInterval(this.statusTimerId); this.statusTimerId = null; }
+    },
+
+    async pollLogs() {
+      const r = await callJsonApi("adminlogs", { action: "tail", limit: 200, since_seq: this.sinceSeq });
+      if (!r || !r.ok) { this.logError = (r && r.error) || "Couldn't reach the log engine."; return; }
+      this.logError = "";
+      const entries = (r.data && r.data.entries) || [];
+      if (entries.length) {
+        const view = this.$refs.logView;
+        const wasAtBottom = view ? (view.scrollHeight - view.scrollTop - view.clientHeight < 30) : true;
+        this.lines.push(...entries);
+        if (this.lines.length > 1000) this.lines.splice(0, this.lines.length - 1000);
+        if (wasAtBottom && !this.paused && view) {
+          this.$nextTick(() => { view.scrollTop = view.scrollHeight; });
+        }
+      }
+      if (r.data && r.data.latest_seq != null) this.sinceSeq = r.data.latest_seq;
+    },
+
+    async fetchStatus() {
+      this.statusLoading = false;
+      const r = await callJsonApi("agent_runs", { action: "status", campaign_id: this.campaignId });
+      if (!r || !r.ok) { this.statusError = (r && r.error) || "Couldn't reach the agent-run engine."; return; }
+      this.statusError = "";
+      this.status = r.data;
+    },
+
+    async fetchEndpoints() {
+      this.endpointLoading = true;
+      const r = await callJsonApi("model_endpoints", { action: "list" });
+      if (!r || !r.ok) { this.endpointsError = (r && r.error) || "Couldn't reach the model-endpoints engine."; this.endpointLoading = false; return; }
+      this.endpointsError = "";
+      this.endpoints = (r.data && r.data.endpoints) || r.data || [];
+      this.endpointLoading = false;
+    },
+  }));
+  })();
+  })();
+</script>

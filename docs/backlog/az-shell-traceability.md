@@ -61,6 +61,7 @@ retired front-door traceability and serves as the single source of truth for por
 | dormant-surface registry | `webui/dormant.html` | `api/dormant.py` | delivered | engine-registered lifecycle status |
 | feedback (surveys) | `webui/feedback.html` | `api/feedback.py` | delivered | |
 | keyboard shortcuts (reference) | `webui/shortcuts.html` | none (static) | partial | static reference modal; no API proxy needed |
+| debug (live diagnostics) | `webui/debug.html` | `api/adminlogs.py` + reuses `api/agent_runs.py`, `api/model_endpoints.py` | delivered | FR-LOG-3 — live log tail + scheduler/status + endpoint health |
 
 ### Proxy-only endpoints (no dedicated panel)
 
