@@ -47,6 +47,42 @@ def test_source_funnel_weights_conversions_above_matches(learning, campaign):
 
 
 @pytest.mark.unit
+def test_top_likes_ranks_approved_tagged_features(learning, campaign):
+    """FR-LEARN-2/7: like: keys become the ordered top-likes list."""
+    model = learning.model_for(campaign.id)
+    model = learning.record_decision(
+        model, approved=True, features={"like:LeSS": "LeSS", "like:Kanban": "Kanban"}
+    )
+    model = learning.record_decision(
+        model, approved=True, features={"like:LeSS": "LeSS"}
+    )
+    assert learning.top_likes(model) == ["LeSS", "Kanban"]
+    assert learning.top_likes(model, limit=1) == ["LeSS"]
+
+
+@pytest.mark.unit
+def test_top_dislikes_ranks_declined_tagged_features(learning, campaign):
+    """FR-LEARN-2/7: dislike: keys become the ordered top-dislikes list."""
+    model = learning.model_for(campaign.id)
+    model = learning.record_decision(
+        model, approved=False, features={"dislike:SAFe": "SAFe", "dislike:Scaled Agile": "Scaled Agile"}
+    )
+    model = learning.record_decision(
+        model, approved=False, features={"dislike:SAFe": "SAFe"}
+    )
+    assert learning.top_dislikes(model) == ["SAFe", "Scaled Agile"]
+    assert learning.top_dislikes(model, limit=1) == ["SAFe"]
+
+
+@pytest.mark.unit
+def test_top_likes_dislikes_empty_on_cold_model(learning, campaign):
+    """A model with no liked/disliked tags returns empty lists (never fabricated)."""
+    model = learning.model_for(campaign.id)
+    assert learning.top_likes(model) == []
+    assert learning.top_dislikes(model) == []
+
+
+@pytest.mark.unit
 def test_decay_applies_across_runs(learning, campaign):
     model = learning.model_for(campaign.id)
     model = learning.record_source_yield(model, {"x": 10})

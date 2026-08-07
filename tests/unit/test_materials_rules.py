@@ -19,6 +19,7 @@ from applicant.core.rules.materials import (
     clamp_aggressiveness,
     classify_screening_question,
     normalize_screening_question,
+    positioning_directive,
     should_generate_cover_letter,
 )
 
@@ -207,3 +208,45 @@ def test_aggressiveness_directive_thresholds():
     assert "understated" in low
     mid = aggressiveness_directive(50)
     assert "balanced" in mid
+
+
+@pytest.mark.unit
+def test_positioning_directive_empty_when_no_learned_taste():
+    """A cold model (no likes/dislikes) yields no directive at all."""
+    assert positioning_directive([], []) == ""
+    assert positioning_directive(None, None) == ""
+
+
+@pytest.mark.unit
+def test_positioning_directive_foregrounds_likes_deemphasizes_dislikes():
+    """The directive leads with the liked topics and gives minimal space to the
+    disliked ones, in the exact wording the product asked for."""
+    d = positioning_directive(["LeSS", "Kanban"], ["SAFe", "Scaled Agile"])
+    assert "Lead with / foreground, when truthfully supported: LeSS, Kanban." in d
+    assert (
+        "Give minimal space to (never deny/omit/falsify if directly asked): "
+        "SAFe, Scaled Agile." in d
+    )
+
+
+@pytest.mark.unit
+def test_positioning_directive_handles_one_sided_input():
+    """Only likes or only dislikes renders just that clause."""
+    likes_only = positioning_directive(["Remote-first"], [])
+    assert "Lead with / foreground" in likes_only
+    assert "Give minimal space" not in likes_only
+    dislikes_only = positioning_directive([], ["office politics"])
+    assert "Give minimal space to (never deny/omit/falsify if directly asked): office politics." in dislikes_only
+    assert "Lead with / foreground" not in dislikes_only
+
+
+@pytest.mark.unit
+def test_positioning_directive_never_licenses_fabrication():
+    """The directive always carries the truthfulness guardrail wording."""
+    d_likes = positioning_directive(["LeSS"], [])
+    assert "when truthfully supported" in d_likes
+    d_dislikes = positioning_directive([], ["SAFe"])
+    assert "never deny/omit/falsify" in d_dislikes
+    d_both = positioning_directive(["LeSS"], ["SAFe"])
+    assert "when truthfully supported" in d_both
+    assert "never deny/omit/falsify" in d_both

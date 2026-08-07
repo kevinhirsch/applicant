@@ -489,6 +489,54 @@ class LearningService:
         ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(0, int(limit))]
         return [{"reason": token, "count": count} for token, count in ranked]
 
+    # --- learned like/dislike rollup (FR-LEARN-2/7) -----------------------
+    def _top_tagged(
+        self, model: LearningModel, prefix: str, bucket_suffix: str, *, limit: int = 5
+    ) -> list[str]:
+        """Top ``feature_stats`` tokens under ``prefix``, ranked by count.
+
+        Mirrors ``decline_reasons`` ranking (highest count first, alphabetical
+        tie-break for a deterministic order) for any tagged bucket written by
+        ``record_decision`` — e.g. ``like:*``/``dislike:*`` keys whose slots carry
+        ``{value}:approve`` / ``{value}:decline`` labels. Pure READ; never
+        fabricates (returns ``[]`` when the model has no such tags yet).
+        """
+        counts: dict[str, int] = {}
+        for key, slot in model.feature_stats.items():
+            if not key.startswith(prefix) or not isinstance(slot, dict):
+                continue
+            token = key[len(prefix):]
+            if not token:
+                continue
+            total = 0
+            for label, count in slot.items():
+                if not str(label).endswith(f":{bucket_suffix}"):
+                    continue
+                try:
+                    total += int(count)
+                except (TypeError, ValueError):
+                    continue
+            if total > 0:
+                counts[token] = counts.get(token, 0) + total
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(0, int(limit))]
+        return [token for token, _count in ranked]
+
+    def top_likes(self, model: LearningModel, *, limit: int = 5) -> list[str]:
+        """Learned attributes the user consistently LIKES (FR-LEARN-2/7).
+
+        Reads the ``like:{value}`` keys that ``record_decision`` / feedback folding
+        accumulate; used to foreground those topics in generated material.
+        """
+        return self._top_tagged(model, "like:", "approve", limit=limit)
+
+    def top_dislikes(self, model: LearningModel, *, limit: int = 5) -> list[str]:
+        """Learned attributes the user consistently DISLIKES (FR-LEARN-2/7).
+
+        Reads the ``dislike:{value}`` keys; used to de-emphasize those topics in
+        generated material (never to deny/omit truthful facts).
+        """
+        return self._top_tagged(model, "dislike:", "decline", limit=limit)
+
     # --- approve/decline taste bias (FR-LEARN-1/3, #237) ------------------
     def taste_bias(self, model: LearningModel, text: str) -> float:
         """Bounded multiplicative bias from accumulated approve/decline taste (#237).

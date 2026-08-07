@@ -231,3 +231,31 @@ def aggressiveness_directive(value: int) -> str:
         "Frame the candidate's REAL accomplishments in a balanced, confident voice. "
         "Never add a claim that is not in the source."
     )
+
+
+def positioning_directive(likes: list[str], dislikes: list[str]) -> str:
+    """Render learned likes/dislikes as a positioning directive (no fabrication).
+
+    Foregrounds the topics the user consistently LIKES and gives minimal space to
+    the ones they DISLIKE, based on the learning model's ``like:``/``dislike:``
+    feature_stats. Returns an empty string when both lists are empty so a cold
+    campaign is byte-identical to before. This NEVER licenses omitting, denying,
+    or falsifying a truthful résumé fact: the guardrail that forbids fabrication
+    is unchanged (FR-LEARN-2/7, NFR-TRUTH-1).
+    """
+    likes = [str(x).strip() for x in (likes or []) if str(x).strip()]
+    dislikes = [str(x).strip() for x in (dislikes or []) if str(x).strip()]
+    if not likes and not dislikes:
+        return ""
+    parts: list[str] = []
+    if likes:
+        parts.append(
+            "Lead with / foreground, when truthfully supported: " + ", ".join(likes) + "."
+        )
+    if dislikes:
+        parts.append(
+            "Give minimal space to (never deny/omit/falsify if directly asked): "
+            + ", ".join(dislikes)
+            + "."
+        )
+    return " ".join(parts)

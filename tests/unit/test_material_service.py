@@ -16,7 +16,9 @@ from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.application.services.conversion_service import ConversionService
+from applicant.application.services.learning_service import LearningService
 from applicant.application.services.material_service import VARIANT_CAP, MaterialService
+from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.errors import ReviewRequired, TruthfulnessViolation
 from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, ResumeVariantId, new_id
@@ -417,6 +419,84 @@ def test_generate_text_not_degraded_on_real_generation(storage):
     )
     svc._generate_text("I write Python and SQL.", ["Python"], kind="essay_answer")
     assert svc.last_generation_degraded is False
+
+
+class _PromptCapturingLLM:
+    """Captures the system prompt of each generation call."""
+
+    def __init__(self) -> None:
+        self.system_prompts: list[str] = []
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMResult
+
+        self.system_prompts.append(messages[0].content)
+        return LLMResult(text="I work well in Lean and Kanban environments.", tier=1, model="fake")
+
+
+def _learning_with_dislike_safe(storage, cid):
+    """A LearningService whose model carries dislike:SAFe, seeded through the real
+    record_decision fold so the ranking helpers read genuine persisted shape."""
+    learning = LearningService(storage, LocalEmbedding())
+    model = learning.model_for(cid)
+    model = learning.record_decision(
+        model, approved=False, features={"dislike:SAFe": "SAFe"}
+    )
+    learning.persist_model(model)
+    return learning
+
+
+@pytest.mark.unit
+def test_generate_text_appends_positioning_directive_for_essay(storage):
+    """FR-LEARN-7: when the learning model carries a learned dislike (e.g. SAFe),
+    the cover_letter/essay system prompt includes the positioning directive."""
+    from applicant.application.services.learning_service import LearningService
+
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    llm = _PromptCapturingLLM()
+    learning = _learning_with_dislike_safe(storage, cid)
+    # Mirror the real _wire shape used elsewhere in this suite.
+    svc = MaterialService(
+        storage,
+        llm=llm,
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+        learning=learning,
+    )
+    svc._generate_text(
+        "I write Python and SQL.", ["Python"], kind="essay_answer", campaign_id=cid
+    )
+    assert llm.system_prompts
+    prompt = llm.system_prompts[0]
+    assert "Give minimal space to (never deny/omit/falsify if directly asked): SAFe." in prompt
+    assert "Lead with / foreground" not in prompt  # only a dislike was learned
+
+
+@pytest.mark.unit
+def test_generate_text_skips_directive_for_resume_variant(storage):
+    """FR-LEARN-7: the directive only affects cover_letter/essay paths."""
+    from applicant.application.services.learning_service import LearningService
+
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    llm = _PromptCapturingLLM()
+    learning = _learning_with_dislike_safe(storage, cid)
+    svc = MaterialService(
+        storage,
+        llm=llm,
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+        learning=learning,
+    )
+    svc._generate_text(
+        "I write Python and SQL.", ["Python"], kind="resume_variant", campaign_id=cid
+    )
+    assert llm.system_prompts
+    assert "Give minimal space to" not in llm.system_prompts[0]
 
 
 @pytest.mark.unit

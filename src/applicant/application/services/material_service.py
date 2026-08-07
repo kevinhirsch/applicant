@@ -63,6 +63,7 @@ from applicant.core.rules.materials import (
     clamp_aggressiveness,
     classify_screening_question,
     normalize_screening_question,
+    positioning_directive,
     should_generate_cover_letter,
 )
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
@@ -2355,6 +2356,22 @@ class MaterialService:
                 # every pass (FR-RESUME-5/9). The dial only biases framing.
                 system = _SYSTEM_PROMPT + "\n" + self._voice.as_directive()
                 system += "\n" + aggressiveness_directive(self._aggressiveness)
+                # FR-LEARN-7: learned like/dislike positioning for free-prose
+                # material only (cover letter + essay answers). Reads the learning
+                # model's like:/dislike: feature_stats; advisory-only, never a
+                # license to omit/deny/falsify truthful facts. Wrapped in
+                # try/except so a learning failure can never break generation.
+                if kind in ("cover_letter", "essay_answer") and self._learning is not None and campaign_id is not None:
+                    try:
+                        _positioning_model = self._learning.load_model(campaign_id)
+                        _positioning = positioning_directive(
+                            self._learning.top_likes(_positioning_model),
+                            self._learning.top_dislikes(_positioning_model),
+                        )
+                        if _positioning:
+                            system += "\n" + _positioning
+                    except Exception:  # pragma: no cover - defensive: learning never breaks writing
+                        pass
                 if self._extra_banned:
                     system += "\nAvoid these phrases: " + "; ".join(self._extra_banned)
                 # FR-MIND-1/2/5: append a BOUNDED, advisory-only "what the assistant has
