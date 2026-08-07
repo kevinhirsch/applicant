@@ -1208,3 +1208,289 @@ def test_no_research_service_is_a_noop():
     assert "research_used" not in summary
     # true_source is the plain candidate source, no research block prepended.
     assert material.true_source_seen == "TRUE: 5y python"
+
+
+# === FR-AUTO: hands-off auto-draft of top-N viable roles ====================
+class _AutoDraftDigest:
+    """Digest fake that supports build_digest (and the deliver legacy shape)."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.build_calls = 0
+
+    def build_digest(self, campaign_id, criteria=None):
+        self.build_calls += 1
+        return [dict(r) for r in self.rows]
+
+    def deliver(self, campaign_id, criteria=None):
+        return {"payload": {"rows": []}}
+
+
+class _AutoDraftMaterial:
+    """Material fake for the auto-draft path: records screening-answer calls."""
+
+    def __init__(self):
+        self.screening_answers = []
+        self.true_source_seen = None
+
+    def true_attribute_text(self, campaign_id, _):
+        return "TRUE: 5y python"
+
+    def select_or_generate(self, campaign_id, posting_id, jd_terms, true_source, application_id=None):
+        from types import SimpleNamespace
+
+        from applicant.core.ids import ResumeVariantId
+
+        self.true_source_seen = true_source
+        variant = SimpleNamespace(id=ResumeVariantId(new_id()), approved=False)
+        return SimpleNamespace(variant=variant, generated=True)
+
+    def cover_letter_warranted(self, *, campaign_default=False):
+        return False
+
+    def generate_screening_answer(self, campaign_id, application_id, question, true_source, **kwargs):
+        from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
+        from applicant.core.ids import GeneratedDocumentId
+
+        self.screening_answers.append(question)
+        return GeneratedDocument(
+            id=GeneratedDocumentId(new_id()),
+            campaign_id=campaign_id,
+            application_id=application_id,
+            type=DocumentType.SCREENING_ANSWER,
+            content="draft answer",
+        )
+
+
+def _seed_digest_rows(storage, cid, n, *, titles=None, companies=None):
+    """Seed ``n`` viable postings and return matching digest rows without warnings."""
+    rows = []
+    for i in range(n):
+        pid = JobPostingId(new_id())
+        title = (titles or [f"Role-{i}"])[i] if titles else f"Role-{i}"
+        company = (companies or ["Acme"])[i] if companies else "Acme"
+        storage.postings.add(
+            JobPosting(
+                id=pid, campaign_id=cid, title=title, company=company,
+                source_url="http://x", work_mode="remote",
+            )
+        )
+        rows.append({"posting_id": pid, "title": title, "company": company, "warnings": []})
+    return rows
+
+
+@pytest.mark.unit
+def test_auto_draft_top_n_creates_digested_apps_with_materials():
+    """FR-AUTO: the tick auto-drafts materials for the top-N viable roles and
+    leaves every application in DIGESTED (review-gated, never auto-approved)."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, schedule={"auto_draft_top_n": 2})
+    rows = _seed_digest_rows(storage, cid, 2)
+    material = _AutoDraftMaterial()
+    digest = _AutoDraftDigest(rows)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=material,
+        digest_service=digest,
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+
+    assert len(result.auto_drafted) == 2
+    apps = storage.applications.list_for_campaign(cid)
+    assert len(apps) == 2
+    assert all(a.status is ApplicationState.DIGESTED for a in apps)
+    # The drafting carried the posting's real fields onto the application row.
+    assert all(a.job_title and a.work_mode and a.root_url for a in apps)
+    # Screening answers were generated for the generic question set.
+    assert material.screening_answers
+    assert any("authorized to work" in q for q in material.screening_answers)
+    # run_once also honors auto_draft_top_n and records intent.
+    result2 = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert result2.ran is True
+    assert len(result2.auto_drafted) == 0  # already drafted -> idempotent
+
+
+@pytest.mark.unit
+def test_auto_draft_default_top_n():
+    """FR-AUTO: with no schedule override the default top-N is 3."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage)
+    rows = _seed_digest_rows(storage, cid, 4)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+    assert len(result.auto_drafted) == 3
+    assert len(storage.applications.list_for_campaign(cid)) == 3
+
+
+@pytest.mark.unit
+def test_auto_draft_idempotent_rerun_creates_no_dupes():
+    """FR-AUTO: a second pass must not draft a posting already drafted."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, schedule={"auto_draft_top_n": 5})
+    rows = _seed_digest_rows(storage, cid, 3)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    r1 = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), r1, now)
+    r2 = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), r2, now)
+    assert len(r1.auto_drafted) == 3
+    assert r2.auto_drafted == []
+    apps = storage.applications.list_for_campaign(cid)
+    assert len(apps) == 3
+    assert len({str(a.posting_id) for a in apps}) == 3
+
+
+@pytest.mark.unit
+def test_auto_draft_skips_rows_with_warnings():
+    """FR-AUTO: presubmit-safety-warned rows are never auto-drafted."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, schedule={"auto_draft_top_n": 5})
+    rows = _seed_digest_rows(storage, cid, 2)
+    rows[0]["warnings"] = ["Duplicate application: already applied within 30 days."]
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+    assert result.auto_drafted == [str(rows[1]["posting_id"])]
+    apps = storage.applications.list_for_campaign(cid)
+    assert len(apps) == 1
+    assert str(apps[0].posting_id) == str(rows[1]["posting_id"])
+
+
+@pytest.mark.unit
+def test_auto_draft_budget_bound_ceilings_top_n():
+    """FR-AUTO: the drafting count is capped by the remaining daily budget ceiling
+    but drafting itself must NOT consume the pipeline-start cap."""
+    storage = InMemoryStorage()
+    # throughput_target=1 -> remaining_budget=1, so even top_n=3 drafts only 1.
+    cid = _make_campaign(storage, target=1, schedule={"auto_draft_top_n": 3})
+    rows = _seed_digest_rows(storage, cid, 3)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+    assert len(result.auto_drafted) == 1
+    # The daily pipeline-start budget was NOT consumed by drafting.
+    assert loop.acted_today(cid, datetime(2026, 6, 16, tzinfo=UTC)) == 0
+
+
+@pytest.mark.unit
+def test_auto_draft_kill_switch_zero():
+    """FR-AUTO: ``auto_draft_top_n = 0`` disables drafting entirely."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, schedule={"auto_draft_top_n": 0})
+    rows = _seed_digest_rows(storage, cid, 3)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+    assert result.auto_drafted == []
+    assert storage.applications.list_for_campaign(cid) == []
+
+
+@pytest.mark.unit
+def test_auto_draft_one_role_failure_is_isolated(monkeypatch):
+    """FR-AUTO: one role whose drafting raises must not strand the rest of the
+    batch; its partial state is rolled back."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, schedule={"auto_draft_top_n": 5})
+    rows = _seed_digest_rows(storage, cid, 2)
+    storage.commit()  # persist seeds: the failing role's rollback must not unwind them
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=_AutoDraftMaterial(),
+        digest_service=_AutoDraftDigest(rows),
+    )
+    fail_pid = rows[0]["posting_id"]
+    original = loop._auto_draft_one
+
+    def _failing_one(campaign, posting_id):
+        if posting_id == fail_pid:
+            raise RuntimeError("boom")
+        return original(campaign, posting_id)
+
+    monkeypatch.setattr(loop, "_auto_draft_one", _failing_one)
+    from applicant.application.services.agent_loop import TickResult
+
+    result = TickResult(campaign_id=str(cid))
+    loop._auto_draft_top_viable(storage.campaigns.get(cid), result, datetime(2026, 6, 16, tzinfo=UTC))
+    assert result.auto_drafted == [str(rows[1]["posting_id"])]
+    apps = storage.applications.list_for_campaign(cid)
+    assert len(apps) == 1
+    assert str(apps[0].posting_id) == str(rows[1]["posting_id"])
+
+
+@pytest.mark.unit
+def test_approve_after_auto_draft_pipeline_picks_up_approved_digested_app(tmp_path):
+    """FR-AUTO companion: once the human approves an auto-drafted DIGESTED app
+    (the digest_service now advances its status to APPROVED), the very next
+    _process_approvals pass starts its pipeline."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    pid = JobPostingId(new_id())
+    storage.postings.add(
+        JobPosting(id=pid, campaign_id=cid, title="Eng", company="Acme", source_url="u")
+    )
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=pid,
+        status=ApplicationState.DIGESTED, job_title="Eng", work_mode="remote", root_url="u",
+    )
+    storage.applications.add(app)
+    storage.commit()
+    # The companion fix advanced it (DIGESTED -> APPROVED) when the user approved.
+    updated = app.with_status(ApplicationState.APPROVED)
+    storage.applications.update(updated)
+    storage.decisions.add(
+        Decision(id=DecisionId(new_id()), application_id=app.id, type=DecisionType.APPROVE)
+    )
+    storage.commit()
+    loop = _loop(storage, orch, prefill=_FakePrefill())
+    result = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert (apps_now := [a for a in storage.applications.list_for_campaign(cid) if a.id == app.id])
+    # The pipeline PICKED IT UP: the app left DIGESTED (the fake prefill advances
+    # APPROVED -> AWAITING_FINAL_APPROVAL within the tick) and was started.
+    assert apps_now[0].status is not ApplicationState.DIGESTED
+    assert any(str(app.id) in p for p in result.pipelines_started)

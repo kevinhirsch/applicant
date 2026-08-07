@@ -25,6 +25,7 @@ from applicant.core.ids import (
     JobPostingId,
     new_id,
 )
+from applicant.core.state_machine import ApplicationState
 
 
 def _wire():
@@ -288,6 +289,59 @@ def test_approve_decline_promote_a_posting_to_an_application():
     from applicant.core.errors import NotFound
     with _pytest.raises(NotFound):
         digest.approve("no-such-id")
+
+
+def test_approve_after_auto_draft_advances_digested_to_approved():
+    """FR-AUTO companion: an auto-drafted DIGESTED application must be advanced
+    to APPROVED when the human approves it later (else _process_approvals skips
+    it forever because it only acts on APPROVED apps).
+
+    Approving by APPLICATION id (the auto-draft path): status advances via the
+    legal §7 transition, and the decision is recorded."""
+    storage, digest, *_rest = _wire()
+    cid = _seed_campaign(storage, with_posting=True)
+    posting = storage.postings.list_for_campaign(cid)[0]
+    # Simulate the auto-draft keystone: an existing DIGESTED application row.
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=posting.id,
+        status=ApplicationState.DIGESTED, job_title=posting.title,
+        work_mode=posting.work_mode, root_url=posting.source_url,
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    dec = digest.approve(app.id)
+    assert dec.application_id == app.id
+    updated = storage.applications.get(app.id)
+    assert updated is not None
+    assert updated.status is ApplicationState.APPROVED
+
+
+def test_decline_after_auto_draft_advances_digested_to_declined():
+    """FR-AUTO companion: declining an auto-drafted DIGESTED application advances
+    it to DECLINED (legal transition) and records the decision."""
+    storage, digest, *_rest = _wire()
+    cid = _seed_campaign(storage, with_posting=True)
+    posting = storage.postings.list_for_campaign(cid)[0]
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=posting.id,
+        status=ApplicationState.DIGESTED, job_title=posting.title,
+        work_mode=posting.work_mode, root_url=posting.source_url,
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    dec = digest.decline(app.id, feedback_text="not remote enough")
+    assert dec.application_id == app.id
+    updated = storage.applications.get(app.id)
+    assert updated is not None
+    assert updated.status is ApplicationState.DECLINED
 
 
 # === #13: deliver builds + scores the digest ONCE per delivery =============

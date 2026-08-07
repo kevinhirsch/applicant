@@ -69,6 +69,18 @@ _RESUME_FAILURE_CAP = 5
 #: ``_RESUME_FAILURE_CAP``/``ResumeLedger`` above.
 _APPROVAL_START_FAILURE_CAP = 5
 
+#: Hands-off autonomy (FR-AUTO): the tick auto-drafts materials for the top-N
+#: freshest VIABLE roles each run. ``campaign.schedule["auto_draft_top_n"]``
+#: overrides; ``0`` is the kill switch. The drafted applications stay DIGESTED
+#: (review-gated) — this NEVER calls approve(), because approve() triggers the
+#: live camoufox browser pipeline.
+_AUTO_DRAFT_TOP_N_DEFAULT = 3
+_AUTO_DRAFT_SCREENING_QUESTIONS = (
+    "Why are you interested in the {title} role at {company}?",
+    "How many years of relevant professional experience do you have?",
+    "Are you legally authorized to work in the United States?",
+)
+
 
 @dataclass
 class ResumeLedger:
@@ -290,6 +302,9 @@ class TickResult:
     # ``completed`` (a successful submit/teardown) so a failed run is never
     # miscounted as a success.
     failed: list[str] = field(default_factory=list)
+    # FR-AUTO: posting ids for which the tick auto-drafted materials (applications
+    # left DIGESTED and review-gated — never auto-approved).
+    auto_drafted: list[str] = field(default_factory=list)
     budget_remaining: int = 0
     budget_exhausted: bool = False
 
@@ -660,6 +675,11 @@ class AgentLoop:
         # 3. Discovery -> scoring -> deliver digest (FR-DISC/AGENT-3/DIG-1). ---
         self._discover_and_digest(campaign, result, now)
 
+        # 3b. Hands-off autonomy (FR-AUTO): auto-draft materials for top-N viable
+        # roles, leaving them DIGESTED for the review queue. NEVER calls approve()
+        # (that would trigger the live camoufox browser pipeline).
+        self._auto_draft_top_viable(campaign, result, now)
+
         # 4. Approved digest items -> create Application + run pipeline. -------
         self._process_approvals(campaign, result, now)
 
@@ -784,6 +804,90 @@ class AgentLoop:
         scores only the fresh backlog instead of re-scanning the full posting history.
         """
         return list(self._storage.postings.list_unscored_for_campaign(campaign_id))
+
+    # --- hands-off autonomy: auto-draft top-N viable roles (FR-AUTO) -------
+    def _auto_draft_top_viable(self, campaign, result: TickResult, now: datetime) -> None:
+        """Auto-draft materials for the top-N freshest VIABLE roles.
+
+        Creates review-gated DIGESTED applications (never approved) with tailored
+        resume variant + cover letter (via ``_prepare_material_for``) and screening
+        answers for a few generic questions, so the user wakes to a ready review
+        queue. This NEVER calls ``approve()`` — approve() triggers the live camoufox
+        browser pipeline. Idempotent per posting; isolated per role so one failure
+        never strands the batch.
+        """
+        if self._material is None or self._digest is None:
+            return
+        if not callable(getattr(self._digest, "build_digest", None)):
+            return  # legacy/unit fake digest without build_digest: nothing to draft from
+        top_n = int((campaign.schedule or {}).get("auto_draft_top_n", _AUTO_DRAFT_TOP_N_DEFAULT))
+        if top_n <= 0:  # kill switch
+            return
+        # Ceiling only: drafting must NOT consume the daily pipeline-start cap.
+        limit = min(top_n, self.remaining_budget(campaign, now))
+        if limit <= 0:
+            return
+        rows = self._digest.build_digest(campaign.id, self._criteria_for(campaign.id))
+        drafted = 0
+        for row in rows:
+            if drafted >= limit:
+                break
+            if row.get("warnings"):
+                continue
+            posting_id = row.get("posting_id")
+            if posting_id is None:
+                continue
+            if self._storage.applications.get_by_posting(
+                campaign.id, JobPostingId(str(posting_id))
+            ) is not None:
+                continue  # idempotent: never draft the same posting twice
+            try:
+                self._auto_draft_one(campaign, JobPostingId(str(posting_id)))
+                drafted += 1
+                result.auto_drafted.append(str(posting_id))
+            except Exception as exc:
+                log.warning(
+                    "auto_draft_failed",
+                    campaign_id=str(campaign.id),
+                    posting_id=str(posting_id),
+                    error=str(exc),
+                )
+                self._storage.rollback()
+
+    def _auto_draft_one(self, campaign, posting_id: JobPostingId) -> None:
+        """Create one DIGESTED application + its materials for a viable posting."""
+        posting = self._storage.postings.get(posting_id)
+        if posting is None:
+            return
+        app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=campaign.id,
+            posting_id=posting_id,
+            status=ApplicationState.DIGESTED,
+            job_title=posting.title,
+            work_mode=posting.work_mode,
+            root_url=posting.source_url,
+        )
+        self._storage.applications.add(app)
+        self._storage.commit()
+        # Resume variant + cover letter (safe on a DIGESTED app; it only touches
+        # storage + material; ``_deferred_questions`` is [] pre-prefill).
+        self._prepare_material_for(campaign, app)
+        true_source = self._true_source(campaign, app, posting)
+        for template in _AUTO_DRAFT_SCREENING_QUESTIONS:
+            question = template.format(title=posting.title, company=posting.company)
+            try:
+                self._material.generate_screening_answer(
+                    campaign.id, app.id, question, true_source
+                )
+            except Exception as exc:
+                log.warning(
+                    "auto_draft_screening_failed",
+                    application_id=str(app.id),
+                    question=question,
+                    error=str(exc),
+                )
+                self._storage.rollback()
 
     # --- approvals -> applications -> durable pipeline --------------------
     def _process_approvals(self, campaign, result: TickResult, now: datetime) -> None:

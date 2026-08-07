@@ -27,7 +27,7 @@ from datetime import UTC, date, datetime, timedelta
 from applicant.core.entities.application import Application
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
-from applicant.core.errors import InvalidInput, NotFound
+from applicant.core.errors import IllegalStateTransition, InvalidInput, NotFound
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, JobPostingId, new_id
 from applicant.core.rules.jd_match import compute_jd_match
 from applicant.core.state_machine import ApplicationState
@@ -846,6 +846,24 @@ class DigestService:
         }
 
     # --- decisions (FR-DIG-3/5, FR-FB-1) ----------------------------------
+    def _advance_if_legal(self, app, status: ApplicationState) -> None:
+        """Advance an existing application to ``status`` when the §7 state machine allows.
+
+        Auto-draft (FR-AUTO) creates DIGESTED applications. A later human
+        approve/decline must advance them (DIGESTED -> APPROVED/DECLINED) or
+        AgentLoop._process_approvals keeps skipping them forever (it only acts on
+        APPROVED apps). Illegal transitions are ignored so the legal new-row path
+        still applies for postings that never became applications.
+        """
+        if app.status is status:
+            return
+        try:
+            updated = app.with_status(status)
+        except IllegalStateTransition:
+            return
+        self._storage.applications.update(updated)
+        self._storage.commit()
+
     def _application_for(self, target_id, *, status: ApplicationState) -> ApplicationId:
         """Resolve a digest target to a real application row (FR-DIG-3).
 
@@ -854,17 +872,21 @@ class DigestService:
         (its FK), so a not-yet-pursued posting must be promoted to an application
         first — otherwise the decision insert hits a foreign-key violation (-> 500).
         If ``target_id`` is already an application, it is returned unchanged (status
-        untouched). If it is a posting, find-or-create its application at ``status``
-        (APPROVED so the loop pursues it, or DECLINED for a terminal decline),
-        mirroring AgentLoop._ensure_application. Unknown id -> NotFound (404).
+        advanced via the legal §7 transition). If it is a posting, find-or-create
+        its application at ``status`` (APPROVED so the loop pursues it, or DECLINED
+        for a terminal decline), mirroring AgentLoop._ensure_application. Unknown id
+        -> NotFound (404).
         """
-        if self._storage.applications.get(target_id) is not None:
+        existing_app = self._storage.applications.get(target_id)
+        if existing_app is not None:
+            self._advance_if_legal(existing_app, status)
             return target_id  # already an application
         posting = self._storage.postings.get(JobPostingId(str(target_id)))
         if posting is None:
             raise NotFound(f"No posting or application for id '{target_id}'.")
         existing = self._storage.applications.get_by_posting(posting.campaign_id, posting.id)
         if existing is not None:
+            self._advance_if_legal(existing, status)
             return existing.id
         app = Application(
             id=ApplicationId(new_id()),
