@@ -148,18 +148,23 @@
       flex: 0 0 auto !important;
     }
 
-    /* Common section header styling (Chats, Tasks) - matching Preferences style */
+    /* Unified SECTION-LABEL style — the single header treatment shared by
+       Chats, Tasks, Preferences, and any other sidebar section header. */
     .section-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 6px;
-      margin: 0 0 0.5rem 0;
-      padding: 0;
+      margin: 0;
+      padding: 12px 16px 6px;
       -webkit-user-select: none;
       /* Safari compatibility */
       user-select: none;
-      font-size: var(--font-size-normal);
+      text-transform: uppercase;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--color-text-secondary, var(--color-primary));
     }
 
     /* Collapsible section headers (Tasks) */

@@ -127,34 +127,46 @@
       flex-shrink: 0;
     }
 
-    .task-name { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 0; cursor: pointer; border-radius: 4px; transition: background-color 0.2s; font-size: var(--font-size-small); margin-bottom: 2px; }
-  
+    .task-name { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: background-color 0.2s; font-size: 13px; font-weight: 400; }
+
     .task-info-line { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 2px; }
     .task-actions { display: flex; gap: 0.375rem; margin-left: auto; }
-  
+
+    /* Unified item-row style — shared with the Applicant nav rows and the
+       Chats list rows (see left-sidebar.html and chats-list.html). Tasks
+       carry two lines of content (title + status), so align-items:center
+       centers that block within the same row padding as every other row. */
     .task-container {
       width: 100%;
       display: flex;
-      align-items: stretch;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 16px;
       position: relative;
-      border-radius: 4px;
+      border-radius: 6px;
       overflow: hidden;
+      cursor: pointer;
+      color: var(--color-text);
+      opacity: .85;
+      transition: background-color .15s ease, opacity .15s ease;
     }
 
-    .task-container:hover { 
+    .task-container:hover {
       background-color: var(--color-background-hover);
+      opacity: 1;
      }
-    
+
 
     .task-container-vertical { display: flex; flex-direction: column; width: 100%; gap: 6px; }
 
     /* Selected task accent */
     .task-selected {
       background-color: var(--color-background-hover);
+      opacity: 1;
     }
 
     .task-selected .task-name {
-      font-weight: bold;
+      font-weight: 700;
     }
   
     /* Scheduler badges (subset used in sidebar) */
