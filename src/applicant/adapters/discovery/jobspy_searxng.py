@@ -85,6 +85,69 @@ class PerBoardRateLimiter:
         return b.tokens
 
 
+# --- per-source circuit breaker (discovery resilience) ---------------------
+
+
+@dataclass
+class _BreakerState:
+    consecutive_failures: int = 0
+    opened_at: float | None = None
+
+
+class SourceCircuitBreaker:
+    """Per-source circuit breaker guarding against a hard-blocked board.
+
+    A source like Glassdoor/ZipRecruiter that 403s on EVERY tick wastes a full
+    scrape attempt every single discovery run forever — the per-board rate
+    limiter (``PerBoardRateLimiter``) only throttles *call frequency*, it does
+    not notice a source is *reliably failing*. This breaker tracks consecutive
+    non-``SOURCE_OK`` outcomes per source key (``record``); once a source hits
+    ``failure_threshold`` consecutive failures, the breaker "opens" and
+    ``allow()`` returns ``False`` for ``cooldown_seconds`` — the caller skips
+    ``source.fetch()`` entirely and records a ``SOURCE_COOLDOWN`` outcome
+    instead, exactly like a rate-limit skip.
+
+    After the cooldown window elapses the breaker auto-recovers (half-open):
+    the next call is allowed through as a probe. A single ``ok`` outcome
+    clears the failure count and closes the breaker; a failed probe re-opens
+    it and restarts the cooldown clock, so a still-blocked board keeps being
+    skipped rather than hammered every tick.
+    """
+
+    def __init__(self, *, failure_threshold: int = 3, cooldown_seconds: float = 1800.0) -> None:
+        self._threshold = failure_threshold
+        self._cooldown = cooldown_seconds
+        self._state: dict[str, _BreakerState] = {}
+
+    def allow(self, key: str) -> bool:
+        """Whether ``key`` may attempt a fetch this run (closed or half-open)."""
+        st = self._state.get(key)
+        if st is None or st.opened_at is None:
+            return True
+        return (_time.monotonic() - st.opened_at) >= self._cooldown
+
+    def record(self, key: str, *, ok: bool) -> None:
+        """Record one outcome for ``key`` — ``ok=False`` counts toward opening."""
+        st = self._state.setdefault(key, _BreakerState())
+        if ok:
+            st.consecutive_failures = 0
+            st.opened_at = None
+            return
+        st.consecutive_failures += 1
+        if st.consecutive_failures >= self._threshold:
+            st.opened_at = _time.monotonic()
+
+    def is_open(self, key: str) -> bool:
+        """Whether ``key`` is CURRENTLY open (tripped and still cooling down)."""
+        st = self._state.get(key)
+        if st is None or st.opened_at is None:
+            return False
+        return (_time.monotonic() - st.opened_at) < self._cooldown
+
+    def reset(self, key: str) -> None:
+        self._state.pop(key, None)
+
+
 # --- proxy hook seam (FR-DISC-6) ------------------------------------------
 @dataclass(frozen=True)
 class ProxyConfig:
@@ -695,12 +758,16 @@ class JobSpySearxngDiscovery:
         proxy: ProxyConfig | None = None,
         proxy_url: str | None = None,
         rate_limiter: PerBoardRateLimiter | None = None,
+        circuit_breaker: SourceCircuitBreaker | None = None,
     ) -> None:
         # proxy / proxy_url is the FR-DISC-6 proxy hook (off by default).
         if proxy is None and proxy_url:
             proxy = ProxyConfig(proxies=(proxy_url,), enabled=True)
         self._proxy = proxy or ProxyConfig()
         self._rate_limiter = rate_limiter or PerBoardRateLimiter()
+        # Discovery resilience: skip a source that has failed N runs in a row
+        # (e.g. a 403-blocked board) instead of re-attempting it every tick.
+        self._circuit_breaker = circuit_breaker or SourceCircuitBreaker()
         self._sources: dict[str, Source] = {}
         self._enabled: dict[str, bool] = {}
         # H2 (no silent underdelivery): per-source outcome of the most recent
@@ -758,6 +825,7 @@ class JobSpySearxngDiscovery:
         still be enabled; absent it, every enabled source is queried (legacy path).
         """
         from applicant.core.rules.underdelivery import (
+            SOURCE_COOLDOWN,
             SOURCE_EMPTY,
             SOURCE_ERROR,
             SOURCE_OK,
@@ -789,6 +857,21 @@ class JobSpySearxngDiscovery:
                     }
                 )
                 continue
+            # Circuit breaker (discovery resilience): a source that has failed
+            # ``failure_threshold`` runs in a row (e.g. a 403-blocked board) is
+            # skipped for a cooldown window instead of wasting another attempt
+            # every single tick. Auto-recovers once the cooldown elapses.
+            if not self._circuit_breaker.allow(key):
+                log.info("circuit_breaker_skip", source=key)
+                outcomes.append(
+                    {
+                        "source_key": key,
+                        "status": SOURCE_COOLDOWN,
+                        "found": 0,
+                        "error": None,
+                    }
+                )
+                continue
             source = self._sources[key]
             found = 0
             for posting in source.fetch(campaign_id, criteria):
@@ -801,6 +884,7 @@ class JobSpySearxngDiscovery:
             # via ``last_error`` — distinguish "failed" from genuinely "empty".
             error = getattr(source, "last_error", None)
             status = SOURCE_ERROR if error else (SOURCE_OK if found else SOURCE_EMPTY)
+            self._circuit_breaker.record(key, ok=(status == SOURCE_OK))
             outcomes.append(
                 {
                     "source_key": key,

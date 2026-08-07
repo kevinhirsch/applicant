@@ -15,12 +15,15 @@ from applicant.core.rules.underdelivery import source_shortfall_message
 #: jobspy:* → medium (network-backed, depends on board uptime)
 #: searxng → medium (metasearch, depends on operator config)
 #: rss:* → medium (feed-backed, depends on feed availability)
+#: greenhouse:* / lever:* → high (direct public ATS API, no anti-bot 403s)
 #: unknown → medium (conservative default)
 SOURCE_TIERS: dict[str, str] = {
     "sample": "high",
     "jobspy": "medium",
     "searxng": "medium",
     "rss": "medium",
+    "greenhouse": "high",
+    "lever": "high",
 }
 
 #: Tier baseline scores used when no yield_stats are available.
@@ -35,6 +38,7 @@ _STATUS_SCORES: dict[str, float] = {
     "ok": 1.0,
     "empty": 0.5,
     "rate_limited": 0.3,
+    "cooldown": 0.2,
     "error": 0.0,
 }
 
@@ -123,6 +127,10 @@ def reliability_detail(source_key: str, yield_stats: dict | None = None) -> str:
         detail = "Metasearch source (depends on operator configuration)"
     elif prefix == "rss":
         detail = "RSS feed source (depends on feed availability)"
+    elif prefix == "greenhouse":
+        detail = "Greenhouse ATS board (direct public API, no anti-bot blocking)"
+    elif prefix == "lever":
+        detail = "Lever ATS postings (direct public API, no anti-bot blocking)"
     else:
         detail = "Unknown source type"
 

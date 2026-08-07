@@ -7,7 +7,14 @@ from applicant.adapters.discovery.factory import (
     _parse_feed_list,
     build_default_discovery,
 )
-from applicant.adapters.discovery.jobspy_searxng import SampleSource, JobSpySearxngDiscovery
+from applicant.adapters.discovery.jobspy_searxng import (
+    JobSpySearxngDiscovery,
+    SampleSource,
+    SourceCircuitBreaker,
+)
+from applicant.core.entities.search_criteria import SearchCriteria
+from applicant.core.ids import CampaignId, new_id
+from applicant.core.rules.underdelivery import SOURCE_COOLDOWN, SOURCE_OK
 
 
 @pytest.fixture(autouse=True)
@@ -103,3 +110,103 @@ class TestDiscoveryFactory:
         custom_keys = [k for k in discovery._sources if k.startswith(CUSTOM_RSS_KEY_PREFIX)]
         assert len(custom_keys) == 1
         assert custom_keys[0] == f"{CUSTOM_RSS_KEY_PREFIX}-1"
+
+
+    def test_build_with_greenhouse_and_lever_selects_fake_clients_when_offline(self):
+        """live=False (default) wires the new ATS sources to the Fake clients too."""
+        discovery = build_default_discovery(
+            live=False, greenhouse_boards=("acme",), lever_companies=("widgets",)
+        )
+        gh_source = discovery._sources["greenhouse:acme"]
+        lv_source = discovery._sources["lever:widgets"]
+        assert type(gh_source._client).__name__ == "FakeGreenhouseClient"
+        assert type(lv_source._client).__name__ == "FakeLeverClient"
+
+    def test_build_with_greenhouse_and_lever_selects_live_clients_when_live(self):
+        """live=True wires the new ATS sources to the real network clients."""
+        discovery = build_default_discovery(
+            live=True, greenhouse_boards=("acme",), lever_companies=("widgets",)
+        )
+        gh_source = discovery._sources["greenhouse:acme"]
+        lv_source = discovery._sources["lever:widgets"]
+        assert type(gh_source._client).__name__ == "LiveGreenhouseClient"
+        assert type(lv_source._client).__name__ == "LiveLeverClient"
+
+
+@pytest.mark.unit
+class TestSourceCircuitBreaker:
+    """Discovery resilience: a source failing N runs in a row (e.g. a
+    403-blocked Glassdoor/ZipRecruiter board) is skipped for a cooldown window
+    instead of being re-attempted -- and wasting a scrape -- on every single
+    discovery tick."""
+
+    class _AlwaysFailingSource:
+        key = "flaky"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch(self, campaign_id, criteria):
+            self.calls += 1
+            self.last_error = "board says no"
+            return []
+
+    def test_opens_after_threshold_consecutive_failures_and_skips_fetch(self):
+        cid = CampaignId(new_id())
+        criteria = SearchCriteria(campaign_id=cid)
+        source = self._AlwaysFailingSource()
+        breaker = SourceCircuitBreaker(failure_threshold=3, cooldown_seconds=3600)
+        disc = JobSpySearxngDiscovery(sources=[source], circuit_breaker=breaker)
+
+        for _ in range(3):
+            disc.search(cid, criteria)
+        assert source.calls == 3  # each of the first 3 runs actually attempted fetch
+
+        # 4th run: the breaker is now open -- fetch must NOT be attempted again.
+        disc.search(cid, criteria)
+        assert source.calls == 3
+        assert disc.last_source_outcomes == [
+            {
+                "source_key": "flaky",
+                "status": SOURCE_COOLDOWN,
+                "found": 0,
+                "error": None,
+            }
+        ]
+
+    def test_a_healthy_source_never_trips_the_breaker(self):
+        cid = CampaignId(new_id())
+        criteria = SearchCriteria(campaign_id=cid)
+        source = SampleSource(key="full")
+        breaker = SourceCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
+        disc = JobSpySearxngDiscovery(sources=[source], circuit_breaker=breaker)
+        for _ in range(5):
+            disc.search(cid, criteria)
+        assert disc.last_source_outcomes[0]["status"] == SOURCE_OK
+
+    def test_ok_outcome_resets_the_consecutive_failure_count(self):
+        breaker = SourceCircuitBreaker(failure_threshold=2, cooldown_seconds=3600)
+        breaker.record("x", ok=False)
+        breaker.record("x", ok=True)
+        breaker.record("x", ok=False)
+        # Only ONE consecutive failure since the "ok" reset the streak.
+        assert breaker.allow("x") is True
+        assert breaker.is_open("x") is False
+
+    def test_recovers_after_the_cooldown_window_elapses(self):
+        import time
+
+        breaker = SourceCircuitBreaker(failure_threshold=1, cooldown_seconds=0.05)
+        breaker.record("x", ok=False)
+        assert breaker.allow("x") is False
+        assert breaker.is_open("x") is True
+        time.sleep(0.1)
+        assert breaker.allow("x") is True
+        assert breaker.is_open("x") is False
+
+    def test_reset_clears_state(self):
+        breaker = SourceCircuitBreaker(failure_threshold=1, cooldown_seconds=3600)
+        breaker.record("x", ok=False)
+        assert breaker.allow("x") is False
+        breaker.reset("x")
+        assert breaker.allow("x") is True

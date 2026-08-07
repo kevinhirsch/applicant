@@ -13,6 +13,8 @@ committed; ``None`` means direct egress.
 from __future__ import annotations
 
 import json
+import logging
+from contextlib import contextmanager
 from typing import Protocol
 
 from applicant.observability.logging import get_logger
@@ -24,6 +26,66 @@ log = get_logger(__name__)
 #: SearXNG instance or a stalled RSS endpoint would otherwise wedge a discovery
 #: run indefinitely. Per-instance ``timeout=`` overrides this default.
 _DEFAULT_HTTP_TIMEOUT = 15.0
+
+#: python-jobspy names its per-board loggers ``JobSpy:{Name}`` (see its own
+#: ``create_logger``) with ``propagate=False`` -- so its own error logging never
+#: reaches ours. Map our lowercase ``site`` key to that exact logger suffix so
+#: ``_capture_jobspy_blocked`` can listen on the right logger (403-miscount fix,
+#: discovery resilience).
+_JOBSPY_LOGGER_NAMES: dict[str, str] = {
+    "linkedin": "LinkedIn",
+    "indeed": "Indeed",
+    "glassdoor": "Glassdoor",
+    "google": "Google",
+    "zip_recruiter": "ZipRecruiter",
+}
+
+
+class _CapturingHandler(logging.Handler):
+    """Collect ERROR-level log records mentioning an HTTP 403 (discovery resilience).
+
+    python-jobspy swallows a hard HTTP 403 block INSIDE its own scraper: it
+    catches the exception, logs it via its own named logger, and returns an
+    empty result with no exception raised. Left alone, ``LiveJobSpyClient``
+    would report that as a plain empty scrape, and the caller (``JobSpySource``)
+    would miscount a hard block as ``SOURCE_EMPTY`` instead of ``SOURCE_ERROR`` --
+    understating the failure to the source-yield learning system. This handler
+    recovers the swallowed signal by listening on the board's own logger for the
+    duration of one scrape call.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:  # a malformed record must never break the scrape
+            return
+        if "403" in message:
+            self.messages.append(message)
+
+
+@contextmanager
+def _capture_jobspy_blocked(site: str):
+    """Temporarily attach a ``_CapturingHandler`` to ``site``'s own jobspy logger.
+
+    Yields the (initially empty) list of captured 403 messages, mutated in place
+    as records arrive; unknown site keys yield a plain empty list (no handler
+    attached) so an unrecognized/new board never raises spuriously.
+    """
+    logger_name = _JOBSPY_LOGGER_NAMES.get(site)
+    if logger_name is None:
+        yield []
+        return
+    logger = logging.getLogger(f"JobSpy:{logger_name}")
+    handler = _CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        yield handler.messages
+    finally:
+        logger.removeHandler(handler)
 
 
 def _parse_feed_xml(text: str):
@@ -77,16 +139,25 @@ class LiveJobSpyClient:
     ) -> list[dict]:
         from jobspy import scrape_jobs  # lazy: real network dependency
 
-        df = scrape_jobs(
-            site_name=[site],
-            search_term=search_term or None,
-            location=location,
-            results_wanted=results_wanted,
-            proxies=proxies,
-            is_remote=is_remote,
-            country_indeed=country_indeed or "usa",
-            hours_old=hours_old,
-        )
+        with _capture_jobspy_blocked(site) as blocked_messages:
+            df = scrape_jobs(
+                site_name=[site],
+                search_term=search_term or None,
+                location=location,
+                results_wanted=results_wanted,
+                proxies=proxies,
+                is_remote=is_remote,
+                country_indeed=country_indeed or "usa",
+                hours_old=hours_old,
+            )
+        if (df is None or len(df) == 0) and blocked_messages:
+            # 403-miscount fix: python-jobspy swallowed the block internally and
+            # returned nothing with no exception -- raise so the caller
+            # (``JobSpySource.fetch``) records this as SOURCE_ERROR, never the
+            # SOURCE_EMPTY a genuinely quiet board would report.
+            raise RuntimeError(
+                f"{site} blocked the request (HTTP 403): {blocked_messages[0]}"
+            )
         if df is None or len(df) == 0:
             return []
         # python-jobspy returns a pandas DataFrame; to_dict("records") -> list[dict].

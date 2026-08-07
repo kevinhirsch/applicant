@@ -6,10 +6,15 @@ and the RSS/Atom parser runs on canned XML. No network.
 
 from __future__ import annotations
 
+import logging
+import sys
+import types
+
 import httpx
 
 from applicant.adapters.discovery.clients import (
     LiveGreenhouseClient,
+    LiveJobSpyClient,
     LiveLeverClient,
     LiveRssClient,
     LiveSearxngClient,
@@ -254,3 +259,91 @@ def test_lever_valid_json_parses_postings(monkeypatch):
     assert LiveLeverClient().fetch_postings(company="acme", proxies=None) == [
         {"text": "Role", "hostedUrl": "https://lever.test/1"}
     ]
+
+
+def _install_fake_jobspy(monkeypatch, scrape_jobs):
+    """Monkeypatch a fake ``jobspy`` module in ``sys.modules``.
+
+    ``LiveJobSpyClient.scrape`` does ``from jobspy import scrape_jobs`` lazily
+    inside the method, so swapping the module in ``sys.modules`` before the call
+    routes it to our fake implementation -- no network, no real python-jobspy
+    scrape, exactly like ``_patch_httpx`` does for the httpx-based clients above.
+    """
+    fake = types.ModuleType("jobspy")
+    fake.scrape_jobs = scrape_jobs
+    monkeypatch.setitem(sys.modules, "jobspy", fake)
+
+
+def test_jobspy_403_swallowed_by_board_is_surfaced_as_an_error(monkeypatch):
+    """403-miscount fix (discovery resilience): python-jobspy swallows a hard
+    HTTP 403 block INSIDE its own per-board scraper -- it logs the failure via
+    its own ``JobSpy:{Name}`` logger (``propagate=False``, so it never reaches
+    ours) and returns an EMPTY DataFrame with no exception raised. Left alone,
+    the caller (``JobSpySource.fetch``) would miscount that hard block as
+    SOURCE_EMPTY instead of SOURCE_ERROR, understating it to source-yield
+    learning. ``LiveJobSpyClient`` must recover the swallowed signal and raise."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        logging.getLogger("JobSpy:Glassdoor").error(
+            "Glassdoor: bad response status code: 403"
+        )
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    try:
+        client.scrape(
+            site="glassdoor",
+            search_term="engineer",
+            location="United States",
+            results_wanted=10,
+            proxies=None,
+        )
+    except RuntimeError as exc:
+        assert "403" in str(exc)
+    else:
+        raise AssertionError("expected a RuntimeError surfacing the swallowed 403")
+
+
+def test_jobspy_genuinely_empty_board_still_returns_empty_list(monkeypatch):
+    """A board that legitimately has zero matching postings (nothing logged)
+    must still return [] without raising -- the fix must never misclassify a
+    real SOURCE_EMPTY run as an error."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    rows = client.scrape(
+        site="indeed",
+        search_term="engineer",
+        location="United States",
+        results_wanted=10,
+        proxies=None,
+    )
+    assert rows == []
+
+
+def test_jobspy_403_on_unmapped_site_does_not_raise(monkeypatch):
+    """An unrecognized site key (no known jobspy logger mapping) must never
+    raise spuriously -- it falls back to the pre-fix plain-empty behavior."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    assert (
+        client.scrape(
+            site="some_future_board",
+            search_term="engineer",
+            location="United States",
+            results_wanted=10,
+            proxies=None,
+        )
+        == []
+    )
