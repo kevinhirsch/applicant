@@ -360,6 +360,54 @@ class TestCaptureLogAndRecentLogs:
         logs = logging_mod.recent_logs()
         assert [l["seq"] for l in logs] == [1, 2, 3]
 
+    def test_query_service_logs_threads_since_seq(self):
+        """AdminQueryService.logs threads since_seq filtering (FR-LOG-3)."""
+        from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
+        from applicant.adapters.storage.in_memory import InMemoryStorage
+        from applicant.application.services.admin_query_service import AdminQueryService
+
+        for i in range(5):
+            logging_mod._capture_log(None, "info", {"i": i})
+        svc = AdminQueryService(InMemoryStorage(), CheckpointShimOrchestrator())
+        all_logs = svc.logs()
+        max_seq = all_logs[-1]["seq"]
+        logging_mod._capture_log(None, "info", {"i": "new"})
+        newer = svc.logs(since_seq=max_seq)
+        assert len(newer) == 1
+        assert newer[0]["seq"] == max_seq + 1
+        assert newer[0]["i"] == "new"
+        # limit still caps the page size even with since_seq
+        capped = svc.logs(limit=0, since_seq=max_seq)
+        assert len(capped) == 1
+
+    def test_logs_router_since_seq_and_latest_seq(self):
+        """GET /logs threads since_seq and echoes latest_seq (FR-LOG-3)."""
+        from applicant.app.routers.admin import logs as logs_handler
+
+        class _FakeQuery:
+            def __init__(self, entries):
+                self._entries = entries
+
+            def logs(self, limit, since_seq=None):
+                return self._entries
+
+        # no new entries: latest_seq falls back to the caller's since_seq
+        result = logs_handler(limit=100, since_seq=42, **{"admin_query": _FakeQuery([])})
+        assert result == {"entries": [], "latest_seq": 42, "status": "live"}
+
+        # new entries: latest_seq comes from the newest entry's seq
+        fake = _FakeQuery([{"seq": 43}, {"seq": 44}])
+        result2 = logs_handler(limit=100, since_seq=42, **{"admin_query": fake})
+        assert result2["entries"][0]["seq"] == 43
+        assert result2["entries"][1]["seq"] == 44
+        assert result2["latest_seq"] == 44
+        assert result2["status"] == "live"
+
+        # since_seq omitted stays backward compatible (existing Ops usage)
+        result3 = logs_handler(limit=100, **{"admin_query": fake})
+        assert result3["latest_seq"] == 44
+        assert result3["status"] == "live"
+
 
 class TestToJsonable:
     """Tests for _to_jsonable type coercion."""
