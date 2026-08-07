@@ -16,6 +16,7 @@ from applicant.adapters.storage.models import (
     FieldMappingModel,
     FontModel,
     DiscoverySourceModel,
+    DiscoveryBoardModel,
     JobPostingModel,
     ResumeVariantModel,
     GeneratedMaterialModel,
@@ -119,6 +120,7 @@ MODEL_TABLENAMES: list[tuple[type, str]] = [
     (FieldMappingModel, "field_mappings"),
     (FontModel, "fonts"),
     (DiscoverySourceModel, "discovery_sources"),
+    (DiscoveryBoardModel, "discovery_boards"),
     (JobPostingModel, "job_postings"),
     (ResumeVariantModel, "resume_variants"),
     (GeneratedMaterialModel, "generated_materials"),
@@ -284,6 +286,21 @@ class TestDiscoverySourceModel:
                 col_names = [col.name for col in c.columns]
                 assert "campaign_id" in col_names
                 assert "source_key" in col_names
+                break
+
+
+class TestDiscoveryBoardModel:
+    """discovery_boards table: UniqueConstraint on source_key."""
+
+    @pytest.mark.unit
+    def test_has_unique_on_source_key(self) -> None:
+        constraints = DiscoveryBoardModel.__table__.constraints
+        unique_names = {c.name for c in constraints if hasattr(c, "columns")}
+        assert "uq_discovery_boards_source_key" in unique_names
+        for c in constraints:
+            if c.name == "uq_discovery_boards_source_key":
+                col_names = [col.name for col in c.columns]
+                assert col_names == ["source_key"]
                 break
 
 
@@ -559,6 +576,7 @@ class TestCreateAll:
             "field_mappings",
             "fonts",
             "discovery_sources",
+            "discovery_boards",
             "job_postings",
             "resume_variants",
             "generated_materials",

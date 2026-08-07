@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.events import JobDiscovered, event_bus
-from applicant.core.ids import CampaignId, DiscoverySourceId, new_id
+from applicant.core.ids import AtsBoardId, CampaignId, DiscoverySourceId, new_id
 from applicant.core.rules.source_pacing import (
     DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
     SourcePacer,
@@ -50,6 +52,8 @@ class DiscoveryService:
         learning=None,
         tool_registry=None,
         *,
+        greenhouse_client=None,
+        lever_client=None,
         advanced_learning=None,
         source_pacer: SourcePacer | None = None,
         per_domain_interval_seconds: float = DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
@@ -76,6 +80,36 @@ class DiscoveryService:
         # FR-MIND-3). ``None`` (default) => no extra title bias, byte-identical.
         self._advanced_learning = advanced_learning
         self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
+        # Runtime ATS board clients (slice 1). Injected explicitly in tests; live
+        # clients are lazy-imported when omitted so the service never reaches into
+        # app.config and module imports stay light (hexagonal layering).
+        self._greenhouse_client = greenhouse_client
+        self._lever_client = lever_client
+
+    def _board_client(self, provider: str):
+        """Return the right ATS board client (live if not explicitly injected)."""
+        if provider == "greenhouse":
+            if self._greenhouse_client is None:
+                from applicant.adapters.discovery.clients import LiveGreenhouseClient
+
+                self._greenhouse_client = LiveGreenhouseClient()
+            return self._greenhouse_client
+        if self._lever_client is None:
+            from applicant.adapters.discovery.clients import LiveLeverClient
+
+            self._lever_client = LiveLeverClient()
+        return self._lever_client
+
+    @staticmethod
+    def _default_board_source_builder(*, provider, token, source_key, client):
+        """Build the adapter source for a persisted board (lazy import, clean layering)."""
+        if provider == "greenhouse":
+            from applicant.adapters.discovery.jobspy_searxng import GreenhouseSource
+
+            return GreenhouseSource(client=client, token=token, key=source_key)
+        from applicant.adapters.discovery.jobspy_searxng import LeverSource
+
+        return LeverSource(client=client, company=token, key=source_key)
 
     # --- source registry (FR-DISC-2) --------------------------------------
     def sync_registry(self, campaign_id: CampaignId) -> list[DiscoverySource]:
@@ -123,6 +157,68 @@ class DiscoveryService:
 
     def list_sources(self, campaign_id: CampaignId) -> list[DiscoverySource]:
         return self._storage.discovery_sources.list_for_campaign(campaign_id)
+
+    def add_board(self, campaign_id, provider, token, *, builder=None) -> dict:
+        """Persist + register a runtime ATS board (Greenhouse token / Lever slug)."""
+        provider = (provider or "").lower().strip()
+        token = (token or "").strip()
+        if not provider or not token:
+            raise ValueError("provider and token are required")
+        if provider not in ("greenhouse", "lever"):
+            raise ValueError(
+                f"unsupported provider '{provider}' (only greenhouse and lever are supported)"
+            )
+        client = self._board_client(provider)
+        try:
+            if provider == "greenhouse":
+                rows = client.fetch_jobs(token=token, proxies=None)
+            else:
+                rows = client.fetch_postings(company=token, proxies=None)
+        except Exception:
+            rows = []
+        if not rows:
+            raise ValueError(f"No live board found for {provider} token '{token}'")
+        source_key = f"{provider}:{token}"
+        existing = self._storage.discovery_boards.get(source_key)
+        board_id = existing.id if existing else AtsBoardId(new_id())
+        self._storage.discovery_boards.upsert(
+            AtsBoard(
+                id=board_id,
+                campaign_id=campaign_id,
+                provider=provider,
+                token=token,
+                source_key=source_key,
+                enabled=True,
+                created_at=datetime.now(UTC),
+            )
+        )
+        if source_key not in self._discovery.available_sources():
+            source = (builder or self._default_board_source_builder)(
+                provider=provider,
+                token=token,
+                source_key=source_key,
+                client=client,
+            )
+            self._discovery.register_source(source, enabled=True)
+        self._storage.commit()
+        return {"ok": True, "source_key": source_key, "found": len(rows)}
+
+    def remove_board(self, campaign_id, source_key) -> dict:
+        """Remove a persisted runtime ATS board + unregister it (idempotent)."""
+        board = self._storage.discovery_boards.get(source_key)
+        if board is None:
+            return {"ok": True}
+        self._storage.discovery_boards.delete(source_key)
+        self._storage.commit()
+        if source_key in self._discovery.available_sources():
+            try:
+                self._discovery.unregister_source(source_key)
+            except KeyError:
+                pass
+        return {"ok": True}
+
+    def user_added_source_keys(self) -> set[str]:
+        return {b.source_key for b in self._storage.discovery_boards.list_all()}
 
     # --- discovery run ----------------------------------------------------
     def run_discovery(

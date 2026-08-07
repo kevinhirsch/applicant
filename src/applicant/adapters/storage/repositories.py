@@ -21,6 +21,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUp, FollowUpStatus, FollowUpTemplate
@@ -49,6 +50,7 @@ from applicant.core.events import event_bus
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
+    AtsBoardId,
     AttributeId,
     CampaignId,
     DetectionEventId,
@@ -263,6 +265,18 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
         source_key=row.source_key,
         enabled=row.enabled,
         yield_stats=dict(row.yield_stats or {}),
+    )
+
+
+def _discovery_board_to_entity(row: m.DiscoveryBoardModel) -> AtsBoard:
+    return AtsBoard(
+        id=AtsBoardId(row.id),
+        campaign_id=row.campaign_id,
+        provider=row.provider,
+        token=row.token,
+        source_key=row.source_key,
+        enabled=row.enabled,
+        created_at=row.created_at,
     )
 
 
@@ -966,6 +980,52 @@ class DiscoverySourceRepo:
         return [_discovery_source_to_entity(r) for r in rows]
 
 
+class DiscoveryBoardRepo:
+    """Persisted runtime add/remove keyless ATS boards (Greenhouse/Lever)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def upsert(self, board: AtsBoard) -> None:
+        self._s.merge(
+            m.DiscoveryBoardModel(
+                id=board.id,
+                campaign_id=board.campaign_id,
+                provider=board.provider,
+                token=board.token,
+                source_key=board.source_key,
+                enabled=board.enabled,
+                created_at=board.created_at,
+            )
+        )
+
+    def get(self, source_key: str) -> AtsBoard | None:
+        row = self._s.scalars(
+            select(m.DiscoveryBoardModel).where(
+                m.DiscoveryBoardModel.source_key == source_key
+            )
+        ).first()
+        return _discovery_board_to_entity(row) if row else None
+
+    def list_all(self) -> list[AtsBoard]:
+        rows = self._s.scalars(select(m.DiscoveryBoardModel)).all()
+        return [_discovery_board_to_entity(r) for r in rows]
+
+    def delete(self, source_key: str) -> bool:
+        result = self._s.query(m.DiscoveryBoardModel).filter(
+            m.DiscoveryBoardModel.source_key == source_key
+        ).delete(synchronize_session=False)
+        return bool(result)
+
+    def delete_for_campaign(self, campaign_id: str) -> int:
+        return int(
+            self._s.query(m.DiscoveryBoardModel)
+            .filter(m.DiscoveryBoardModel.campaign_id == str(campaign_id))
+            .delete(synchronize_session=False)
+            or 0
+        )
+
+
 class ScreeningAnswerLibraryRepo:
     """Reusable, campaign-scoped screening-answer library (product-gaps #20)."""
 
@@ -1526,6 +1586,7 @@ class SqlAlchemyStorage:
         self.pending_actions = PendingActionRepo(session)
         self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)
+        self.discovery_boards = DiscoveryBoardRepo(session)
         self.screening_answer_library = ScreeningAnswerLibraryRepo(session)
         self.agent_runs = AgentRunRepo(session)
         self.detection_events = DetectionEventRepo(session)
@@ -1648,6 +1709,7 @@ class SqlAlchemyStorage:
         counts["discovery_sources"] = _del(
             m.DiscoverySourceModel, m.DiscoverySourceModel.campaign_id == scid
         )
+        counts["discovery_boards"] = self.discovery_boards.delete_for_campaign(scid)
         counts["screening_answer_library"] = _del(
             m.ScreeningAnswerLibraryModel,
             m.ScreeningAnswerLibraryModel.campaign_id == scid,

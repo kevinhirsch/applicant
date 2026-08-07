@@ -172,3 +172,34 @@ def build_default_discovery(
         )
 
     return JobSpySearxngDiscovery(sources=sources, proxy=proxy)
+
+
+def register_persisted_ats_boards(
+    aggregator, boards, *, live: bool = False
+) -> None:
+    """Register persisted user-added ATS boards onto an aggregator, deduped by source_key.
+
+    Env-configured boards (already registered) win: same-key persisted rows are skipped.
+    """
+    if live:
+        greenhouse_client = LiveGreenhouseClient()
+        lever_client = LiveLeverClient()
+    else:
+        greenhouse_client = FakeGreenhouseClient()
+        lever_client = FakeLeverClient()
+    for board in boards:
+        if board.source_key in aggregator.available_sources():
+            continue
+        if board.provider == "greenhouse":
+            source = GreenhouseSource(
+                client=greenhouse_client,
+                token=board.token,
+                key=board.source_key,
+            )
+        else:
+            source = LeverSource(
+                client=lever_client,
+                company=board.token,
+                key=board.source_key,
+            )
+        aggregator.register_source(source, enabled=board.enabled)

@@ -7,7 +7,7 @@ yield stats, and lets the user toggle a source on/off (persisted to
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from applicant.app.container import Container
@@ -38,6 +38,11 @@ class ToggleSourceIn(BaseModel):
     enabled: bool
 
 
+class AddBoardIn(BaseModel):
+    provider: str
+    token: str
+
+
 def _is_live(source_key: str, *, discovery_live: bool) -> bool:
     """Whether ``source_key`` is currently backed by a real, live client."""
     return discovery_live and source_key != _SAMPLE_SOURCE_KEY
@@ -52,6 +57,7 @@ def list_sources(
     svc.sync_registry(campaign_id)  # type: ignore[arg-type]
     sources = svc.list_sources(campaign_id)  # type: ignore[arg-type]
     discovery_live = bool(getattr(container.settings, "discovery_live", False))
+    user_added = svc.user_added_source_keys()
     return {
         "campaign_id": campaign_id,
         "items": [
@@ -60,6 +66,7 @@ def list_sources(
                 "enabled": s.enabled,
                 "yield_stats": s.yield_stats,
                 "live": _is_live(s.source_key, discovery_live=discovery_live),
+                "user_added": s.source_key in user_added,
             }
             for s in sources
         ],
@@ -72,3 +79,20 @@ def toggle_source(
 ) -> dict:
     svc.set_source_enabled(campaign_id, source_key, body.enabled)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "source_key": source_key, "enabled": body.enabled}
+
+
+@router.post("/{campaign_id}/boards")
+def add_board(
+    campaign_id: str, body: AddBoardIn, svc=Depends(get_discovery_service)
+) -> dict:
+    try:
+        return svc.add_board(campaign_id, body.provider, body.token)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/{campaign_id}/boards/{source_key}")
+def remove_board(
+    campaign_id: str, source_key: str, svc=Depends(get_discovery_service)
+) -> dict:
+    return svc.remove_board(campaign_id, source_key)  # type: ignore[arg-type]

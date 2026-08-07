@@ -788,6 +788,12 @@ class JobSpySearxngDiscovery:
         self._sources[source.key] = source
         self._enabled.setdefault(source.key, enabled)
 
+    def unregister_source(self, key: str) -> None:
+        if key not in self._sources:
+            raise KeyError(f"unknown discovery source: {key}")
+        self._sources.pop(key, None)
+        self._enabled.pop(key, None)
+
     def set_source_enabled(self, key: str, enabled: bool) -> None:
         if key not in self._sources:
             raise KeyError(f"unknown discovery source: {key}")

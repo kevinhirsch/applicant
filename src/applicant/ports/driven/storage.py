@@ -22,6 +22,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUp
@@ -289,6 +290,17 @@ class DiscoverySourceRepository(Protocol):
 
 
 @runtime_checkable
+class DiscoveryBoardRepository(Protocol):
+    """Persisted runtime add/remove keyless ATS boards (Greenhouse/Lever)."""
+
+    def upsert(self, board: AtsBoard) -> None: ...
+    def get(self, source_key: str) -> AtsBoard | None: ...
+    def list_all(self) -> list[AtsBoard]: ...
+    def delete(self, source_key: str) -> bool: ...
+    def delete_for_campaign(self, campaign_id: str) -> int: ...
+
+
+@runtime_checkable
 class ScreeningAnswerLibraryRepository(Protocol):
     """Reusable, campaign-scoped screening-answer library (product-gaps #20).
 
@@ -389,6 +401,7 @@ class StoragePort(Protocol):
     pending_actions: PendingActionRepository
     field_mappings: FieldMappingRepository
     discovery_sources: DiscoverySourceRepository
+    discovery_boards: DiscoveryBoardRepository
     screening_answer_library: ScreeningAnswerLibraryRepository
     agent_runs: AgentRunRepository
     detection_events: DetectionEventRepository

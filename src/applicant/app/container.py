@@ -901,6 +901,15 @@ def build_container(settings: Settings | None = None) -> Container:
         greenhouse_boards=discovery_greenhouse_boards,
         lever_companies=discovery_lever_companies,
     )
+    # Runtime add/remove ATS boards: persisted user-added boards are registered
+    # onto the aggregator on every boot (deduped; env-configured boards win).
+    from applicant.adapters.discovery.factory import register_persisted_ats_boards
+
+    register_persisted_ats_boards(
+        discovery,
+        storage.discovery_boards.list_all(),
+        live=settings.discovery_live,
+    )
     # P1-9: single-URL posting fetcher for the paste-a-URL/bookmarklet intake.
     # Same live/fake split as the discovery clients above (FR-DISC-4 hermeticity):
     # the fake never touches the network and the intake service then saves an

@@ -40,7 +40,9 @@ def test_list_sources_syncs_registry_and_returns_toggles(gated_client):
     item = body["items"][0]
     # `live` added (dark-engine audit item 65): whether this source is currently
     # backed by a real network client vs. the offline sample/fake clients.
-    assert set(item) == {"source_key", "enabled", "yield_stats", "live"}
+    # `user_added` added (ATS-board slice1): whether the source was added at
+    # runtime via the persisted discovery_boards registry.
+    assert set(item) == {"source_key", "enabled", "yield_stats", "live", "user_added"}
     assert item["enabled"] is True
 
 

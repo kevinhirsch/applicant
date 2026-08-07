@@ -17,6 +17,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUpStatus
@@ -549,6 +550,31 @@ class _DiscoverySourceRepo:
         return len(stale)
 
 
+class _DiscoveryBoardRepo:
+    """Persisted runtime add/remove keyless ATS boards, keyed by source_key."""
+
+    def __init__(self) -> None:
+        self._d: dict[str, AtsBoard] = {}
+
+    def upsert(self, board: AtsBoard) -> None:
+        self._d[board.source_key] = board
+
+    def get(self, source_key: str) -> AtsBoard | None:
+        return self._d.get(source_key)
+
+    def list_all(self) -> list[AtsBoard]:
+        return list(self._d.values())
+
+    def delete(self, source_key: str) -> bool:
+        return self._d.pop(source_key, None) is not None
+
+    def delete_for_campaign(self, cid: str) -> int:
+        stale = [k for k, b in self._d.items() if b.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
+
 class _ScreeningAnswerLibraryRepo:
     """Reusable, campaign-scoped screening-answer library (product-gaps #20)."""
 
@@ -1034,6 +1060,7 @@ class InMemoryStorage:
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
+        self.discovery_boards = _DiscoveryBoardRepo()
         self.screening_answer_library = _ScreeningAnswerLibraryRepo()
         self.agent_runs = _AgentRunRepo()
         self.detection_events = _DetectionEventRepo(self.applications)
@@ -1063,6 +1090,7 @@ class InMemoryStorage:
         self.pending_actions = _StageProxy(self.pending_actions, s)
         self.field_mappings = _StageProxy(self.field_mappings, s)
         self.discovery_sources = _StageProxy(self.discovery_sources, s)
+        self.discovery_boards = _StageProxy(self.discovery_boards, s)
         self.screening_answer_library = _StageProxy(self.screening_answer_library, s)
         self.agent_runs = _StageProxy(self.agent_runs, s)
         self.detection_events = _StageProxy(self.detection_events, s)
@@ -1122,6 +1150,7 @@ class InMemoryStorage:
             "postings": self.postings.delete_for_campaign(cid),
             "field_mappings": self.field_mappings.delete_for_campaign(cid),
             "discovery_sources": self.discovery_sources.delete_for_campaign(cid),
+            "discovery_boards": self.discovery_boards.delete_for_campaign(cid),
             "screening_answer_library": self.screening_answer_library.delete_for_campaign(cid),
             "agent_runs": self.agent_runs.delete_for_campaign(cid),
             "action_events": self.action_events.delete_for_campaign(cid),

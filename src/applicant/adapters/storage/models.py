@@ -137,6 +137,22 @@ class DiscoverySourceModel(Base):
     yield_stats: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+# 6b -----------------------------------------------------------------------
+class DiscoveryBoardModel(Base):
+    __tablename__ = "discovery_boards"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_discovery_boards_source_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    token: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 # 7 -------------------------------------------------------------------------
 class JobPostingModel(Base):
     __tablename__ = "job_postings"
@@ -491,6 +507,7 @@ ALL_TABLES = [
     FieldMappingModel,
     FontModel,
     DiscoverySourceModel,
+    DiscoveryBoardModel,
     JobPostingModel,
     ResumeVariantModel,
     GeneratedMaterialModel,
