@@ -85,3 +85,67 @@ def test_defaults_to_system_campaign_and_state(onb):
 def test_unknown_action_is_rejected(onb):
     r = onb.dispatch({"action": "delete_everything"})
     assert r["ok"] is False and r["status"] == 400
+
+
+
+# --- conversational gather/refine actions (redesign-conversational-onboarding.md) ---
+
+
+def test_shown_forwards_post_with_empty_body(onb):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {"oobe_shown": True}}
+
+    with patch.object(onb, "_forward", fake):
+        r = onb.dispatch({"campaign_id": "c1", "action": "shown"})
+    assert seen == {"method": "POST", "path": "/api/onboarding/c1/shown", "body": {}}
+    assert r["data"]["oobe_shown"] is True
+
+
+def test_next_forwards_get(onb):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path)
+        return {"ok": True, "status": 200, "data": {"section": "identity"}}
+
+    with patch.object(onb, "_forward", fake):
+        r = onb.dispatch({"campaign_id": "c1", "action": "next"})
+    assert seen == {"method": "GET", "path": "/api/onboarding/c1/next"}
+    assert r["data"]["section"] == "identity"
+
+
+def test_save_field_forwards_post_with_body(onb):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(onb, "_forward", fake):
+        onb.dispatch({
+            "campaign_id": "c1", "action": "save_field",
+            "section": "identity", "field": "phone", "value": "555-0100",
+        })
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/onboarding/c1/field"
+    assert seen["body"] == {"section": "identity", "field": "phone", "value": "555-0100"}
+
+
+def test_omit_forwards_post_with_body(onb):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(onb, "_forward", fake):
+        onb.dispatch({
+            "campaign_id": "c1", "action": "omit",
+            "section": "references", "field": None, "note": "prefers not to share",
+        })
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/onboarding/c1/omit"
+    assert seen["body"] == {"section": "references", "field": None, "note": "prefers not to share"}

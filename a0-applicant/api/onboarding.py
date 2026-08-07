@@ -7,6 +7,13 @@ state and apply-readiness (never client-derived, H1). One endpoint, dispatched b
 ``action``: ``state`` (resumable — sections_complete + first-incomplete), ``section``
 (persist one section, validated engine-side), ``complete`` (apply_ready / apply_missing).
 
+redesign-conversational-onboarding.md adds the conversational gather/refine actions
+the ``onboarding_next``/``onboarding_answer`` agent tools and the first-run banner
+extension dispatch through: ``shown`` (record the wizard was displayed once),
+``next`` (what to ask about next), ``save_field`` (one freeform chat answer,
+read-merge-write — never clobbers section siblings), ``omit`` (explicit decline,
+field- or section-level).
+
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
 """
@@ -78,6 +85,24 @@ def dispatch(input: dict) -> dict:
         return _forward("POST", f"/api/onboarding/{cid}/section", body)
     if action == "complete":
         return _forward("POST", f"/api/onboarding/{cid}/complete", {})
+    if action == "shown":
+        return _forward("POST", f"/api/onboarding/{cid}/shown", {})
+    if action == "next":
+        return _forward("GET", f"/api/onboarding/{cid}/next")
+    if action == "save_field":
+        body = {
+            "section": (input or {}).get("section"),
+            "field": (input or {}).get("field"),
+            "value": (input or {}).get("value"),
+        }
+        return _forward("POST", f"/api/onboarding/{cid}/field", body)
+    if action == "omit":
+        body = {
+            "section": (input or {}).get("section"),
+            "field": (input or {}).get("field"),
+            "note": (input or {}).get("note") or "",
+        }
+        return _forward("POST", f"/api/onboarding/{cid}/omit", body)
     return {"ok": False, "status": 400, "error": f"unknown onboarding action {action!r}"}
 
 

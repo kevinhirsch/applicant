@@ -36,7 +36,9 @@ from applicant.core.rules.sensitive_fields import (
 )
 from applicant.observability.logging import get_logger
 from applicant.ports.driving.onboarding import (
+    INTAKE_FIELD_CATALOG,
     REQUIRED_SECTIONS,
+    GatherTarget,
     IntakeSection,
     OnboardingState,
     ReconciliationConflict,
@@ -117,10 +119,22 @@ class OnboardingService:
     def _load(self, campaign_id: str) -> dict[str, Any]:
         rec = self._config.get(self._key(campaign_id))
         if not rec:
-            return {"intake": {}, "sections_complete": [], "complete": False}
+            return {
+                "intake": {},
+                "sections_complete": [],
+                "complete": False,
+                # redesign-conversational-onboarding.md §3.1/§3.2.1: additive,
+                # same precedent as `memory_seeded` (line ~358 below).
+                "oobe_shown": False,
+                "omitted_sections": [],
+                "omitted_fields": {},
+            }
         rec.setdefault("intake", {})
         rec.setdefault("sections_complete", [])
         rec.setdefault("complete", False)
+        rec.setdefault("oobe_shown", False)
+        rec.setdefault("omitted_sections", [])
+        rec.setdefault("omitted_fields", {})
         return rec
 
     def _store(self, campaign_id: str, rec: dict[str, Any]) -> None:
@@ -128,13 +142,25 @@ class OnboardingService:
 
     def _to_state(self, campaign_id: str, rec: dict[str, Any]) -> OnboardingState:
         done = set(rec.get("sections_complete", []))
-        missing = [s.value for s in REQUIRED_SECTIONS if s.value not in done]
+        # §3.2.1: an explicitly-omitted section satisfies REQUIRED_SECTIONS the same
+        # way a filled one does, without ever writing into `intake` (so it never
+        # reaches the attribute-cloud/criteria bridges) — this also fixes the
+        # pre-existing References required-but-skippable bug as a side effect.
+        omitted_sections = set(rec.get("omitted_sections", []))
+        missing = [
+            s.value
+            for s in REQUIRED_SECTIONS
+            if s.value not in done and s.value not in omitted_sections
+        ]
         return OnboardingState(
             campaign_id=campaign_id,
             complete=bool(rec.get("complete", False)),
             sections_complete=sorted(done),
             missing_sections=missing,
             intake=rec.get("intake", {}),
+            oobe_shown=bool(rec.get("oobe_shown", False)),
+            omitted_sections=sorted(omitted_sections),
+            omitted_fields={k: list(v) for k, v in rec.get("omitted_fields", {}).items()},
         )
 
     # --- port methods ------------------------------------------------------
@@ -174,6 +200,131 @@ class OnboardingService:
 
         log.info("onboarding_section_saved", campaign_id=campaign_id, section=section.value)
         return self._to_state(campaign_id, rec)
+
+    # --- conversational gather/refine (redesign-conversational-onboarding.md) ---
+    def mark_shown(self, campaign_id: str) -> OnboardingState:
+        """Record that the first-run wizard has been shown at least once (§3.1).
+
+        Idempotent, no other side effects — does not touch intake/sections_complete/
+        complete. Gates the auto-popup banner only; the conversational gather loop
+        (`next_gather_target`) is independent of this flag.
+        """
+        rec = self._load(campaign_id)
+        rec["oobe_shown"] = True
+        self._store(campaign_id, rec)
+        return self._to_state(campaign_id, rec)
+
+    def save_field(
+        self, campaign_id: str, section: IntakeSection, field: str, value: Any
+    ) -> OnboardingState:
+        """Read-merge-write a single field's chat answer into its section (§3.2.3).
+
+        `save_section` overwrites the WHOLE section dict — fine for the wizard
+        (which always posts every field in the section's form) but wrong for a
+        chat answer to one field, which must never wipe its already-saved
+        siblings. Delegating to `save_section` after merging keeps the EEO
+        normalization + engine bridges (attribute cloud / criteria, both
+        confirm=True — a chat answer is the user's own first-party statement,
+        same trust posture as the wizard) working unmodified. Answering a field
+        un-defers it if it was previously marked omitted.
+        """
+        rec = self._load(campaign_id)
+        data = dict(rec.get("intake", {}).get(section.value, {}))
+        data[field] = value
+        self.save_section(campaign_id, section, data)
+
+        rec = self._load(campaign_id)
+        omitted_fields = {k: list(v) for k, v in rec.get("omitted_fields", {}).items()}
+        if field in omitted_fields.get(section.value, []):
+            omitted_fields[section.value] = [
+                f for f in omitted_fields[section.value] if f != field
+            ]
+            rec["omitted_fields"] = omitted_fields
+            self._store(campaign_id, rec)
+        return self._to_state(campaign_id, rec)
+
+    def mark_field_omitted(
+        self, campaign_id: str, section: IntakeSection, field: str, note: str = ""
+    ) -> OnboardingState:
+        """Record that the user explicitly declined one field (§3.2.1/§3.2.3).
+
+        Advisory-only: does not by itself flip section completeness — it only
+        tells `next_gather_target` to stop asking about this one field while
+        still asking about other blanks in the same section. Out-of-band: never
+        written into `intake`, so it can never leak into the attribute-cloud /
+        criteria bridges (which only iterate real `data.items()`).
+        """
+        rec = self._load(campaign_id)
+        omitted_fields = {k: list(v) for k, v in rec.get("omitted_fields", {}).items()}
+        fields = omitted_fields.setdefault(section.value, [])
+        if field not in fields:
+            fields.append(field)
+        rec["omitted_fields"] = omitted_fields
+        self._store(campaign_id, rec)
+        log.info(
+            "onboarding_field_omitted", campaign_id=campaign_id, section=section.value, field=field
+        )
+        return self._to_state(campaign_id, rec)
+
+    def mark_section_omitted(
+        self, campaign_id: str, section: IntakeSection, note: str = ""
+    ) -> OnboardingState:
+        """Record that the user explicitly declined a whole section (§3.2.1/§3.2.3).
+
+        Satisfies REQUIRED_SECTIONS the same way a filled section does (see
+        `_to_state`), without writing anything into `intake` — so a declined
+        References section, e.g., no longer blocks `complete()` forever (the
+        pre-existing required-but-skippable bug this mechanism fixes).
+        """
+        rec = self._load(campaign_id)
+        omitted_sections = set(rec.get("omitted_sections", []))
+        omitted_sections.add(section.value)
+        rec["omitted_sections"] = sorted(omitted_sections)
+        self._store(campaign_id, rec)
+        log.info("onboarding_section_omitted", campaign_id=campaign_id, section=section.value)
+        return self._to_state(campaign_id, rec)
+
+    def next_gather_target(self, campaign_id: str) -> GatherTarget | None:
+        """The next required section (fixed order) still owed an answer, or None (§3.2.3).
+
+        Walks REQUIRED_SECTIONS in order, skipping BASE_RESUME (upload-only — a
+        chat answer can't satisfy it; the agent can only remind the user to
+        upload it) and any section already complete or omitted. Returns the
+        first section that's neither, together with whichever of its catalog
+        fields (INTAKE_FIELD_CATALOG) are still absent/empty in `intake[section]`
+        and not already in `omitted_fields[section]`. `None` once every required
+        section is done-or-omitted — onboarding is functionally resolved even if
+        some fields were declined.
+        """
+        rec = self._load(campaign_id)
+        done = set(rec.get("sections_complete", []))
+        omitted_sections = set(rec.get("omitted_sections", []))
+        omitted_fields = rec.get("omitted_fields", {})
+        intake = rec.get("intake", {})
+
+        for section in REQUIRED_SECTIONS:
+            if section is IntakeSection.BASE_RESUME:
+                continue
+            if section.value in done or section.value in omitted_sections:
+                continue
+            entry = INTAKE_FIELD_CATALOG.get(section)
+            if entry is None:
+                continue
+            section_data = intake.get(section.value) or {}
+            section_omitted = set(omitted_fields.get(section.value, []))
+            missing_fields = [
+                {"key": f.key, "label": f.label, "hint": f.hint}
+                for f in entry.fields
+                if f.key not in section_omitted
+                and section_data.get(f.key) in (None, "", [], {})
+            ]
+            return GatherTarget(
+                section=section.value,
+                title=entry.title,
+                hint=entry.hint,
+                missing_fields=missing_fields,
+            )
+        return None
 
     # --- #6: onboarding -> engine bridge ----------------------------------
     def _bridge_section_to_engine(
@@ -322,7 +473,12 @@ class OnboardingService:
     def complete(self, campaign_id: str) -> OnboardingState:
         rec = self._load(campaign_id)
         done = set(rec.get("sections_complete", []))
-        missing = [s.value for s in REQUIRED_SECTIONS if s.value not in done]
+        omitted_sections = set(rec.get("omitted_sections", []))
+        missing = [
+            s.value
+            for s in REQUIRED_SECTIONS
+            if s.value not in done and s.value not in omitted_sections
+        ]
         if missing:
             rec["complete"] = False
             self._store(campaign_id, rec)

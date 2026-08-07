@@ -4,6 +4,13 @@ Zero-CLI endpoints (NFR-ZEROCLI-1) for the comprehensive intake: get/resume the
 state, save a step, complete (gated on required sections), and ingest the base
 resume to bootstrap + reconcile the attribute cloud. Gated behind the LLM-settings
 gate (FR-UI-5) like the rest of the application surface.
+
+Also the conversational gather/refine surface (redesign-conversational-onboarding.md):
+`/shown` records the first-run wizard was displayed once (gates the auto-popup
+banner), `/next` returns what the chat agent should ask about next, `/field`
+saves one freeform chat answer without clobbering its section siblings, and
+`/omit` records an explicit decline (field- or section-level) so the agent never
+re-asks.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ from applicant.app.deps import (
     get_onboarding_service,
     require_llm_configured,
 )
-from applicant.ports.driving.onboarding import IntakeSection
+from applicant.ports.driving.onboarding import GatherTarget, IntakeSection
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +108,32 @@ class ConfirmConflictIn(BaseModel):
     value: str
 
 
+class SaveFieldIn(BaseModel):
+    section: str
+    field: str
+    value: Any
+
+    @field_validator("section")
+    @classmethod
+    def _section_must_be_valid(cls, v: str) -> str:
+        if v not in {e.value for e in IntakeSection}:
+            raise ValueError(f"Unknown intake section: {v}")
+        return v
+
+
+class OmitIn(BaseModel):
+    section: str
+    field: str | None = None
+    note: str = ""
+
+    @field_validator("section")
+    @classmethod
+    def _section_must_be_valid(cls, v: str) -> str:
+        if v not in {e.value for e in IntakeSection}:
+            raise ValueError(f"Unknown intake section: {v}")
+        return v
+
+
 def _state_dict(state) -> dict:
     return {
         "campaign_id": state.campaign_id,
@@ -108,6 +141,20 @@ def _state_dict(state) -> dict:
         "sections_complete": state.sections_complete,
         "missing_sections": state.missing_sections,
         "intake": state.intake,
+        "oobe_shown": state.oobe_shown,
+        "omitted_sections": state.omitted_sections,
+        "omitted_fields": state.omitted_fields,
+    }
+
+
+def _gather_target_dict(target: GatherTarget | None) -> dict | None:
+    if target is None:
+        return None
+    return {
+        "section": target.section,
+        "title": target.title,
+        "hint": target.hint,
+        "missing_fields": target.missing_fields,
     }
 
 
@@ -141,6 +188,51 @@ def complete(campaign_id: str, svc=Depends(get_onboarding_service)) -> dict:
                 "missing_sections": state.missing_sections,
             },
         )
+    return _state_dict(state)
+
+
+@router.post("/{campaign_id}/shown")
+def mark_shown(campaign_id: str, svc=Depends(get_onboarding_service)) -> dict:
+    """Record that the first-run wizard has been shown at least once (§3.1).
+
+    Idempotent, side-effect-free beyond the flag: fired by the wizard's `init()`
+    regardless of whether the user finishes, skips sections, or closes early —
+    "first campaign start" is a one-time event, not a per-session nag.
+    """
+    return _state_dict(svc.mark_shown(campaign_id))
+
+
+@router.get("/{campaign_id}/next")
+def next_gather_target(campaign_id: str, svc=Depends(get_onboarding_service)) -> dict | None:
+    """The next required-section gap the chat agent should ask about, or null."""
+    return _gather_target_dict(svc.next_gather_target(campaign_id))
+
+
+@router.post("/{campaign_id}/field")
+def save_field(campaign_id: str, body: SaveFieldIn, svc=Depends(get_onboarding_service)) -> dict:
+    """Save one freeform chat answer (read-merge-write; never clobbers siblings)."""
+    try:
+        section = IntakeSection(body.section)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown section: {body.section}"
+        ) from exc
+    return _state_dict(svc.save_field(campaign_id, section, body.field, body.value))
+
+
+@router.post("/{campaign_id}/omit")
+def omit(campaign_id: str, body: OmitIn, svc=Depends(get_onboarding_service)) -> dict:
+    """Record an explicit decline: a single field (`field` set) or a whole section."""
+    try:
+        section = IntakeSection(body.section)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown section: {body.section}"
+        ) from exc
+    if body.field:
+        state = svc.mark_field_omitted(campaign_id, section, body.field, body.note)
+    else:
+        state = svc.mark_section_omitted(campaign_id, section, body.note)
     return _state_dict(state)
 
 

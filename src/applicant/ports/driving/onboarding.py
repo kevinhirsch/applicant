@@ -10,6 +10,20 @@ state is saved per step and a completion flag gates automated work. The base res
 bootstraps the per-campaign attribute cloud, reconciled with the interview answers
 (FR-ONBOARD-3): non-integral changes auto-apply; integral changes require explicit
 confirmation (FR-FB-3).
+
+Conversational gather/refine (redesign-conversational-onboarding.md): after the
+first-run wizard pass, the chat agent proactively asks about whatever required
+fields are still blank. Two out-of-band tracking lists make that possible without
+touching the completeness semantics above: ``omitted_sections`` (a whole section
+the user explicitly declined — satisfies REQUIRED_SECTIONS without writing
+anything into ``intake``, so it never reaches the attribute-cloud/criteria
+bridges) and ``omitted_fields`` (per-section field keys the user declined, so the
+gather loop stops asking about that one field without affecting section
+completeness). ``INTAKE_FIELD_CATALOG`` is the single source of truth for field
+labels/hints the gather loop phrases its questions with, mirroring the wizard's
+own ``SECTIONS`` array (a0-applicant/webui/main.html) so the two never drift on
+the field *set* (labels/hints may read slightly differently since one is a form
+UI string and the other a spoken chat prompt).
 """
 
 from __future__ import annotations
@@ -59,6 +73,134 @@ REQUIRED_SECTIONS: tuple[IntakeSection, ...] = (
 
 
 @dataclass(frozen=True)
+class FieldSpec:
+    """One catalog field: the key the intake dict stores it under, plus copy."""
+
+    key: str
+    label: str
+    hint: str = ""
+
+
+@dataclass(frozen=True)
+class SectionCatalogEntry:
+    """A section's chat-facing copy (title/hint) + its field catalog."""
+
+    title: str
+    hint: str
+    fields: tuple[FieldSpec, ...] = ()
+
+
+#: Single source of truth for intake field labels/hints the conversational gather
+#: loop (``OnboardingService.next_gather_target``) phrases its questions with.
+#: Mirrors ``a0-applicant/webui/main.html``'s ``SECTIONS`` array field-for-field —
+#: see the module docstring. ``BASE_RESUME`` has no fields: it is upload-only and
+#: is special-cased out of the gather loop (a chat answer cannot satisfy it).
+INTAKE_FIELD_CATALOG: dict[IntakeSection, SectionCatalogEntry] = {
+    IntakeSection.IDENTITY: SectionCatalogEntry(
+        title="Identity",
+        hint="How employers reach you.",
+        fields=(
+            FieldSpec("full_name", "Full legal name"),
+            FieldSpec("email", "Email"),
+            FieldSpec("phone", "Phone"),
+        ),
+    ),
+    IntakeSection.WORK_AUTHORIZATION: SectionCatalogEntry(
+        title="Work authorization",
+        hint="Used only to filter roles you're eligible for — never AI-answered on applications.",
+        fields=(
+            FieldSpec("authorized", "Authorized to work?"),
+            FieldSpec("sponsorship", "Need visa sponsorship?"),
+        ),
+    ),
+    IntakeSection.LOCATION: SectionCatalogEntry(
+        title="Location & work mode",
+        hint="Where you'll work from and how.",
+        fields=(
+            FieldSpec("locations", "Preferred locations"),
+            FieldSpec("work_mode", "Work mode"),
+        ),
+    ),
+    IntakeSection.TARGET_ROLES: SectionCatalogEntry(
+        title="Target roles",
+        hint="The titles you want to be matched against.",
+        fields=(FieldSpec("roles", "Roles / titles"),),
+    ),
+    IntakeSection.COMPENSATION: SectionCatalogEntry(
+        title="Compensation",
+        hint="Your minimum acceptable salary — used to screen postings.",
+        fields=(FieldSpec("salary_floor", "Minimum salary"),),
+    ),
+    IntakeSection.WORK_HISTORY: SectionCatalogEntry(
+        title="Work history",
+        hint="Recent roles. A short summary is fine to start.",
+        fields=(FieldSpec("summary", "Recent roles", "Company — Title — dates; …"),),
+    ),
+    IntakeSection.EDUCATION: SectionCatalogEntry(
+        title="Education",
+        hint="Highest degree and where.",
+        fields=(
+            FieldSpec("degree", "Highest degree"),
+            FieldSpec("school", "School"),
+        ),
+    ),
+    IntakeSection.REFERENCES: SectionCatalogEntry(
+        title="References",
+        hint="Optional — skip if you'd rather add these later.",
+        fields=(FieldSpec("references", "References", "Name — relationship — contact"),),
+    ),
+    IntakeSection.CERTIFICATIONS: SectionCatalogEntry(
+        title="Certifications",
+        hint="Optional — any licenses or certifications.",
+        fields=(FieldSpec("certifications", "Certifications"),),
+    ),
+    IntakeSection.KEY_ATTRIBUTES: SectionCatalogEntry(
+        title="Key skills & attributes",
+        hint="Skills that should surface in tailored materials.",
+        fields=(FieldSpec("skills", "Key skills"),),
+    ),
+    IntakeSection.EEO: SectionCatalogEntry(
+        title="Voluntary EEO",
+        hint="Entirely optional and never AI-answered. Defaults to decline (FR-ATTR-6).",
+        fields=(
+            FieldSpec("race_ethnicity", "Race / ethnicity"),
+            FieldSpec("gender", "Gender"),
+            FieldSpec("veteran_status", "Veteran status"),
+            FieldSpec("disability_status", "Disability status"),
+        ),
+    ),
+    IntakeSection.BASE_RESUME: SectionCatalogEntry(
+        title="Your Résumé",
+        hint="Upload-only — a chat answer can't satisfy this; the agent can only remind you to upload it.",
+        fields=(),
+    ),
+    IntakeSection.CAMPAIGN_CRITERIA: SectionCatalogEntry(
+        title="Search criteria",
+        hint="Confirms the titles / locations / salary floor this campaign searches on.",
+        fields=(
+            FieldSpec("titles", "Job titles"),
+            FieldSpec("locations", "Locations"),
+            FieldSpec("salary_floor", "Salary floor"),
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class GatherTarget:
+    """The next thing the conversational gather loop should ask about.
+
+    ``missing_fields`` is a list of ``{"key", "label", "hint"}`` dicts (catalog
+    fields not yet answered and not marked omitted) for ``section``.
+    """
+
+    section: str
+    title: str
+    hint: str
+    missing_fields: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class OnboardingState:
     """Snapshot of the resumable intake (FR-ONBOARD-2)."""
 
@@ -67,6 +209,14 @@ class OnboardingState:
     sections_complete: list[str] = field(default_factory=list)
     missing_sections: list[str] = field(default_factory=list)
     intake: dict[str, Any] = field(default_factory=dict)
+    #: True once the first-run wizard has been shown at least once (redesign
+    #: §3.1) — gates the auto-popup banner, not the conversational gather loop.
+    oobe_shown: bool = False
+    #: Whole sections the user explicitly declined to answer (redesign §3.2.1).
+    omitted_sections: list[str] = field(default_factory=list)
+    #: Per-section field keys the user explicitly declined to answer, keyed by
+    #: ``IntakeSection.value`` (redesign §3.2.1).
+    omitted_fields: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -126,4 +276,39 @@ class OnboardingPort(Protocol):
         self, campaign_id: str, document_path: str
     ) -> ReconciliationResult:
         """Parse the base resume and reconcile with interview answers (FR-ONBOARD-3)."""
+        ...
+
+    def mark_shown(self, campaign_id: str) -> OnboardingState:
+        """Record that the first-run wizard has been shown at least once (§3.1)."""
+        ...
+
+    def save_field(
+        self, campaign_id: str, section: IntakeSection, field: str, value: Any
+    ) -> OnboardingState:
+        """Read-merge-write a single field into a section (conversational answer, §3.2.3).
+
+        Unlike ``save_section`` (whole-section overwrite), this only touches the
+        one named field — the rest of the section's already-saved fields survive.
+        Answering a field that was previously marked omitted un-defers it.
+        """
+        ...
+
+    def mark_field_omitted(
+        self, campaign_id: str, section: IntakeSection, field: str, note: str = ""
+    ) -> OnboardingState:
+        """Record that the user explicitly declined one field (§3.2.1/§3.2.3)."""
+        ...
+
+    def mark_section_omitted(
+        self, campaign_id: str, section: IntakeSection, note: str = ""
+    ) -> OnboardingState:
+        """Record that the user explicitly declined a whole section (§3.2.1/§3.2.3)."""
+        ...
+
+    def next_gather_target(self, campaign_id: str) -> GatherTarget | None:
+        """The next required section (in fixed order) still owed an answer, or ``None``.
+
+        Skips sections already complete or omitted, and ``BASE_RESUME`` (upload-only).
+        Returns ``None`` once every required section is done-or-omitted (§3.2.3).
+        """
         ...

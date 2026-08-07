@@ -223,7 +223,16 @@
     state: { sections_complete: [] }, step: 0, form: {}, finished: false,
     readyState: { apply_ready: false, apply_missing: [] },
 
-    async init() { await this.refresh(); this.jumpToFirstIncomplete(); this.loading = false; },
+    async init() {
+      await this.refresh();
+      // §3.1: record the wizard was displayed at least once — regardless of whether
+      // the user finishes, skips sections, or closes early. Fire-and-forget: this is
+      // an advisory flag (gates the first-run auto-popup banner only), never worth
+      // blocking the wizard's own render on.
+      if (!this.fatalError) callJsonApi("onboarding", { action: "shown" });
+      this.jumpToFirstIncomplete();
+      this.loading = false;
+    },
     async refresh() {
       const r = await callJsonApi("onboarding", { action: "state" });
       if (!r || !r.ok) { this.fatalError = "Couldn't reach the setup engine. Is a model connected?"; return; }

@@ -390,3 +390,114 @@ def test_free_text_criteria_field_reaches_gate_as_statement(svc_and_storage):
 
     missing = svc.apply_readiness(CID).missing
     assert LABEL_TARGET_ROLES not in missing and LABEL_KEY_SKILLS not in missing
+
+
+
+# --- conversational gather/refine (redesign-conversational-onboarding.md) ---
+
+
+@pytest.mark.unit
+def test_mark_shown_sets_flag_without_touching_intake(svc_and_storage):
+    svc, *_ = svc_and_storage
+    before = svc.get_state(CID)
+    assert before.oobe_shown is False
+
+    state = svc.mark_shown(CID)
+    assert state.oobe_shown is True
+    assert state.intake == {}
+    assert state.sections_complete == []
+    # Idempotent — a second call changes nothing else.
+    state2 = svc.mark_shown(CID)
+    assert state2.oobe_shown is True
+
+
+@pytest.mark.unit
+def test_save_field_merges_without_clobbering_siblings(svc_and_storage):
+    """save_field is read-merge-write, unlike save_section's whole-dict overwrite."""
+    svc, *_ = svc_and_storage
+    svc.save_section(CID, IntakeSection.IDENTITY, {"full_name": "Jane", "email": "jane@x.com"})
+
+    state = svc.save_field(CID, IntakeSection.IDENTITY, "phone", "555-0100")
+
+    identity = state.intake[IntakeSection.IDENTITY.value]
+    assert identity["full_name"] == "Jane"  # sibling survives
+    assert identity["email"] == "jane@x.com"  # sibling survives
+    assert identity["phone"] == "555-0100"  # new field written
+    assert IntakeSection.IDENTITY.value in state.sections_complete
+
+
+@pytest.mark.unit
+def test_answering_a_field_undoes_a_previous_omission(svc_and_storage):
+    svc, *_ = svc_and_storage
+    svc.mark_field_omitted(CID, IntakeSection.WORK_HISTORY, "summary")
+    assert "summary" in svc.get_state(CID).omitted_fields[IntakeSection.WORK_HISTORY.value]
+
+    state = svc.save_field(CID, IntakeSection.WORK_HISTORY, "summary", "Acme — Engineer — 2020-2024")
+
+    assert "summary" not in state.omitted_fields.get(IntakeSection.WORK_HISTORY.value, [])
+
+
+@pytest.mark.unit
+def test_mark_section_omitted_satisfies_required_sections_and_completion(svc_and_storage):
+    """Fixes the pre-existing bug: References is required but the wizard lets it be
+    skipped, and a skip (data={}) is indistinguishable from never-visited. Explicit
+    omission is the fix — it satisfies REQUIRED_SECTIONS without writing into intake."""
+    svc, *_ = svc_and_storage
+    for section in REQUIRED_SECTIONS:
+        if section is IntakeSection.REFERENCES:
+            continue
+        svc.save_section(CID, section, {"x": "value"})
+
+    state = svc.get_state(CID)
+    assert IntakeSection.REFERENCES.value in state.missing_sections
+    assert svc.complete(CID).complete is False
+
+    state = svc.mark_section_omitted(CID, IntakeSection.REFERENCES)
+    assert IntakeSection.REFERENCES.value not in state.missing_sections
+    assert IntakeSection.REFERENCES.value in state.omitted_sections
+    # Omission never wrote into intake — never reaches the attribute/criteria bridges.
+    assert IntakeSection.REFERENCES.value not in state.intake
+
+    assert svc.complete(CID).complete is True
+
+
+@pytest.mark.unit
+def test_next_gather_target_walks_required_sections_in_order_skipping_base_resume(svc_and_storage):
+    svc, *_ = svc_and_storage
+    target = svc.next_gather_target(CID)
+    assert target is not None
+    # IDENTITY is first in REQUIRED_SECTIONS and BASE_RESUME must never be a target.
+    assert target.section == IntakeSection.IDENTITY.value
+    assert target.section != IntakeSection.BASE_RESUME.value
+    assert {f["key"] for f in target.missing_fields} == {"full_name", "email", "phone"}
+
+
+@pytest.mark.unit
+def test_next_gather_target_skips_done_and_omitted_sections(svc_and_storage):
+    svc, *_ = svc_and_storage
+    svc.save_section(CID, IntakeSection.IDENTITY, {"full_name": "Jane"})
+    svc.mark_section_omitted(CID, IntakeSection.WORK_AUTHORIZATION)
+
+    target = svc.next_gather_target(CID)
+    assert target is not None
+    assert target.section == IntakeSection.LOCATION.value
+
+
+@pytest.mark.unit
+def test_next_gather_target_excludes_omitted_fields_from_missing_list(svc_and_storage):
+    svc, *_ = svc_and_storage
+    svc.mark_field_omitted(CID, IntakeSection.IDENTITY, "phone")
+
+    target = svc.next_gather_target(CID)
+    assert target is not None
+    assert target.section == IntakeSection.IDENTITY.value
+    assert "phone" not in {f["key"] for f in target.missing_fields}
+    assert "email" in {f["key"] for f in target.missing_fields}
+
+
+@pytest.mark.unit
+def test_next_gather_target_is_none_once_everything_done_or_omitted(svc_and_storage):
+    svc, *_ = svc_and_storage
+    for section in REQUIRED_SECTIONS:
+        svc.mark_section_omitted(CID, section)
+    assert svc.next_gather_target(CID) is None
