@@ -43,7 +43,7 @@ import logging as _logging  # noqa: E402
 _std_log = _logging.getLogger(__name__)
 
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
-DEFAULT_VIABILITY_THRESHOLD = 70
+DEFAULT_VIABILITY_THRESHOLD = 60
 #: Neutral-positive default score when no search criteria are set (#344).
 #: Configurable so operators can tune whether unscored postings are leaned
 #: toward inclusion (higher) or exclusion (lower). 0.5 = neutral, 0.75 = lean
