@@ -211,3 +211,9 @@ class TestSidebarLauncher:
 
     def test_has_settings_label(self, html):
         assert "Settings" in html
+
+    def test_opens_debug_panel(self, html):
+        assert "window.openModal('/plugins/applicant/webui/debug.html')" in html
+
+    def test_has_debug_label(self, html):
+        assert "Debug" in html
