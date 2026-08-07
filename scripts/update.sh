@@ -250,7 +250,17 @@ case "${APPLICANT_CHANNEL}" in
   beta) _channel_default_branch="beta" ;;
   *)    _channel_default_branch="main" ;;
 esac
-APPLICANT_BRANCH="${APPLICANT_BRANCH:-${_channel_default_branch}}"
+# Default to the branch THIS deployment actually runs — NOT a hardcoded channel
+# branch. A local/dev deployment may run an unpushed feature branch; blindly
+# resetting it to origin/main would DESTROY unpushed work (the safe-sync guard
+# below is the real backstop). Explicit APPLICANT_BRANCH still wins; on main this
+# is a no-op. Preserve the channel default under SELFTEST so unit tests are stable.
+_deployed_branch="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ "${APPLICANT_SELFTEST:-0}" != "1" && -n "${_deployed_branch}" && "${_deployed_branch}" != "HEAD" ]]; then
+  APPLICANT_BRANCH="${APPLICANT_BRANCH:-${_deployed_branch}}"
+else
+  APPLICANT_BRANCH="${APPLICANT_BRANCH:-${_channel_default_branch}}"
+fi
 # A ref shaped like a release tag (vMAJOR.MINOR.PATCH[-prerelease]) is synced
 # as a TAG, not a branch — this is the one case reset target isn't `origin/<ref>`.
 _is_release_tag=0
@@ -258,20 +268,44 @@ _is_release_tag=0
 # What the sync changed drives the smart-skip below. Defaults are CONSERVATIVE:
 # rebuild BOTH images, back up, and migrate unless we can positively PROVE an input
 # is unchanged — so an aggressive skip can never miss a real change.
-REBUILD_API=1; REBUILD_A0=1; REBUILD_COMPANION=1; RUN_MIGRATE=1
+REBUILD_API=1; REBUILD_A0=1; REBUILD_COMPANION=1; RUN_MIGRATE=1; LOCAL_AHEAD=0
 OLD_REV=""; NEW_REV=""
 # APPLICANT_SELFTEST=1 skips the destructive git reset (set by the test suite so a
 # unit test can never hard-reset the working tree to origin/main).
 if [[ "${APPLICANT_SELFTEST:-0}" != "1" && -d "${REPO_ROOT}/.git" ]]; then
   OLD_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
   if [[ "${_is_release_tag}" -eq 1 ]]; then
-    log "0/5 Syncing source to release tag ${APPLICANT_BRANCH} (channel=${APPLICANT_CHANNEL})"
-    run git -C "${REPO_ROOT}" fetch origin "refs/tags/${APPLICANT_BRANCH}:refs/tags/${APPLICANT_BRANCH}"
-    run git -C "${REPO_ROOT}" reset --hard "${APPLICANT_BRANCH}"
+    _fetch_ref="refs/tags/${APPLICANT_BRANCH}:refs/tags/${APPLICANT_BRANCH}"; _sync_target="${APPLICANT_BRANCH}"
   else
-    log "0/5 Syncing source to origin/${APPLICANT_BRANCH} (channel=${APPLICANT_CHANNEL})"
-    run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
-    run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
+    _fetch_ref="${APPLICANT_BRANCH}"; _sync_target="origin/${APPLICANT_BRANCH}"
+  fi
+  log "0/5 Syncing source toward ${_sync_target} (channel=${APPLICANT_CHANNEL})"
+  if [[ "${APPLY}" -eq 1 ]]; then
+    git -C "${REPO_ROOT}" fetch origin "${_fetch_ref}" 2>/dev/null \
+      || log "    fetch of ${APPLICANT_BRANCH} failed (offline or no such ref) — keeping the current checkout."
+  else
+    echo "    (would run) git -C ${REPO_ROOT} fetch origin ${_fetch_ref}"
+  fi
+  # SAFE SYNC — never destroy unpushed work. Reset to the target ONLY when it exists
+  # AND HEAD is an ANCESTOR of it (pure fast-forward; no local commit lost). If the
+  # local checkout is AHEAD of / diverged from the target (an unpushed feature branch
+  # / dev deployment) OR the target ref is missing, SKIP the reset and rebuild from
+  # the current checkout — the correct "deploy my local code" behaviour that can
+  # never nuke unpushed commits.
+  if git -C "${REPO_ROOT}" rev-parse --verify --quiet "${_sync_target}^{commit}" >/dev/null 2>&1; then
+    _target_rev="$(git -C "${REPO_ROOT}" rev-parse "${_sync_target}" 2>/dev/null || true)"
+    if [[ "${OLD_REV}" == "${_target_rev}" ]]; then
+      log "    Already at ${_sync_target} (${OLD_REV:0:12}); no source change."
+    elif git -C "${REPO_ROOT}" merge-base --is-ancestor "${OLD_REV}" "${_target_rev}" 2>/dev/null; then
+      log "    Fast-forward ${OLD_REV:0:12} -> ${_target_rev:0:12} (safe; no local commits dropped)."
+      run git -C "${REPO_ROOT}" reset --hard "${_sync_target}"
+    else
+      log "    Local checkout ${OLD_REV:0:12} is AHEAD of / diverged from ${_sync_target} — NOT resetting (would drop unpushed commits). Rebuilding from the current checkout."
+      LOCAL_AHEAD=1
+    fi
+  else
+    log "    No ${_sync_target} ref (unpushed branch or offline) — rebuilding from the current checkout."
+    LOCAL_AHEAD=1
   fi
   NEW_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 else
@@ -285,7 +319,7 @@ fi
 # real --apply run with a git checkout: the dry-run preview and the hermetic
 # self-test keep the conservative do-everything defaults, so the full flow is still
 # shown/tested. This block runs BEFORE the backup step on purpose.
-if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" && -n "${NEW_REV}" ]]; then
+if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && "${LOCAL_AHEAD}" -ne 1 && -n "${OLD_REV}" && -n "${NEW_REV}" ]]; then
   if [[ "${OLD_REV}" == "${NEW_REV}" ]]; then
     log "Already at origin/${APPLICANT_BRANCH} (${NEW_REV:0:12}) — nothing new to deploy."
     REBUILD_API=0; REBUILD_A0=0; REBUILD_COMPANION=0; RUN_MIGRATE=0

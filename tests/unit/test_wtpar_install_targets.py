@@ -147,9 +147,10 @@ class TestInstallTargets:
         assert "docker/docker-compose.prod.yml" in install_sh
         assert "COMPOSE_FILE" in install_sh
 
-    def test_install_builds_a0_and_api(self, install_sh):
-        """The build step targets both locally-built images."""
-        assert "build a0 api" in install_sh
+    def test_install_builds_a0_companion_and_api(self, install_sh):
+        """The build step explicitly targets ALL three locally-built images
+        (a0 shell + companion front-door + engine api) for retried/visible builds."""
+        assert "build a0 companion api" in install_sh
 
     def test_install_brings_up_full_stack(self, install_sh):
         """The up step brings up all known services."""
