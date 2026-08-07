@@ -95,6 +95,9 @@
 
     async init() {
       await this.loadItems();
+      // Root=Today redesign: refresh when the root view becomes visible again
+      // (welcome-screen dispatches this whenever isVisible flips true).
+      window.addEventListener('applicant:refresh-today', () => this.loadItems());
     },
 
     async loadItems() {
