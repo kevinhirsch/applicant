@@ -52,13 +52,13 @@
 
   <div class="shortfalls" x-show="sourceShortfalls.length > 0"><div class="shortfalls-title">⚠️ Source Shortfalls</div><template x-for="s in sourceShortfalls" :key="s.source_key"><div class="shortfall-item" x-text="s.message"></div></template></div>
 
-  <template x-for="row in rows" :key="row.application_id">
+  <template x-for="row in rows" :key="row.posting_id">
     <div class="item">
       <div class="info">
         <div class="title" x-text="row.title"></div>
-        <div class="role" x-show="row.role" x-text="row.role"></div>
-        <div class="score" x-show="row.score !== undefined && row.score !== null" x-text="'Score: ' + row.score"></div>
-        <div class="why" x-show="row.why" x-text="row.why"></div>
+        <div class="role" x-show="row.title" x-text="row.title"></div>
+        <div class="score" x-show="row.viability_score !== undefined && row.viability_score !== null" x-text="'Score: ' + row.viability_score"></div>
+        <div class="why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
         <div class="feedback-row" x-show="!feedbackResult[row.posting_id]">
           <input type="text" class="feedback-input"
                  x-model="(postingFeedback[row.posting_id] = postingFeedback[row.posting_id] || {text:'',sentiment:null}).text"
@@ -77,12 +77,12 @@
         </div>
       </div>
       <div class="actions">
-        <button class="btn" @click="approve(row.application_id)" :disabled="busy">Approve</button>
+        <button class="btn" @click="approve(row.posting_id)" :disabled="busy">Approve</button>
         <div class="decline-row">
-          <input type="text" x-model="declineReasons[row.application_id]" placeholder="Reason…" @keyup.enter="decline(row.application_id)">
-          <button class="btn" @click="decline(row.application_id)" :disabled="busy || !(declineReasons[row.application_id] || '').trim()">Pass</button>
+          <input type="text" x-model="declineReasons[row.posting_id]" placeholder="Reason…" @keyup.enter="decline(row.posting_id)">
+          <button class="btn" @click="decline(row.posting_id)" :disabled="busy || !(declineReasons[row.posting_id] || '').trim()">Pass</button>
         </div>
-        <button class="btn" @click="window.openModal('/plugins/applicant/webui/documents.html?application_id=' + row.application_id)" :disabled="busy">Review</button>
+        <button class="btn" @click="window.openModal('/plugins/applicant/webui/documents.html?application_id=' + row.posting_id)" :disabled="busy">Review</button>
       </div>
     </div>
   </template>
