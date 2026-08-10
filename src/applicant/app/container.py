@@ -586,6 +586,32 @@ class _LivePresubmitSafetyParams:
         return self._defaults.get(key, default)
 
 
+def _effective_smart_routing(setup_service: Any, settings: Any) -> tuple[bool, bool]:
+    """The effective smart-routing ``(enabled, prefer_local)`` (EPIC MODEL-CONFIG).
+
+    Folds the operator's persisted runtime OVERRIDE
+    (``SetupService.get_smart_routing()``) over the env/``Settings`` default: a stored
+    value WINS; ``None`` means "not overridden, use the env default". Read fresh at each
+    ladder resolve so a runtime toggle via ``SetupService.set_smart_routing`` (which
+    fires the ``llm_config_change`` hook) takes effect WITHOUT an engine restart. Any
+    read failure degrades to the env default, so the boot path is never broken.
+    """
+    stored: dict[str, Any] = {}
+    getter = getattr(setup_service, "get_smart_routing", None)
+    if callable(getter):
+        try:
+            stored = getter() or {}
+        except Exception:  # pragma: no cover - never let a store read break resolution
+            stored = {}
+    enabled = stored.get("enabled")
+    if enabled is None:
+        enabled = getattr(settings, "llm_smart_routing", False)
+    prefer_local = stored.get("prefer_local")
+    if prefer_local is None:
+        prefer_local = getattr(settings, "llm_smart_routing_prefer_local", False)
+    return bool(enabled), bool(prefer_local)
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
@@ -856,8 +882,15 @@ def build_container(settings: Settings | None = None) -> Container:
     # local model (the adapter dispatches _call_ollama/_call_openai off the active
     # tier's base_url). The existing context-window fallback still walks the rest.
     # OFF: the ladder is built straight from build_ladder(), byte-identical to today.
+    # EPIC MODEL-CONFIG: the master flag honors the operator's persisted RUNTIME
+    # override folded over the env default (see ``_effective_smart_routing``). The
+    # router object is armed when routing is effectively ON at boot (env default OR a
+    # persisted override); ``_resolve_llm_ladder`` then re-reads the effective flag on
+    # every resolve, so a runtime toggle (SetupService.set_smart_routing fires the
+    # llm_config_change hook) turns reordering on/off live without a restart.
+    _sr_enabled_boot, _ = _effective_smart_routing(setup_service, settings)
     smart_router = None
-    if settings.llm_smart_routing:
+    if _sr_enabled_boot:
         from applicant.adapters.llm.smart_router import SmartLlmRouter
 
         smart_router = SmartLlmRouter(model_endpoint_service)
@@ -871,9 +904,14 @@ def build_container(settings: Settings | None = None) -> Container:
         lets a model connected through the OOBE take effect with NO engine restart —
         the boot-time adapter used to freeze the initially-empty ladder. OFF: the
         ladder is built straight from ``build_ladder()``, byte-identical to today.
+
+        Smart routing (and its local-preference cost tier) is decided from the EFFECTIVE
+        flag read fresh here (persisted operator override over the env default), so an
+        operator's runtime change takes effect at the next resolve without a restart.
         """
         ladder = setup_service.build_ladder()
-        if smart_router is not None and ladder is not None:
+        sr_enabled, sr_prefer_local = _effective_smart_routing(setup_service, settings)
+        if sr_enabled and smart_router is not None and ladder is not None:
             from applicant.adapters.llm.smart_router import order_ladder_by_router
             from applicant.ports.driven.llm_router import CostTier, TaskType
 
@@ -882,11 +920,9 @@ def build_container(settings: Settings | None = None) -> Container:
                 smart_router,
                 task=TaskType.CHAT,
                 cost_tier=(
-                    CostTier.LOWEST
-                    if settings.llm_smart_routing_prefer_local
-                    else CostTier.BALANCED
+                    CostTier.LOWEST if sr_prefer_local else CostTier.BALANCED
                 ),
-                prefer_local=settings.llm_smart_routing_prefer_local,
+                prefer_local=sr_prefer_local,
             )
         return ladder
 

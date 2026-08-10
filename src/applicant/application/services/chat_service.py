@@ -609,6 +609,14 @@ class ChatService:
             tool_registry=self._tool_registry,
             computer_use=self._computer_use,
             desktop_operable=self._desktop_operable,
+            # RUX-6 campaign-chat action tools: pass through the criteria + digest
+            # services this ChatService already holds so the tool-capable agent is
+            # actually OFFERED edit_criteria / rescore / draft_application /
+            # discard_job. Each tool is still capability-gated inside ChatToolbox
+            # (offered only when its backing service is wired AND the "chat" FR-UI-4
+            # toggle is on) and integral criteria changes remain confirmation-gated.
+            criteria_service=self._criteria,
+            digest_service=self._digest,
         )
         return toolbox if toolbox.has_tools() else None
 

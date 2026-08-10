@@ -39,6 +39,9 @@ BACKEND_ONLY = {
     "agent_runs", "base_resume", "features", "hello",
     "local_only_status", "adminlogs",
     "onboarding", "pending", "update_panel",
+    # EPIC REVIEW-UX (RUX): the review proxy has no dedicated *.html panel — the
+    # Review modal lives inside documents.html (reuse-first), so it is backend-only.
+    "review",
 }
 
 # Frontend-only panels (no corresponding API proxy)

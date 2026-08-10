@@ -41,6 +41,7 @@ from applicant.app.routers import (
     realtime,
     remote,
     research,
+    review,
     setup,
     ui,
     update,
@@ -75,6 +76,11 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(attributes.router)
     app.include_router(digest.router)
     app.include_router(feedback.router)
+    # EPIC REVIEW-UX (RUX-1/2/3): the Pending-Reviews decide/refine workflow. Gated
+    # behind require_llm_configured internally (like feedback/digest), so its order
+    # among the gated routers does not matter. Its UI reuses documents.html; the a0
+    # shell reaches it through the review proxy (a0-applicant/api/review.py).
+    app.include_router(review.router)
     app.include_router(documents.router)
     app.include_router(chat.router)
     app.include_router(remote.router)
