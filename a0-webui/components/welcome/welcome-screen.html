@@ -18,9 +18,65 @@
                 <x-extension id="welcome-screen-start"></x-extension>
 
                 <main class="welcome-shell">
-                    <section class="welcome-composer" aria-label="Start a new chat">
-                        <x-component path="chat/attachments/inputPreview.html"></x-component>
-                        <x-component path="chat/input/chat-bar-input.html"></x-component>
+                    <!-- RUX-6: the "Ask anything to start a new chat" box is wired to the
+                         CAMPAIGN agent (Applicant's ChatService via /api/chat), not the
+                         generic a0 agent chat. It answers campaign questions and can take
+                         gated, transparent, reversible actions (edit criteria, re-score,
+                         draft, discard) — every side-effect routes through the engine's
+                         existing review gates and it NEVER auto-submits an application. -->
+                    <section class="welcome-composer" aria-label="Start a new chat"
+                             x-data="lpCampaignChat()">
+                        <div class="lp-chat-thread" x-show="turns.length > 0" x-ref="thread" role="log" aria-live="polite">
+                            <template x-for="(t, i) in turns" :key="i">
+                                <div class="lp-chat-turn" :class="t.role === 'user' ? 'lp-chat-user' : 'lp-chat-agent'">
+                                    <span class="lp-chat-role" x-text="t.role === 'user' ? 'You' : 'Applicant'"></span>
+                                    <div class="lp-chat-bubble" x-text="t.text"></div>
+                                </div>
+                            </template>
+
+                            <!-- Gated actions surface here for the user's explicit approval
+                                 (transparent + reversible; nothing was committed yet). -->
+                            <template x-for="p in pending" :key="p.key">
+                                <div class="lp-chat-confirm">
+                                    <div class="lp-chat-confirm-text">
+                                        <span class="material-symbols-outlined" aria-hidden="true">shield</span>
+                                        <span x-text="p.label"></span>
+                                    </div>
+                                    <div class="lp-chat-confirm-actions">
+                                        <button type="button" class="lp-chat-btn lp-chat-btn-primary"
+                                                @click="confirm(p)" :disabled="p.busy">Confirm</button>
+                                        <button type="button" class="lp-chat-btn"
+                                                @click="discard(p)" :disabled="p.busy">Not now</button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="lp-chat-typing" x-show="sending" aria-hidden="true">
+                                <span></span><span></span><span></span>
+                            </div>
+                        </div>
+
+                        <div class="lp-chat-error" x-show="error" x-text="error"></div>
+
+                        <form class="lp-chat-input-row" @submit.prevent="send()">
+                            <textarea class="lp-chat-input"
+                                      x-model="input"
+                                      rows="1"
+                                      placeholder="Ask anything to start a new chat"
+                                      aria-label="Ask anything to start a new chat"
+                                      @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"
+                                      :disabled="sending"></textarea>
+                            <button type="submit" class="lp-chat-send"
+                                    :disabled="sending || !input.trim()"
+                                    aria-label="Send message">
+                                <span class="material-symbols-outlined" x-text="sending ? 'hourglass_top' : 'arrow_upward'"></span>
+                            </button>
+                        </form>
+
+                        <p class="lp-chat-hint" x-show="turns.length === 0">
+                            Ask about your search, tune your criteria, re-score your matches, or
+                            draft and discard roles. I never submit an application without you.
+                        </p>
                     </section>
 
                     <section class="welcome-alerts"
@@ -374,35 +430,203 @@
 
         .welcome-composer {
             width: 100%;
+            display: grid;
+            gap: 0.7rem;
         }
 
-        .welcome-composer > x-component,
-        .welcome-composer > x-component > div[x-data],
-        .welcome-composer > x-component > div[x-data] > template + div {
-            display: contents;
+        /* RUX-6 campaign-chat composer (wired to the campaign agent). */
+        .lp-chat-thread {
+            display: grid;
+            gap: 0.75rem;
+            max-height: 42vh;
+            overflow-y: auto;
+            padding: 0.9rem 1rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--color-panel) 74%, var(--color-background) 26%);
+            backdrop-filter: blur(18px);
         }
 
-        .welcome-composer .input-row {
+        .lp-chat-turn {
+            display: grid;
+            gap: 0.2rem;
+            max-width: 88%;
+        }
+
+        .lp-chat-user {
+            justify-self: end;
+            text-align: right;
+        }
+
+        .lp-chat-agent {
+            justify-self: start;
+        }
+
+        .lp-chat-role {
+            font-size: 0.72rem;
+            font-weight: 620;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--color-text) 55%, transparent);
+        }
+
+        .lp-chat-bubble {
+            padding: 0.6rem 0.8rem;
+            border-radius: 10px;
+            font-size: 0.98rem;
+            line-height: 1.42;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: var(--color-text);
+            background: color-mix(in srgb, var(--color-border) 42%, transparent);
+        }
+
+        .lp-chat-user .lp-chat-bubble {
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 18%, transparent);
+        }
+
+        .lp-chat-confirm {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.7rem;
+            padding: 0.7rem 0.85rem;
+            border: 1px solid color-mix(in srgb, var(--color-primary, #2f6bff) 45%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 8%, transparent);
+        }
+
+        .lp-chat-confirm-text {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.9rem;
+            color: var(--color-text);
+        }
+
+        .lp-chat-confirm-text .material-symbols-outlined {
+            font-size: 1.15rem;
+            color: var(--color-primary, #2f6bff);
+        }
+
+        .lp-chat-confirm-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .lp-chat-btn {
+            padding: 0.4rem 0.85rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--color-text);
+            font: inherit;
+            font-size: 0.85rem;
+            font-weight: 560;
+            cursor: pointer;
+        }
+
+        .lp-chat-btn:hover:not(:disabled),
+        .lp-chat-btn:focus-visible {
+            background: color-mix(in srgb, var(--color-text) 8%, transparent);
+        }
+
+        .lp-chat-btn-primary {
+            border-color: transparent;
+            background: var(--color-primary, #2f6bff);
+            color: #fff;
+        }
+
+        .lp-chat-btn:disabled {
+            opacity: 0.55;
+            cursor: default;
+        }
+
+        .lp-chat-typing {
+            display: inline-flex;
+            gap: 0.3rem;
+            align-items: center;
+            padding: 0.35rem 0.2rem;
+        }
+
+        .lp-chat-typing span {
+            width: 0.42rem;
+            height: 0.42rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-text) 45%, transparent);
+            animation: lp-chat-blink 1.1s infinite ease-in-out;
+        }
+
+        .lp-chat-typing span:nth-child(2) { animation-delay: 0.18s; }
+        .lp-chat-typing span:nth-child(3) { animation-delay: 0.36s; }
+
+        @keyframes lp-chat-blink {
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
+        }
+
+        .lp-chat-error {
+            padding: 0.5rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            color: var(--color-warning-text, #8a6d1a);
+            background: var(--color-warning-bg, #fef5e6);
+        }
+
+        .lp-chat-input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.5rem;
             min-height: 4.9rem;
             padding: 0.58rem 0.7rem 0.58rem 0.86rem;
-            border-radius: 8px;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 10px;
             background: color-mix(in srgb, var(--color-panel) 64%, var(--color-background) 36%);
         }
 
-        .welcome-composer #chat-input {
+        .lp-chat-input {
+            flex: 1 1 auto;
             min-height: 3.2rem;
+            max-height: 12rem;
+            resize: none;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: var(--color-text);
+            font: inherit;
             font-size: 1.03rem;
+            line-height: 1.42;
         }
 
-        .welcome-composer #expand-button {
-            display: none;
+        .lp-chat-input::placeholder {
+            color: color-mix(in srgb, var(--color-text) 48%, transparent);
         }
 
-        .welcome-composer .chat-more-panel {
-            top: calc(100% + 0.55rem);
-            bottom: auto;
-            margin-top: 0;
-            margin-bottom: 0;
+        .lp-chat-send {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.5rem;
+            height: 2.5rem;
+            border: none;
+            border-radius: 999px;
+            background: var(--color-primary, #2f6bff);
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .lp-chat-send:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .lp-chat-hint {
+            margin: 0;
+            padding-inline: 0.2rem;
+            font-size: 0.85rem;
+            color: color-mix(in srgb, var(--color-text) 62%, transparent);
         }
 
         .welcome-alerts {
@@ -1262,6 +1486,133 @@
         // gadget failing/slow never blocks the other); this is a best-effort
         // cross-filter only, populated whenever Pending Reviews loads.
         const reviewedPostingIds = new Set();
+
+        // ── RUX-6: "Ask anything to start a new chat" → the campaign agent ──
+        // Wires the composer to Applicant's ChatService via the plugin chat proxy
+        // (plugins/applicant/chat → engine /api/chat). The agent answers campaign
+        // questions and can take GATED actions (edit criteria, re-score, draft,
+        // discard) server-side; any change that shifts campaign scope comes back as a
+        // pending confirmation the user must approve here (transparent + reversible).
+        // It NEVER submits an application.
+        window.Alpine.data("lpCampaignChat", () => ({
+            input: "",
+            sending: false,
+            error: "",
+            turns: [],       // { role: 'user'|'assistant', text }
+            pending: [],     // gated confirmations awaiting the user's explicit approval
+
+            async send() {
+                const message = (this.input || "").trim();
+                if (!message || this.sending) return;
+                this.error = "";
+                this.turns.push({ role: "user", text: message });
+                this.input = "";
+                this.sending = true;
+                this.scrollThread();
+                let r;
+                try {
+                    // campaign_id is resolved to the active campaign server-side
+                    // (the proxy maps a missing/__system__ id), so we don't send it.
+                    r = await callJsonApi("chat", { action: "send", message });
+                } catch (e) {
+                    r = null;
+                }
+                this.sending = false;
+                if (!r || !r.ok) {
+                    this.error = (r && r.error) || "I couldn't reach the agent just now — try again in a moment.";
+                    this.scrollThread();
+                    return;
+                }
+                const d = r.data || {};
+                const text = d.message || d.answer || "";
+                if (text) this.turns.push({ role: "assistant", text });
+                this.collectPending(d);
+                this.scrollThread();
+            },
+
+            // Turn the engine's proposed integral changes into explicit, user-approved
+            // confirmations. Non-integral changes are already applied by the engine and
+            // narrated in the reply; only gated ones need a button here.
+            collectPending(d) {
+                const changes = Array.isArray(d.proposed_changes) ? d.proposed_changes : [];
+                for (const c of changes) {
+                    if (c && c.requires_confirmation && !c.applied) {
+                        this.pending.push({
+                            key: `attr:${c.name}:${Math.random().toString(36).slice(2)}`,
+                            type: "attr",
+                            name: c.name,
+                            value: c.value,
+                            label: `Confirm: set ${c.name} to “${c.value}”`,
+                            busy: false,
+                        });
+                    }
+                }
+                const controls = Array.isArray(d.control_actions) ? d.control_actions : [];
+                for (const a of controls) {
+                    if (a && a.requires_confirmation && a.kind === "criteria" && a.detail) {
+                        this.pending.push({
+                            key: `crit:${Math.random().toString(36).slice(2)}`,
+                            type: "criteria",
+                            changes: a.detail,
+                            label: `Confirm search change: ${this.describeDetail(a.detail)}`,
+                            busy: false,
+                        });
+                    }
+                }
+            },
+
+            describeDetail(detail) {
+                try {
+                    return Object.entries(detail)
+                        .map(([k, v]) => `${k.replace(/_/g, " ")} → ${Array.isArray(v) ? v.join(", ") : v}`)
+                        .join("; ");
+                } catch (e) {
+                    return "this change";
+                }
+            },
+
+            async confirm(p) {
+                p.busy = true;
+                this.error = "";
+                let r;
+                try {
+                    if (p.type === "attr") {
+                        r = await callJsonApi("chat", { action: "confirm", name: p.name, value: p.value });
+                    } else {
+                        r = await callJsonApi("chat", { action: "confirm_criteria", changes: p.changes });
+                    }
+                } catch (e) {
+                    r = null;
+                }
+                p.busy = false;
+                if (!r || !r.ok) {
+                    this.error = (r && r.error) || "I couldn't apply that change — try again.";
+                    return;
+                }
+                this.pending = this.pending.filter((x) => x.key !== p.key);
+                this.turns.push({
+                    role: "assistant",
+                    text: "Done — I've applied that. It affects future scoring, and it's reversible; just tell me to change it back.",
+                });
+                // A confirmed criteria change re-ranks matches — let the rest of the
+                // page pick it up without a manual refresh.
+                window.dispatchEvent(new CustomEvent("applicant:refresh-today"));
+                this.scrollThread();
+            },
+
+            discard(p) {
+                this.pending = this.pending.filter((x) => x.key !== p.key);
+                this.turns.push({ role: "assistant", text: "Okay, I've left that as it was." });
+                this.scrollThread();
+            },
+
+            scrollThread() {
+                this.$nextTick(() => {
+                    const el = this.$refs.thread;
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
+            },
+        }));
 
         // ── Header: active campaign name + notifications-connect affordance ──
         window.Alpine.data("lpHeader", () => ({

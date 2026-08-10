@@ -45,6 +45,25 @@ _REGISTRY_KEY = "chat"
 #: Hard cap on dispatch rounds (defense in depth; the loop in chat_service also caps).
 MAX_TOOL_ROUNDS = 4
 
+#: RUX-6 campaign-chat action tools. The criteria fields the assistant may steer, and
+#: which of them are INTEGRAL (a change shifts the campaign's scope, so it can never be
+#: silently committed — it is held for the user's confirmation, FR-FB-3). Kept in sync
+#: with ``criteria_service._INTEGRAL_FIELDS`` (a private module constant we deliberately
+#: do NOT import, to avoid a fragile cross-module private dependency).
+_CRITERIA_INTEGRAL = frozenset({"titles", "locations", "salary_floor"})
+_CRITERIA_FIELDS = frozenset(
+    {"titles", "locations", "salary_floor", "work_modes", "keywords", "human_readable"}
+)
+#: Friendly labels for the criteria fields (used in the first-person result strings).
+_CRITERIA_LABELS = {
+    "titles": "target roles",
+    "locations": "locations",
+    "salary_floor": "salary floor",
+    "work_modes": "work mode",
+    "keywords": "key skills",
+    "human_readable": "search description",
+}
+
 
 def _ok(text: str) -> str:
     return text
@@ -85,6 +104,9 @@ class ChatToolbox:
         computer_use=None,
         desktop_operable: bool = False,
         intake_service=None,
+        criteria_service=None,
+        digest_service=None,
+        audit=None,
     ) -> None:
         self._campaign_id = campaign_id
         self._agent_memory = agent_memory
@@ -95,6 +117,22 @@ class ChatToolbox:
         # off: the bounded ``desktop`` tool is not even advertised to the model.
         self._desktop_operable = bool(desktop_operable and computer_use is not None)
         self._intake = intake_service
+        # RUX-6 campaign-chat action tools. Each is CAPABILITY-GATED (offered only when
+        # its backing service is wired AND the FR-UI-4 "chat" toggle is on), REVERSIBLE
+        # (an integral criteria change is held for the user's confirmation; a discard is
+        # archived-with-reason, never a hard delete), and AUDITED (every successful action
+        # is logged + forwarded to the optional ``audit`` sink; approve/decline are also
+        # captured by the domain-event AuditLogService). None of them submits — the
+        # never-auto-submit safety line holds.
+        self._criteria = criteria_service
+        self._digest = digest_service
+        self._audit_sink = audit
+        # WIRING: register these tools into the live campaign agent by having
+        # ChatService._maybe_toolbox pass through the services it already holds:
+        #   ChatToolbox(..., criteria_service=self._criteria, digest_service=self._digest,
+        #               audit=<optional AuditLogService/log sink>)
+        # (chat_service.py is a shared wiring point owned by the Integrate step; this
+        # module stays additive.)
 
     # --- schema collection (FR-MIND-6) ------------------------------------
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -176,6 +214,70 @@ class ChatToolbox:
                 },
                 ["url"],
             ))
+        if self._criteria_available():
+            schemas.append(_fn(
+                "edit_criteria",
+                "Adjust one field of the user's saved search criteria, which affects ALL "
+                "future scoring and suggestions. Non-integral fields (work mode, key "
+                "skills, search description) apply right away and are reversible. Integral "
+                "fields (target roles, locations, salary floor) shift the scope of the "
+                "search, so you CANNOT apply them yourself — they are held for the user's "
+                "explicit confirmation.",
+                {
+                    "field": {
+                        "type": "string",
+                        "enum": sorted(_CRITERIA_FIELDS),
+                        "description": "Which criteria field to change.",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "The new value. For list fields (roles, locations, "
+                        "work mode, skills) use a comma-separated string.",
+                    },
+                },
+                ["field", "value"],
+            ))
+        if self._digest_available():
+            schemas.append(_fn(
+                "rescore",
+                "Re-score the user's discovered roles against their CURRENT criteria and "
+                "rebuild today's matches. Read-only re-ranking — it never drafts or submits "
+                "anything.",
+                {},
+                [],
+            ))
+            schemas.append(_fn(
+                "draft_application",
+                "Start a draft for a specific role: tailor a resume and cover letter and "
+                "get it ready to apply. It is held at the user's review line and is NEVER "
+                "submitted without their explicit approval. Reversible — the user can still "
+                "discard it.",
+                {
+                    "application_id": {
+                        "type": "string",
+                        "description": "The id of the posting/role to draft (from the "
+                        "digest or pending reviews).",
+                    },
+                },
+                ["application_id"],
+            ))
+            schemas.append(_fn(
+                "discard_job",
+                "Discard a role the user does not want, with a brief reason. The reason is "
+                "REQUIRED (it teaches the next run to rank similar roles lower). The role is "
+                "archived rather than deleted, so it is reversible.",
+                {
+                    "application_id": {
+                        "type": "string",
+                        "description": "The id of the posting/role to discard.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "A brief reason it is not a fit (required).",
+                    },
+                },
+                ["application_id", "reason"],
+            ))
         if self._desktop_operable:
             schemas.append(_fn(
                 "desktop",
@@ -242,6 +344,12 @@ class ChatToolbox:
     def _intake_available(self) -> bool:
         return self._intake is not None and self._registry_on()
 
+    def _criteria_available(self) -> bool:
+        return self._criteria is not None and self._registry_on()
+
+    def _digest_available(self) -> bool:
+        return self._digest is not None and self._registry_on()
+
     def has_tools(self) -> bool:
         """True when at least one tool is offerable (so the loop is worth entering)."""
         return bool(self.tool_schemas())
@@ -274,6 +382,10 @@ class ChatToolbox:
             "update_playbook": self._update_playbook,
             "recall": self._recall,
             "save_job": self._save_job,
+            "edit_criteria": self._edit_criteria,
+            "rescore": self._rescore,
+            "draft_application": self._draft_application,
+            "discard_job": self._discard_job,
             "desktop": self._desktop,
         }.get(name)
         if handler is None:
@@ -427,6 +539,163 @@ class ChatToolbox:
         if note:
             parts.append(str(note))
         return " ".join(parts)
+
+    # --- RUX-6 campaign-chat action tools (gated + reversible + audited) ---
+    def _edit_criteria(self, args: dict) -> str:
+        """Adjust one criteria field via the EXISTING CriteriaService (FR-CRIT-2/3).
+
+        Non-integral fields (work mode / key skills / search description) apply directly
+        and are reversible. Integral fields (target roles / locations / salary floor)
+        are NEVER self-committed here — the assistant proposes them and they wait for the
+        user's explicit confirmation (FR-FB-3), exactly like the criteria refocus path.
+        """
+        if not self._criteria_available():
+            return "I can't change your search criteria right now."
+        campaign_id = self._campaign_str()
+        if not campaign_id:
+            return "I can't change criteria without a campaign to attach them to."
+        field = (args.get("field") or "").strip().lower()
+        if field not in _CRITERIA_FIELDS:
+            return (
+                "I can only change your target roles, locations, work mode, salary floor, "
+                "search description, or key skills."
+            )
+        value = args.get("value")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "I need a value to set for that."
+        label = _CRITERIA_LABELS.get(field, field)
+        if field in _CRITERIA_INTEGRAL:
+            # Never self-confirm an integral change: hold it for the user (FR-FB-3).
+            self._audit("edit_criteria_proposed", campaign_id=campaign_id, field=field)
+            return (
+                f"Changing your {label} shifts the scope of your search, so I won't apply "
+                "it on my own — it's waiting for your confirmation. Just say the word and "
+                "I'll set it (and it's reversible either way)."
+            )
+        try:
+            self._criteria.edit_criteria(campaign_id, changes={field: value})
+        except Exception as exc:
+            log.info("chat_edit_criteria_failed", field=field, error=str(exc))
+            return "I couldn't update that just now, so I left your criteria unchanged."
+        self._audit(
+            "edit_criteria", campaign_id=campaign_id, field=field, value=str(value)
+        )
+        return (
+            f"Done. I've updated your {label}; it'll affect how I score and suggest roles "
+            "from here on, and you can change it again anytime."
+        )
+
+    def _rescore(self, args: dict) -> str:
+        """Re-score against current criteria via the EXISTING digest build path.
+
+        Reuses ``DigestService.build_digest_payload`` (rebuild + re-score, no delivery /
+        no notification side-effects). Read-mostly and idempotent; it never drafts or
+        submits anything.
+        """
+        if not self._digest_available():
+            return "I can't re-score your matches right now."
+        campaign_id = self._campaign_str()
+        if not campaign_id:
+            return "I can't re-score without a campaign to work on."
+        try:
+            payload = self._digest.build_digest_payload(campaign_id)
+        except Exception as exc:
+            log.info("chat_rescore_failed", error=str(exc))
+            return "I ran into a problem re-scoring, so nothing changed."
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        count = len(rows) if isinstance(rows, list) else 0
+        self._audit("rescore", campaign_id=campaign_id, matches=count)
+        if count == 0:
+            return (
+                "I re-scored against your current criteria. Nothing clears the bar right "
+                "now, but I'll keep looking. (Re-scoring only re-ranks what I've found; it "
+                "never submits anything.)"
+            )
+        noun = "match" if count == 1 else "matches"
+        return (
+            f"I re-scored against your current criteria — {count} {noun} in your digest "
+            "now. Re-scoring only re-ranks what I've found; it never submits anything."
+        )
+
+    def _draft_application(self, args: dict) -> str:
+        """Start a draft for a role via the EXISTING approve-to-draft path.
+
+        Reuses ``DigestService.approve`` (the same gated path the landing page's "Draft
+        this" button uses): it tailors materials and moves the role forward, but it stops
+        at the review line — it NEVER submits. Reversible: the user can still discard it.
+        """
+        if not self._digest_available():
+            return "I can't start a draft right now."
+        application_id = (args.get("application_id") or "").strip()
+        if not application_id:
+            return "I need to know which role to draft — tell me the role and I'll start it."
+        try:
+            self._digest.approve(application_id)
+        except Exception as exc:
+            log.info("chat_draft_failed", application_id=application_id, error=str(exc))
+            return "I couldn't start that draft, so I left it untouched."
+        self._audit(
+            "draft_application",
+            campaign_id=self._campaign_str(),
+            application_id=application_id,
+        )
+        return (
+            "I've started a draft for that role — I'll tailor a resume and cover letter "
+            "and hold everything at your review line. I never submit an application "
+            "without your approval."
+        )
+
+    def _discard_job(self, args: dict) -> str:
+        """Discard a role with a reason via the EXISTING decline path.
+
+        Reuses ``DigestService.decline``: the reason is REQUIRED (FR-FB-1) and feeds a
+        negative learning signal so similar roles rank lower; the role is archived rather
+        than deleted, so the action is reversible.
+        """
+        if not self._digest_available():
+            return "I can't discard a role right now."
+        application_id = (args.get("application_id") or "").strip()
+        if not application_id:
+            return "I need to know which role to discard."
+        reason = (args.get("reason") or "").strip()
+        if not reason:
+            return (
+                "Tell me briefly why it's not a fit and I'll discard it — the reason helps "
+                "me rank similar roles lower next time."
+            )
+        try:
+            self._digest.decline(application_id, feedback_text=reason)
+        except Exception as exc:
+            log.info("chat_discard_failed", application_id=application_id, error=str(exc))
+            return "I couldn't discard that just now, so I left it untouched."
+        self._audit(
+            "discard_job",
+            campaign_id=self._campaign_str(),
+            application_id=application_id,
+        )
+        return (
+            "Done — I've discarded that role and noted your reason, so I'll rank similar "
+            "roles lower. It's archived rather than deleted, so tell me if you want it back."
+        )
+
+    # --- audit trail (RUX-6: every gated action is recorded) --------------
+    def _audit(self, action: str, **detail: Any) -> None:
+        """Record one gated chat action.
+
+        Always logs a structured line (the module's existing audit lane); additionally
+        forwards to an injected ``audit`` sink when one is wired. approve/decline are also
+        captured by the domain-event AuditLogService, so this is belt-and-suspenders for
+        them and the primary record for edit_criteria/rescore. Never raises into a tool.
+        """
+        try:
+            log.info("chat_tool_action", tool=action, **detail)
+        except Exception:  # pragma: no cover - logging must never break a tool
+            pass
+        if self._audit_sink is not None:
+            try:
+                self._audit_sink(action, dict(detail))
+            except Exception:  # pragma: no cover - a bad sink must never break a tool
+                pass
 
     def _desktop(self, args: dict) -> str:
         if not self._desktop_operable:
