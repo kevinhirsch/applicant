@@ -2,85 +2,39 @@
 
 **North star:** Kevin wakes to a review-ready queue of tailored, drafted job applications for high-fit roles — produced automatically, durable across a fresh install, no manual babysitting.
 
-**Conventions**
-- **DoR (Definition of Ready):** what must be true before work starts — scoped, unblocked, testable.
-- **DoD (Definition of Done):** what must be true to close — fixed *in source*, committed + pushed, verified on the running 10.0.1.11 instance, and resilient to a fresh install.
-- Priority: P0 = blocks the north star; P1 = quality/robustness; P2 = polish.
-- Env: prod = `10.0.1.11:8000` (Applicant), model = vLLM `10.0.1.225:8000` (qwen3.6:27b). Source-of-truth branch = `claude/refactor-agent-zero-applicant-xn7xoc`.
+**Conventions** — DoR: ready to start (scoped, unblocked, testable). DoD: fixed *in source*, committed + pushed, verified on the running 10.0.1.11 instance, resilient to a fresh install. P0 blocks the north star; P1 robustness; P2 polish.
+Env: prod `10.0.1.11:8000` · model vLLM `10.0.1.225:8000` (qwen3.6:27b) · branch `claude/refactor-agent-zero-applicant-xn7xoc`.
 
-_Last updated: 2026-08-10 (morning)_
+_Last updated: 2026-08-10 (midday)_
 
 ---
 
-## P0 — Core value: produce drafted applications
+## ✅ DONE + verified this cycle (P0/P1)
 
-### B1 — Digest reads stored scores (unblock auto-draft) — ✅ CODE DONE, ⏳ VERIFYING
-- **DoR:** Root cause confirmed (build_digest LLM-re-scored the whole backlog → digest GET timed out → auto-draft starved).
-- **DoD:** `build_digest` never LLM-scores in the hot path; digest GET returns < 3s; a scheduler tick's auto-draft completes; `applications` count > 0 for the campaign; committed + pushed; survives fresh install.
-- Status: committed (`005c41a5`). Needs deploy + verification that applications appear.
+- **B1 Digest reads stored scores** — build_digest no longer LLM-re-scores in the hot path. Committed + baked. (Part of the perf story below.)
+- **B2 Auto-register local LLM endpoint on boot** — a fresh install now gets a working chat/routing endpoint with no manual step. Verified `endpoints_online: 1` on a clean boot.
+- **B3 vLLM stops wedging** — router is qwen-only (GLM swaps disabled); no re-wedge. (Kevin's box, backup kept.)
+- **B4 Bound per-tick scoring + digest perf (the thundering-herd)** — scorer walked the whole 4k backlog every tick AND build_digest did 266 full posting-scans per build (167s). Fixed: per-tick scoring cap (SCORING_BATCH_PER_TICK, default 20) + hoisted the campaign-wide reads out of the per-row warnings loop. **Digest 167s → 1.5s warm.** Verified.
+- **B6 Rebuild prod from source** — api rebuilt from HEAD, migration applied, data intact; all fixes baked. (a0 rebuild pending the landing page.)
+- **RESEARCH-400 (owner attribution)** — engine never sent `X-Applicant-Owner`; companion 400'd every callback. Fixed via `default_owner` (APPLICANT_OWNER, default "applicant") — clears research + calendar/emails/memory lanes. Committed + baked.
+- **Latest build on remote** — all 370+ commits pushed to GitHub; prod == HEAD (was ~370 behind).
+- **UI monkey crawl** — 23 broken panels → 0 (campaigns API shape, undefined callJsonApi, Alpine x-for crashes, /api/setup/automation 404, tiers config path). Committed + baked.
+- **Self-drafting works** — 5 DIGESTED drafts for top-fit roles with genuinely tailored materials (verified real Wells Fargo/Slalom/Ally content); Today shows a 22-item review queue. Review-gated, never auto-submitted.
 
-### B2 — Auto-register local LLM endpoint on boot — ✅ CODE DONE, ⏳ VERIFY ON FRESH INSTALL
-- **DoR:** Confirmed a clean install logs `llm_router_no_endpoints` because the endpoint pool is empty (tier ladder alone doesn't populate it).
-- **DoD:** On first boot with `llm_configured`, an endpoint is auto-registered from `settings.llm_base_url`; `endpoints_online >= 1` without manual action; idempotent; verified by clearing endpoints + rebooting (or on the next fresh install).
-- Status: committed (`005c41a5`). Verify on a fresh boot with empty pool.
+## 🔜 IN PROGRESS
 
-### B3 — vLLM stops wedging (qwen-only router) — ✅ DONE (Kevin infra)
-- **DoR:** Confirmed GLM model-swaps wedge the shared router (health OK / completions hang), taking down Applicant + Hermes.
-- **DoD:** Router never swaps; qwen stays loaded; no re-wedge under load; backup kept.
-- Status: `~/.local/share/vllm-qwen27b/model-router.py` → `backend_for` returns qwen always; restarted; verified. NOTE: this is Kevin's box, not the Applicant repo.
+- **APP-LP-1 Landing-page overhaul** — signed off (`docs/stories/landing-page-overhaul.md`). Dedicated build agent implementing: 4 gadgets (Pending Reviews, Top New Matches, Pipeline Funnel, Daily Progress) in priority order, act-inline + keep chat, cut AI-accounts/Channels clutter, keep notifications + System Resources. Browser-verified, baked. **This delivers B5 (end-to-end review UX).**
 
-### B4 — Engine resilient to vLLM flakiness under load — ⏳ TODO (P0/P1)
-- **DoR:** Observed 500s/timeouts when the engine hammers vLLM scoring the backlog (thundering herd).
-- **DoD:** Scoring uses bounded concurrency + retry/backoff so a transient 500/timeout doesn't drop a posting to embedding-only; steady-state scoring drains the backlog without saturating vLLM; verified scored-count climbs steadily.
+## ⏳ TODO
 
-### B5 — End-to-end proof: Kevin sees drafts in the UI — ⏳ TODO (the real DoD)
-- **DoR:** B1–B2 verified (applications exist in DB).
-- **DoD:** Open Today/Digest as a user → a review-ready queue of tailored applications (resume variant + cover letter + screening answers) for high-fit roles renders; each is DIGESTED/review-gated (never auto-submitted). Screenshotted.
+- **B4-deep (P2)** digest cold build still ~15s (first call after restart / cache-invalidation); warm is 1.5s. Optional: warnings only need the ~5 apps' postings, not all 5376 — make it size-independent.
+- **RESEARCH-503 (P1)** with owner fixed, `/research` now 503s: the COMPANION has no research/default LLM endpoint. Mirror the engine's auto-register on the companion so research enrichment actually runs. (Enrichment only — not a draft blocker.)
+- **B7 (P1) model_endpoints proxy JSON→Form** — engine `add_endpoint` uses Form; the plugin proxy sends JSON → UI "Add endpoint" fails. (Endpoint auto-registers now, so lower urgency.)
+- **B8 (P1) idle-in-transaction sessions** — boot/tick sessions leave transactions open (ClientRead ~6 min), blocking VACUUM on job_postings. (NOT the digest cause — that was the per-row scans, fixed. Separate hygiene item.)
+- **B10 branding (P2)** — logo wordmark + `.js` substitution done in source; bakes on the next a0 rebuild (landing-page agent's rebuild). Verify no "Agent Zero" post-bake.
+- **B12 (P2) modal titles show raw file paths** (e.g. `/plugins/applicant/webui/digest.html`) — give panels friendly titles.
+- **B13 (P2) full visual QA re-pass** — after landing page + branding land, re-run the visual crawl in light + dark.
+- **New-draft quality re-check (P1)** — with scoring bounded + vLLM headroom, confirm NEW auto-drafts come back LLM-tailored (not deterministic fallback).
 
----
-
-## P1 — Robustness & correctness
-
-### B6 — Rebuild prod from source (bake all fixes durably) — ⏳ TODO
-- **DoR:** All P0 source fixes committed.
-- **DoD:** a0 + api images rebuilt from HEAD (sequential/OOM-safe), migration run, stack recreated, data intact, no hot-patches remain; `git rev-parse HEAD` on the build source == origin HEAD.
-
-### B7 — model_endpoints proxy JSON→Form mismatch — ⏳ TODO
-- **DoR:** Confirmed engine `add_endpoint`/`test_endpoint` use `Form(...)` but the plugin proxy sends JSON → UI "Add endpoint" fails.
-- **DoD:** UI can add + test an endpoint successfully (proxy sends form-encoded OR engine accepts JSON body); verified via the panel.
-
-### B8 — Shared-session IllegalStateChangeError — ⏳ TODO
-- **DoR:** Confirmed nested `commit()` (scheduler thread + HTTP request sharing the boot Session) 500s `POST /api/onboarding/{cid}/shown`.
-- **DoD:** No `IllegalStateChangeError` in logs under concurrent load; onboarding "shown" returns 2xx; fix uses per-thread/scoped sessions or a guard; regression test.
-
-### B9 — Discovery scoring backlog drains — ⏳ TODO
-- **DoR:** ~5376 discovered, only ~1176 scored.
-- **DoD:** Background scorer works through the backlog to near-complete; `scored` approaches `postings`; viable set (≥70) grows; verified over time with vLLM stable.
-
----
-
-## P2 — Branding & polish (found by the visual monkey-crawl)
-
-### B10 — "AGENT ZERO" branding regression — ⏳ TODO
-- **DoR:** Visual crawl shows the sidebar logo renders the base agent-zero wordmark; `.js` files leak "Agent Zero"; overlay lacks branded logo SVGs.
-- **DoD:** Logo reads "Applicant" (branded `a0-fullDark.svg`/`a0-collapsed.svg` in overlay); `apply-branding.sh` also rewrites `.js`; no visible "Agent Zero" on any user-facing page; verified in a screenshot; baked into the image.
-
-### B11 — Off-brand upstream welcome cards — ⏳ TODO
-- **DoR:** Root page shows base `_discovery` plugin cards (Connect WhatsApp/Telegram, Codex/Grok AI accounts) irrelevant to job search.
-- **DoD:** Root page shows only Applicant-relevant content (Today + chat); upstream welcome cards hidden/removed cleanly; verified in a screenshot; durable.
-
-### B12 — Modals show raw file path as title — ⏳ TODO
-- **DoR:** Every panel modal titles as e.g. `/plugins/applicant/webui/digest.html`.
-- **DoD:** Modals show a friendly title (e.g. "Daily Digest"); verified across panels.
-
-### B13 — Full visual QA re-pass — ⏳ TODO
-- **DoR:** B1–B12 addressed.
-- **DoD:** Re-run the visual crawl; every user-facing page reviewed as a user; no rendering/empty-state/branding defects; report + screenshots.
-
----
-
-## Done this cycle (for the record)
-- Latest build pushed to GitHub (was ~370 commits behind) — remote/prod match HEAD.
-- Rebuilt prod from source (durable, migration applied, data intact).
-- UI monkey crawl: 23 broken panels → 0 (campaigns API shape, undefined `callJsonApi`, Alpine x-for crashes, `/api/setup/automation` 404, tiers config path).
-- LLM pipeline diagnosed + restored (vLLM unwedged, endpoint registered, tiers online).
+## Done earlier (foundation)
+- Fresh install on 10.0.1.11; campaign recreated; OOM root-caused (sequential builds); install/update system + fork-safe Update button; discovery resilience (Greenhouse/Lever + circuit breaker).
