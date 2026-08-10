@@ -47,7 +47,7 @@ from applicant.application.workflows.application_pipeline import (
     PipelineContext,
 )
 from applicant.core.entities.application import Application
-from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP
+from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP, RunMode
 from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, new_id
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
@@ -650,7 +650,22 @@ class AgentLoop:
         # 1. Run-mode gate (FR-AGENT-2). UNTIL_N_VIABLE counts viable postings so far.
         # A manual "Run now" (force) bypasses this gate — the schedule may be paused
         # or the mode's auto-stop met, but the operator explicitly asked for one pass.
-        viable_count = self._viable_count(campaign_id)
+        #
+        # P0 (2026-08-10): ``AgentRunService.should_continue`` only ever CONSULTS
+        # ``viable_count`` for ``RunMode.UNTIL_N_VIABLE`` (CONTINUOUS/FIXED_DURATION
+        # ignore the argument entirely) -- so computing it unconditionally, on EVERY
+        # tick, for EVERY run mode, paid a full ``list_for_campaign`` scan for no
+        # reason on the common CONTINUOUS case. Worse, ``_viable_count``'s fallback
+        # branch (below) LLM-scored every unscored posting live -- confirmed live as
+        # the actual root cause of a tick that streamed thousands of successful-but-
+        # unpersisted LLM calls and never reached scoring/digest/auto-draft at all,
+        # holding the scheduler's per-campaign lock indefinitely on a campaign with a
+        # large unscored backlog. Only pay for it when the run mode will actually use it.
+        viable_count = (
+            self._viable_count(campaign_id)
+            if campaign.run_mode is RunMode.UNTIL_N_VIABLE
+            else 0
+        )
         if not force and not self._runs.should_continue(
             campaign, now=now, viable_count=viable_count
         ):
@@ -810,7 +825,9 @@ class AgentLoop:
                     _cap = _SCORE_BATCH_PER_TICK_DEFAULT
             if _cap > 0:
                 _scored_this_tick = 0
-                for posting in self._unscored_postings(campaign.id):
+                # Bound the QUERY itself to _cap rows (P0 2026-08-10) -- the loop only
+                # ever consumes up to _cap anyway; no reason to load the full backlog.
+                for posting in self._unscored_postings(campaign.id, limit=_cap):
                     if _scored_this_tick >= _cap:
                         break
                     try:
@@ -841,13 +858,26 @@ class AgentLoop:
         except TypeError:  # pragma: no cover - legacy signature without criteria
             return self._discovery.run_discovery(campaign_id)
 
-    def _unscored_postings(self, campaign_id: CampaignId) -> list:
+    def _unscored_postings(self, campaign_id: CampaignId, *, limit: int | None = None) -> list:
         """Postings not yet viability-scored this campaign (#8).
 
         Uses the indexed ``JobPostingRepository.list_unscored_for_campaign`` so the loop
         scores only the fresh backlog instead of re-scanning the full posting history.
+
+        ``limit`` (P0 2026-08-10): the caller only ever consumes the first ``_cap``
+        rows before breaking out of its loop, so a campaign with a large unscored
+        backlog (thousands of rows) should never pay to materialize all of them into
+        memory every tick just to use a handful. Threaded straight to the storage
+        query (bounded at the DB, not just the Python loop); a storage double that
+        doesn't (yet) accept ``limit`` degrades to the unbounded read rather than
+        raising (legacy/unit test doubles).
         """
-        return list(self._storage.postings.list_unscored_for_campaign(campaign_id))
+        try:
+            return list(
+                self._storage.postings.list_unscored_for_campaign(campaign_id, limit=limit)
+            )
+        except TypeError:  # pragma: no cover - defensive: legacy double without limit
+            return list(self._storage.postings.list_unscored_for_campaign(campaign_id))
 
     # --- hands-off autonomy: auto-draft top-N viable roles (FR-AUTO) -------
     def _auto_draft_top_viable(self, campaign, result: TickResult, now: datetime) -> None:
@@ -2171,11 +2201,25 @@ class AgentLoop:
             log.warning("checkpoint_clear_failed", application_id=str(application_id))
 
     def _viable_count(self, campaign_id: CampaignId) -> int:
-        """Count viable postings from the PERSISTED viability score (#8).
+        """Count viable postings from the PERSISTED viability score ONLY (#8).
 
         Was: re-score every posting every tick (and reload the LearningModel per
         posting). Now reads the durable ``viability_score`` the scoring step already
         persisted, so UNTIL_N_VIABLE costs an O(n) read, not an O(n) re-score.
+
+        P0 (2026-08-10): a "fall back to a one-off live score" branch used to run
+        for every UNSCORED posting here, contradicting this very docstring — on a
+        campaign with a large unscored backlog (thousands, the common case right
+        after discovery finds a fresh batch), that meant an O(n) LLM-backed
+        ``score_posting`` call PER TICK, and ``score_posting`` never persists (only
+        ``score_viability``/``_persist_or_defer`` does) — so the cost was paid
+        EVERY tick, forever, for the SAME unscored rows. Confirmed live as the
+        actual root cause of a tick that streamed thousands of successful-but-
+        wasted LLM calls, persisted zero scores, and never reached scoring/digest/
+        auto-draft at all (this is the very FIRST thing ``_tick`` computes). An
+        unscored posting is now simply not counted (yet) — the background per-tick
+        scoring pass persists its score in due course, and the NEXT call here picks
+        it up for free from the read, with zero extra cost.
         """
         if self._scoring is None:
             return 0
@@ -2184,20 +2228,7 @@ class AgentLoop:
         for posting in self._storage.postings.list_for_campaign(campaign_id):
             score = getattr(posting, "viability_score", None)
             if score is None:
-                # Not yet scored (e.g. first tick before discovery scored it). Fall
-                # back to a one-off score so the gate is never under-counted.
-                try:
-                    # #8: score against the campaign's criteria (was: empty default
-                    # criteria, a uniform neutral score that ignored onboarding/learned
-                    # criteria).
-                    scoring = self._scoring.score_posting(
-                        posting, self._criteria_for(campaign_id)
-                    )
-                    if self._scoring.is_viable(scoring):
-                        count += 1
-                except Exception:  # pragma: no cover - defensive
-                    pass
-                continue
+                continue  # not yet scored — the background scoring pass will fill it in
             if score * 100.0 >= threshold:
                 count += 1
         return count

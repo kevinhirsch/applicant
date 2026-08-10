@@ -242,22 +242,115 @@ def test_throughput_hard_cap_refuses_31st_per_day(tmp_path):
 
 @pytest.mark.unit
 def test_run_mode_until_n_viable_stops(tmp_path):
-    """FR-AGENT-2: UNTIL_N_VIABLE stops once enough viable roles exist."""
+    """FR-AGENT-2: UNTIL_N_VIABLE stops once enough viable roles exist.
+
+    P0 (2026-08-10): ``_viable_count`` counts PERSISTED viability scores only
+    (see the dedicated tests below) -- so these postings need one set, or the
+    gate would never see them as viable at all.
+    """
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _make_campaign(
         storage, run_mode=RunMode.UNTIL_N_VIABLE, schedule={"target_viable": 2}
     )
-    # 3 viable postings already exist -> count (3) >= target (2) -> stop.
+    # 3 viable (persisted-score >= threshold) postings already exist -> count
+    # (3) >= target (2) -> stop.
     for i in range(3):
         pid = JobPostingId(new_id())
         storage.postings.add(
-            JobPosting(id=pid, campaign_id=cid, title=f"R{i}", company="A", source_url="u")
+            JobPosting(
+                id=pid, campaign_id=cid, title=f"R{i}", company="A", source_url="u",
+                viability_score=0.9,
+            )
         )
     loop = _loop(storage, orch, prefill=_FakePrefill())
     result = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
     assert result.ran is False
     assert result.reason == "run_mode_stop"
+
+
+@pytest.mark.unit
+def test_viable_count_never_live_scores_an_unscored_posting(tmp_path):
+    """P0 root cause (2026-08-10): ``_viable_count`` must count ONLY the
+    PERSISTED ``viability_score`` -- never fall back to a live, LLM-backed
+    ``score_posting`` call for an unscored posting.
+
+    Live incident this closes: a campaign with ~5376 postings, only 4 scored,
+    running in CONTINUOUS mode. ``_tick`` unconditionally computed
+    ``_viable_count`` as its FIRST action, before any gate/discovery/scoring/
+    digest/auto-draft step. The fallback branch called
+    ``self._scoring.score_posting(posting, criteria)`` -- a real LLM call --
+    for EVERY one of the ~5372 unscored postings, and ``score_posting`` never
+    persists (only ``score_viability`` does via ``_persist_or_defer``). The
+    result: a tick that streamed thousands of successful-but-wasted LLM calls,
+    persisted ZERO scores, and never reached scoring/auto-draft at all -- the
+    per-campaign lock stayed held indefinitely (confirmed live via a stack
+    trace during the hang: ``_tick -> _viable_count -> score_posting -> ...
+    -> httpx``). ``_viable_count``'s own docstring already claimed "reads the
+    durable viability_score... O(n) READ, not O(n) re-score" -- the fallback
+    branch contradicted it. This asserts that claim is actually true: an
+    unscored posting is simply not counted (yet); the background per-tick
+    scoring pass (SCORING_BATCH_PER_TICK) is what eventually persists a score
+    for it, at which point a LATER ``_viable_count`` call picks it up for
+    free from the read.
+    """
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage, run_mode=RunMode.UNTIL_N_VIABLE, schedule={"target_viable": 1})
+    # One posting with NO persisted score (the common case for a fresh/large
+    # discovery backlog) and one WITH a persisted, viable score.
+    storage.postings.add(
+        JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="Unscored", company="A", source_url="u")
+    )
+    storage.postings.add(
+        JobPosting(
+            id=JobPostingId(new_id()), campaign_id=cid, title="Scored", company="A",
+            source_url="u2", viability_score=0.95,
+        )
+    )
+    scoring = _CountingScoring()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=scoring,
+    )
+    count = loop._viable_count(cid)
+    assert count == 1, "only the PERSISTED-viable posting counts"
+    assert scoring.posting_scored == [], (
+        "the unscored posting must NEVER be live-scored by _viable_count -- "
+        "that is the exact P0 that stalled every tick forever"
+    )
+
+
+@pytest.mark.unit
+def test_continuous_run_mode_never_computes_viable_count_at_all(tmp_path):
+    """P0 root cause companion: ``viable_count`` is consulted ONLY by
+    ``AgentRunService.should_continue`` for ``RunMode.UNTIL_N_VIABLE`` --
+    CONTINUOUS (this incident's actual mode) and FIXED_DURATION ignore it
+    entirely. A tick must not pay ANY cost (LLM calls or even a full
+    ``list_for_campaign`` scan) computing a metric its own run mode will
+    never consult.
+    """
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage, run_mode=RunMode.CONTINUOUS)
+    for i in range(5):
+        storage.postings.add(
+            JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title=f"R{i}", company="A", source_url="u")
+        )
+    scoring = _CountingScoring()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=scoring,
+        digest_service=_FakeDigest(),
+        prefill_service=_FakePrefill(),
+        orchestrator=orch,
+    )
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert scoring.posting_scored == [], (
+        "CONTINUOUS mode must never trigger _viable_count's (now-read-only, but "
+        "still an O(n) scan) posting walk at all"
+    )
 
 
 @pytest.mark.unit
@@ -569,14 +662,22 @@ def test_record_submission_folds_conversion_learning():
 
 # === Scale-in: per-tick scoring, N+1 elimination, retention (#8/#9/#10/#11) ==
 class _CountingScoring(_FakeScoring):
-    """Tracks score_viability calls so we can prove only the unscored backlog is scored."""
+    """Tracks score_viability AND score_posting calls (P0 2026-08-10:
+    ``_viable_count`` must never fall back to ``score_posting`` for an
+    unscored posting -- that live, unpersisted LLM call for every unscored
+    row is exactly what stalled every tick forever on a large backlog)."""
 
     def __init__(self):
         self.scored: list = []
+        self.posting_scored: list = []
 
     def score_viability(self, pid, criteria=None):
         self.scored.append(str(pid))
         return None
+
+    def score_posting(self, posting, criteria=None):
+        self.posting_scored.append(str(posting.id))
+        return super().score_posting(posting, criteria)
 
     @property
     def threshold(self):
@@ -602,11 +703,12 @@ def test_only_unscored_postings_are_scored_each_tick(tmp_path):
     )
 
     # Extend the in-memory repo with the parallel-lane indexed method (test-only).
-    def _list_unscored(campaign_id):
-        return [
+    def _list_unscored(campaign_id, *, limit=None):
+        out = [
             p for p in storage.postings.list_for_campaign(campaign_id)
             if getattr(p, "viability_score", None) is None
         ]
+        return out[:limit] if limit is not None else out
     storage.postings.list_unscored_for_campaign = _list_unscored
 
     scoring = _CountingScoring()
@@ -650,10 +752,8 @@ def test_scoring_batch_per_tick_zero_is_a_real_kill_switch(tmp_path, monkeypatch
     storage.postings.add(
         JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="Fresh", company="A", source_url="u")
     )
-    storage.postings.list_unscored_for_campaign = lambda campaign_id: [
-        p for p in storage.postings.list_for_campaign(campaign_id)
-        if getattr(p, "viability_score", None) is None
-    ]
+    # InMemoryStorage.postings.list_unscored_for_campaign is native (no monkeypatch
+    # needed) and supports the ``limit`` kwarg agent_loop.py now passes (P0 2026-08-10).
 
     scoring = _CountingScoring()
     loop = AgentLoop(
@@ -683,10 +783,6 @@ def test_scoring_batch_per_tick_unset_still_uses_the_default(tmp_path, monkeypat
     storage.postings.add(
         JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="Fresh", company="A", source_url="u")
     )
-    storage.postings.list_unscored_for_campaign = lambda campaign_id: [
-        p for p in storage.postings.list_for_campaign(campaign_id)
-        if getattr(p, "viability_score", None) is None
-    ]
 
     scoring = _CountingScoring()
     loop = AgentLoop(

@@ -575,15 +575,18 @@ def test_redline_link_targets_served_review_surface():
 
 # ============================================================ #8 viable count criteria
 @pytest.mark.unit
-def test_viable_count_scores_with_campaign_criteria(tmp_path):
-    """#8 (FR-AGENT-2): _viable_count's fallback score_posting receives the campaign
-    criteria, not None.
-
-    FAIL-BEFORE: score_posting(posting) was called with no criteria, scoring against
-    empty defaults.
+def test_viable_count_never_falls_back_to_live_scoring(tmp_path):
+    """#8 (FR-AGENT-2), UPDATED for the P0 fix (2026-08-10):
+    ``_viable_count`` used to fall back to a live ``score_posting`` call (threaded
+    with the campaign criteria) for any UNSCORED posting -- this test originally
+    proved that threading worked. That whole fallback branch is now GONE: on a
+    campaign with a large unscored backlog, it meant an O(n) LLM-backed call EVERY
+    tick that never even persisted (only ``score_viability`` does) — confirmed live
+    as the root cause of a tick that streamed thousands of wasted LLM calls and
+    never reached scoring/digest/auto-draft at all. ``_viable_count`` now reads the
+    PERSISTED ``viability_score`` only; an unscored posting is simply not counted
+    (yet) and the scorer is never called from here.
     """
-    from applicant.core.entities.search_criteria import SearchCriteria
-
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _make_campaign(storage, run_mode=RunMode.UNTIL_N_VIABLE)
@@ -591,23 +594,16 @@ def test_viable_count_scores_with_campaign_criteria(tmp_path):
         JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="R", company="A", source_url="u")
     )
 
-    crit = SearchCriteria(campaign_id=cid, titles=("engineer",))
-
-    class _Criteria:
-        def get_criteria(self, campaign_id):
-            return crit
-
     scoring = _FakeScoring()
     loop = AgentLoop(
         storage=storage,
         agent_run_service=AgentRunService(storage),
         scoring_service=scoring,
-        criteria_service=_Criteria(),
         orchestrator=orch,
     )
     n = loop._viable_count(cid)
-    assert n == 1
-    assert crit in scoring.criteria_seen  # criteria was threaded into scoring
+    assert n == 0, "an unscored posting is not counted -- never live-scored"
+    assert scoring.criteria_seen == [], "_viable_count must never call score_posting at all"
 
 
 # ============================================================ #9 record_acted ordering
