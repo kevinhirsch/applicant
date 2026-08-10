@@ -23,9 +23,13 @@ _Last updated: 2026-08-10 (midday)_
 - **UI monkey crawl** — 23 broken panels → 0 (campaigns API shape, undefined callJsonApi, Alpine x-for crashes, /api/setup/automation 404, tiers config path). Committed + baked.
 - **Self-drafting works** — 5 DIGESTED drafts for top-fit roles with genuinely tailored materials (verified real Wells Fargo/Slalom/Ally content); Today shows a 22-item review queue. Review-gated, never auto-submitted.
 
+## ✅ DONE this cycle (cont.)
+
+- **APP-LP-1 Landing-page overhaul** — DONE + verified (`4ee732e1`). Command-center root: Pending Reviews (score badges, sorted best-fit, inline Review/Approve/Snooze) → Top New Matches (score + why + Draft/Skip) → Pipeline Funnel → Daily Progress → notifications-connect + System Resources; clutter cut; chat kept. Reused digest/pending endpoints; 1 justified new endpoint (pipeline-summary). Contrast measured (5–11:1) light+dark; **also fixed an app-wide light-mode theme freeze** (buttons/badges/cards) + the sidebar white-on-white + the branding logo. Delivers B5 (review UX). Baked (a0+api image rebuild).
+
 ## 🔜 IN PROGRESS
 
-- **APP-LP-1 Landing-page overhaul** — signed off (`docs/stories/landing-page-overhaul.md`). Dedicated build agent implementing: 4 gadgets (Pending Reviews, Top New Matches, Pipeline Funnel, Daily Progress) in priority order, act-inline + keep chat, cut AI-accounts/Channels clutter, keep notifications + System Resources. Browser-verified, baked. **This delivers B5 (end-to-end review UX).**
+- **Tech-Debt audit (full fan-out, 13 domains)** — parallel auditors → consolidated `docs/TECH-DEBT-REGISTER.md` (UNWIRED / UNEXPOSED / DUP / PARTIAL). Then triage + burn down (expose unexposed, reuse/dedup, wire unwired, delete dead code).
 
 ## ⏳ TODO
 
