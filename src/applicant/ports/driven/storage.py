@@ -75,8 +75,16 @@ class JobPostingRepository(Protocol):
     def add(self, posting: JobPosting) -> None: ...
     def get(self, posting_id: JobPostingId) -> JobPosting | None: ...
     def list_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]: ...
-    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
-        """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring)."""
+    def list_unscored_for_campaign(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring).
+
+        ``limit`` (P0 2026-08-10) bounds the query itself so a caller that only ever
+        consumes a small capped batch per call (``agent_loop.py``'s per-tick scoring
+        loop) never loads the ENTIRE unscored backlog into memory just to use the
+        first few rows. ``None`` (default) is unbounded, unchanged behavior.
+        """
         ...
 
     def count_scored_for_campaign(self, campaign_id: CampaignId) -> int:

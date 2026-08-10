@@ -119,8 +119,10 @@ class _PostingRepo:
             key=lambda p: str(p.id),
         )
 
-    def list_unscored_for_campaign(self, cid: CampaignId) -> list[JobPosting]:
-        return sorted(
+    def list_unscored_for_campaign(
+        self, cid: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        out = sorted(
             (
                 p
                 for p in self._d.values()
@@ -128,6 +130,7 @@ class _PostingRepo:
             ),
             key=lambda p: str(p.id),
         )
+        return out[:limit] if limit is not None else out
 
     def count_for_campaign(self, cid: CampaignId) -> int:
         """Mirrors ``JobPostingRepo.count_for_campaign`` (perf audit #6)."""

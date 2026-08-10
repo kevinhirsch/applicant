@@ -428,13 +428,22 @@ class JobPostingRepo:
         ).all()
         return [_posting_to_entity(r) for r in rows]
 
-    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
-        rows = self._s.scalars(
+    def list_unscored_for_campaign(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        query = (
             select(m.JobPostingModel)
             .where(m.JobPostingModel.campaign_id == campaign_id)
             .where(m.JobPostingModel.viability_score.is_(None))
             .order_by(m.JobPostingModel.id)
-        ).all()
+        )
+        # P0 (2026-08-10): bound the query itself when a caller only needs a small
+        # batch (agent_loop.py's per-tick SCORING_BATCH_PER_TICK cap) -- a campaign
+        # can carry thousands of unscored postings, and materializing all of them
+        # every tick just to use the first few was real, avoidable per-tick cost.
+        if limit is not None:
+            query = query.limit(limit)
+        rows = self._s.scalars(query).all()
         return [_posting_to_entity(r) for r in rows]
 
     def count_for_campaign(self, campaign_id: CampaignId) -> int:
