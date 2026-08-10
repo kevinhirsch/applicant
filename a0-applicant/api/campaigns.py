@@ -37,16 +37,24 @@ def _forward(method: str, path: str, body: dict | None = None, timeout: int = 10
         return {"ok": False, "status": 0, "error": f"{type(e).__name__}: {e}"}
 
 
+def _normalize_list(res: dict) -> dict:
+    """The engine returns a bare campaign array; UI panels expect ``data.campaigns``.
+    Normalize so ``r.data.campaigns`` is always the list."""
+    if res.get("ok") and isinstance(res.get("data"), list):
+        res["data"] = {"campaigns": res["data"]}
+    return res
+
+
 def dispatch(input: dict) -> dict:
     cid = str((input or {}).get("campaign_id") or "").strip()
     action = str((input or {}).get("action") or "").strip().lower()
 
     # Default action is "list" when action is empty or missing
     if not action:
-        return _forward("GET", "/api/campaigns")
+        return _normalize_list(_forward("GET", "/api/campaigns"))
 
     if action == "list":
-        return _forward("GET", "/api/campaigns")
+        return _normalize_list(_forward("GET", "/api/campaigns"))
 
     if action == "create":
         body = {"name": input.get("name")}

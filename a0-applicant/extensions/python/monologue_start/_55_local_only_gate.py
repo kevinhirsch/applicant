@@ -20,7 +20,7 @@ from pathlib import Path
 
 from helpers.extension import Extension
 
-_CFG_PATH = Path(__file__).resolve().parents[4] / "config" / "intel_tiers.yaml"
+_CFG_PATH = Path(__file__).resolve().parents[3] / "config" / "intel_tiers.yaml"
 
 
 def is_local_only() -> bool:

@@ -49,7 +49,7 @@
     <div class="picker">
       <select x-model="selectedCampaignId" @change="loadCriteriaAndSignature()">
         <option value="">Select a campaign…</option>
-        <template x-for="c in campaigns" :key="c.id || c.name">
+        <template x-for="(c, ci) in campaigns" :key="c.id || c.name || ci">
           <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
         </template>
       </select>
@@ -80,7 +80,7 @@
             <table>
               <thead><tr><th>Title</th></tr></thead>
               <tbody>
-                <template x-for="t in criteriaData.titles" :key="t">
+                <template x-for="(t, ti) in criteriaData.titles" :key="ti">
                   <tr><td x-text="t"></td></tr>
                 </template>
               </tbody>
@@ -92,7 +92,7 @@
             <table>
               <thead><tr><th>Location</th></tr></thead>
               <tbody>
-                <template x-for="loc in criteriaData.locations" :key="loc">
+                <template x-for="(loc, li) in criteriaData.locations" :key="li">
                   <tr><td x-text="loc"></td></tr>
                 </template>
               </tbody>
@@ -104,7 +104,7 @@
             <table>
               <thead><tr><th>Mode</th></tr></thead>
               <tbody>
-                <template x-for="wm in criteriaData.work_modes" :key="wm">
+                <template x-for="(wm, wi) in criteriaData.work_modes" :key="wi">
                   <tr><td x-text="wm"></td></tr>
                 </template>
               </tbody>
@@ -116,7 +116,7 @@
             <table>
               <thead><tr><th>Keyword</th></tr></thead>
               <tbody>
-                <template x-for="kw in criteriaData.keywords" :key="kw">
+                <template x-for="(kw, ki) in criteriaData.keywords" :key="ki">
                   <tr><td x-text="kw"></td></tr>
                 </template>
               </tbody>

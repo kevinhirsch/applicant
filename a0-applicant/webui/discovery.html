@@ -41,7 +41,7 @@
     <div class="picker">
       <select x-model="selectedCampaignId" @change="loadSources()">
         <option value="">Select a campaign…</option>
-        <template x-for="c in campaigns" :key="c.id || c.name">
+        <template x-for="(c, ci) in campaigns" :key="c.id || c.name || ci">
           <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
         </template>
       </select>
@@ -62,7 +62,7 @@
         </div>
 
         <div class="grid" x-show="sources.length > 0">
-          <template x-for="s in sources" :key="s.source_key">
+          <template x-for="(s, si) in sources" :key="s.source_key || si">
             <div class="item">
               <div class="title" x-text="s.source_key"></div>
               <div class="meta">

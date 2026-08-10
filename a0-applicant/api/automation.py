@@ -1,7 +1,7 @@
 """AZ3 (#839) — Automation preferences proxy: read/write automation settings.
 
 The Automation panel is served by the a0 shell, but the Applicant engine is internal-only
-("api:8000"). This handler forwards the UI's calls to the engine's "/api/automation" API,
+("api:8000"). This handler forwards the UI's calls to the engine's "/api/setup/automation" API,
 keeping the engine the single source of truth for automation preferences.
 Two actions dispatched by "action": "get" (GET /api/automation), "set" (PUT /api/automation).
 
@@ -42,11 +42,11 @@ def dispatch(input: dict) -> dict:
     action = str((input or {}).get("action") or "").strip().lower()
 
     if action == "get":
-        return _forward("GET", "/api/automation")
+        return _forward("GET", "/api/setup/automation")
 
     if action == "set":
         body = {k: v for k, v in (input or {}).items() if k != "action"}
-        return _forward("PUT", "/api/automation", body)
+        return _forward("PUT", "/api/setup/automation", body)
 
     return {"ok": False, "status": 400, "error": f"unknown automation action {action!r}"}
 

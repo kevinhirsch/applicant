@@ -83,7 +83,7 @@
           <div class="row" x-show="status.latest_stats.completed !== undefined"><span class="label">Completed</span><span class="value" x-text="status.latest_stats.completed"></span></div>
           <div class="row" x-show="status.latest_stats.llm_calls !== undefined"><span class="label">LLM calls</span><span class="value" x-text="status.latest_stats.llm_calls"></span></div>
           <div class="row" x-show="status.latest_stats.tokens_in !== undefined"><span class="label">Tokens in/out</span><span class="value" x-text="status.latest_stats.tokens_in + ' / ' + (status.latest_stats.tokens_out || 0)"></span></div>
-          <div class="row" x-show="status.latest_stats.cost_usd_estimate !== undefined"><span class="label">Est. cost</span><span class="value" x-text="$" + status.latest_stats.cost_usd_estimate.toFixed(4)"></span></div>
+          <div class="row" x-show="status.latest_stats.cost_usd_estimate !== undefined"><span class="label">Est. cost</span><span class="value" x-text="'$' + (status.latest_stats.cost_usd_estimate || 0).toFixed(4)"></span></div>
         </div>
         <div class="err" x-show="statusError" x-text="statusError"></div>
       </div>
@@ -125,7 +125,7 @@
     lines: [], sinceSeq: null, paused: false, levelFilter: "", search: "",
     logError: "", logTimerId: null,
     // status state
-    campaigns: [], campaignId: "__system__", status: null, statusError: "", statusTimerId: null, statusLoading: true,
+    campaigns: [], campaignId: "__system__", status: { scheduler: {}, latest_stats: {} }, statusError: "", statusTimerId: null, statusLoading: true,
     // endpoint state
     endpoints: [], endpointsError: "", endpointLoading: false,
 
@@ -181,7 +181,7 @@
       const r = await callJsonApi("agent_runs", { action: "status", campaign_id: this.campaignId });
       if (!r || !r.ok) { this.statusError = (r && r.error) || "Couldn't reach the agent-run engine."; return; }
       this.statusError = "";
-      this.status = r.data;
+      this.status = r.data || { scheduler: {}, latest_stats: {} };
     },
 
     async fetchEndpoints() {

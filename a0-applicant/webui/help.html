@@ -26,7 +26,7 @@
     .empty { text-align: center; padding: 2rem; color: #6b7280; font-size: 0.9rem; }
   </style>
 </head>
-<body class="ahelp" x-data="window.Alpine.data('ahelp')" x-cloak>
+<div class="ahelp" x-data="ahelp()" x-cloak>
   <h1>Help &amp; Instructions</h1>
   <p style="margin-bottom:1rem;font-size:0.85rem;color:#4b5563;">
     Select a surface below for quick guidance.
@@ -52,7 +52,7 @@
         <span x-text="s.title"></span>
         <span class="toggle" x-text="openId === s.id ? '▾' : '▸'"></span>
       </div>
-      <div class="surface-content" x-show="openId === s.id" x-collapse>
+      <div class="surface-content" x-show="openId === s.id">
         <div x-show="contentLoading">
           Loading details...
         </div>
@@ -77,7 +77,7 @@
   <script>
   (function() {
 const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
-const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
 
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('ahelp', () => ({
       surfaces: [],
@@ -142,5 +142,5 @@ const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
     }));
   })();
   </script>
-</body>
+</div>
 </html>

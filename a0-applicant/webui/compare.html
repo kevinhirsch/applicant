@@ -105,7 +105,7 @@
         </div>
       </template>
 
-      <div class="summary" x-show="result && result.summary" x-text="result.summary">
+      <div class="summary" x-show="result && result.summary" x-text="result?.summary || ''">
       </div>
 
       <div class="empty" x-show="result && (!result.dimensions || result.dimensions.length === 0)">

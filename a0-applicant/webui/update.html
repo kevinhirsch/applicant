@@ -61,7 +61,7 @@
       </button>
 
       <div class="log-box" x-show="logTail.length > 0">
-        <template x-for="line in logTail" x-text="line"></template>
+        <template x-for="(line, li) in logTail" :key="li"><div x-text="line"></div></template>
       </div>
     </div>
   </template>

@@ -31,7 +31,7 @@
   .aprivacy .instructions{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:8px;line-height:1.4}
 </style>
 
-<div class="aprivacy" x-data="window.Alpine.data('aprivacy')">
+<div class="aprivacy" x-data="aprivacy()">
   <h1>Privacy & Sandbox <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=privacy')" title="Help for privacy">?</button></h1>
   <p class="sub">Telemetry preferences and sandbox connection settings</p>
 
@@ -112,7 +112,7 @@
   <script>
   (function() {
 const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
-const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
 
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('aprivacy', () => ({
       loading: false,

@@ -28,7 +28,7 @@
   .achannels .instructions li{margin-bottom:2px}
 </style>
 
-<div class="achannels" x-data="window.Alpine.data('achannels')">
+<div class="achannels" x-data="achannels()">
   <h1>Channels <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=channels')" title="Help for channels">?</button></h1>
   <p class="sub">Notification channel settings</p>
 
@@ -162,7 +162,7 @@
   <script>
   (function() {
 const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
-const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
 
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('achannels', () => ({
       discordWebhook: '',

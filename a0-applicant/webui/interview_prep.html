@@ -24,7 +24,7 @@
   .aintprep .notice{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border-radius:8px;padding:12px 16px;font-size:.85rem;margin-top:.75rem}
 </style>
 
-<div class="aintprep" x-data="window.Alpine.data('aintprep')">
+<div class="aintprep" x-data="aintprep()">
   <h1>Interview Prep <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=interview_prep')" title="Help for interview prep">?</button></h1>
   <p class="sub">Generate an interview-preparation brief for an application</p>
 
@@ -97,7 +97,7 @@
   <script>
   (function() {
 const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
-const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
 
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('aintprep', () => ({
       campaigns: [],

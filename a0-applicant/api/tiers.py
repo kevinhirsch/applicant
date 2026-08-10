@@ -66,7 +66,7 @@ def _load_plane_a_profiles() -> dict:
     """Read Plane-A profiles from config/intel_tiers.yaml (pure local read, no engine call)."""
     import yaml
     from pathlib import Path
-    cfg_path = Path(__file__).resolve().parents[3] / "config" / "intel_tiers.yaml"
+    cfg_path = Path(__file__).resolve().parents[1] / "config" / "intel_tiers.yaml"
     try:
         with open(cfg_path) as f:
             data = yaml.safe_load(f)

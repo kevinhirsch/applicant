@@ -23,7 +23,7 @@
   .ademo .honest-note{background:var(--color-warning-bg,#fff8e1);color:var(--color-warning-text,#8d6e00);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:1rem;line-height:1.4}
 </style>
 
-<div class="ademo" x-data="window.Alpine.data('ademo')">
+<div class="ademo" x-data="ademo()">
   <h1>Demo Data <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=demo')" title="Help for demo data">?</button></h1>
   <p class="sub">Sample data management for testing</p>
 
@@ -84,7 +84,7 @@
   <script>
   (function() {
 const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
-const callJsonApi = (ep, ...a) => window.callJsonApi(_appPrefixPath(ep), ...a);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
 
     if (typeof window.Alpine !== 'undefined') window.Alpine.data('ademo', () => ({
       demo_mode: false,
