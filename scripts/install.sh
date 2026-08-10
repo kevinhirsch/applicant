@@ -838,7 +838,13 @@ fi
 # (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
 phase "Building the local images (a0 shell + companion + engine api)"
 ui_step "Streaming build output below (this is the long part — texlive + browsers)…"
-run_retry "Image build" dc -f "${COMPOSE_FILE}" build a0 companion api
+# Build ONE image at a time (never `build a0 companion api` in a single call):
+# docker compose builds multiple services in PARALLEL, and concurrent builds of
+# a0 + companion + api spiked RAM enough to OOM-kill a 15GB host mid-install
+# (2026-08-07). Sequential caps peak memory to a single image build.
+for _bsvc in a0 companion api; do
+  run_retry "Image build ($_bsvc)" dc -f "${COMPOSE_FILE}" build "$_bsvc"
+done
 
 # --- Phase 4: migrate the schema BEFORE the api serves ----------------------
 # The engine queries app_config AS IT BOOTS, so the schema must exist first. Bring
