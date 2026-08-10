@@ -427,6 +427,10 @@ async def lifespan(app: FastAPI):
         if ensure_system_campaign(container.storage):
             log.info("system_campaign_seeded")
         _boot_health.record("system_campaign_seed", ok=True)
+        from applicant.app.container import ensure_default_campaign
+        if ensure_default_campaign(container.storage):
+            log.info("default_campaign_seeded")
+        _boot_health.record("default_campaign_seed", ok=True)
     except Exception as exc:  # pragma: no cover - tolerate first-boot races
         log.warning("system_campaign_seed_failed", error=str(exc))
         _boot_health.record("system_campaign_seed", ok=False, detail=str(exc))

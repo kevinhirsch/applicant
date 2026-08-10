@@ -296,6 +296,36 @@ def ensure_system_campaign(storage: Any) -> bool:
         return storage.campaigns.get(sid) is not None
 
 
+def ensure_default_campaign(storage: Any) -> bool:
+    """Idempotently seed a default active USER campaign on a fresh install.
+
+    The OOBE onboarding and every active-campaign resolver need at least one
+    non-system campaign: with none, the resolver falls back to the reserved
+    ``__system__`` campaign and onboarding against it fails (fresh-install OOBE
+    was broken, 2026-08). Create one active campaign so first-run works out of the
+    box. No-op on in-memory storage and when any non-system campaign already
+    exists. Returns True iff a row was created.
+    """
+    if getattr(storage, "_session", None) is None:
+        return False
+    from applicant.core.entities.campaign import Campaign
+    from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId, new_id
+
+    try:
+        existing = [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
+    except Exception:
+        return False
+    if existing:
+        return False
+    try:
+        storage.campaigns.add(Campaign(id=CampaignId(new_id()), name="My Job Search", active=True))
+        storage.commit()
+        return True
+    except Exception:  # pragma: no cover - concurrent first-boot seed race
+        storage.rollback()
+        return not [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
+
+
 def _build_remote_view(settings: Settings) -> Any:
     """Pick the remote-view sub-port by REMOTE_VIEW_BACKEND (FR-SANDBOX-2).
 
