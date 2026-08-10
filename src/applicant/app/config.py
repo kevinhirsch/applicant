@@ -8,6 +8,26 @@ from typing import Self
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# EPIC MODEL-CONFIG: the pure per-use-case catalog lives in ``core.model_config`` so
+# both the ``application`` and ``app`` layers can import it (application must not
+# import app). Re-exported below so routers/UI keep one ``config`` import site.
+from applicant.core.model_config import (
+    LLM_BINDING_MODE_DEFAULT,
+    LLM_BINDING_MODE_ENDPOINT,
+    LLM_BINDING_MODES,
+    LLM_USE_CASE_GROUP_AGENTS,
+    LLM_USE_CASE_GROUP_CHAT,
+    LLM_USE_CASE_GROUP_DRAFTING,
+    LLM_USE_CASE_GROUP_EMBEDDINGS,
+    LLM_USE_CASE_GROUP_RESEARCH,
+    LLM_USE_CASE_GROUP_SCORING,
+    LLM_USE_CASE_GROUP_SYSTEM,
+    LLM_USE_CASES,
+    LLM_USE_CASES_BY_KEY,
+    LLMUseCase,
+    llm_use_case_keys,
+)
+
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
 #: The takeover desktop is a containerized, web-streamed Ubuntu desktop (the DE is
 #: an image/arg swap). Default Cinnamon; Xfce, GNOME, Pantheon also selectable.
@@ -126,6 +146,52 @@ PREFIX_CACHE_AUTO = "auto"
 PREFIX_CACHE_ON = "on"
 PREFIX_CACHE_OFF = "off"
 PREFIX_CACHE_MODES = (PREFIX_CACHE_AUTO, PREFIX_CACHE_ON, PREFIX_CACHE_OFF)
+
+
+# --- EPIC MODEL-CONFIG: env-overridable preset-model overlay -----------------
+# The catalog itself is re-exported from ``core.model_config`` (imported at the top).
+# The names below are re-exported so downstream ``from applicant.app.config import
+# LLM_USE_CASES`` sites keep working; this tuple also documents the surface.
+_MODEL_CONFIG_REEXPORTS = (
+    LLM_BINDING_MODE_DEFAULT,
+    LLM_BINDING_MODE_ENDPOINT,
+    LLM_BINDING_MODES,
+    LLM_USE_CASE_GROUP_AGENTS,
+    LLM_USE_CASE_GROUP_CHAT,
+    LLM_USE_CASE_GROUP_DRAFTING,
+    LLM_USE_CASE_GROUP_EMBEDDINGS,
+    LLM_USE_CASE_GROUP_RESEARCH,
+    LLM_USE_CASE_GROUP_SCORING,
+    LLM_USE_CASE_GROUP_SYSTEM,
+    LLM_USE_CASES,
+    LLM_USE_CASES_BY_KEY,
+    LLMUseCase,
+    llm_use_case_keys,
+)
+
+
+def llm_preset_model_overrides(settings: Settings) -> dict[str, str]:
+    """Map the env-overridable preset-model Settings onto use-case keys.
+
+    Returns ``{use_case_key: preset_model}`` for the use cases whose preset model
+    is env-configurable (drafting shares one model across its three sub-cases).
+    Only non-empty overrides are returned; the caller overlays these onto the
+    static ``LLM_USE_CASES`` ``preset_model`` when rendering the Settings surface,
+    so the documented preset is never a hardcoded decision.
+    """
+    out: dict[str, str] = {}
+    if settings.llm_preset_scoring_model:
+        out["scoring"] = settings.llm_preset_scoring_model
+    if settings.llm_preset_drafting_model:
+        for key in ("drafting_cover_letter", "drafting_screening", "drafting_resume"):
+            out[key] = settings.llm_preset_drafting_model
+    if settings.llm_preset_research_model:
+        out["research"] = settings.llm_preset_research_model
+    if settings.llm_preset_chat_model:
+        out["chat"] = settings.llm_preset_chat_model
+    if settings.llm_preset_embeddings_model:
+        out["embeddings"] = settings.llm_preset_embeddings_model
+    return out
 
 
 def resolve_takeover_image(desktop: str, override: str = "") -> str:
@@ -648,6 +714,25 @@ class Settings(BaseSettings):
     # configured and online (keeps tokens free/on-box, FR-LLM-5/NFR-TOKEN-1).
     llm_smart_routing_prefer_local: bool = Field(
         default=True, alias="LLM_SMART_ROUTING_PREFER_LOCAL"
+    )
+    # --- EPIC MODEL-CONFIG: env-overridable preset model names ---------------
+    # The documented per-use-case preset MODELS, overridable via env so nothing
+    # is a hardcoded decision even at the config layer (the UI overlays these
+    # onto ``LLM_USE_CASES`` when rendering the Settings surface). "" for a
+    # use case means "whatever the configured tier ladder serves" (fresh-install
+    # zero-config: everything resolves to the ladder, so the app works OOTB). An
+    # operator's explicit per-use-case binding (persisted by SetupService) always
+    # wins over these presets. See docs/APPLICANT-BACKLOG.md §EPIC MODEL-CONFIG.
+    llm_preset_scoring_model: str = Field(default="", alias="LLM_PRESET_SCORING_MODEL")
+    llm_preset_drafting_model: str = Field(
+        default="deepseek-v4-flash", alias="LLM_PRESET_DRAFTING_MODEL"
+    )
+    llm_preset_research_model: str = Field(
+        default="", alias="LLM_PRESET_RESEARCH_MODEL"
+    )
+    llm_preset_chat_model: str = Field(default="", alias="LLM_PRESET_CHAT_MODEL")
+    llm_preset_embeddings_model: str = Field(
+        default="", alias="LLM_PRESET_EMBEDDINGS_MODEL"
     )
     # --- Verified local-only private mode (P2-11) ----------------------------
     # When ON, the engine's LLM ladder REFUSES every tier whose base_url is not

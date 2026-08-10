@@ -57,6 +57,20 @@
     <span x-show="routing?.health" x-text="routing?.health ? (routing?.health.endpoints_online + '/' + routing?.health.endpoints_total + ' endpoints online, ' + routing?.health.local_available + ' local') : ''"></span>
   </div>
 
+  <!-- MODEL-CONFIG (deferred item): the llm_smart_routing master flag, editable here. -->
+  <div class="inst" x-show="!loading && smartLoaded" style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center">
+    <label style="display:flex;gap:6px;align-items:center">
+      <input type="checkbox" x-model="smart.enabled" @change="saveSmartRouting()">
+      <span>Enable smart routing (master switch)</span>
+    </label>
+    <label style="display:flex;gap:6px;align-items:center">
+      <input type="checkbox" x-model="smart.prefer_local" @change="saveSmartRouting()" :disabled="!smart.enabled">
+      <span>Prefer local when online</span>
+    </label>
+    <span class="save-msg" x-show="smartMsg" x-text="smartMsg"></span>
+    <a href="#" @click.prevent="window.openModal('/plugins/applicant/webui/model_config.html')" style="font-size:.8rem">Per-use-case model configuration →</a>
+  </div>
+
   <template x-if="!loading">
     <div>
       <div class="list" x-show="tiers.length">
@@ -140,10 +154,43 @@
       planeAProfiles: {},
       planeALoading: false,
       planeAError: '',
+      smart: { enabled: false, prefer_local: true },
+      smartLoaded: false,
+      smartMsg: '',
 
       async init() {
         this.loadTiers();
+        this.loadSmartRouting();
         await this.loadPlaneA();
+      },
+
+      async loadSmartRouting() {
+        try {
+          const res = await callJsonApi('model_config', { action: 'get_smart_routing' });
+          if (res && res.ok && res.data) {
+            this.smart = { enabled: !!res.data.enabled, prefer_local: !!res.data.prefer_local };
+            this.smartLoaded = true;
+          }
+        } catch (e) { /* non-fatal: the ladder editor still works */ }
+      },
+
+      async saveSmartRouting() {
+        this.smartMsg = '';
+        try {
+          const res = await callJsonApi('model_config', {
+            action: 'set_smart_routing',
+            enabled: this.smart.enabled,
+            prefer_local: this.smart.prefer_local,
+          });
+          if (res && res.ok) {
+            this.smartMsg = 'Saved.';
+            await this.loadTiers();
+          } else {
+            this.smartMsg = (res && res.error) || 'Failed to save.';
+          }
+        } catch (e) {
+          this.smartMsg = 'Network error saving smart-routing setting.';
+        }
       },
 
       async loadTiers() {

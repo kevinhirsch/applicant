@@ -110,6 +110,29 @@ class EndpointModelIn(BaseModel):
     model: str
 
 
+class UseCaseBindingIn(BaseModel):
+    """EPIC MODEL-CONFIG: bind one use case to the default ladder or an endpoint.
+
+    ``mode="default"`` clears any override; ``mode="endpoint"`` pins ``endpoint_id``
+    (a saved model-endpoint id) + ``model`` as that use case's primary tier.
+    """
+
+    mode: str = "default"
+    endpoint_id: str = ""
+    model: str = ""
+
+
+class SmartRoutingIn(BaseModel):
+    """EPIC MODEL-CONFIG (deferred item): the smart-routing master flag override.
+
+    ``None`` leaves the stored value untouched (partial update). ``enabled`` is the
+    master on/off switch; ``prefer_local`` is the local-preference policy.
+    """
+
+    enabled: bool | None = None
+    prefer_local: bool | None = None
+
+
 class AutomationPrefsIn(BaseModel):
     """Settings > Automation body (dark-engine audit items
     82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
@@ -405,6 +428,186 @@ def set_tiers(body: LadderIn, svc=Depends(get_setup_service)) -> None:
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# === EPIC MODEL-CONFIG: per-use-case model/endpoint configuration ===========
+# The Settings "Model configuration" surface reads/writes these. They REUSE the
+# existing ModelEndpointService registry + SetupService tier ladder — no parallel
+# config system, no forked ladder. A use case with no stored binding walks the
+# shared ladder (fresh-install zero-config), so the app works out of the box.
+def _use_case_endpoint_resolver(container):
+    """Resolve a saved endpoint id -> {base_url, api_key, name} (sealed key too).
+
+    Mirrors ``configure_llm_from_endpoint``'s resolver so ``resolve_use_case_ladder``
+    can materialize a bound endpoint's primary tier server-side; the browser never
+    holds the raw key.
+    """
+    ep_svc = container.model_endpoint_service
+
+    def _resolve(endpoint_id: str):
+        rec = ep_svc.get_endpoint(endpoint_id) if ep_svc is not None else None
+        if rec is None:
+            return None
+        return {
+            "base_url": rec.get("base_url", ""),
+            "api_key": ep_svc._resolve_key(rec),
+            "name": rec.get("name", ""),
+        }
+
+    return _resolve
+
+
+@router.get("/llm/use-cases")
+def get_use_cases(container=Depends(get_container)) -> dict:
+    """Return the per-use-case catalog + current bindings + endpoints for the UI.
+
+    ``use_cases`` = one row per LLM call site (``LLM_USE_CASES``) with its documented
+    preset (env-overridable) and the operator's current binding (``default`` = walk
+    the ladder, or a pinned endpoint/model). ``endpoints`` = the saved model
+    endpoints (no keys) the dropdowns pick from. ``smart_routing`` = the effective
+    master flag (stored override folded over the env default).
+    """
+    from applicant.app.config import LLM_USE_CASES, llm_preset_model_overrides
+
+    svc = container.setup_service
+    settings = container.settings
+    bindings = svc.get_use_case_bindings()
+    overrides = llm_preset_model_overrides(settings)
+    ep_svc = container.model_endpoint_service
+    endpoints = ep_svc.list_endpoints(refresh=False) if ep_svc is not None else []
+    ep_by_id = {e.get("id"): e for e in endpoints}
+
+    rows: list[dict] = []
+    for uc in LLM_USE_CASES:
+        binding = bindings.get(uc.key)
+        row: dict[str, Any] = {
+            "key": uc.key,
+            "label": uc.label,
+            "group": uc.group,
+            "task_type": uc.task_type,
+            "description": uc.description,
+            "preset_target": uc.preset_target,
+            "preset_model": overrides.get(uc.key, uc.preset_model),
+            "mode": (binding or {}).get("mode", "default"),
+            "endpoint_id": (binding or {}).get("endpoint_id", ""),
+            "model": (binding or {}).get("model", ""),
+        }
+        if row["mode"] == "endpoint":
+            ep = ep_by_id.get(row["endpoint_id"])
+            row["endpoint_name"] = (ep or {}).get("name", "")
+            row["endpoint_base_url"] = (ep or {}).get("base_url", "")
+            row["endpoint_missing"] = ep is None
+        rows.append(row)
+
+    stored = svc.get_smart_routing()
+    return {
+        "use_cases": rows,
+        "endpoints": endpoints,
+        "smart_routing": {
+            "enabled": (
+                stored["enabled"]
+                if stored["enabled"] is not None
+                else bool(settings.llm_smart_routing)
+            ),
+            "prefer_local": (
+                stored["prefer_local"]
+                if stored["prefer_local"] is not None
+                else bool(settings.llm_smart_routing_prefer_local)
+            ),
+            "overridden": stored["enabled"] is not None
+            or stored["prefer_local"] is not None,
+        },
+        "routing": _routing_status(container),
+    }
+
+
+@router.put("/llm/use-cases/{use_case}", status_code=status.HTTP_204_NO_CONTENT)
+def set_use_case(
+    use_case: str, body: UseCaseBindingIn, container=Depends(get_container)
+) -> None:
+    """Bind ``use_case`` to the default ladder or a saved endpoint (validated).
+
+    When the use case is pinned to an endpoint, the resolver confirms the endpoint
+    still exists and, on save, the bound endpoint becomes that use case's primary
+    tier with the shared ladder kept below it as the configured fallback.
+    """
+    from applicant.core.errors import InvalidInput
+
+    svc = container.setup_service
+    try:
+        svc.set_use_case_binding(
+            use_case,
+            mode=body.mode,
+            endpoint_id=body.endpoint_id,
+            model=body.model,
+        )
+    except InvalidInput as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/llm/use-cases/{use_case}", status_code=status.HTTP_204_NO_CONTENT)
+def clear_use_case(use_case: str, container=Depends(get_container)) -> None:
+    """Reset a use case to the shared-ladder default (remove any override)."""
+    from applicant.core.errors import InvalidInput
+
+    svc = container.setup_service
+    try:
+        svc.clear_use_case_binding(use_case)
+    except InvalidInput as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/llm/smart-routing")
+def get_smart_routing(container=Depends(get_container)) -> dict:
+    """Return the effective smart-routing master flag (+ live routing status)."""
+    svc = container.setup_service
+    settings = container.settings
+    stored = svc.get_smart_routing()
+    return {
+        "enabled": (
+            stored["enabled"]
+            if stored["enabled"] is not None
+            else bool(settings.llm_smart_routing)
+        ),
+        "prefer_local": (
+            stored["prefer_local"]
+            if stored["prefer_local"] is not None
+            else bool(settings.llm_smart_routing_prefer_local)
+        ),
+        "overridden": stored["enabled"] is not None
+        or stored["prefer_local"] is not None,
+        "routing": _routing_status(container),
+    }
+
+
+@router.put("/llm/smart-routing", status_code=status.HTTP_204_NO_CONTENT)
+def set_smart_routing(body: SmartRoutingIn, container=Depends(get_container)) -> None:
+    """Persist the smart-routing master flag / local-preference override.
+
+    Fires the LLM config-change hook so the live adapter re-resolves its ladder.
+    """
+    container.setup_service.set_smart_routing(
+        enabled=body.enabled, prefer_local=body.prefer_local
+    )
+
+
+# WIRING: register the MODEL-CONFIG routes + consume the bindings/overrides.
+#  1. This module's ``router`` already carries the new /api/setup/llm/use-cases
+#     (GET/PUT/DELETE) and /api/setup/llm/smart-routing (GET/PUT) endpoints; it is
+#     the SAME ``router`` the Integrate step registers in app/routers/__init__.py,
+#     so no extra include is needed beyond the existing setup-router registration.
+#  2. Per-use-case consumption: LLM call sites (scoring_service, material_service,
+#     research_service, chat_service, embeddings, reflection-coach, automation-
+#     engineer) should build their adapter from
+#     ``setup_service.resolve_use_case_ladder(<use_case>, endpoint_resolver=
+#     _use_case_endpoint_resolver(container))`` instead of the shared
+#     ``_resolve_llm_ladder`` when they want their configured binding to win. This
+#     is additive: an unbound use case returns the shared ladder unchanged.
+#  3. Master-flag override: app/container.py builds ``smart_router`` and picks the
+#     cost tier from ``settings.llm_smart_routing`` / ``.._prefer_local`` at boot.
+#     To honor a RUNTIME override, container.py should fold in
+#     ``setup_service.get_smart_routing()`` (stored value wins over the env default)
+#     when arming the router / choosing the cost tier in ``_resolve_llm_ladder``.
 
 
 @router.get("/channels")

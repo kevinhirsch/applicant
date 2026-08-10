@@ -165,6 +165,14 @@ _AUTOMATION_KEY = "automation.prefs"
 #: str | None}``. Set ONLY by ``record_easy_apply_consent`` -- never derived from
 #: a caller-supplied flag on some other request.
 _EASY_APPLY_CONSENT_KEY = "easy_apply.consent"
+#: EPIC MODEL-CONFIG: per-use-case model/endpoint bindings. An OVERRIDE record
+#: ``{use_case_key: {"mode": "default"|"endpoint", "endpoint_id": str, "model":
+#: str}}`` — only use cases the operator explicitly bound are present. A use case
+#: with no stored binding resolves to the shared tier ladder (fresh-install
+#: zero-config: nothing is stored, so every use case walks ``build_ladder``). This
+#: never forks the ladder; a bound endpoint is PREPENDED as the primary tier and
+#: the full ladder remains below it as the fallback path.
+_USE_CASE_BINDINGS_KEY = "llm.use_case_bindings"
 #: Defaults duplicated here (NOT imported from ``applicant.app.config.Settings``)
 #: so this module has zero import-time dependency on the pydantic settings
 #: layer -- the same reason ``get_quiet_hours`` hardcodes "22:00"/"07:00"
@@ -1577,6 +1585,192 @@ class SetupService:
             for t in tiers
         ]
         return TierLadder(tiers=configs)
+
+    # --- EPIC MODEL-CONFIG: per-use-case model/endpoint bindings ------------
+    # These are ADDITIVE and reuse the existing tier ladder + model-endpoint
+    # registry — they never fork the ladder. A use case with no stored binding
+    # resolves to ``build_ladder()`` unchanged, so a fresh install works with
+    # zero config. Binding a use case to a saved endpoint PREPENDS that endpoint
+    # as the primary tier and keeps the full ladder below it as the fallback.
+    def get_use_case_bindings(self) -> dict[str, dict[str, Any]]:
+        """Return the persisted per-use-case bindings (only explicitly-set ones).
+
+        Shape: ``{use_case_key: {"mode": ..., "endpoint_id": ..., "model": ...}}``.
+        Never returns secrets (bindings reference an endpoint by id; the endpoint's
+        own sealed key is resolved live at ``resolve_use_case_ladder`` time).
+        """
+        rec = self._store.get(_USE_CASE_BINDINGS_KEY) or {}
+        out: dict[str, dict[str, Any]] = {}
+        for key, val in rec.items():
+            if isinstance(val, dict):
+                out[key] = {
+                    "mode": val.get("mode", "default"),
+                    "endpoint_id": val.get("endpoint_id", ""),
+                    "model": val.get("model", ""),
+                }
+        return out
+
+    def get_use_case_binding(self, use_case: str) -> dict[str, Any] | None:
+        """Return one use case's stored binding (or ``None`` when unset)."""
+        return self.get_use_case_bindings().get(use_case)
+
+    def set_use_case_binding(
+        self,
+        use_case: str,
+        *,
+        mode: str,
+        endpoint_id: str = "",
+        model: str = "",
+    ) -> None:
+        """Bind a use case to the default ladder or to a saved model endpoint.
+
+        ``mode="default"`` clears any override (walk the shared ladder).
+        ``mode="endpoint"`` requires ``endpoint_id`` + ``model`` and pins that
+        endpoint as the use case's primary tier. The use case key is validated
+        against the ``LLM_USE_CASES`` catalog; an ``endpoint`` binding requires the
+        referenced endpoint to actually exist in the shared registry (so a use case
+        is never bound to nothing).
+        """
+        from applicant.core.model_config import LLM_BINDING_MODES, llm_use_case_keys
+
+        if use_case not in llm_use_case_keys():
+            raise InvalidInput(f"Unknown use case {use_case!r}.")
+        if mode not in LLM_BINDING_MODES:
+            raise InvalidInput(
+                f"mode must be one of {LLM_BINDING_MODES}, got {mode!r}."
+            )
+        rec = dict(self._store.get(_USE_CASE_BINDINGS_KEY) or {})
+        if mode == "default":
+            # Clearing to default removes the override entirely.
+            rec.pop(use_case, None)
+            self._store.set(_USE_CASE_BINDINGS_KEY, rec)
+            log.info("llm_use_case_binding_cleared", use_case=use_case)
+            return
+        endpoint_id = (endpoint_id or "").strip()
+        model = (model or "").strip()
+        if not endpoint_id or not model:
+            raise InvalidInput(
+                "Binding to an endpoint requires both an endpoint and a model."
+            )
+        if self._connection_record(endpoint_id) is None:
+            raise InvalidInput(
+                "That model endpoint no longer exists — add it first or pick another."
+            )
+        rec[use_case] = {"mode": "endpoint", "endpoint_id": endpoint_id, "model": model}
+        self._store.set(_USE_CASE_BINDINGS_KEY, rec)
+        log.info(
+            "llm_use_case_binding_set",
+            use_case=use_case,
+            endpoint_id=endpoint_id,
+            model=model,
+        )
+
+    def clear_use_case_binding(self, use_case: str) -> None:
+        """Reset a use case to the shared-ladder default (remove any override)."""
+        self.set_use_case_binding(use_case, mode="default")
+
+    def resolve_use_case_ladder(
+        self,
+        use_case: str,
+        *,
+        endpoint_resolver: Callable[[str], dict[str, Any] | None] | None = None,
+    ) -> TierLadder | None:
+        """Materialize the tier ladder a given use case should use.
+
+        REUSE, don't fork: the shared ``build_ladder()`` is the base (and the
+        fallback). When the use case is bound to a saved endpoint AND that endpoint
+        resolves, its ``(base_url, key, model)`` is PREPENDED as the primary tier,
+        leaving the full base ladder below it — so "use my chosen endpoint/model,
+        fall back per my configured fallback" holds. When there is no binding, the
+        binding is ``default``, the endpoint was deleted, or no resolver is wired,
+        the base ladder is returned unchanged (graceful, never strands the engine).
+
+        ``endpoint_resolver(endpoint_id)`` returns ``{base_url, api_key, name}`` for
+        a saved endpoint (the caller resolves the sealed key) — the SAME resolver
+        shape ``configure_llm_from_endpoint`` uses. In verified local-only private
+        mode (P2-11) a non-private bound endpoint is dropped, exactly like any tier.
+        """
+        base = self.build_ladder()
+        binding = self.get_use_case_bindings().get(use_case)
+        if not binding or binding.get("mode") != "endpoint" or endpoint_resolver is None:
+            return base
+        endpoint_id = binding.get("endpoint_id", "")
+        model = binding.get("model", "")
+        if not endpoint_id or not model:
+            return base
+        ep = endpoint_resolver(endpoint_id)
+        if ep is None:
+            log.warning(
+                "llm_use_case_endpoint_missing", use_case=use_case, endpoint_id=endpoint_id
+            )
+            return base
+        base_url = ep.get("base_url", "")
+        # Same private-mode invariant as the ladder: a non-private primary is
+        # dropped in local-only mode so a bound cloud endpoint can never leak.
+        if self._local_only:
+            from applicant.core.rules.private_endpoints import is_private_host_url
+
+            if not is_private_host_url(base_url):
+                log.info(
+                    "llm_use_case_binding_excluded_local_only",
+                    use_case=use_case,
+                    base_url=base_url,
+                )
+                return base
+        provider = (
+            "ollama"
+            if ("11434" in base_url or "ollama" in base_url.lower())
+            else "openai"
+        )
+        primary = TierConfig(
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            api_key=ep.get("api_key", ""),
+            context_window=int(ep.get("context_window", 8192) or 8192),
+        )
+        base_tiers = list(base.tiers) if base is not None else []
+        return TierLadder(tiers=[primary, *base_tiers])
+
+    # --- EPIC MODEL-CONFIG: smart-routing master flag (deferred UI item) ----
+    def get_smart_routing(self) -> dict[str, Any]:
+        """Return the persisted smart-routing OVERRIDE (values may be ``None``).
+
+        ``{"enabled": bool|None, "prefer_local": bool|None}`` — ``None`` means "not
+        overridden; use the env/``Settings`` default". Stored alongside the other
+        Automation prefs so it shares the one override record. The read-only routing
+        STATUS (which endpoint is actually serving) stays in the setup router's
+        ``_routing_status``, which reads the live router.
+        """
+        rec = self._store.get(_AUTOMATION_KEY) or {}
+        return {
+            "enabled": rec.get("llm_smart_routing"),
+            "prefer_local": rec.get("llm_smart_routing_prefer_local"),
+        }
+
+    def set_smart_routing(
+        self, *, enabled: bool | None = None, prefer_local: bool | None = None
+    ) -> None:
+        """Persist the smart-routing master flag / local-preference override.
+
+        ``None`` leaves the stored value untouched (partial-update convention). The
+        override is stored so the surface reflects the operator's explicit choice;
+        the composition root should consult it when arming the router (see the
+        WIRING note in the setup router). Fires the LLM config-change hook so the
+        live adapter re-resolves its ladder without a restart.
+        """
+        rec = dict(self._store.get(_AUTOMATION_KEY) or {})
+        if enabled is not None:
+            rec["llm_smart_routing"] = bool(enabled)
+        if prefer_local is not None:
+            rec["llm_smart_routing_prefer_local"] = bool(prefer_local)
+        self._store.set(_AUTOMATION_KEY, rec)
+        log.info(
+            "llm_smart_routing_set",
+            enabled=rec.get("llm_smart_routing"),
+            prefer_local=rec.get("llm_smart_routing_prefer_local"),
+        )
+        self._fire_llm_config_change()
 
     def _tier_to_record(
         self, tier: TierSettings, tier_no: int, key: str | None = None
