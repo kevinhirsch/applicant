@@ -624,6 +624,84 @@ def test_only_unscored_postings_are_scored_each_tick(tmp_path):
 
 
 @pytest.mark.unit
+def test_scoring_batch_per_tick_zero_is_a_real_kill_switch(tmp_path, monkeypatch):
+    """P0 root-cause regression (2026-08-10): ``SCORING_BATCH_PER_TICK=0`` must
+    actually PAUSE scoring for the tick, not silently fall back to the default
+    batch size of 20.
+
+    Before this fix, ``_discover_and_digest`` read the env var but then did
+    ``if _cap <= 0: _cap = _SCORE_BATCH_PER_TICK_DEFAULT`` unconditionally --
+    so an operator who explicitly set ``SCORING_BATCH_PER_TICK=0`` (believing,
+    correctly per the ``auto_draft_top_n`` convention used elsewhere in this
+    same file, that 0 means "off") got a full batch of 20 LLM-backed scoring
+    calls every tick anyway. On this campaign's box the local LLM tier was
+    intermittently failing and the configured DeepSeek fallback tier couldn't
+    accept scoring's structured-output request (a separate, also-fixed bug),
+    so those 20 calls could each burn up to the full HTTP timeout -- a single
+    tick's scoring phase alone could run for many minutes, starving
+    ``_auto_draft_top_viable`` (which runs strictly AFTER scoring in the same
+    tick) and stalling the review queue for hours despite viable, draftable
+    rows sitting ready with budget to spare.
+    """
+    monkeypatch.setenv("SCORING_BATCH_PER_TICK", "0")
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    storage.postings.add(
+        JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="Fresh", company="A", source_url="u")
+    )
+    storage.postings.list_unscored_for_campaign = lambda campaign_id: [
+        p for p in storage.postings.list_for_campaign(campaign_id)
+        if getattr(p, "viability_score", None) is None
+    ]
+
+    scoring = _CountingScoring()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=scoring,
+        digest_service=_FakeDigest(),
+        prefill_service=_FakePrefill(),
+        orchestrator=orch,
+    )
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert scoring.scored == [], (
+        "SCORING_BATCH_PER_TICK=0 must pause scoring entirely for the tick -- "
+        "0 must never be silently promoted back to the default batch size"
+    )
+
+
+@pytest.mark.unit
+def test_scoring_batch_per_tick_unset_still_uses_the_default(tmp_path, monkeypatch):
+    """Companion to the kill-switch test: an UNSET (or blank/invalid) env var is
+    genuinely different from an explicit ``0`` and must still use the default
+    batch size -- only an explicit non-positive value pauses scoring."""
+    monkeypatch.delenv("SCORING_BATCH_PER_TICK", raising=False)
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    storage.postings.add(
+        JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="Fresh", company="A", source_url="u")
+    )
+    storage.postings.list_unscored_for_campaign = lambda campaign_id: [
+        p for p in storage.postings.list_for_campaign(campaign_id)
+        if getattr(p, "viability_score", None) is None
+    ]
+
+    scoring = _CountingScoring()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=scoring,
+        digest_service=_FakeDigest(),
+        prefill_service=_FakePrefill(),
+        orchestrator=orch,
+    )
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert len(scoring.scored) == 1, "an unset batch size must still score the unscored backlog"
+
+
+@pytest.mark.unit
 def test_resume_in_flight_backs_off_human_gated_app(tmp_path):
     """#9: a human-gated app is not re-driven every tick — the per-app backoff skips
     a re-drive until the backoff window elapses."""

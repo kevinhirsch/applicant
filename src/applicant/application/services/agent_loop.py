@@ -81,7 +81,11 @@ _AUTO_DRAFT_TOP_N_DEFAULT = 3
 #: the single local-model box that timed LLM calls out en masse, starved auto-draft,
 #: and held DB sessions long enough to hang the digest/UI. Bounding per tick drains
 #: the backlog steadily while leaving model + DB headroom for material generation and
-#: a responsive UI. Tunable via the SCORING_BATCH_PER_TICK env (0/unset -> default).
+#: a responsive UI. Tunable via the SCORING_BATCH_PER_TICK env: unset/blank/invalid
+#: -> this default; an EXPLICIT ``0`` (or any non-positive value) is a genuine kill
+#: switch that pauses scoring for the tick entirely (mirrors ``auto_draft_top_n``'s
+#: "0 is the kill switch" convention below -- see the P0 2026-08-10 fix at the call
+#: site in ``_discover_and_digest``).
 _SCORE_BATCH_PER_TICK_DEFAULT = 20
 _AUTO_DRAFT_SCREENING_QUESTIONS = (
     "Why are you interested in the {title} role at {company}?",
@@ -781,23 +785,39 @@ class AgentLoop:
             # unscored backlog in small batches so the single local-model box is never
             # thundering-herded (LLM timeouts / degraded scores / starved auto-draft /
             # hung UI). The rest of the backlog is scored on subsequent ticks.
+            #
+            # P0 (2026-08-10): an UNSET/blank/invalid env value uses the default batch
+            # size, but an EXPLICIT non-positive value (``SCORING_BATCH_PER_TICK=0``)
+            # is a genuine kill switch -- mirroring ``auto_draft_top_n``'s "0 is the
+            # kill switch" convention a few lines below in this same file. The old
+            # code conflated the two (``if _cap <= 0: _cap = _SCORE_BATCH_PER_TICK_
+            # DEFAULT`` ran unconditionally), so an operator who explicitly paused
+            # scoring with ``SCORING_BATCH_PER_TICK=0`` silently got a full batch of
+            # 20 LLM-backed calls every tick anyway. On a box where the local tier is
+            # flaky and the fallback tier can't (yet) absorb structured-output calls,
+            # those 20 calls-per-tick could each burn the full HTTP timeout -- stalling
+            # every tick's LATER steps (including auto-draft, which runs strictly
+            # after scoring) for many minutes at a stretch.
             import os as _os
 
-            try:
-                _cap = int(_os.getenv("SCORING_BATCH_PER_TICK", "") or _SCORE_BATCH_PER_TICK_DEFAULT)
-            except (TypeError, ValueError):
+            _raw_cap = _os.getenv("SCORING_BATCH_PER_TICK", "").strip()
+            if not _raw_cap:
                 _cap = _SCORE_BATCH_PER_TICK_DEFAULT
-            if _cap <= 0:
-                _cap = _SCORE_BATCH_PER_TICK_DEFAULT
-            _scored_this_tick = 0
-            for posting in self._unscored_postings(campaign.id):
-                if _scored_this_tick >= _cap:
-                    break
+            else:
                 try:
-                    self._scoring.score_viability(posting.id, criteria)
-                    _scored_this_tick += 1
-                except Exception:  # pragma: no cover - defensive
-                    pass
+                    _cap = int(_raw_cap)
+                except (TypeError, ValueError):
+                    _cap = _SCORE_BATCH_PER_TICK_DEFAULT
+            if _cap > 0:
+                _scored_this_tick = 0
+                for posting in self._unscored_postings(campaign.id):
+                    if _scored_this_tick >= _cap:
+                        break
+                    try:
+                        self._scoring.score_viability(posting.id, criteria)
+                        _scored_this_tick += 1
+                    except Exception:  # pragma: no cover - defensive
+                        pass
         if self._digest is not None:
             # FR-DIG-1: deliver the digest at most ONCE per (campaign, UTC day) so a
             # ~60s scheduler cadence does not re-send the email + Discord ready-ping
