@@ -37,6 +37,29 @@
   .adoc .snapshot-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:6px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
   .adoc .expander{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:.85rem;font-weight:600;padding:6px 10px;background:var(--color-panel,#f2f5f7);border-radius:6px;border:1px solid var(--color-border,#d8e0e6);margin-top:8px;user-select:none}
   .adoc .expander:hover{background:var(--color-hover-bg,#e8ecf0)}
+  /* ── EPIC REVIEW-UX (RUX-1/2/3/5): the decision + refinement surface ─────── */
+  .adoc .rv-card{background:var(--color-background,#fff);color:var(--color-text);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+  .adoc .rv-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
+  .adoc .rv-title{font-weight:600;font-size:1rem}
+  .adoc .rv-company{font-size:.85rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .adoc .rv-source-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .adoc .rv-source-link{color:var(--color-primary,#2d7ff9);font-weight:600;font-size:.85rem;text-decoration:none}
+  .adoc .rv-source-link:hover{text-decoration:underline}
+  .adoc .rv-link-btn{background:none;border:none;color:var(--color-primary,#2d7ff9);font:inherit;font-weight:600;font-size:.85rem;cursor:pointer;padding:0;text-decoration:underline}
+  .adoc .rv-link-btn:disabled{opacity:.55;cursor:not-allowed}
+  .adoc .rv-posted{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+  .adoc .rv-posted.stale{padding:2px 7px;border-radius:10px;background:var(--color-warning-bg,#fef5e6);color:var(--color-warning-text,#8a6d1a);font-weight:600}
+  .adoc .rv-muted{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+  .adoc .rv-decision-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .adoc .rv-ok{background:var(--color-success-bg,#e8f8ef);color:var(--color-success-text,#1a7a3a);border-radius:8px;padding:6px 10px;font-size:.8rem;margin-top:8px}
+  .adoc .rv-status{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:10px;background:var(--color-panel,#e9edf1);color:var(--color-text);margin-left:6px}
+  .adoc .rv-section-label{font-weight:600;font-size:.9rem;display:flex;align-items:center;gap:6px}
+  .adoc .rv-textarea{width:100%;box-sizing:border-box;min-height:100px;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;margin-top:6px;resize:vertical}
+  .adoc .rv-section-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+  .adoc .rv-section-actions input[type=text]{flex:1;min-width:140px;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.8rem}
+  .adoc .rv-reason-input{width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.8rem}
+  .adoc .rv-change-item{font-size:.78rem;padding:4px 0;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .adoc .rv-change-item .rv-field{font-weight:600}
 </style>
 
 <div class="adoc" x-data="documentsPanel()">
@@ -48,6 +71,110 @@
   <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
   <div x-show="!loading && !fatalError">
+    <!-- ══ EPIC REVIEW-UX (RUX-1/2/3/5) — decide + refine the app under review ══
+         THIN UX over the engine /api/review surface (proxy plugins/applicant/review).
+         Shown when opened from a Digest row (context handed over on
+         window.__applicantReview) or when an application is selected below. Nothing
+         here auto-submits — every side effect stays review-gated (FR-RESUME). -->
+    <div class="section" x-show="rvActive">
+      <h2>🧭 Review &amp; Refine</h2>
+      <div class="loading" x-show="rvLoading"><div class="spinner"></div><br>Loading review…</div>
+      <div class="err" x-show="rvError" x-text="rvError"></div>
+
+      <div x-show="rvLoaded && !rvLoading">
+        <!-- RUX-1: source posting link + freshness + cached snapshot fallback -->
+        <div class="rv-card">
+          <div class="rv-head">
+            <div>
+              <div class="rv-title" x-text="rvTitle || 'This role'"></div>
+              <div class="rv-company" x-show="rvCompany" x-text="rvCompany"></div>
+            </div>
+            <div class="rv-posted" :class="{ stale: rvPostedStale }" x-show="rvPostedRelative" x-text="(rvPostedLabel || 'Posted') + ' ' + rvPostedRelative"></div>
+          </div>
+          <div class="rv-source-row">
+            <!-- Only render a real http(s) URL as a live link (never a javascript:/data: URL). -->
+            <a class="rv-source-link" x-show="isHttp(rvSourceUrl)" :href="rvSourceUrl" target="_blank" rel="noopener noreferrer">🔗 View source posting ↗</a>
+            <span class="rv-muted" x-show="!isHttp(rvSourceUrl)">Source link unavailable</span>
+            <button class="rv-link-btn" @click="openReviewSnapshot()" :disabled="rvSnapshotBusy" x-show="rvSnapshotAvailable || !isHttp(rvSourceUrl)">📸 Cached snapshot</button>
+            <span class="rv-muted" x-show="rvSnapshotBusy">opening…</span>
+          </div>
+          <div class="err" x-show="rvSnapshotError" x-text="rvSnapshotError"></div>
+        </div>
+
+        <!-- RUX-2: three-way decision (Discard opens a reason prompt) -->
+        <div class="rv-card">
+          <div class="rv-section-label">Decision</div>
+          <div class="rv-decision-row">
+            <button class="btn primary small" @click="rvDecide('continue')" :disabled="rvBusy">Continue</button>
+            <button class="btn small" @click="rvDecide('save')" :disabled="rvBusy">Save for later</button>
+            <button class="btn danger small" @click="rvStartDiscard()" :disabled="rvBusy">Discard…</button>
+          </div>
+          <div x-show="rvShowDiscardReason" style="margin-top:8px">
+            <input type="text" class="rv-reason-input" x-model="rvDiscardReason" placeholder="Why are you discarding this role? (teaches your profile)" @keyup.enter="rvConfirmDiscard()">
+            <div class="rv-section-actions">
+              <button class="btn danger small" @click="rvConfirmDiscard()" :disabled="rvBusy || !rvDiscardReason.trim()">Confirm discard</button>
+              <button class="btn small" @click="rvShowDiscardReason=false; rvDiscardReason=''">Cancel</button>
+            </div>
+            <div class="rv-muted" style="margin-top:4px">Discard archives the app (reversible) and feeds a negative learning signal.</div>
+          </div>
+          <div class="rv-ok" x-show="rvDecisionMessage" x-text="rvDecisionMessage"></div>
+        </div>
+
+        <!-- RUX-3: per-section inline edit + regenerate; apply-across + regenerate-all -->
+        <div class="rv-section-label" style="margin:10px 0 4px">Generated answers</div>
+        <div class="empty" x-show="rvSections.length === 0" style="padding:14px">Nothing drafted for this role yet.</div>
+        <template x-for="section in rvSections" :key="section.section_id">
+          <div class="rv-card">
+            <div class="rv-section-label">
+              <span x-text="section.label || section.kind || 'Section'"></span>
+              <span class="rv-status" x-show="section.status" x-text="section.status"></span>
+            </div>
+            <textarea class="rv-textarea" x-model="section.content" :disabled="rvSectionBusy[section.section_id]"></textarea>
+            <div class="rv-section-actions">
+              <button class="btn small" @click="rvSaveSection(section)" :disabled="rvSectionBusy[section.section_id]">💾 Save edit</button>
+              <input type="text" x-model="rvSectionFeedback[section.section_id]" placeholder="Feedback for this section…" :disabled="rvSectionBusy[section.section_id]">
+              <button class="btn small" @click="rvRegenerateSection(section)" :disabled="rvSectionBusy[section.section_id]">♻️ Regenerate this section</button>
+            </div>
+            <div class="err" x-show="rvSectionError[section.section_id]" x-text="rvSectionError[section.section_id]"></div>
+          </div>
+        </template>
+
+        <div class="rv-card">
+          <div class="rv-section-label">Refine across the whole app</div>
+          <textarea class="rv-textarea" x-model="rvCrossFeedback" placeholder="One instruction to apply across sections (e.g. 'lead with my platform-migration results')…" :disabled="rvBusy"></textarea>
+          <div class="rv-section-actions">
+            <button class="btn small" @click="rvApplyAcross()" :disabled="rvBusy || !rvCrossFeedback.trim()">Apply feedback across sections</button>
+            <button class="btn small" @click="rvRegenerateAll()" :disabled="rvBusy">🔁 Regenerate whole app</button>
+          </div>
+          <div class="rv-ok" x-show="rvCrossMessage" x-text="rvCrossMessage"></div>
+          <div class="err" x-show="rvCrossError" x-text="rvCrossError"></div>
+        </div>
+
+        <!-- RUX-5: freeform profile feedback → global, transparent, reversible -->
+        <div class="rv-section-label" style="margin:10px 0 4px">Teach my profile</div>
+        <div class="rv-card">
+          <div class="rv-muted">Freeform feedback here updates your whole profile/criteria — it changes ALL future scoring and suggestions, and you can revert it.</div>
+          <textarea class="rv-textarea" x-model="rvProfileFeedback" placeholder="e.g. 'I only want fully-remote roles' or 'weight leadership scope higher'…" :disabled="rvProfileBusy"></textarea>
+          <div class="rv-section-actions">
+            <button class="btn primary small" @click="rvSubmitProfileFeedback()" :disabled="rvProfileBusy || !rvProfileFeedback.trim()">Update my profile</button>
+            <span class="rv-muted" x-show="rvProfileBusy">applying…</span>
+          </div>
+          <div class="err" x-show="rvProfileError" x-text="rvProfileError"></div>
+          <div x-show="rvProfileChanges.length > 0" style="margin-top:8px">
+            <div class="rv-muted" x-show="rvProfileSummary" x-text="rvProfileSummary"></div>
+            <div style="font-weight:600;font-size:.82rem;margin:6px 0 2px">What changed</div>
+            <template x-for="c in rvProfileChanges" :key="c.field">
+              <div class="rv-change-item"><span class="rv-field" x-text="c.field"></span>: <span class="rv-muted" x-text="(c.before ?? '∅')"></span> → <span x-text="(c.after ?? '∅')"></span></div>
+            </template>
+            <div class="rv-section-actions">
+              <button class="btn small" @click="rvRevertProfileFeedback()" :disabled="rvProfileBusy || !rvLastAdjustmentId">↩️ Revert this change</button>
+              <span class="rv-ok" x-show="rvProfileReverted" style="padding:2px 8px">Reverted.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tailoring aggressiveness dial (FR-RESUME-9; live since #187, previously no UI control) -->
     <div class="section">
       <h2>🎚️ Tailoring aggressiveness</h2>
@@ -365,9 +492,51 @@
     screeningReuseResult: "",
     screeningReuseError: "",
 
+    // ── EPIC REVIEW-UX (RUX-1/2/3/5) state — the decision + refinement surface ──
+    rvApplicationId: "",
+    rvPostingId: "",
+    rvCampaignId: "__system__",
+    rvLoading: false,
+    rvLoaded: false,
+    rvError: "",
+    rvBusy: false,
+    rvTitle: "",
+    rvCompany: "",
+    rvSourceUrl: "",
+    rvSnapshotAvailable: false,
+    rvSnapshotBusy: false,
+    rvSnapshotError: "",
+    rvPostedLabel: "",
+    rvPostedRelative: "",
+    rvPostedStale: false,
+    rvShowDiscardReason: false,
+    rvDiscardReason: "",
+    rvDecisionMessage: "",
+    rvSections: [],
+    rvSectionBusy: {},
+    rvSectionError: {},
+    rvSectionFeedback: {},
+    rvCrossFeedback: "",
+    rvCrossMessage: "",
+    rvCrossError: "",
+    rvProfileFeedback: "",
+    rvProfileBusy: false,
+    rvProfileError: "",
+    rvProfileSummary: "",
+    rvProfileChanges: [],
+    rvLastAdjustmentId: "",
+    rvProfileReverted: false,
+
+    get rvActive() {
+      return this.rvLoading || this.rvLoaded || !!this.rvError;
+    },
+
     async init() {
       this.loading = true;
       this.fatalError = "";
+      // RUX: the Digest "Review" button hands the posting context over on a global
+      // right before openModal (modal panels can't read the modal path's query string).
+      this._rvReadContext();
       const r = await callJsonApi("campaigns", { action: "list" });
       if (!r || !r.ok) {
         this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
@@ -375,13 +544,21 @@
       } else {
         const items = (r.data && r.data.campaigns) || [];
         this.campaigns = items;
-        if (items.length > 0) {
+        // Prefer the handed campaign when it exists; else the first campaign.
+        const handed = items.find((c) => (c.id || c.name) === this.rvCampaignId);
+        if (handed) {
+          this.selectedCampaignId = handed.id || handed.name || "";
+        } else if (items.length > 0) {
           this.selectedCampaignId = items[0].id || items[0].name || "";
         }
       }
       this.loading = false;
       if (this.selectedCampaignId) {
         await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
+      }
+      // RUX-1/2/3/5: if we were opened for a specific posting/app, load its review.
+      if (this.rvApplicationId || this.rvPostingId) {
+        await this.loadReview();
       }
     },
 
@@ -578,10 +755,14 @@
       this.screeningReuseResult = "";
       this.screeningReuseError = "";
       if (this.selectedApplicationId) {
+        // RUX: drive the Review & Refine surface off the picked application too.
+        this.rvApplicationId = this.selectedApplicationId;
+        this.rvPostingId = "";
         await Promise.all([
           this.loadDocuments(),
           this.loadSnapshot(),
-          this.loadJdMatch()
+          this.loadJdMatch(),
+          this.loadReview()
         ]);
       }
     },
@@ -708,6 +889,241 @@
         this.snapshotData = typeof snap === "string" ? snap : JSON.stringify(snap, null, 2);
       }
       this.snapshotLoading = false;
+    },
+
+    // ══ EPIC REVIEW-UX (RUX-1/2/3/5) methods ═════════════════════════════════
+
+    // RUX-1: only ever render a real http(s) URL as a live link (defense in depth —
+    // the engine already sanitizes source_url, but never trust it into an href blind).
+    isHttp(url) {
+      url = (url || "").trim();
+      return url.startsWith("http://") || url.startsWith("https://");
+    },
+
+    _rvReadContext() {
+      const ctx = (window.__applicantReview && typeof window.__applicantReview === "object") ? window.__applicantReview : {};
+      this.rvPostingId = ctx.posting_id || "";
+      this.rvApplicationId = ctx.application_id || ctx.posting_id || "";
+      this.rvCampaignId = ctx.campaign_id || "__system__";
+      this.rvTitle = ctx.title || "";
+      this.rvCompany = ctx.company || "";
+      this.rvSourceUrl = (ctx.source_url || "").trim();  // decent first paint before get() lands
+    },
+
+    async loadReview() {
+      this.rvLoading = true;
+      this.rvError = "";
+      const r = await callJsonApi("review", {
+        action: "get",
+        application_id: this.rvApplicationId,
+        posting_id: this.rvPostingId,
+        campaign_id: this.rvCampaignId || this.selectedCampaignId,
+      });
+      if (!r || !r.ok) {
+        this.rvError = (r && r.error) || "Couldn't load this application for review.";
+        this.rvLoading = false;
+        return;
+      }
+      const d = r.data || {};
+      if (d.application_id) this.rvApplicationId = d.application_id;
+      if (d.posting_id) this.rvPostingId = d.posting_id;
+      if (d.campaign_id) this.rvCampaignId = d.campaign_id;
+      if (d.title) this.rvTitle = d.title;
+      if (d.company) this.rvCompany = d.company;
+      this.rvSourceUrl = (d.source_url || this.rvSourceUrl || "").trim();
+      this.rvSnapshotAvailable = !!d.snapshot_available;
+      this.rvPostedLabel = d.posted_label || "";
+      this.rvPostedRelative = d.posted_relative || "";
+      this.rvPostedStale = !!d.posted_stale;
+      this.rvSections = Array.isArray(d.sections) ? d.sections : [];
+      this.rvLoaded = true;
+      this.rvLoading = false;
+    },
+
+    // RUX-1: cached-snapshot fallback for a pulled/unreachable listing.
+    async openReviewSnapshot() {
+      this.rvSnapshotBusy = true;
+      this.rvSnapshotError = "";
+      const r = await callJsonApi("review", {
+        action: "snapshot",
+        posting_id: this.rvPostingId,
+        application_id: this.rvApplicationId,
+      });
+      this.rvSnapshotBusy = false;
+      if (r && r.ok && r.data && r.data.html) {
+        const blob = new Blob([r.data.html], { type: "text/html" });
+        window.open(URL.createObjectURL(blob), "_blank", "noopener");
+      } else {
+        this.rvSnapshotError = (r && r.error) || "No cached snapshot is available for this role.";
+      }
+    },
+
+    // RUX-2: three-way decision — Continue / Save for later / Discard-with-reason.
+    rvStartDiscard() {
+      this.rvShowDiscardReason = true;
+      this.rvDecisionMessage = "";
+    },
+
+    async rvDecide(decision, reason) {
+      this.rvBusy = true;
+      this.rvDecisionMessage = "";
+      const r = await callJsonApi("review", {
+        action: "decide",
+        application_id: this.rvApplicationId,
+        posting_id: this.rvPostingId,
+        campaign_id: this.rvCampaignId,
+        decision: decision,
+        reason: reason || "",
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvError = (r && r.error) || "Couldn't record that decision.";
+        return false;
+      }
+      const d = r.data || {};
+      if (decision === "continue") this.rvDecisionMessage = "Continuing — refine the answers below, then approve to prefill.";
+      else if (decision === "save") this.rvDecisionMessage = "Saved for later" + (d.bucket ? (" (" + d.bucket + ")") : "") + " — it's out of your active queue with a reminder nudge.";
+      else if (decision === "discard") this.rvDecisionMessage = "Discarded (archived, reversible). Similar roles will rank lower.";
+      return true;
+    },
+
+    async rvConfirmDiscard() {
+      const reason = (this.rvDiscardReason || "").trim();
+      if (!reason) return;
+      const ok = await this.rvDecide("discard", reason);
+      if (ok) {
+        this.rvShowDiscardReason = false;
+        this.rvDiscardReason = "";
+      }
+    },
+
+    // RUX-3: per-section review — inline edit, regenerate one, apply-across, regen-all.
+    _rvApplySection(updated) {
+      if (!updated || !updated.section_id) return;
+      const i = this.rvSections.findIndex((s) => s.section_id === updated.section_id);
+      if (i >= 0) this.rvSections[i] = { ...this.rvSections[i], ...updated };
+    },
+
+    async rvSaveSection(section) {
+      const id = section.section_id;
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: true };
+      this.rvSectionError[id] = "";
+      const r = await callJsonApi("review", {
+        action: "edit_section",
+        application_id: this.rvApplicationId,
+        section_id: id,
+        content: section.content || "",
+      });
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: false };
+      if (!r || !r.ok) {
+        this.rvSectionError[id] = (r && r.error) || "Couldn't save that edit.";
+        return;
+      }
+      if (r.data && r.data.section) this._rvApplySection(r.data.section);
+    },
+
+    async rvRegenerateSection(section) {
+      const id = section.section_id;
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: true };
+      this.rvSectionError[id] = "";
+      const r = await callJsonApi("review", {
+        action: "regenerate_section",
+        application_id: this.rvApplicationId,
+        section_id: id,
+        feedback: (this.rvSectionFeedback[id] || "").trim(),
+      });
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: false };
+      if (!r || !r.ok) {
+        this.rvSectionError[id] = (r && r.error) || "Couldn't regenerate that section.";
+        return;
+      }
+      if (r.data && r.data.section) this._rvApplySection(r.data.section);
+      this.rvSectionFeedback[id] = "";
+    },
+
+    async rvApplyAcross() {
+      const feedback = (this.rvCrossFeedback || "").trim();
+      if (!feedback) return;
+      this.rvBusy = true;
+      this.rvCrossMessage = "";
+      this.rvCrossError = "";
+      const r = await callJsonApi("review", {
+        action: "apply_feedback",
+        application_id: this.rvApplicationId,
+        feedback: feedback,
+        // omitting section_ids means "all sections"
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvCrossError = (r && r.error) || "Couldn't apply that feedback.";
+        return;
+      }
+      if (r.data && Array.isArray(r.data.sections)) this.rvSections = r.data.sections;
+      this.rvCrossMessage = "Applied across sections. Review the updated drafts above.";
+      this.rvCrossFeedback = "";
+    },
+
+    async rvRegenerateAll() {
+      this.rvBusy = true;
+      this.rvCrossMessage = "";
+      this.rvCrossError = "";
+      const r = await callJsonApi("review", {
+        action: "regenerate_all",
+        application_id: this.rvApplicationId,
+        feedback: (this.rvCrossFeedback || "").trim(),
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvCrossError = (r && r.error) || "Couldn't regenerate the application.";
+        return;
+      }
+      if (r.data && Array.isArray(r.data.sections)) this.rvSections = r.data.sections;
+      this.rvCrossMessage = "Regenerated the whole application. Everything stays review-gated until you approve.";
+    },
+
+    // RUX-5: freeform profile feedback → global, transparent, reversible.
+    async rvSubmitProfileFeedback() {
+      const feedback = (this.rvProfileFeedback || "").trim();
+      if (!feedback) return;
+      this.rvProfileBusy = true;
+      this.rvProfileError = "";
+      this.rvProfileReverted = false;
+      const r = await callJsonApi("review", {
+        action: "profile_feedback",
+        application_id: this.rvApplicationId,
+        campaign_id: this.rvCampaignId,
+        feedback: feedback,
+      });
+      this.rvProfileBusy = false;
+      if (!r || !r.ok) {
+        this.rvProfileError = (r && r.error) || "Couldn't update your profile.";
+        return;
+      }
+      const d = r.data || {};
+      this.rvProfileSummary = d.summary || "Your profile was updated. Future scoring will reflect this.";
+      this.rvProfileChanges = Array.isArray(d.changes) ? d.changes : [];
+      this.rvLastAdjustmentId = d.adjustment_id || "";
+      this.rvProfileFeedback = "";
+    },
+
+    async rvRevertProfileFeedback() {
+      if (!this.rvLastAdjustmentId) return;
+      this.rvProfileBusy = true;
+      this.rvProfileError = "";
+      const r = await callJsonApi("review", {
+        action: "revert_feedback",
+        campaign_id: this.rvCampaignId,
+        adjustment_id: this.rvLastAdjustmentId,
+      });
+      this.rvProfileBusy = false;
+      if (!r || !r.ok) {
+        this.rvProfileError = (r && r.error) || "Couldn't revert that change.";
+        return;
+      }
+      this.rvProfileReverted = true;
+      this.rvProfileChanges = [];
+      this.rvProfileSummary = "";
+      this.rvLastAdjustmentId = "";
     }
   }));
   })();

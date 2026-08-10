@@ -50,14 +50,30 @@ class TestDigestPanel:
         # Assert per-item message rendering
         assert "s.message" in html, "Each shortfall item must render the message field"
 
-    def test_deep_link_to_documents_review(self, html):
-        """Each digest row has a deep-link/button into the documents review surface carrying application_id."""
+    def test_deep_link_to_review_modal(self, html):
+        """Each digest row opens the Review modal (documents.html) carrying the posting
+        context via a global handoff (modal panels can't read the modal path's query)."""
         assert "window.openModal" in html, "Must use shell's openModal convention"
-        assert "documents.html" in html, "Must navigate to the documents panel"
-        assert "application_id" in html, "Must reference application_id in the deep-link"
+        assert "documents.html" in html, "Must navigate to the review modal (documents.html)"
+        assert "posting_id" in html, "Must carry the posting_id into the review context"
+        assert "__applicantReview" in html, "Must hand the posting context over on the global"
         assert "Review" in html, "The deep-link button should be labeled 'Review'"
         # Confirm the link is per-row (in the actions div or with template x-for)
         assert 'x-for="row in rows"' in html, "Must be inside the row template"
+
+    def test_source_posting_link_on_row(self, html):
+        """RUX-1: a prominent 'View source posting' link opens the live listing in a
+        new tab, sourced from the row's link/source_url, with opener-leak protection."""
+        assert "View source posting" in html or "View source" in html
+        assert 'target="_blank"' in html
+        assert "noopener" in html
+        # Sourced from the digest row payload (build_digest emits row.link = source_url).
+        assert "row.link" in html or "source_url" in html
+
+    def test_cached_snapshot_fallback_on_row(self, html):
+        """RUX-1: when the source URL is pulled/unreachable, a cached snapshot is offered."""
+        assert 'action: "snapshot"' in html
+        assert "snapshot" in html.lower()
 
     def test_posting_feedback_wired(self, html):
         assert 'callJsonApi("feedback",' in html
