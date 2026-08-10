@@ -1,14 +1,20 @@
 # Slice S1 — Remote-repairs-local LLM. docs/stories/self-healing.md#s1-remote-repairs-local-llm
 # Grounds: src/applicant/adapters/llm/openai_compatible.py (tier ladder), src/applicant/
+# application/services/llm_wedge_detector.py (the detection + escalation-verified + loud-alert
+# half of this slice, wired into src/applicant/app/container.py), src/applicant/
 # application/services/model_endpoint_service.py (endpoint ping), MODEL-RESILIENCY fallback
 # tier (docs/APPLICANT-BACKLOG.md), the new scoped restart control-plane channel (gap — see
 # ADR-0008 Consequences).
 #
-# NOT YET WIRED — see epic_self_healing.feature header for the collection/@pending convention.
+# WIRED via tests/bdd/steps/test_self_healing_s1_steps.py's scenarios() call. Per the task
+# scoping this slice's build was split in two: DETECTION + ESCALATION-VERIFIED + LOUD-ALERT
+# (this SHIPS, scenario 1 below is GREEN) vs. the cross-box "restart the wedged local vLLM
+# host" action (explicitly OUT OF SCOPE — flagged in ADR-0008 as needing infra; a separate
+# vLLM-host watchdog owns the actual restart). Scenarios 2 and 3 stay @pending for that reason,
+# with an honest failing probe (see the step module's docstring for the @pending convention).
 
 Feature: Remote LLM repairs the local LLM
 
-  @pending
   Scenario: Inference escalates to remote when local is unreachable
     Given the local vLLM endpoint is unreachable
     When a scoring or chat call is dispatched through the tier ladder

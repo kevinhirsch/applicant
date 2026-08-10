@@ -954,6 +954,27 @@ def build_container(settings: Settings | None = None) -> Container:
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).
     setup_service.register_llm_config_change_hook(llm.refresh_ladder)
+    # ADR-0008 (EPIC SELF-HEAL) Slice S1: wrap the shared LLM singleton so EVERY
+    # completion (chat, scoring, drafting, résumé parse-verify, ...) is observed
+    # for a wedged/unreachable primary tier -- the real incident this closes: a
+    # local vLLM whose API stayed up but generation deadlocked, silently
+    # freezing scoring + auto-draft for ~5.5 hours with no alert. Reassigning
+    # ``llm`` HERE (before any consumer below captures a reference) means every
+    # downstream service transparently gets the observed adapter -- the wrapper
+    # is a pure pass-through decorator (see `WedgeDetectingLLM`), so behavior is
+    # unchanged for every existing call site. The detector's alert channel
+    # (`NotificationService`) is built later in this function and late-bound in
+    # below once it exists (see `llm_wedge_detector.set_notifications`).
+    from applicant.application.services.llm_wedge_detector import (
+        LlmWedgeDetector,
+        WedgeDetectingLLM,
+    )
+    from applicant.core.events import event_bus as _event_bus
+
+    llm_wedge_detector = LlmWedgeDetector(
+        bus=_event_bus, threshold=settings.llm_wedge_detection_threshold
+    )
+    llm = WedgeDetectingLLM(llm, llm_wedge_detector)
     # P1-1a: late-bind the ladder into the parse-verify layer (the parser was built
     # before ``llm`` existed). The singleton resolves its ladder lazily, so a model
     # connected at runtime is picked up on the next résumé ingest automatically.
@@ -1228,6 +1249,9 @@ def build_container(settings: Settings | None = None) -> Container:
     takeover_publisher = make_takeover_publisher()
     agent_run_service = AgentRunService(storage, realtime=agent_publisher)
     notification_service = NotificationService(notification, realtime=notif_publisher)
+    # ADR-0008 Slice S1: late-bind the wedge detector's alert channel now that it
+    # exists (it was built earlier alongside ``llm``, before this service did).
+    llm_wedge_detector.set_notifications(notification_service)
     pending_actions_service = PendingActionsService(storage, realtime=notif_publisher)
     digest_service = DigestService(
         storage,

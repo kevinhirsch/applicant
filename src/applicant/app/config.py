@@ -209,6 +209,16 @@ class Settings(BaseSettings):
         default=65536, ge=1, alias="LLM_FALLBACK_CONTEXT_WINDOW"
     )
 
+    # --- Local-LLM wedge detector (ADR-0008 / EPIC SELF-HEAL, Slice S1) -------
+    # How many CONSECUTIVE primary-tier completion failures (climbed past or
+    # ladder-exhausted) declare a "wedge" rather than ordinary transient noise
+    # the ladder already absorbs silently -- see
+    # `application/services/llm_wedge_detector.py`. Mirrors
+    # `SCORING_MAX_TRANSIENT_RETRIES`'s bounded-retry-count idiom.
+    llm_wedge_detection_threshold: int = Field(
+        default=3, ge=1, alias="LLM_WEDGE_DETECTION_THRESHOLD"
+    )
+
     # Truth policy for the material fabrication guard (P1-13). "balanced" (default):
     # the model may freely rewrite/restructure; invented *facts* are surfaced for
     # review, not hard-blocked (safe — a human approves every send). "strict": any

@@ -123,3 +123,48 @@ class OutcomeRecorded(DomainEvent):
     outcome_type: str = ""
     source: str = ""
     reason: str = ""
+
+
+# ---------------------------------------------------------------------------
+# EPIC SELF-HEAL / ADR-0008 — deterministic detection layer
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LocalLlmWedgeDetected(DomainEvent):
+    """ADR-0008 detector #1/#3: the local/primary LLM tier is wedged, not just
+    transiently blipping (`application/services/llm_wedge_detector.py`).
+
+    Emitted once the primary tier has failed ``consecutive_failures`` calls in a
+    row (>= the configured detection threshold) -- a single failed call never
+    fires this, which is what distinguishes a genuine wedge from ordinary
+    transient noise the tier ladder already absorbs silently. ``escalated``
+    records whether a configured fallback tier caught the call (True -- the
+    ladder's existing climb-on-failure logic answered instead, ADR-0008 layer-
+    3(a)) or every tier was exhausted with nothing left to answer (False).
+    ``fallback_configured`` distinguishes "no fallback exists" from "the
+    fallback tier is also failing" when ``escalated`` is False.
+    """
+
+    consecutive_failures: int = 0
+    tier_count: int = 0
+    fallback_configured: bool = False
+    escalated: bool = False
+    last_error: str = ""
+
+
+@dataclass(frozen=True)
+class RemediationRequested(DomainEvent):
+    """A detector has identified a condition an external remediator/watchdog
+    could act on (ADR-0008 layer-2/3(b)).
+
+    Purely informational: emitting this event never triggers an action itself.
+    Slice S1 emits it for a wedged local LLM but does NOT consume it -- the
+    actual cross-box "restart the local model host" remediation is explicitly
+    out of scope for S1 (flagged in ADR-0008 as needing infra; a separate
+    vLLM-host watchdog is the intended consumer of this signal).
+    """
+
+    detector: str = ""
+    target: str = ""
+    reason: str = ""

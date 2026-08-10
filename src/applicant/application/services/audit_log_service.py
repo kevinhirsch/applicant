@@ -25,9 +25,11 @@ from applicant.core.events import (
     DomainEvent,
     DomainEventBus,
     JobDiscovered,
+    LocalLlmWedgeDetected,
     MaterialApproved,
     OutcomeRecorded,
     PendingActionRaised,
+    RemediationRequested,
     ViabilityScored,
     event_bus,
 )
@@ -48,6 +50,11 @@ _ACTION_MAP: dict[type[DomainEvent], str] = {
     PendingActionRaised: "pending_action",
     MaterialApproved: "material_approved",
     OutcomeRecorded: "outcome_recorded",
+    # ADR-0008 (EPIC SELF-HEAL) S1 — deterministic detection layer. New entries,
+    # not a new map/store: a detector's typed event lands on the SAME audit trail
+    # as every other domain event (ADR-0008 §5 Auditability).
+    LocalLlmWedgeDetected: "detector_fired",
+    RemediationRequested: "remediation_requested",
 }
 
 
@@ -192,6 +199,14 @@ class AuditLogService:
             return str(event.campaign_id or "")
         if isinstance(event, MaterialApproved):
             return str(event.document_id or "")
+        if isinstance(event, LocalLlmWedgeDetected):
+            outcome = "escalated to fallback" if event.escalated else "no tier answered"
+            return (
+                f"local LLM wedged after {event.consecutive_failures} consecutive "
+                f"failures ({outcome})"
+            )
+        if isinstance(event, RemediationRequested):
+            return event.reason or event.detector
         return ""
 
     @staticmethod
@@ -205,6 +220,16 @@ class AuditLogService:
             return {"outcome_type": event.outcome_type, "source": event.source}
         if isinstance(event, PendingActionRaised):
             return {"action_kind": event.action_kind}
+        if isinstance(event, LocalLlmWedgeDetected):
+            return {
+                "consecutive_failures": event.consecutive_failures,
+                "tier_count": event.tier_count,
+                "fallback_configured": event.fallback_configured,
+                "escalated": event.escalated,
+                "last_error": event.last_error,
+            }
+        if isinstance(event, RemediationRequested):
+            return {"detector": event.detector, "target": event.target}
         return {}
 
     # -- id resolution -------------------------------------------------------
