@@ -75,6 +75,14 @@ _APPROVAL_START_FAILURE_CAP = 5
 #: (review-gated) — this NEVER calls approve(), because approve() triggers the
 #: live camoufox browser pipeline.
 _AUTO_DRAFT_TOP_N_DEFAULT = 3
+
+#: RESILIENT (2026-08-10): max postings viability-scored per tick. The scorer used
+#: to walk the ENTIRE unscored backlog (thousands) every tick — a thundering herd on
+#: the single local-model box that timed LLM calls out en masse, starved auto-draft,
+#: and held DB sessions long enough to hang the digest/UI. Bounding per tick drains
+#: the backlog steadily while leaving model + DB headroom for material generation and
+#: a responsive UI. Tunable via the SCORING_BATCH_PER_TICK env (0/unset -> default).
+_SCORE_BATCH_PER_TICK_DEFAULT = 20
 _AUTO_DRAFT_SCREENING_QUESTIONS = (
     "Why are you interested in the {title} role at {company}?",
     "How many years of relevant professional experience do you have?",
@@ -769,9 +777,25 @@ class AgentLoop:
         # The LearningModel is loaded once per tick inside ScoringService via the
         # criteria-aware score; here we only feed it the unscored backlog.
         if self._scoring is not None:
+            # Bounded per-tick scoring (see _SCORE_BATCH_PER_TICK_DEFAULT): drain the
+            # unscored backlog in small batches so the single local-model box is never
+            # thundering-herded (LLM timeouts / degraded scores / starved auto-draft /
+            # hung UI). The rest of the backlog is scored on subsequent ticks.
+            import os as _os
+
+            try:
+                _cap = int(_os.getenv("SCORING_BATCH_PER_TICK", "") or _SCORE_BATCH_PER_TICK_DEFAULT)
+            except (TypeError, ValueError):
+                _cap = _SCORE_BATCH_PER_TICK_DEFAULT
+            if _cap <= 0:
+                _cap = _SCORE_BATCH_PER_TICK_DEFAULT
+            _scored_this_tick = 0
             for posting in self._unscored_postings(campaign.id):
+                if _scored_this_tick >= _cap:
+                    break
                 try:
                     self._scoring.score_viability(posting.id, criteria)
+                    _scored_this_tick += 1
                 except Exception:  # pragma: no cover - defensive
                     pass
         if self._digest is not None:

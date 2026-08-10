@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 48" role="img" aria-label="Applicant">
+  <!-- Applicant wordmark. Rendered as a CSS mask (mask-image) filled with the
+       theme's --color-text, so only the glyph shapes matter. Replaces the base
+       Agent Zero wordmark in the overlay. -->
+  <text x="2" y="37" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="0.5">Applicant</text>
+</svg>
