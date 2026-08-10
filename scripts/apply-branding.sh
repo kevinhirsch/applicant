@@ -46,5 +46,11 @@ rm -f "$TARGET_DIR/webui/README.md"
 echo "Applying string substitution: 'Agent Zero' -> '$APP_NAME', 'agent0ai' -> '$APP_SHORT_NAME'"
 find "$TARGET_DIR/webui" -type f -name '*.html' ! -path '*/node_modules/*' -print0 | xargs -0 -r sed -i -e "s/Agent Zero/${APP_NAME}/g" -e "s/agent0ai/${APP_SHORT_NAME}/g"
 find "$TARGET_DIR/webui" -type f -name '*.json' ! -path '*/node_modules/*' -print0 | xargs -0 -r sed -i -e "s/Agent Zero/${APP_NAME}/g" -e "s/agent0ai/${APP_SHORT_NAME}/g"
+# .js display strings (welcome/settings Alpine stores etc.) leaked the upstream
+# codename too (found by the visual monkey-crawl). Substitute ONLY the spaced
+# display name "Agent Zero" -> APP_NAME here — deliberately NOT "agent0ai", which
+# appears in functional identifiers/URLs in JS and must not be rewritten. Skip
+# vendored libraries (vendor/, node_modules/).
+find "$TARGET_DIR/webui" -type f -name '*.js' ! -path '*/node_modules/*' ! -path '*/vendor/*' -print0 | xargs -0 -r sed -i -e "s/Agent Zero/${APP_NAME}/g"
 
 echo "Branding applied from overlay"
