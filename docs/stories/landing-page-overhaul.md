@@ -55,6 +55,8 @@
 - [ ] Upstream clutter removed (AI-accounts, Connect-Channels marketing cards); notifications-connect + System Resources retained; chat box retained at top.
 - [ ] No "Agent Zero" branding anywhere on the page.
 - [ ] Passes the visual monkey-crawl: **zero console/render errors**, responsive, theme-consistent (light + dark).
+- [ ] **Visually tight + meets good HIG** (Apple Human Interface Guidelines — Kevin runs a macOS-Tahoe-styled desktop): clear visual hierarchy; consistent spacing on a grid (uniform paddings/margins/gaps via theme tokens, no ad-hoc values); purposeful whitespace (not cramped, not sparse); everything aligned (no ragged edges, consistent card widths); consistent component styling; a real typographic scale; adequate contrast + comfortable click targets; restraint.
+- [ ] **Zoomed screenshot inspection of EVERY region** (not just a full-page shot): header/logo, chat box, each of the 4 gadgets individually, the gaps/dividers between sections, and the page edges — each inspected close-up (device_scale_factor 2) for pixel-level defects (misalignment, inconsistent padding, clipped/overflowing text, uneven spacing, weak contrast, off-grid items). Iterate screenshot→zoom→fix→re-screenshot until **zero visible defects** in the zoomed views, in **both light and dark**. Zoomed screenshots attached for review.
 - [ ] Every gadget **degrades gracefully** (skeleton / empty state) if its data source is slow or empty — never hangs the page.
 - [ ] Fixed **in source** (`a0-webui/` + `a0-applicant/`), committed + pushed, **baked into the image** so a fresh install ships it.
 - [ ] **Browser-verified with before/after screenshots.**
