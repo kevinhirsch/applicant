@@ -780,6 +780,29 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
     )
 
+    # RESILIENT (2026-08-10): auto-register the configured LLM base_url as a model
+    # endpoint on first boot so a FRESH install has a working chat/routing endpoint
+    # out of the box. The tier ladder alone does NOT populate the SmartRouter's
+    # endpoint pool, so on a clean install chat logged "llm_router_no_endpoints" and
+    # the endpoint had to be added by hand before anything could route. Idempotent:
+    # add_endpoint dedupes on base_url, and we only seed when the pool is empty.
+    # Wrapped so a momentarily-unreachable model at boot never fails startup.
+    if settings.llm_configured and settings.llm_base_url:
+        try:
+            if not model_endpoint_service.list_endpoints(refresh=False):
+                model_endpoint_service.add_endpoint(
+                    base_url=settings.llm_base_url,
+                    api_key=settings.llm_api_key or "",
+                    name="Local model (auto-registered)",
+                    probe=True,
+                )
+        except Exception:
+            import structlog
+
+            structlog.get_logger().warning(
+                "model_endpoint_autoregister_failed", exc_info=True
+            )
+
     # FR-MIND-8: bound the context (compress middle turns over a token budget) and
     # apply provider prefix-cache breakpoints where supported. Threshold 0 (default)
     # keeps the manager a no-op, so default behavior is unchanged.

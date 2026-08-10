@@ -367,6 +367,16 @@ class DigestService:
             # viability threshold — the user asked for it explicitly, so the digest
             # keeps it and says (honestly) how it scored instead.
             user_added = (posting.source_key or "") == USER_ADDED_SOURCE_KEY
+            # PERF / DRAFT-UNBLOCK (2026-08-10): never LLM-re-score the unscored
+            # backlog synchronously in the digest hot path. build_digest ran
+            # score_for_digest on EVERY posting (5k+), fresh-scoring the ~4k unscored
+            # ones on each cache-miss rebuild -> the digest GET timed out (>40s) AND
+            # the scheduler's auto-draft (which calls build_digest) never finished
+            # within its tick, so ZERO applications were ever drafted. The background
+            # scoring pass scores postings over time; the digest only READS
+            # already-scored ones. User-added postings are always kept (FR-DIG).
+            if getattr(posting, "viability_score", None) is None and not user_added:
+                continue
             row = {
                 "posting_id": posting.id,
                 "title": posting.title,
@@ -382,22 +392,35 @@ class DigestService:
                 "easy_apply": bool(getattr(posting, "easy_apply", False)),
             }
             if self._scoring is not None:
-                # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
-                # digest GETs); fall back to plain score_posting for lightweight doubles.
-                score_fn = getattr(self._scoring, "score_for_digest", None) or self._scoring.score_posting
-                scoring = score_fn(posting, criteria)
+                # RESILIENT (2026-08-10): read the STORED viability score; NEVER call
+                # score_for_digest in this hot path. That scorer LLM-re-scores whenever
+                # a posting's criteria_sig/learning_sig differs from the persisted one,
+                # so every cache-miss digest rebuild re-scored the whole scored set ->
+                # the digest GET timed out (>45s) and auto-draft (which calls
+                # build_digest) never finished its tick -> ZERO applications drafted.
+                # The background scoring pass owns fresh scoring; the digest only READS.
+                # A stale-but-present score is fine (the next background pass refreshes).
+                from applicant.core.entities.viability_scoring import ViabilityScoring
+                persisted = getattr(posting, "viability_score", None)
+                _rat = getattr(posting, "rationale", None)
+                rationale_text = (
+                    str(_rat.get("text")) if isinstance(_rat, dict) and _rat.get("text") else ""
+                )
+                scoring = ViabilityScoring(
+                    posting_id=posting.id, score=persisted or 0.0, rationale=rationale_text
+                )
                 if not self._scoring.is_viable(scoring):
                     if not user_added:
                         continue  # below threshold; excluded from the digest (FR-AGENT-3)
                     row["viability_score"] = round(scoring.score * 100)
                     row["why_suggested"] = (
-                        f"{scoring.rationale} Kept in your digest because you added "
+                        f"{rationale_text} Kept in your digest because you added "
                         "this role yourself, even though it scored below your threshold."
                     )
                     pairs.append((posting, row))
                     continue
                 row["viability_score"] = round(scoring.score * 100)
-                row["why_suggested"] = scoring.rationale
+                row["why_suggested"] = rationale_text
             else:
                 # ROBUST: ``JobPostingModel.viability_score`` is nullable and the
                 # no-scoring branch has no score yet. Emit a numeric 0.0 (not None) so
