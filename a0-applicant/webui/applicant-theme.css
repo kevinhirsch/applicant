@@ -5,10 +5,25 @@
   /* Primary accent */
   --ap-color-primary: var(--color-primary, #4361ee);
   --color-primary-hover: #3a56d4;
+  /* UIKIT-STANDARDS.md contrast fix (dark default): white .btn.primary label
+     text on the shared slate --color-primary-dark (#737a81) measures 4.35:1,
+     an AA fail for normal text. This darkens the same slate tone just enough
+     to clear 4.5:1 (measured ~5.0:1) without changing its hue. Light mode
+     already passes at ~9.7:1 via --ap-color-primary → --color-primary-light,
+     so it's reused unchanged below in .light-mode — see the leak-trap note
+     on the .light-mode block for why that reuse is safe here. */
+  --ap-btn-primary-bg: #697076;
 
   /* Neutrals (slightly warm greys) */
   --ap-color-text: var(--color-text, #2c2c2c);
-  --color-text-secondary: #5a5a5a;
+  /* UIKIT-STANDARDS.md contrast fix: this was a single literal (#5a5a5a)
+     shared by both themes, measuring only 2.7:1 on the dark background
+     (AA fail) since dark mode never got its own value. Split into an
+     explicit -dark/-light pair, re-resolved under .light-mode below, same
+     pattern as the --ap-color-* aliases' APP-LP-1 fix. */
+  --color-text-secondary-dark: #9aa0a6;
+  --color-text-secondary-light: #5a5a5a;
+  --color-text-secondary: var(--color-text-secondary-dark);
   --ap-color-background: var(--color-background, #f5f7fa);
   --ap-color-panel: var(--color-panel, #e8ecf1);
   --ap-color-border: var(--color-border, #d4d9e0);
@@ -26,8 +41,20 @@
   --color-danger-border: #e8a0a0;
   --color-danger-text: #9b1c1c;
 
-  /* Input surface */
-  --color-input-bg: #ffffff;
+  /* Input / card surface. UIKIT-STANDARDS.md §1 "live gap": this was a
+     single literal (#ffffff) shared by both themes, so .card/.item/.surface
+     and every text input rendered a WHITE background even in dark mode —
+     combined with --ap-color-text resolving to white in dark mode, that's
+     white text on a white surface (1:1, unreadable) anywhere a panel didn't
+     locally override the background (confirmed real, not just theoretical —
+     see help.html's .surface, and every <input>/<textarea>/<select> in the
+     app, which style directly off this token). Split into an explicit
+     -dark/-light pair; light keeps the original #ffffff (already correct
+     there), dark gets a near-black "raised surface" tone that keeps white
+     text at ~16.7:1. */
+  --color-input-bg-dark: #1e1e1e;
+  --color-input-bg-light: #ffffff;
+  --color-input-bg: var(--color-input-bg-dark);
   --color-hover-bg: #eef1f3;
 
   /* Typography */
@@ -69,6 +96,20 @@
   --ap-color-background: var(--color-background, #f5f7fa);
   --ap-color-panel: var(--color-panel, #e8ecf1);
   --ap-color-border: var(--color-border, #d4d9e0);
+  /* UIKIT-STANDARDS.md contrast fixes — same re-declare-under-.light-mode
+     pattern as the five aliases above, applied to the three tokens flagged
+     in the audit as single-literal/no-.light-mode-counterpart:
+     --color-text-secondary, --color-input-bg, --ap-btn-primary-bg. */
+  --color-text-secondary: var(--color-text-secondary-light);
+  --color-input-bg: var(--color-input-bg-light);
+  /* Reusing --ap-color-primary (not a new literal) is safe here specifically
+     because this declaration lives on the SAME .light-mode selector/element
+     as the --ap-color-primary override two lines up — by the time this var()
+     resolves, --ap-color-primary is already light's value on this element,
+     not :root's frozen dark one. That's the same reasoning the file-level
+     APP-LP-1 comment above documents; it would NOT be safe to reference
+     --ap-color-primary from :root, only from within .light-mode itself. */
+  --ap-btn-primary-bg: var(--ap-color-primary);
 }
 
 /* ── Global reset ── */
@@ -98,9 +139,13 @@ h3 { font-size: var(--font-lg); font-weight: 600; margin: var(--space-sm) 0 var(
   border-color: var(--ap-color-primary);
 }
 .btn.primary, .btn-primary, .sidebar-action.primary {
-  background: var(--ap-color-primary);
+  /* UIKIT-STANDARDS.md contrast fix: white label text needs the theme-scoped
+     --ap-btn-primary-bg (§ :root/.light-mode above), not the shared
+     --ap-color-primary directly — see the fix comment on --ap-btn-primary-bg
+     for why (dark-mode --ap-color-primary alone was only 4.35:1). */
+  background: var(--ap-btn-primary-bg);
   color: #fff;
-  border-color: var(--ap-color-primary);
+  border-color: var(--ap-btn-primary-bg);
 }
 .btn.primary:hover, .btn-primary:hover, .sidebar-action.primary:hover {
   background: var(--color-primary-hover);
@@ -236,9 +281,10 @@ input:focus, textarea:focus, select:focus {
   margin-bottom: 2px;
 }
 .sidebar-action.active {
-  background: var(--ap-color-primary);
+  /* Same white-on-primary contrast fix as .btn.primary above. */
+  background: var(--ap-btn-primary-bg);
   color: #fff;
-  border-color: var(--ap-color-primary);
+  border-color: var(--ap-btn-primary-bg);
 }
 
 /* ── Table helpers ── */
@@ -279,7 +325,8 @@ th { font-weight: 600; background: var(--ap-color-panel); }
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .help-btn:hover {
-  background: var(--ap-color-primary);
+  /* Same white-on-primary contrast fix as .btn.primary above. */
+  background: var(--ap-btn-primary-bg);
   color: #fff;
-  border-color: var(--ap-color-primary);
+  border-color: var(--ap-btn-primary-bg);
 }
