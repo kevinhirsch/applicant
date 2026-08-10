@@ -22,6 +22,7 @@ unchanged (keyed by a criteria signature) rather than re-paying an LLM call per 
 from __future__ import annotations
 
 import hashlib
+import os
 
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
@@ -52,6 +53,21 @@ DEFAULT_NEUTRAL_SCORE = 0.75
 #: Max share of the score the converting-role signature can contribute (FR-LEARN-5).
 _SIGNATURE_WEIGHT = 0.2
 
+#: P0 durability fix: how many CONSECUTIVE transient LLM failures a posting
+#: tolerates before the resilience valve gives up and persists the degraded
+#: embedding score anyway (see ``_persist_or_defer``). Without this cap, a
+#: posting whose LLM call keeps failing would stay unscored forever and never
+#: reach the digest. Tunable via ``SCORING_MAX_TRANSIENT_RETRIES`` (read fresh
+#: per call, like ``agent_loop.py``'s ``SCORING_BATCH_PER_TICK`` — no restart
+#: needed to change it).
+DEFAULT_MAX_TRANSIENT_RETRIES = 3
+#: Key the consecutive-transient-failure counter is stored under in the
+#: existing nullable ``JobPosting.rationale`` JSON column — reused rather than
+#: adding a schema migration. Cleared automatically the next time a real score
+#: (LLM success, no-LLM-configured, or the retry-exhausted fallback) persists,
+#: because ``_persist_score`` always writes a FRESH rationale dict.
+_TRANSIENT_FAILURES_KEY = "transient_llm_failures"
+
 
 class ScoringService:
     def __init__(
@@ -62,6 +78,7 @@ class ScoringService:
         *,
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
         neutral_score: float = DEFAULT_NEUTRAL_SCORE,
+        max_transient_retries: int | None = None,
         learning=None,
         advanced_learning=None,
         tool_registry=None,
@@ -72,6 +89,20 @@ class ScoringService:
         self._embedding = embedding
         self._threshold = threshold
         self._neutral_score = neutral_score
+        # P0 durability fix: bounded retry budget before a degraded (embedding
+        # fallback) score is accepted as final. ``None`` (the default — every
+        # existing construction site) reads ``SCORING_MAX_TRANSIENT_RETRIES`` fresh
+        # here so an operator can tune it via env with no code change; an explicit
+        # int (tests) overrides it directly.
+        if max_transient_retries is None:
+            try:
+                max_transient_retries = int(
+                    os.getenv("SCORING_MAX_TRANSIENT_RETRIES", "")
+                    or DEFAULT_MAX_TRANSIENT_RETRIES
+                )
+            except (TypeError, ValueError):
+                max_transient_retries = DEFAULT_MAX_TRANSIENT_RETRIES
+        self._max_transient_retries = max_transient_retries
         self._learning = learning
         # Optional AdvancedLearningService so scoring can bias toward the DISCRETE
         # converting signature that the live conversion loop actually writes (+ an
@@ -102,19 +133,25 @@ class ScoringService:
         scoring = self._score(
             posting, criteria, learning_model=learning_model, advanced_model=advanced_model
         )
-        self._persist_score(
+        persisted = self._persist_or_defer(
             posting,
             scoring,
             criteria_sig=self._criteria_sig(criteria),
             learning_sig=self._learning_sig(learning_model),
         )
-        event_bus.emit(
-            ViabilityScored(
-                posting_id=posting_id,
-                score=scoring.score,
-                campaign_id=posting.campaign_id,
+        if persisted:
+            # Only fire the "scored" domain event (and its audit-log entry) when the
+            # score actually landed durably — a deferred degraded fallback (see
+            # ``_persist_or_defer``) leaves the posting genuinely unscored, so an
+            # event claiming it was scored would be misleading and would double up
+            # once the real score persists on a later retry.
+            event_bus.emit(
+                ViabilityScored(
+                    posting_id=posting_id,
+                    score=scoring.score,
+                    campaign_id=posting.campaign_id,
+                )
             )
-        )
         return scoring
 
     def _persist_score(
@@ -153,6 +190,88 @@ class ScoringService:
             self._storage.commit()
         except Exception:  # pragma: no cover - never let persistence break scoring
             pass
+
+    def _llm_configured(self) -> bool:
+        """True iff an LLM tier is wired and reports itself configured."""
+        llm = self._llm
+        return llm is not None and getattr(llm, "is_configured", lambda: False)()
+
+    def _persist_or_defer(
+        self,
+        posting: JobPosting,
+        scoring: ViabilityScoring,
+        *,
+        criteria_sig: str = "",
+        learning_sig: str = "",
+    ) -> bool:
+        """Persist ``scoring`` unless it's a degraded fallback that should be retried.
+
+        THE P0 FIX: a transient LLM failure (timeout/transport/parse) used to
+        degrade ``_base_score`` to the local embedding signal, and that degraded
+        value was persisted unconditionally — embedding similarity almost never
+        clears the viability threshold, so a posting hit by a one-off LLM hiccup
+        was permanently buried below the threshold with no retry (``_unscored_postings``
+        only ever revisits postings whose ``viability_score`` is still ``NULL``).
+
+        When ``scoring.degraded`` is True AND an LLM tier IS configured (so a retry
+        can plausibly succeed), this SKIPS persistence — ``viability_score`` stays
+        whatever it already was (``None`` for a first-time posting), so the next
+        tick's ``list_unscored_for_campaign`` retries it via the LLM — UNLESS the
+        posting has now failed ``self._max_transient_retries`` times in a row, in
+        which case the degraded value is accepted so the posting still makes
+        progress instead of retrying forever. The two legitimate cases — an LLM
+        success, or no LLM configured at all (``scoring.degraded`` is False in both,
+        see ``_base_score``) — always persist immediately, byte-identical to before.
+
+        Returns True iff the score was actually persisted (so the caller can decide
+        whether firing a "scored" domain event is honest).
+        """
+        if scoring.degraded and self._llm_configured():
+            failures = self._bump_transient_failures(posting)
+            if failures < self._max_transient_retries:
+                return False  # leave unscored for retry; do not persist the poisoned value
+            # Retry budget exhausted: fall through and accept the degraded value so
+            # the posting isn't stuck unscored forever.
+        self._persist_score(posting, scoring, criteria_sig=criteria_sig, learning_sig=learning_sig)
+        return True
+
+    def _transient_failure_count(self, posting: JobPosting) -> int:
+        """Consecutive-transient-LLM-failure count durably recorded on ``posting``."""
+        rationale = getattr(posting, "rationale", None)
+        if not isinstance(rationale, dict):
+            return 0
+        try:
+            return int(rationale.get(_TRANSIENT_FAILURES_KEY, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _bump_transient_failures(self, posting: JobPosting) -> int:
+        """Increment + durably persist the consecutive-transient-failure counter.
+
+        Stored on the existing nullable ``JobPosting.rationale`` JSON column
+        (no schema migration) so the count survives across scheduler ticks even
+        while ``viability_score`` stays NULL. ``viability_score`` is deliberately
+        left untouched here — only the bookkeeping key changes — so the posting
+        stays in ``list_unscored_for_campaign`` until the retry budget is spent.
+        Best-effort like ``_persist_score``: a storage hiccup must never break
+        scoring; on failure this returns the WOULD-BE count so the caller's
+        this-attempt decision is still correct even if it couldn't be durably
+        recorded.
+        """
+        import dataclasses
+
+        prior = getattr(posting, "rationale", None)
+        prior = prior if isinstance(prior, dict) else {}
+        count = self._transient_failure_count(posting) + 1
+        try:
+            updated = dataclasses.replace(
+                posting, rationale={**prior, _TRANSIENT_FAILURES_KEY: count}
+            )
+            self._storage.postings.add(updated)
+            self._storage.commit()
+        except Exception:  # pragma: no cover - never let bookkeeping break scoring
+            pass
+        return count
 
     def _load_learning_model(self, campaign_id):
         """Load the per-campaign ``LearningModel`` ONCE for a scoring pass (perf).
@@ -287,7 +406,11 @@ class ScoringService:
         scoring = self._score(
             posting, criteria, learning_model=learning_model, advanced_model=advanced_model
         )
-        self._persist_score(posting, scoring, criteria_sig=sig, learning_sig=learning_sig)
+        # P0 durability fix: a degraded (LLM-configured-but-failed) fallback must
+        # not be persisted as authoritative — see ``_persist_or_defer``. ``scoring``
+        # is still RETURNED so the digest can show the transient in-memory value
+        # immediately; only the durable write is skipped/deferred.
+        self._persist_or_defer(posting, scoring, criteria_sig=sig, learning_sig=learning_sig)
         return scoring
 
     def score_posting(
@@ -328,12 +451,13 @@ class ScoringService:
             (*criteria.titles, *criteria.keywords, criteria.human_readable)
         ).strip()
         jd_text = f"{posting.title} {posting.description}".strip()
+        degraded = False
         if not criteria_text:
             # No stated criteria yet: neutral-positive so nothing is silently dropped.
             base = 0.75
             rationale = "No search criteria set yet — scored neutral so nothing is dropped."
         else:
-            base, rationale = self._base_score(posting, criteria, criteria_text, jd_text)
+            base, rationale, degraded = self._base_score(posting, criteria, criteria_text, jd_text)
         # #237: fold the accumulated per-feature approve/decline TASTE into the base
         # score so the feedback loop actually closes — a posting carrying a value the
         # user has consistently declined is nudged down, an approved one nudged up.
@@ -358,7 +482,9 @@ class ScoringService:
                 f"; biased toward converting-role signature "
                 f"(alignment {alignment * 100:.0f}/100, FR-LEARN-5)"
             )
-        return ViabilityScoring(posting_id=posting.id, score=score, rationale=rationale)
+        return ViabilityScoring(
+            posting_id=posting.id, score=score, rationale=rationale, degraded=degraded
+        )
 
     def _base_score(
         self,
@@ -366,17 +492,27 @@ class ScoringService:
         criteria: SearchCriteria,
         criteria_text: str,
         jd_text: str,
-    ) -> tuple[float, str]:
-        """Base viability in [0, 1] + a plain-language rationale.
+    ) -> tuple[float, str, bool]:
+        """Base viability in [0, 1] + a plain-language rationale + a DEGRADED flag.
 
         Prefer the configured model's semantic judgment (entry/L1 tier); fall back to
         the local zero-token lexical-overlap signal when no model is configured or a
         call fails — the digest must never hard-depend on the network.
+
+        The third element, ``degraded``, is True ONLY when an LLM tier IS configured
+        but the call failed and this fell back to the embedding signal — the case
+        the P0 durability fix (``ScoringService._persist_or_defer``) guards against:
+        a transient failure must not be persisted as if it were an authoritative LLM
+        judgment, or it permanently buries a posting below the viability threshold
+        with no retry. ``degraded`` is False both when the LLM succeeds AND when no
+        LLM is configured at all — in the latter case the embedding signal IS the
+        authoritative score by design (NFR-TOKEN-1), exactly as before.
         """
         llm = self._llm
         if llm is not None and getattr(llm, "is_configured", lambda: False)():
             try:
-                return self._llm_base(posting, criteria)
+                score, rationale = self._llm_base(posting, criteria)
+                return score, rationale, False
             except Exception as exc:  # noqa: BLE001 - any model/parse failure degrades
                 # #345: do NOT swallow the failure silently. A model reply that parses
                 # but carries no ``score`` key (or any other model/parse error) must be
@@ -389,10 +525,23 @@ class ScoringService:
                     exc,
                     getattr(posting, "id", "?"),
                 )
+                base = self._embedding.similarity(criteria_text, jd_text)
+                return (
+                    base,
+                    (
+                        f"Match {base * 100:.0f}/100 from overlap between the role and "
+                        f"your criteria (threshold {self._threshold})."
+                    ),
+                    True,
+                )
         base = self._embedding.similarity(criteria_text, jd_text)
-        return base, (
-            f"Match {base * 100:.0f}/100 from overlap between the role and your "
-            f"criteria (threshold {self._threshold})."
+        return (
+            base,
+            (
+                f"Match {base * 100:.0f}/100 from overlap between the role and your "
+                f"criteria (threshold {self._threshold})."
+            ),
+            False,
         )
 
     def _llm_base(

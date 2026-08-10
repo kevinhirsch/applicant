@@ -293,7 +293,16 @@ class OpenAICompatibleLLM:
         model: str = "",
         context_window: int = 8192,
         transport: httpx.BaseTransport | None = None,
-        timeout: float = 60.0,
+        # P0 durability fix: a flat 60.0s was too short for a cold-start local model
+        # call (e.g. vLLM warm-up ~38s could still exceed 60s under load) — the
+        # resulting timeout looked like a permanent failure and (before the
+        # companion fix in scoring_service.py) silently degraded viability scoring
+        # to the local embedding signal, with the bad score persisted forever.
+        # Accepts either a flat float (byte-identical to before) or an
+        # ``httpx.Timeout`` for separate connect/read/write/pool budgets — the
+        # composition root (container.py) builds the latter from
+        # ``LLM_HTTP_TIMEOUT``/``LLM_HTTP_CONNECT_TIMEOUT`` (default 120s/10s).
+        timeout: float | httpx.Timeout = 60.0,
         context_manager: ContextWindowManager | None = None,
         app_context_manager: Any | None = None,
         prefix_cache: str = "auto",

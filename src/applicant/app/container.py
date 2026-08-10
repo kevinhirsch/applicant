@@ -646,6 +646,29 @@ def build_container(settings: Settings | None = None) -> Container:
     # stack bound to the tick's OWN fresh Session — mirroring how storage-bound services
     # are already isolated per tick. ``a_config_store`` and ``a_storage`` MUST share one
     # Session (the caller pairs them so).
+    # P0 durability fix: an OPTIONAL deterministic CLOUD escalation tier for the LLM
+    # ladder (default DeepSeek's OpenAI-compatible endpoint). When the local tier
+    # fails/times out repeatedly, the existing climb-on-failure logic in
+    # OpenAICompatibleLLM escalates to this instead of exhausting the ladder and
+    # leaving scoring_service.py's transient-retry guard as the only backstop.
+    # Built ONCE here from env; empty LLM_FALLBACK_API_KEY (the default) means NO
+    # fallback tier is added anywhere — every ladder stays local-only, byte-
+    # identical to today (opt-in: never egresses to a cloud endpoint unless the
+    # operator drops a real key in). Threaded into SetupService.build_ladder()
+    # (setup_service.py), which appends it BELOW the persisted tiers and runs it
+    # through the SAME local-only-mode filter as any other tier.
+    _llm_fallback_tier = (
+        {
+            "provider": settings.llm_fallback_provider,
+            "base_url": settings.llm_fallback_base_url,
+            "model": settings.llm_fallback_model,
+            "api_key": settings.llm_fallback_api_key,
+            "context_window": settings.llm_fallback_context_window,
+        }
+        if settings.llm_fallback_api_key
+        else None
+    )
+
     def _build_setup_stack(a_storage, a_config_store):
         onboarding_service = OnboardingService(
             storage=a_storage,
@@ -713,6 +736,9 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             onboarding_gate=_onboarding_gate_cached,
             sandbox_backend=settings.sandbox_backend,
+            # P0 durability fix: the optional cloud escalation tier (None unless
+            # LLM_FALLBACK_API_KEY is set) — see its construction above.
+            fallback_tier=_llm_fallback_tier,
             # P2-11: local-only private mode filters the effective ladder AND the
             # LLM gate inside SetupService (single chokepoint for every consumer).
             local_only=settings.llm_local_only,
@@ -900,6 +926,12 @@ def build_container(settings: Settings | None = None) -> Container:
             cost_usd=cost,
         )
 
+    # P0 durability fix: raise + make configurable the flat 60s httpx timeout that
+    # could false-positive on a cold-start local model call (see openai_compatible.py
+    # / config.py). Split connect (fails fast on a genuinely unreachable host) from
+    # read (gives a slow-but-alive model the time it needs).
+    import httpx as _httpx
+
     llm = OpenAICompatibleLLM(
         # Resolve the ladder lazily through the provider so a runtime model-connect
         # (which re-fires this) is picked up without rebuilding the adapter — the chat,
@@ -912,6 +944,12 @@ def build_container(settings: Settings | None = None) -> Container:
         prefix_cache=settings.prefix_cache,
         rate_limiter=llm_rate_limiter,
         usage_recorder=_record_llm_usage,
+        timeout=_httpx.Timeout(
+            connect=settings.llm_http_connect_timeout,
+            read=settings.llm_http_timeout,
+            write=settings.llm_http_timeout,
+            pool=settings.llm_http_connect_timeout,
+        ),
     )
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).

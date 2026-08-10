@@ -320,10 +320,22 @@ class SetupService:
         local_only: bool = False,
         telemetry_enabled_default: bool = False,
         telemetry_endpoint_default: str = "",
+        fallback_tier: dict[str, Any] | None = None,
     ) -> None:
         self._store = config_store or InMemoryAppConfigStore()
         self._credentials = credentials
         self._llm_preconfigured = llm_configured
+        # P0 durability fix: an OPTIONAL deterministic CLOUD escalation tier,
+        # appended below the persisted ladder in ``build_ladder`` (never persisted
+        # itself, never surfaced via ``get_tiers``). Wired by the composition root
+        # from ``LLM_FALLBACK_*`` env — ``None`` (the default, or when no
+        # ``LLM_FALLBACK_API_KEY`` is configured) keeps every ladder byte-identical
+        # to local-only. Shaped as a plain tier-record dict (same shape
+        # ``_load_tiers``/``_tier_to_record`` produce: provider/base_url/model/
+        # api_key/context_window) so it flows through the SAME ``_effective_tiers``
+        # local-only-mode filter and ``TierConfig`` construction as any other tier
+        # — no parallel mechanism.
+        self._fallback_tier = fallback_tier
         # P2-11 verified local-only private mode: when True, tiers whose
         # base_url is not an on-box/private-network host are dropped from the
         # EFFECTIVE ladder and from the LLM-configured gate — here, in the one
@@ -1534,8 +1546,24 @@ class SetupService:
         In local-only private mode (P2-11) non-private tiers are excluded here —
         the single ladder source — so no consumer (boot, runtime re-resolve,
         smart-routing reorder) can ever walk a cloud rung while the mode is on.
+
+        P0 durability fix: when an optional cloud ``self._fallback_tier`` is wired
+        (see ``__init__``), it is appended to the persisted tiers as the LOWEST-
+        preference rung BEFORE the local-only filter runs — so it is subject to the
+        exact same private-mode exclusion as any other tier (dropped when
+        ``LLM_LOCAL_ONLY`` is on, since a cloud base_url is never a private host),
+        and to the same ``TierConfig``/secret-resolution construction below. It is
+        never written back to ``_LADDER_KEY`` (this method only READS), so it never
+        appears in ``get_tiers()`` / the UI ladder editor, and its plaintext env key
+        is never persisted. The existing context-window walk + smart-router reorder
+        in ``OpenAICompatibleLLM``/``order_ladder_by_router`` then treat it exactly
+        like any other configured tier — a transient failure on every tier above it
+        escalates here instead of exhausting the ladder.
         """
-        tiers = self._effective_tiers(self._load_tiers())
+        tiers = self._load_tiers()
+        if self._fallback_tier is not None:
+            tiers = [*tiers, self._fallback_tier]
+        tiers = self._effective_tiers(tiers)
         if not tiers:
             return None
         configs = [

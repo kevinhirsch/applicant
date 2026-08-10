@@ -241,6 +241,32 @@ services:
       LLM_SMART_ROUTING: ${LLM_SMART_ROUTING:-true}
       LLM_SMART_ROUTING_PREFER_LOCAL: ${LLM_SMART_ROUTING_PREFER_LOCAL:-true}
       LLM_DISABLE_THINKING: "true"
+      # P0 durability fix: a flat 60s HTTP timeout could false-positive on a
+      # cold-start local model call (vLLM warm-up ~38s could still exceed 60s
+      # under load), which silently degraded viability scoring to the local
+      # embedding signal with the bad score persisted forever (see
+      # scoring_service.py). LLM_HTTP_TIMEOUT (read) is generous;
+      # LLM_HTTP_CONNECT_TIMEOUT (connect) stays short so a genuinely dead host
+      # still fails fast.
+      LLM_HTTP_TIMEOUT: ${LLM_HTTP_TIMEOUT:-120}
+      LLM_HTTP_CONNECT_TIMEOUT: ${LLM_HTTP_CONNECT_TIMEOUT:-10}
+      # Companion belt-and-suspenders (scoring_service.py): bounds how many
+      # CONSECUTIVE transient LLM failures a posting tolerates before the engine
+      # accepts the degraded embedding score so scoring still makes forward
+      # progress instead of retrying forever.
+      SCORING_MAX_TRANSIENT_RETRIES: ${SCORING_MAX_TRANSIENT_RETRIES:-3}
+      # Deterministic CLOUD fallback tier (P0 durability fix): when
+      # LLM_FALLBACK_API_KEY is set, it is appended as a lower-preference rung
+      # BELOW the local model, so the existing climb-on-failure escalation logic
+      # has a real cloud model to fall through to instead of only the embedding
+      # signal. Empty (the default) adds NO fallback tier — local-only, byte-
+      # identical to today, zero cloud egress. Drop a real DeepSeek (or any
+      # OpenAI-compatible) key into .env to activate; never hardcode it here.
+      LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-openai}
+      LLM_FALLBACK_BASE_URL: ${LLM_FALLBACK_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-deepseek-chat}
+      LLM_FALLBACK_API_KEY: ${LLM_FALLBACK_API_KEY:-}
+      LLM_FALLBACK_CONTEXT_WINDOW: ${LLM_FALLBACK_CONTEXT_WINDOW:-65536}
       # Company research → cover letters (#299): enrich generated cover letters with
       # capped/budgeted deep research about the employer. OFF by default: it widens
       # the truthfulness ground truth to the researched company facts and spends

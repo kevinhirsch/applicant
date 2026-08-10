@@ -172,6 +172,43 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="", alias="LLM_MODEL")
 
+    # --- LLM HTTP timeout (P0 durability fix) --------------------------------
+    # A flat 60.0s httpx default was too short for a cold-start local model call
+    # (e.g. vLLM warm-up ~38s could still exceed 60s under load) — a call that
+    # timed out looked like a permanent failure and (before the companion fix in
+    # scoring_service.py) silently degraded viability scoring to the local
+    # embedding signal, with the bad sub-threshold score persisted forever with no
+    # retry. Raised + made configurable; split into a SHORT connect budget and a
+    # LONG read budget (container.py builds an ``httpx.Timeout`` from the two) so a
+    # genuinely unreachable host still fails fast while a slow-but-alive model
+    # gets the time it needs.
+    llm_http_timeout: float = Field(default=120.0, ge=1.0, alias="LLM_HTTP_TIMEOUT")
+    llm_http_connect_timeout: float = Field(
+        default=10.0, ge=1.0, alias="LLM_HTTP_CONNECT_TIMEOUT"
+    )
+
+    # --- Deterministic cloud fallback tier (P0 durability fix) ---------------
+    # The tier ladder normally holds only the local model. When it fails/times out
+    # repeatedly, scoring degrades to the local embedding signal (see
+    # scoring_service.py's transient-retry guard). Setting LLM_FALLBACK_API_KEY
+    # appends an ADDITIONAL cloud rung — default DeepSeek's OpenAI-compatible
+    # endpoint — BELOW the local tier(s) in the ladder (setup_service.py
+    # build_ladder), so the existing climb-on-failure escalation logic has a real
+    # model to fall through to instead of only the embedding signal. Empty key
+    # (the default) adds NO fallback tier — the ladder is local-only, byte-
+    # identical to before. Never persisted to the tier-ladder store or surfaced to
+    # the UI; resolved fresh from env at ladder-build time. Also dropped under
+    # LLM_LOCAL_ONLY private mode (P2-11) exactly like any other cloud tier.
+    llm_fallback_provider: str = Field(default="openai", alias="LLM_FALLBACK_PROVIDER")
+    llm_fallback_base_url: str = Field(
+        default="https://api.deepseek.com/v1", alias="LLM_FALLBACK_BASE_URL"
+    )
+    llm_fallback_model: str = Field(default="deepseek-chat", alias="LLM_FALLBACK_MODEL")
+    llm_fallback_api_key: str = Field(default="", alias="LLM_FALLBACK_API_KEY")
+    llm_fallback_context_window: int = Field(
+        default=65536, ge=1, alias="LLM_FALLBACK_CONTEXT_WINDOW"
+    )
+
     # Truth policy for the material fabrication guard (P1-13). "balanced" (default):
     # the model may freely rewrite/restructure; invented *facts* are surfaced for
     # review, not hard-blocked (safe — a human approves every send). "strict": any
