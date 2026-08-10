@@ -73,7 +73,7 @@ class OnboardingFirstRun(Extension):
 
         banners.append({
             "id": "applicant-onboarding-first-run",
-            "auto_modal_path": "plugins/applicant/webui/main.html",
+            "auto_modal_path": "/plugins/applicant/webui/main.html",
             "auto_modal_priority": 100,
             "auto_modal_surfaces": ["welcome"],
             "auto_modal_reason": "onboarding-incomplete",
