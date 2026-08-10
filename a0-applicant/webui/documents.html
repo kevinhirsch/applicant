@@ -48,6 +48,18 @@
   <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
   <div x-show="!loading && !fatalError">
+    <!-- Tailoring aggressiveness dial (FR-RESUME-9; live since #187, previously no UI control) -->
+    <div class="section">
+      <h2>🎚️ Tailoring aggressiveness</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="range" min="0" max="100" x-model.number="aggressiveness" style="width:200px">
+        <span x-text="aggressiveness"></span>
+        <button class="btn small" @click="saveAggressiveness()" :disabled="aggressivenessSaving">Save</button>
+        <span x-show="aggressivenessSaved" style="color:var(--color-success,#28a745);font-size:.8rem">Saved.</span>
+      </div>
+      <div class="err" x-show="aggressivenessError" x-text="aggressivenessError"></div>
+    </div>
+
     <!-- Campaign picker -->
     <div class="picker">
       <label>Campaign</label>
@@ -81,10 +93,59 @@
         <p>No applications found for this campaign.</p>
       </div>
 
+      <!-- Résumé variant library (FR-RESUME-1/6/8): approve/promote generated variants. -->
+      <div class="section">
+        <h2>🗂️ Résumé Variant Library</h2>
+
+        <div x-show="variantsLoading"><div class="spinner"></div> Loading variants…</div>
+        <div class="err" x-show="variantsError" x-text="variantsError"></div>
+
+        <div class="empty" x-show="!variantsLoading && variants.length === 0 && !variantsError">
+          <h2>No variants yet</h2>
+          <p>Tailored résumé variants will appear here once generated.</p>
+        </div>
+
+        <div class="document-list" x-show="variants.length > 0">
+          <template x-for="v in variants" :key="v.variant_id || v.id">
+            <div class="document-item">
+              <div class="doc-header">
+                <span class="doc-type" x-text="'Variant ' + String(v.variant_id || v.id || '').slice(0, 8)"></span>
+                <span class="doc-status" :class="v.approved ? 'approved' : 'pending'" x-text="v.approved ? 'Approved' : 'Pending'"></span>
+                <span class="doc-status pending" x-show="v.degraded">⚠️ Degraded</span>
+              </div>
+              <div style="font-size:.8rem;color:var(--color-text-secondary,#6b7683);margin-bottom:6px">
+                <span x-show="v.targeted_jd_signature">Targets: <span x-text="v.targeted_jd_signature"></span></span>
+                <span x-show="v.fit_scores && v.fit_scores.coverage !== undefined"> · Coverage: <span x-text="Math.round((v.fit_scores.coverage || 0) * 100) + '%'"></span></span>
+              </div>
+              <div style="font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-bottom:8px" x-show="v.lineage && v.lineage.length > 1">
+                Lineage:
+                <template x-for="(anc, i) in (v.lineage || [])" :key="anc.variant_id">
+                  <span><span x-text="String(anc.variant_id).slice(0,8)"></span><span x-show="i < v.lineage.length - 1"> → </span></span>
+                </template>
+              </div>
+              <div class="doc-actions">
+                <button class="btn success small" @click="approveVariant(v.variant_id || v.id)" :disabled="v.approved === true">✓ Approve</button>
+                <button class="btn small" @click="promoteVariant(v.variant_id || v.id)">⭱ Promote to base résumé</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- Documents list -->
       <div x-show="selectedApplicationId">
         <div class="section">
           <h2>📋 Documents</h2>
+
+          <!-- On-demand cover-letter generation (FR-RESUME-10) -->
+          <div class="toolbar">
+            <button class="btn" @click="generateCoverLetter()" :disabled="coverLetterLoading">✉️ Generate Cover Letter</button>
+            <span x-show="coverLetterLoading"><div class="spinner"></div></span>
+          </div>
+          <div class="err" x-show="coverLetterError" x-text="coverLetterError"></div>
+          <div class="empty" x-show="coverLetterResult && coverLetterResult.generated === false">
+            <p x-text="coverLetterResult.reason || 'This role does not warrant a cover letter.'"></p>
+          </div>
 
           <div class="empty" x-show="documents.length === 0 && !documentsLoading">
             <h2>No documents</h2>
@@ -116,6 +177,21 @@
                   Provenance (what I drew on)
                 </div>
                 <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-text="provenanceData || 'Loading…'"></div>
+
+                <!-- Flagged-facts expander (P1-13 truth policy: invented facts surfaced, never silently blocked) -->
+                <div class="expander" @click="toggleFlaggedFacts(doc.id || doc.document_id)">
+                  <span x-text="flaggedFactsOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  🚩 Flagged facts
+                </div>
+                <div class="provenance-content" x-show="flaggedFactsOpen === (doc.id || doc.document_id)">
+                  <div x-show="!flaggedFactsData || !flaggedFactsData.flagged || flaggedFactsData.flagged.length === 0">No unsupported facts flagged.</div>
+                  <template x-for="f in (flaggedFactsData && flaggedFactsData.flagged) || []" :key="f.token || f">
+                    <div class="doc-warning" style="margin-bottom:6px">
+                      ⚠️ <span x-text="f.token || f"></span>
+                      <span x-show="f.kind"> (<span x-text="f.kind"></span>)</span>
+                    </div>
+                  </template>
+                </div>
 
                 <!-- Redline expander -->
                 <div class="expander" @click="redlineOpen = (redlineOpen === (doc.id || doc.document_id)) ? null : (doc.id || doc.document_id)">
@@ -155,6 +231,51 @@
               </div>
             </template>
           </div>
+        </div>
+
+        <!-- JD match explainer (product-gaps #23) -->
+        <div class="section">
+          <h2>🎯 JD Match</h2>
+
+          <div x-show="jdMatchLoading"><div class="spinner"></div> Loading match…</div>
+          <div class="err" x-show="jdMatchError && !jdMatchLoading" x-text="jdMatchError"></div>
+
+          <div x-show="jdMatchData && !jdMatchLoading">
+            <div style="font-size:.85rem;margin-bottom:6px">
+              Coverage: <strong x-text="Math.round((jdMatchData.coverage || 0) * 100) + '%'"></strong>
+            </div>
+            <div style="font-size:.8rem;margin-bottom:4px" x-show="jdMatchData.matched && jdMatchData.matched.length">
+              <div style="font-weight:600;margin-bottom:2px">Matched:</div>
+              <div class="doc-content"><template x-for="t in jdMatchData.matched" :key="t"><span style="color:#155724;margin-right:8px" x-text="t"></span></template></div>
+            </div>
+            <div style="font-size:.8rem" x-show="jdMatchData.missing && jdMatchData.missing.length">
+              <div style="font-weight:600;margin-bottom:2px">Missing:</div>
+              <div class="doc-content"><template x-for="t in jdMatchData.missing" :key="t"><span style="color:#721c24;margin-right:8px" x-text="t"></span></template></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Screening-answer library reuse (product-gaps #20) -->
+        <div class="section">
+          <h2>💬 Screening Answer Library</h2>
+
+          <div x-show="screeningLibraryLoading"><div class="spinner"></div> Loading library…</div>
+          <div class="empty" x-show="!screeningLibraryLoading && screeningLibrary.length === 0">
+            <p>No saved screening answers yet for this campaign.</p>
+          </div>
+          <div class="document-list" x-show="screeningLibrary.length > 0">
+            <template x-for="item in screeningLibrary" :key="item.question">
+              <div class="document-item">
+                <div style="font-weight:600;font-size:.85rem;margin-bottom:6px" x-text="item.question"></div>
+                <div class="doc-content" x-text="item.answer || item.content || '(no content)'"></div>
+                <div class="doc-actions">
+                  <button class="btn small" @click="reuseScreeningAnswer(item.question)" :disabled="screeningReuseLoading === item.question">↻ Reuse for this application</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="err" x-show="screeningReuseError" x-text="screeningReuseError"></div>
+          <div class="doc-content" x-show="screeningReuseResult" x-text="screeningReuseResult"></div>
         </div>
 
         <!-- Submission snapshot -->
@@ -212,6 +333,38 @@
     redlineError: {},
     redlineResults: {},
 
+    // Résumé variant library (FR-RESUME-1/6/8)
+    variants: [],
+    variantsLoading: false,
+    variantsError: "",
+
+    // Tailoring aggressiveness dial (FR-RESUME-9)
+    aggressiveness: 20,
+    aggressivenessSaving: false,
+    aggressivenessSaved: false,
+    aggressivenessError: "",
+
+    // Cover letter on demand (FR-RESUME-10)
+    coverLetterLoading: false,
+    coverLetterResult: null,
+    coverLetterError: "",
+
+    // Flagged facts (P1-13 truth policy)
+    flaggedFactsOpen: null,
+    flaggedFactsData: null,
+
+    // JD match explainer (product-gaps #23)
+    jdMatchData: null,
+    jdMatchLoading: false,
+    jdMatchError: "",
+
+    // Screening-answer library reuse (product-gaps #20)
+    screeningLibrary: [],
+    screeningLibraryLoading: false,
+    screeningReuseLoading: null,
+    screeningReuseResult: "",
+    screeningReuseError: "",
+
     async init() {
       this.loading = true;
       this.fatalError = "";
@@ -228,7 +381,7 @@
       }
       this.loading = false;
       if (this.selectedCampaignId) {
-        await this.loadApplications();
+        await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
       }
     },
 
@@ -239,11 +392,158 @@
       this.snapshotData = null;
       this.snapshotNotFound = false;
       this.snapshotError = "";
+      this.variants = [];
+      this.screeningLibrary = [];
       if (this.selectedCampaignId) {
-        await this.loadApplications();
+        await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
       } else {
         this.applications = [];
       }
+    },
+
+    async loadVariants() {
+      this.variantsLoading = true;
+      this.variantsError = "";
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.variants = []; this.variantsLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "variants", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Couldn't load the résumé variant library.";
+        this.variants = [];
+      } else {
+        const data = r.data || {};
+        const items = data.variants || [];
+        this.variants = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.variantsLoading = false;
+    },
+
+    async approveVariant(variantId) {
+      if (!variantId) return;
+      this.variantsError = "";
+      const r = await callJsonApi("documents", { action: "approve_variant", variant_id: variantId });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Failed to approve variant.";
+      } else {
+        await this.loadVariants();
+      }
+    },
+
+    async promoteVariant(variantId) {
+      if (!variantId) return;
+      this.variantsError = "";
+      const r = await callJsonApi("documents", { action: "promote_variant", variant_id: variantId });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Failed to promote variant.";
+      } else {
+        await this.loadVariants();
+      }
+    },
+
+    async saveAggressiveness() {
+      this.aggressivenessSaving = true;
+      this.aggressivenessSaved = false;
+      this.aggressivenessError = "";
+      const r = await callJsonApi("documents", { action: "set_aggressiveness", aggressiveness: this.aggressiveness });
+      if (!r || !r.ok) {
+        this.aggressivenessError = (r && r.error) || "Failed to save aggressiveness.";
+      } else {
+        const data = r.data || {};
+        if (typeof data.aggressiveness === "number") this.aggressiveness = data.aggressiveness;
+        this.aggressivenessSaved = true;
+        setTimeout(() => { this.aggressivenessSaved = false; }, 2000);
+      }
+      this.aggressivenessSaving = false;
+    },
+
+    async generateCoverLetter() {
+      if (!this.selectedCampaignId || !this.selectedApplicationId) return;
+      this.coverLetterLoading = true;
+      this.coverLetterError = "";
+      this.coverLetterResult = null;
+      const r = await callJsonApi("documents", {
+        action: "cover_letter",
+        campaign_id: this.selectedCampaignId,
+        application_id: this.selectedApplicationId,
+      });
+      if (!r || !r.ok) {
+        this.coverLetterError = (r && r.error) || "Failed to generate cover letter.";
+      } else {
+        this.coverLetterResult = r.data || {};
+        if (this.coverLetterResult.generated !== false) {
+          await this.loadDocuments();
+        }
+      }
+      this.coverLetterLoading = false;
+    },
+
+    async toggleFlaggedFacts(docId) {
+      if (!docId) return;
+      if (this.flaggedFactsOpen === docId) {
+        this.flaggedFactsOpen = null;
+        this.flaggedFactsData = null;
+        return;
+      }
+      this.flaggedFactsOpen = docId;
+      this.flaggedFactsData = null;
+      const r = await callJsonApi("documents", { action: "flagged_facts", document_id: docId });
+      this.flaggedFactsData = (r && r.ok) ? (r.data || {}) : { flagged: [] };
+    },
+
+    async loadJdMatch() {
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.jdMatchData = null; return; }
+      this.jdMatchLoading = true;
+      this.jdMatchError = "";
+      this.jdMatchData = null;
+      const r = await callJsonApi("documents", { action: "jd_match", application_id: appId });
+      if (!r || !r.ok) {
+        this.jdMatchError = (r && r.error) || "Failed to load JD match.";
+      } else {
+        this.jdMatchData = r.data || {};
+      }
+      this.jdMatchLoading = false;
+    },
+
+    async loadScreeningLibrary() {
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.screeningLibrary = []; return; }
+      this.screeningLibraryLoading = true;
+      const r = await callJsonApi("documents", { action: "screening_library", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.screeningLibrary = [];
+      } else {
+        const data = r.data || {};
+        const items = data.items || [];
+        this.screeningLibrary = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.screeningLibraryLoading = false;
+    },
+
+    async reuseScreeningAnswer(question) {
+      if (!question || !this.selectedCampaignId || !this.selectedApplicationId) return;
+      this.screeningReuseLoading = question;
+      this.screeningReuseError = "";
+      this.screeningReuseResult = "";
+      const r = await callJsonApi("documents", {
+        action: "screening_reuse",
+        campaign_id: this.selectedCampaignId,
+        application_id: this.selectedApplicationId,
+        question,
+      });
+      if (!r || !r.ok) {
+        this.screeningReuseError = (r && r.error) || "Failed to reuse screening answer.";
+      } else {
+        const data = r.data || {};
+        if (data.found === false) {
+          this.screeningReuseResult = "No matching library entry found.";
+        } else {
+          this.screeningReuseResult = "Reused: " + (data.content || "(generated)");
+          await this.loadDocuments();
+        }
+      }
+      this.screeningReuseLoading = null;
     },
 
     async loadApplications() {
@@ -270,10 +570,18 @@
       this.snapshotError = "";
       this.provenanceOpen = null;
       this.provenanceData = "";
+      this.flaggedFactsOpen = null;
+      this.flaggedFactsData = null;
+      this.coverLetterResult = null;
+      this.coverLetterError = "";
+      this.jdMatchData = null;
+      this.screeningReuseResult = "";
+      this.screeningReuseError = "";
       if (this.selectedApplicationId) {
         await Promise.all([
           this.loadDocuments(),
-          this.loadSnapshot()
+          this.loadSnapshot(),
+          this.loadJdMatch()
         ]);
       }
     },

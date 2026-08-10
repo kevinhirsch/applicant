@@ -38,13 +38,13 @@
 
   <div class="err" x-show="fatalError" x-text="fatalError"></div>
 
-  <template x-for="entry in entries" :key="entry.id || entry.timestamp">
+  <template x-for="entry in entries" :key="entry.id || entry.occurred_at">
     <div class="entry">
-      <div class="action" x-text="entry.action || entry.event"></div>
-      <div class="detail" x-text="entry.detail || entry.description || ''"></div>
+      <div class="action" x-text="entry.action || '—'"></div>
+      <div class="detail" x-text="entry.reason || ''"></div>
       <div class="meta">
-        <span class="badge" x-text="entry.category || entry.level || ''"></span>
-        <span x-text="entry.timestamp || ''"></span>
+        <span class="badge" x-show="entry.actor" x-text="entry.actor || ''"></span>
+        <span x-text="entry.occurred_at || ''"></span>
       </div>
     </div>
   </template>
@@ -97,7 +97,8 @@
         this.fatalError = (r && r.error) || "Couldn't reach the audit engine.";
         this.entries = [];
       } else {
-        this.entries = (r.data && r.data.entries) || (r.data && r.data.items) || [];
+        // The engine's export response shape is {exported_at, count, events}.
+        this.entries = (r.data && r.data.events) || [];
       }
       this.loading = false;
     },

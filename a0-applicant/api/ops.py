@@ -4,8 +4,15 @@ The Ops console UI is served by the a0 shell, but the Applicant engine is intern
 ("api:8000"). This handler forwards the UI's calls to the engine's "/api/admin/tools",
 "/api/admin/history/{cid}", "/api/admin/detections/{cid}", and "/api/admin/logs" APIs,
 keeping the engine the single source of truth for ops state.
-Five actions dispatched by "action": "tools" (GET), "set_tool" (POST),
-"history" (GET), "detections" (GET), "logs" (GET).
+
+Twenty actions dispatched by "action": "tools" (GET), "set_tool" (POST),
+"history" (GET), "detections" (GET), "logs" (GET) — plus the stuck/blocked-application
+recovery + diagnostic surface (dark-engine audit #61/#62/#67/#71/#72/#76/#78/#79, tech-debt
+register "Stuck/blocked-application recovery ... entirely unreachable"): "stuck_applications"
+(GET), "retry_stuck" (POST), "blocked_applications" (GET), "override_blocked" (POST),
+"screenshots" (GET), "resume_status" (GET), "research_provenance" (GET), "learning" (GET),
+"lessons" (GET), "stealth" (GET), "workspace_bridge" (GET), "captcha_status" (GET),
+"capacity" (GET), "embedding_backend" (GET), "retention_prune" (POST).
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -93,6 +100,75 @@ def dispatch(input: dict) -> dict:
 
     if action == "logs":
         return _forward("GET", f"{ENGINE_PREFIX}/logs")
+
+    # === Stuck/blocked-application recovery (#61/#62) ======================
+    if action == "stuck_applications":
+        return _forward("GET", f"{ENGINE_PREFIX}/stuck-applications/{cid}")
+
+    if action == "retry_stuck":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("POST", f"{ENGINE_PREFIX}/stuck-applications/{application_id}/retry")
+
+    if action == "blocked_applications":
+        return _forward("GET", f"{ENGINE_PREFIX}/blocked-applications/{cid}")
+
+    if action == "override_blocked":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("POST", f"{ENGINE_PREFIX}/blocked-applications/{application_id}/override")
+
+    if action == "resume_status":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("GET", f"{ENGINE_PREFIX}/resume-status/{application_id}")
+
+    # === Per-application evidence (#67 dark-engine screenshot audit) =======
+    if action == "screenshots":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("GET", f"{ENGINE_PREFIX}/screenshots/{application_id}")
+
+    if action == "research_provenance":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("GET", f"{ENGINE_PREFIX}/research-provenance/{application_id}")
+
+    # === Process-wide / campaign-wide diagnostics (#71/#72/#76/#78/#79) ====
+    if action == "learning":
+        return _forward("GET", f"{ENGINE_PREFIX}/learning/{cid}")
+
+    if action == "lessons":
+        ats = (input or {}).get("ats")
+        if ats:
+            return _forward("GET", f"{ENGINE_PREFIX}/lessons/{ats}")
+        return _forward("GET", f"{ENGINE_PREFIX}/lessons")
+
+    if action == "stealth":
+        return _forward("GET", f"{ENGINE_PREFIX}/stealth")
+
+    if action == "workspace_bridge":
+        return _forward("GET", f"{ENGINE_PREFIX}/workspace-bridge")
+
+    if action == "captcha_status":
+        return _forward("GET", f"{ENGINE_PREFIX}/captcha-status")
+
+    if action == "capacity":
+        return _forward("GET", f"{ENGINE_PREFIX}/capacity")
+
+    if action == "embedding_backend":
+        return _forward("GET", f"{ENGINE_PREFIX}/embedding-backend")
+
+    # === PII-retention sweep, on demand (#37) ==============================
+    if action == "retention_prune":
+        days = (input or {}).get("days")
+        qs = f"?days={int(days)}" if days is not None and str(days).strip() != "" else ""
+        return _forward("POST", f"{ENGINE_PREFIX}/retention/prune{qs}")
 
     return {"ok": False, "status": 400, "error": f"unknown ops action {action!r}"}
 

@@ -121,23 +121,38 @@
 
     async resolveItem(actionId) {
       this.busy = true;
-      await callJsonApi("pending", { action: "resolve", action_id: actionId });
+      this.fatalError = "";
+      const r = await callJsonApi("pending", { action: "resolve", action_id: actionId });
       this.busy = false;
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't resolve that item.";
+        return;
+      }
       await this.loadItems();
     },
 
     async snoozeItem(actionId, hours = 24) {
       this.busy = true;
-      await callJsonApi("pending", { action: "snooze", action_id: actionId, hours });
+      this.fatalError = "";
+      const r = await callJsonApi("pending", { action: "snooze", action_id: actionId, hours });
       this.busy = false;
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't snooze that item.";
+        return;
+      }
       await this.loadItems();
     },
 
     async resolveAll() {
       this.busy = true;
+      this.fatalError = "";
       const ids = this.items.map(i => i.id);
-      await callJsonApi("pending", { action: "resolve_bulk", campaign_id: this.campaignId, action_ids: ids });
+      const r = await callJsonApi("pending", { action: "resolve_bulk", campaign_id: this.campaignId, action_ids: ids });
       this.busy = false;
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't resolve all items.";
+        return;
+      }
       await this.loadItems();
     },
   }));

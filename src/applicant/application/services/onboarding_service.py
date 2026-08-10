@@ -415,7 +415,10 @@ class OnboardingService:
             return
         changes: dict[str, Any] = {}
         if section is IntakeSection.TARGET_ROLES:
-            titles = self._split_terms(data.get("titles"))
+            # INTAKE_FIELD_CATALOG's TARGET_ROLES field key is "roles" (the wizard's
+            # "Roles / titles" input posts under that name) — "titles"/"adjacent_titles"
+            # never matched any real payload, so this bridge silently never fired.
+            titles = self._split_terms(data.get("roles"))
             titles += self._split_terms(data.get("adjacent_titles"))
             if titles:
                 changes["titles"] = titles
@@ -425,9 +428,13 @@ class OnboardingService:
             )
             if work_modes:
                 changes["work_modes"] = work_modes
-            # ``current_location`` is a single place ("Austin, TX"); keep it intact
-            # rather than splitting it on the comma into two bogus locations.
-            location = str(data.get("current_location") or "").strip()
+            # INTAKE_FIELD_CATALOG's LOCATION field key is "locations" (the wizard's
+            # "Preferred locations" input posts under that name); ``current_location``
+            # never matched any real payload and left this bridge dead. Treated as a
+            # single place ("Austin, TX"); kept intact rather than splitting it on the
+            # comma into two bogus locations. ``current_location`` stays as a fallback
+            # for any other caller still using that name.
+            location = str(data.get("locations") or data.get("current_location") or "").strip()
             if location:
                 changes["locations"] = [location]
         elif section is IntakeSection.COMPENSATION:
@@ -435,7 +442,12 @@ class OnboardingService:
             if floor is not None:
                 changes["salary_floor"] = floor
         elif section is IntakeSection.KEY_ATTRIBUTES:
-            keywords = self._split_terms(data.get("technical_skills"))
+            # INTAKE_FIELD_CATALOG's KEY_ATTRIBUTES field key is "skills" (the wizard's
+            # "Key skills" input posts under that name); "technical_skills" is the
+            # resume-parse prefill's own key (see _prefill_sections_from_parse) — read
+            # both so neither a manual wizard save nor a resume-prefilled save is lost.
+            keywords = self._split_terms(data.get("skills"))
+            keywords += self._split_terms(data.get("technical_skills"))
             if keywords:
                 changes["keywords"] = keywords
         if not changes:

@@ -18,7 +18,7 @@
   .aprivacy .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
   .aprivacy .form-grid .field{display:flex;flex-direction:column;gap:3px}
   .aprivacy .form-grid label{font-size:.8rem;color:var(--color-text-secondary,#6b7683)}
-  .aprivacy .form-grid input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .aprivacy .form-grid input,.aprivacy .form-grid select{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
   .aprivacy .form-grid input::placeholder{color:var(--color-text-secondary,#6b7683)}
   .aprivacy .form-grid input[type="password"]{font-family:monospace}
   .aprivacy .btn-row{display:flex;gap:8px;margin-top:12px}
@@ -92,6 +92,36 @@
             <label>RDP username</label>
             <input type="text" x-model="rdpUsername" placeholder="e.g. Administrator" />
           </div>
+          <div class="field">
+            <label>Proxmox token ID</label>
+            <input type="text" x-model="proxmoxTokenId" placeholder="e.g. root@pam!applicant" />
+          </div>
+          <div class="field">
+            <label>Proxmox token secret</label>
+            <input type="password" x-model="proxmoxTokenSecret" placeholder="required each save — not shown back" />
+          </div>
+          <div class="field">
+            <label>Clone mode</label>
+            <select x-model="cloneMode">
+              <option value="snapshot-revert">snapshot-revert (cheaper, reused VM)</option>
+              <option value="linked-clone">linked-clone (fresh clone per session)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>RDP password</label>
+            <input type="password" x-model="rdpPassword" placeholder="leave blank to keep unchanged" />
+          </div>
+          <div class="field">
+            <label>Takeover method</label>
+            <select x-model="takeoverMethod">
+              <option value="rdp">rdp (RDP URI)</option>
+              <option value="web-console">web-console (browser gateway)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Takeover URL template</label>
+            <input type="text" x-model="takeoverUrlTemplate" placeholder="e.g. https://guac.local/#/client/{vmid}" />
+          </div>
         </div>
 
         <div class="btn-row">
@@ -130,6 +160,12 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
       cdpHost: '',
       cdpPort: '9222',
       rdpUsername: '',
+      proxmoxTokenId: '',
+      proxmoxTokenSecret: '',
+      cloneMode: 'snapshot-revert',
+      rdpPassword: '',
+      takeoverMethod: 'rdp',
+      takeoverUrlTemplate: '',
 
       async init() {
         await this.loadSettings();
@@ -152,6 +188,12 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
             this.cdpHost = conn.cdp_host || '';
             this.cdpPort = conn.cdp_port != null ? String(conn.cdp_port) : '9222';
             this.rdpUsername = conn.rdp_username || '';
+            this.proxmoxTokenId = conn.proxmox_token_id || '';
+            this.cloneMode = conn.clone_mode || 'snapshot-revert';
+            this.takeoverMethod = conn.takeover_method || 'rdp';
+            this.takeoverUrlTemplate = conn.takeover_url_template || '';
+            // Secrets (proxmox_token_secret, rdp_password) are never returned by the
+            // engine (FR-VAULT-3) — left blank; must be re-entered to change/re-save.
           }
         } catch(e) {
           this.fatalError = 'Failed to load privacy settings';
@@ -185,14 +227,23 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
           const body = {
             proxmox_api_url: this.proxmoxApiUrl,
             proxmox_node: this.proxmoxNode,
+            proxmox_token_id: this.proxmoxTokenId,
+            proxmox_token_secret: this.proxmoxTokenSecret,
             template_vmid: this.templateVmid ? parseInt(this.templateVmid, 10) : 0,
+            clone_mode: this.cloneMode,
             cdp_host: this.cdpHost,
             cdp_port: this.cdpPort ? parseInt(this.cdpPort, 10) : 9222,
             rdp_username: this.rdpUsername,
+            rdp_password: this.rdpPassword,
+            takeover_method: this.takeoverMethod,
+            takeover_url_template: this.takeoverUrlTemplate,
           };
           const res = await callJsonApi('privacy', { action: 'set_sandbox', ...body });
           if (res.ok) {
             this.sandboxMsg = 'Sandbox connection saved.';
+            // Secrets are never echoed back — clear the fields after a successful save.
+            this.proxmoxTokenSecret = '';
+            this.rdpPassword = '';
           } else {
             this.sandboxErr = res.error || 'Failed to save sandbox connection';
           }

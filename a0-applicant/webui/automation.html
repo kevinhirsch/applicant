@@ -49,7 +49,11 @@
         </div>
         <div class="field-row">
           <label>computer_use_approvals</label>
-          <input type="checkbox" x-model="fields.computer_use_approvals" />
+          <select x-model="fields.computer_use_approvals">
+            <option value="">(default)</option>
+            <option value="manual">manual</option>
+            <option value="session">session</option>
+          </select>
         </div>
         <div class="field-row">
           <label>memory_write_approval</label>
@@ -139,18 +143,16 @@
           <label>browser_engine</label>
           <select x-model="fields.browser_engine">
             <option value="">(default)</option>
+            <option value="camoufox">camoufox</option>
             <option value="chromium">chromium</option>
-            <option value="firefox">firefox</option>
-            <option value="webkit">webkit</option>
           </select>
         </div>
         <div class="field-row">
           <label>browser_channel</label>
           <select x-model="fields.browser_channel">
             <option value="">(default)</option>
-            <option value="stable">stable</option>
-            <option value="beta">beta</option>
-            <option value="dev">dev</option>
+            <option value="chrome">chrome</option>
+            <option value="chromium">chromium</option>
           </select>
         </div>
         <div class="field-row">
@@ -166,8 +168,7 @@
           <select x-model="fields.egress_mode">
             <option value="">(default)</option>
             <option value="direct">direct</option>
-            <option value="proxy">proxy</option>
-            <option value="tor">tor</option>
+            <option value="residential-proxy">residential-proxy</option>
           </select>
         </div>
         <div class="field-row">
@@ -191,22 +192,27 @@
           <label>computer_use_backend</label>
           <select x-model="fields.computer_use_backend">
             <option value="">(default)</option>
-            <option value="native">native</option>
-            <option value="docker">docker</option>
-            <option value="xpra">xpra</option>
+            <option value="noop">noop</option>
+            <option value="cua">cua</option>
           </select>
         </div>
         <div class="field-row">
           <label>computer_use_mode</label>
           <select x-model="fields.computer_use_mode">
             <option value="">(default)</option>
-            <option value="headless">headless</option>
-            <option value="desktop">desktop</option>
+            <option value="som">som</option>
+            <option value="ax">ax</option>
           </select>
         </div>
         <div class="field-row">
           <label>takeover_desktop</label>
-          <input type="checkbox" x-model="fields.takeover_desktop" />
+          <select x-model="fields.takeover_desktop">
+            <option value="">(default)</option>
+            <option value="cinnamon">cinnamon</option>
+            <option value="xfce">xfce</option>
+            <option value="gnome">gnome</option>
+            <option value="pantheon">pantheon</option>
+          </select>
         </div>
         <div class="field-row">
           <label>remote_view_backend</label>
@@ -214,7 +220,12 @@
         </div>
         <div class="field-row">
           <label>resume_render</label>
-          <input type="checkbox" x-model="fields.resume_render" />
+          <select x-model="fields.resume_render">
+            <option value="">(default)</option>
+            <option value="auto">auto</option>
+            <option value="on">on</option>
+            <option value="off">off</option>
+          </select>
         </div>
       </div>
 
@@ -233,9 +244,8 @@
           <label>captcha_strategy</label>
           <select x-model="fields.captcha_strategy">
             <option value="">(default)</option>
-            <option value="none">none</option>
-            <option value="auto">auto</option>
-            <option value="manual">manual</option>
+            <option value="human">human</option>
+            <option value="avoid">avoid</option>
             <option value="service">service</option>
           </select>
         </div>
@@ -250,7 +260,8 @@
         </div>
         <div class="field-row">
           <label>captcha_api_key</label>
-          <input type="text" x-model="fields.captcha_api_key" />
+          <input type="text" x-model="fields.captcha_api_key" placeholder="Leave blank to keep the saved key" />
+          <span class="success" style="margin:0;padding:2px 8px;font-size:.72rem" x-show="fields.captcha_api_key_configured">key already saved</span>
         </div>
       </div>
 

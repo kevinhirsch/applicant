@@ -3,7 +3,7 @@
 The Notifications UI is served by the a0 shell, but the Applicant engine is internal-only
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/notifications``
 API, keeping the engine the single source of truth for notification state. Multiple actions
-dispatched by ``action``: ``list``, ``seen``, ``deliver_now``.
+dispatched by ``action``: ``list``, ``seen``, ``deliver_now``, ``presence``.
 
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from helpers.api import ApiHandler
@@ -46,7 +47,19 @@ def dispatch(input: dict) -> dict:
 
     if action == "list":
         include_seen = "true" if input.get("include_seen") else "false"
-        return _forward("GET", f"/api/notifications?include_seen={include_seen}")
+        qs = f"include_seen={include_seen}"
+        # since/limit are opt-in incremental-poll params (forwarded only when the
+        # caller supplies them) so the historical no-arg query string is unchanged.
+        since = str((input or {}).get("since") or "").strip()
+        if since:
+            qs += f"&since={urllib.parse.quote(since)}"
+        limit = (input or {}).get("limit")
+        if limit is not None:
+            try:
+                qs += f"&limit={int(limit)}"
+            except (TypeError, ValueError):
+                pass
+        return _forward("GET", f"/api/notifications?{qs}")
 
     if action == "seen":
         notification_id = str((input or {}).get("notification_id") or "").strip()
@@ -56,6 +69,13 @@ def dispatch(input: dict) -> dict:
 
     if action == "deliver_now":
         return _forward("POST", "/api/notifications/deliver-now")
+
+    if action == "presence":
+        # Web-presence heartbeat (FR-NOTIF-2): lets the in-app surface pre-empt the
+        # Discord escalation while the user is verifiably looking at the Notifications
+        # panel. Forwards to the same engine endpoint the digest front door uses.
+        present = bool((input or {}).get("present", True))
+        return _forward("POST", "/api/digest/presence", {"present": present})
 
     return {"ok": False, "status": 400, "error": f"unknown notifications action {action!r}"}
 

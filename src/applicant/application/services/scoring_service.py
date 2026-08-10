@@ -13,7 +13,7 @@ signature** (FR-LEARN-5): a role that looks like what has actually converted for
 campaign gets a small, transparent boost. Discovery and scoring thus both bend toward
 the learned signature.
 
-The viability **threshold defaults to 70** (on a 0..100 scale) and is configurable per
+The viability **threshold defaults to 60** (on a 0..100 scale) and is configurable per
 campaign; ``is_viable`` gates which postings reach the digest. A digest GET re-runs on
 every view, so ``score_for_digest`` reuses a persisted score whenever the criteria are
 unchanged (keyed by a criteria signature) rather than re-paying an LLM call per posting.

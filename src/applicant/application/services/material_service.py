@@ -1063,6 +1063,29 @@ class MaterialService:
             # Stored in the existing ``fit_scores`` JSON dict (no migration needed).
             fit_scores=({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
         )
+        # Tech-debt fix (Drafting & Materials): a forked variant used to persist ONLY
+        # its metadata — the tailored SOURCE (``report.text``) was generated but never
+        # actually rendered, so ``storage_path`` stayed a placeholder no file ever
+        # existed at (nothing to preview/download/upload; see
+        # ``BaseResumeProvider``'s docstring, which called this out explicitly). Render
+        # it now through the campaign's chosen engine (``tailoring_for`` respects the
+        # Phase 0 LaTeX-vs-docx choice, FR-RESUME-3a — previously computed but never
+        # actually invoked anywhere) so the variant carries a REAL artifact path from
+        # the moment it exists. Best-effort: a render failure degrades to the
+        # placeholder path (counted via ``_note_silent_degradation``) rather than
+        # blocking generation — the redline/review flow does not require a compiled
+        # artifact to already exist.
+        engine = self.tailoring_for(campaign_id)
+        if engine is not None:
+            try:
+                rendered = engine.render_artifact(new_variant.id, report.text)
+            except Exception:
+                self._note_silent_degradation(
+                    "material_service.py:select_or_generate render_artifact"
+                )
+            else:
+                if rendered is not None and rendered.storage_path:
+                    new_variant = replace(new_variant, storage_path=rendered.storage_path)
         # P1-8: compute the deterministic keyword coverage of the GENERATED body vs
         # the JD terms and persist it with the variant, so the coverage the review
         # surface shows is stored (not recomputed ad hoc) and survives restarts.

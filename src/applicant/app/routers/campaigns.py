@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -13,6 +15,7 @@ from applicant.app.deps import (
     get_campaign_service,
     get_cost_service,
     get_data_lifecycle_service,
+    get_learning_service,
     get_pipeline_summary_service,
     require_llm_configured,
 )
@@ -75,7 +78,10 @@ def create_campaign(body: CreateCampaignIn, svc=Depends(get_campaign_service)) -
 
 @router.patch("/{campaign_id}")
 def update_campaign(
-    campaign_id: str, body: UpdateCampaignIn, svc=Depends(get_campaign_service)
+    campaign_id: str,
+    body: UpdateCampaignIn,
+    svc=Depends(get_campaign_service),
+    learning_svc=Depends(get_learning_service),
 ) -> dict:
     """Rename / archive / re-tune a campaign (FR-CRIT-4, FR-AGENT-1/2, FR-DISC-5).
 
@@ -97,6 +103,17 @@ def update_campaign(
         )
     except ValueError as exc:  # bad run_mode value
         raise HTTPException(status_code=422, detail=f"Invalid value: {exc}") from exc
+    if body.exploration_budget is not None:
+        # Two unsynchronized exploration_budget fields otherwise exist (Campaign vs
+        # LearningModel/learning_state) — LearningService.load_model prefers the
+        # learning_state value once one has ever been persisted (e.g. via PUT
+        # /api/criteria/{id}/exploration-budget), so a campaigns-panel edit would
+        # silently no-op after that point. Forward it into the same learning_state
+        # so there is one source of truth regardless of which surface set it last.
+        model = learning_svc.load_model(cid)
+        learning_svc.persist_model(
+            dataclasses.replace(model, exploration_budget=updated.exploration_budget)
+        )
     return _campaign_dict(updated)
 
 

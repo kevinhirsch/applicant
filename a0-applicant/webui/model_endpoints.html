@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
-<!-- Model-endpoints panel — configure endpoint sources + live-model list. Driven by the engine via the a0-applicant model_endpoints proxy (action=list|add|test|remove|models). -->
+<!-- Model-endpoints panel — configure endpoint sources + live-model list. Driven by the engine via the a0-applicant model_endpoints proxy (action=list|add|test|remove|models|toggle|use_model). -->
 <style>
   .amodel-endpoints{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
   .amodel-endpoints h1{font-size:1.5rem;margin:0 0 .25rem}
@@ -21,6 +21,9 @@
   .amodel-endpoints .item .info .url{font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin-top:4px}
   .amodel-endpoints .item .info .meta{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
   .amodel-endpoints .badge{font-size:.72rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block}
+  .amodel-endpoints .badge.online{background:var(--color-success-bg,#e3f6e8);color:var(--color-success-text,#1e7b34)}
+  .amodel-endpoints .badge.offline{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c)}
+  .amodel-endpoints .item .ping-error{font-size:.75rem;color:var(--color-danger-text,#9b1c1c);margin-top:4px}
   .amodel-endpoints .add-form{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:14px;margin-bottom:12px}
   .amodel-endpoints .add-form label{font-size:.82rem;font-weight:600;display:block;margin-bottom:4px}
   .amodel-endpoints .add-form input,.amodel-endpoints .add-form select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;box-sizing:border-box;margin-bottom:8px}
@@ -28,7 +31,7 @@
   .amodel-endpoints .add-form .form-row input{flex:1}
   .amodel-endpoints .item-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
   .amodel-endpoints .models-list{margin-top:8px;padding:8px;background:var(--color-panel,#f2f5f7);border-radius:6px;font-size:.82rem}
-  .amodel-endpoints .models-list .model-item{padding:2px 0}
+  .amodel-endpoints .models-list .model-item{padding:2px 0;display:flex;align-items:center;justify-content:space-between;gap:8px}
 </style>
 
 <div class="amodel-endpoints" x-data="modelEndpointsPanel()">
@@ -77,17 +80,25 @@
         <div class="url" x-text="item.base_url"></div>
         <div class="meta">
           <span class="badge" x-text="item.model_type || 'llm'"></span>
-          <span class="badge" x-text="item.enabled ? 'Enabled' : 'Disabled'"></span>
+          <span class="badge" x-text="item.is_enabled ? 'Enabled' : 'Disabled'"></span>
+          <span class="badge" :class="item.online ? 'online' : 'offline'" x-text="item.online ? 'Online' : 'Offline'"></span>
+          <span class="badge" x-text="item.category === 'local' ? 'Local' : 'Cloud'"></span>
+          <span class="badge" x-show="item.has_key">Key saved</span>
         </div>
+        <div class="ping-error" x-show="item.ping_error" x-text="item.ping_error"></div>
       </div>
       <div class="item-actions">
         <button class="btn" @click="testEndpoint(item)" :disabled="busy">Test</button>
         <button class="btn" @click="loadModels(item)" :disabled="busy">Models</button>
+        <button class="btn" @click="toggleEndpoint(item)" :disabled="busy" x-text="item.is_enabled ? 'Disable' : 'Enable'"></button>
         <button class="btn danger" @click="removeEndpoint(item)" :disabled="busy">Remove</button>
       </div>
       <div class="models-list" x-show="item._showModels && item._models && item._models.length > 0">
         <template x-for="model in item._models" :key="model.id || model.name || model">
-          <div class="model-item" x-text="model.name || model.id || model"></div>
+          <div class="model-item">
+            <span x-text="model.name || model.id || model"></span>
+            <button class="btn" style="padding:2px 8px;font-size:.72rem;margin-left:8px" @click="useModel(item, model)" :disabled="busy">Use this model</button>
+          </div>
         </template>
       </div>
       <div class="models-list" x-show="item._showModels && item._models && item._models.length === 0">
@@ -211,6 +222,38 @@
       this.busy = false;
     },
 
+    async toggleEndpoint(item) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "toggle",
+        endpoint_id: item.id,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to toggle endpoint.";
+      }
+      await this.loadEndpoints();
+      this.busy = false;
+    },
+
+    async useModel(item, model) {
+      const modelName = (model && (model.name || model.id)) || model;
+      if (!modelName) return;
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("model_endpoints", {
+        action: "use_model",
+        endpoint_id: item.id,
+        model: modelName,
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to set this model as active.";
+      } else {
+        item._activeModel = modelName;
+      }
+      this.busy = false;
+    },
+
     async loadModels(item) {
       this.busy = true;
       this.fatalError = "";
@@ -223,7 +266,11 @@
         item._showModels = false;
       } else {
         item._showModels = !item._showModels;
-        const models = r.data && r.data.models ? r.data.models : [];
+        // The engine returns a bare array for this route (not {models: [...]}), so
+        // fall back to r.data itself — mirroring loadEndpoints()'s same shape guard —
+        // otherwise the model list always rendered empty (r.data.models is undefined
+        // on an array).
+        const models = (r.data && r.data.models) || r.data || [];
         item._models = models;
       }
       this.busy = false;

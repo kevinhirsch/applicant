@@ -128,7 +128,8 @@
         this.fatalError = (r && r.error) || "Couldn't reach the discovery engine.";
         this.sources = [];
       } else {
-        this.sources = r.data || [];
+        // Engine returns {campaign_id, items: [...]}, not a bare array (#tech-debt 1.1).
+        this.sources = (r.data && r.data.items) || [];
       }
       this.loading = false;
     },

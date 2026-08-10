@@ -83,6 +83,12 @@ def dispatch(input: dict) -> dict:
             "value": input.get("value"),
             "is_sensitive": bool(input.get("is_sensitive")),
         }
+        # is_integral/confirm (FR-FB-3 protected-attribute gate) are only forwarded
+        # when set, so the default add-shape (and existing callers/tests) is unchanged.
+        if input.get("is_integral"):
+            body["is_integral"] = True
+        if input.get("confirm"):
+            body["confirm"] = True
         return _forward("POST", "/api/attributes", body)
 
     if action == "delete":

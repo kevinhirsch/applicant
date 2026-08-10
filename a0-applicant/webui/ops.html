@@ -149,7 +149,142 @@
           </div>
           <div class="err" x-show="detectionsError" x-text="detectionsError"></div>
         </div>
+
+        <!-- Stuck applications -->
+        <div class="section">
+          <h3>🚧 Stuck Applications</h3>
+          <div class="toolbar">
+            <button class="btn small" @click="loadStuck()" :disabled="stuckLoading">↻ Refresh</button>
+          </div>
+          <div class="loading" x-show="stuckLoading"><div class="spinner"></div></div>
+          <div class="empty" x-show="!stuckLoading && stuckData && (!stuckData.applications || stuckData.applications.length === 0)">
+            <p>No stuck applications — the loop is re-driving everything on schedule.</p>
+          </div>
+          <table x-show="!stuckLoading && stuckData && stuckData.applications && stuckData.applications.length > 0">
+            <thead><tr><th>Application</th><th>Reason</th><th>Attempts</th><th></th></tr></thead>
+            <tbody>
+              <template x-for="row in (stuckData?.applications || [])" :key="rowId(row)">
+                <tr>
+                  <td x-text="rowId(row)"></td>
+                  <td x-text="rowReason(row)"></td>
+                  <td x-text="row.attempts ?? row.failure_count ?? row.failures ?? '-'"></td>
+                  <td>
+                    <button class="btn small primary" @click="retryStuck(rowId(row))" :disabled="busyId === rowId(row)">Retry</button>
+                    <button class="btn small" @click="inspectResumeStatus(rowId(row))" :disabled="busyId === rowId(row)">ETA</button>
+                    <button class="btn small" @click="inspectScreenshots(rowId(row))" :disabled="busyId === rowId(row)">📷</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="err" x-show="stuckError" x-text="stuckError"></div>
+        </div>
+
+        <!-- Blocked applications -->
+        <div class="section">
+          <h3>⛔ Blocked Applications</h3>
+          <div class="toolbar">
+            <button class="btn small" @click="loadBlocked()" :disabled="blockedLoading">↻ Refresh</button>
+          </div>
+          <div class="loading" x-show="blockedLoading"><div class="spinner"></div></div>
+          <div class="empty" x-show="!blockedLoading && blockedData && (!blockedData.applications || blockedData.applications.length === 0)">
+            <p>No applications blocked by the pre-submit safety gate.</p>
+          </div>
+          <table x-show="!blockedLoading && blockedData && blockedData.applications && blockedData.applications.length > 0">
+            <thead><tr><th>Application</th><th>Reason</th><th></th></tr></thead>
+            <tbody>
+              <template x-for="row in (blockedData?.applications || [])" :key="rowId(row)">
+                <tr>
+                  <td x-text="rowId(row)"></td>
+                  <td x-text="rowReason(row)"></td>
+                  <td>
+                    <button class="btn small danger" @click="overrideBlocked(rowId(row))" :disabled="busyId === rowId(row)">Override &amp; proceed</button>
+                    <button class="btn small" @click="inspectResumeStatus(rowId(row))" :disabled="busyId === rowId(row)">ETA</button>
+                    <button class="btn small" @click="inspectScreenshots(rowId(row))" :disabled="busyId === rowId(row)">📷</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="err" x-show="blockedError" x-text="blockedError"></div>
+        </div>
+
+        <!-- Shared inspector: resume ETA / evidence screenshots for one application -->
+        <div class="section" x-show="inspector.mode">
+          <h3 x-text="inspector.mode === 'screenshots' ? ('📷 Screenshots — ' + inspector.appId) : ('⏱️ Resume ETA — ' + inspector.appId)"></h3>
+          <div class="loading" x-show="inspector.loading"><div class="spinner"></div></div>
+          <div class="err" x-show="inspector.error" x-text="inspector.error"></div>
+          <template x-if="!inspector.loading && !inspector.error && inspector.mode === 'resume_status'">
+            <table>
+              <tbody>
+                <template x-for="[k, v] in kvRows(inspector.data)" :key="k">
+                  <tr><td style="font-weight:600;width:40%" x-text="k"></td><td x-text="v"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </template>
+          <template x-if="!inspector.loading && !inspector.error && inspector.mode === 'screenshots'">
+            <div>
+              <div class="empty" x-show="!(inspector.data?.screenshots || []).length"><p>No screenshots captured for this application.</p></div>
+              <template x-for="(shot, i) in (inspector.data?.screenshots || [])" :key="shot.id || i">
+                <div class="detection-item">
+                  <div x-text="shot.page_ref || shot.page_url || shot.label || ('Screenshot ' + (i + 1))"></div>
+                  <div class="detection-meta">
+                    <span x-show="shot.timestamp || shot.captured_at">&nbsp;·&nbsp;<span x-text="shot.timestamp || shot.captured_at"></span></span>
+                    <span x-show="shot.id">&nbsp;·&nbsp;id=<span x-text="shot.id"></span></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
       </div>
+    </div>
+
+    <!-- Section 2b: Engine diagnostics (process-wide, no campaign needed) -->
+    <div class="section">
+      <h2>🩺 Engine Diagnostics</h2>
+      <div class="toolbar">
+        <button class="btn small" @click="loadDiagnostic('stealth')" :disabled="diag.loading">Stealth</button>
+        <button class="btn small" @click="loadDiagnostic('workspace_bridge')" :disabled="diag.loading">Workspace bridge</button>
+        <button class="btn small" @click="loadDiagnostic('captcha_status')" :disabled="diag.loading">Captcha</button>
+        <button class="btn small" @click="loadDiagnostic('capacity')" :disabled="diag.loading">Capacity</button>
+        <button class="btn small" @click="loadDiagnostic('embedding_backend')" :disabled="diag.loading">Embedding backend</button>
+        <button class="btn small" @click="loadDiagnostic('lessons')" :disabled="diag.loading">Lessons learned</button>
+      </div>
+      <div class="loading" x-show="diag.loading"><div class="spinner"></div></div>
+      <div class="err" x-show="diag.error" x-text="diag.error"></div>
+      <table x-show="!diag.loading && !diag.error && diag.mode && diag.mode !== 'lessons'">
+        <tbody>
+          <template x-for="[k, v] in kvRows(diag.data)" :key="k">
+            <tr><td style="font-weight:600;width:40%" x-text="k"></td><td x-text="v"></td></tr>
+          </template>
+        </tbody>
+      </table>
+      <div x-show="!diag.loading && !diag.error && diag.mode === 'lessons'">
+        <div class="empty" x-show="Object.keys(diag.data?.lessons || {}).length === 0"><p>No lessons recorded yet.</p></div>
+        <template x-for="ats in Object.keys(diag.data?.lessons || {})" :key="ats">
+          <div class="detection-item">
+            <div style="font-weight:600" x-text="ats"></div>
+            <div class="detection-meta" x-text="(diag.data.lessons[ats] || []).length + ' lesson(s)'"></div>
+          </div>
+        </template>
+      </div>
+
+      <div class="toolbar" style="margin-top:1rem">
+        <label>PII retention sweep</label>
+        <input type="number" min="0" placeholder="days (blank = saved default)" x-model="retentionDays" style="width:180px;padding:6px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font-size:.82rem">
+        <button class="btn small primary" @click="runRetentionSweep()" :disabled="retentionRunning">Run retention sweep now</button>
+      </div>
+      <div class="loading" x-show="retentionRunning"><div class="spinner"></div></div>
+      <div class="err" x-show="retentionError" x-text="retentionError"></div>
+      <table x-show="!retentionRunning && retentionResult">
+        <tbody>
+          <template x-for="[k, v] in kvRows(retentionResult)" :key="k">
+            <tr><td style="font-weight:600;width:40%" x-text="k"></td><td x-text="v"></td></tr>
+          </template>
+        </tbody>
+      </table>
     </div>
 
     <!-- Section 3: Logs -->
@@ -195,11 +330,43 @@
     detectionsData: { detections: [] },
     detectionsLoading: false,
     detectionsError: "",
+    stuckData: { applications: [] },
+    stuckLoading: false,
+    stuckError: "",
+    blockedData: { applications: [] },
+    blockedLoading: false,
+    blockedError: "",
+    busyId: "",
+    inspector: { mode: "", appId: "", loading: false, error: "", data: null },
+    diag: { mode: "", loading: false, error: "", data: null },
+    retentionDays: "",
+    retentionRunning: false,
+    retentionError: "",
+    retentionResult: null,
     logsData: { entries: [] },
     logsLoading: false,
     logsError: "",
     loading: true,
     fatalError: "",
+
+    // Best-effort id/reason readers — the engine's given-up/blocked rows are plain
+    // dicts whose exact keys depend on the ledger entry shape, so fall back rather
+    // than assume one field name (mirrors history/detections rendering above).
+    rowId(row) {
+      return (row && (row.id || row.application_id || row.name)) || "-";
+    },
+    rowReason(row) {
+      if (!row) return "-";
+      return row.reason || row.detail || row.message || row.last_error || row.error || "-";
+    },
+    // Render an arbitrary JSON object as [key, value] rows for a generic table;
+    // used for the diagnostic/inspector payloads whose shape varies by endpoint.
+    kvRows(obj) {
+      if (!obj || typeof obj !== "object") return [];
+      return Object.entries(obj)
+        .filter(([k]) => k !== "status")
+        .map(([k, v]) => [k, (v !== null && typeof v === "object") ? JSON.stringify(v) : String(v)]);
+    },
 
     async init() {
       this.loading = true;
@@ -267,8 +434,113 @@
       const cid = this.selectedCampaignId || "__system__";
       await Promise.all([
         this.loadHistory(cid),
-        this.loadDetections(cid)
+        this.loadDetections(cid),
+        this.loadStuck(cid),
+        this.loadBlocked(cid)
       ]);
+    },
+
+    async loadStuck(cid) {
+      cid = cid || this.selectedCampaignId || "__system__";
+      this.stuckLoading = true;
+      this.stuckError = "";
+      const r = await callJsonApi("ops", { action: "stuck_applications", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.stuckError = (r && r.error) || "Failed to load stuck applications.";
+        this.stuckData = { applications: [] };
+      } else {
+        this.stuckData = (r && r.data) || {};
+        this.stuckData.applications = this.stuckData.applications || [];
+      }
+      this.stuckLoading = false;
+    },
+
+    async loadBlocked(cid) {
+      cid = cid || this.selectedCampaignId || "__system__";
+      this.blockedLoading = true;
+      this.blockedError = "";
+      const r = await callJsonApi("ops", { action: "blocked_applications", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.blockedError = (r && r.error) || "Failed to load blocked applications.";
+        this.blockedData = { applications: [] };
+      } else {
+        this.blockedData = (r && r.data) || {};
+        this.blockedData.applications = this.blockedData.applications || [];
+      }
+      this.blockedLoading = false;
+    },
+
+    async retryStuck(applicationId) {
+      if (!applicationId || applicationId === "-") return;
+      this.busyId = applicationId;
+      this.stuckError = "";
+      const r = await callJsonApi("ops", { action: "retry_stuck", application_id: applicationId });
+      if (!r || !r.ok) {
+        this.stuckError = (r && r.error) || `Failed to retry ${applicationId}.`;
+      }
+      this.busyId = "";
+      await this.loadStuck();
+    },
+
+    async overrideBlocked(applicationId) {
+      if (!applicationId || applicationId === "-") return;
+      this.busyId = applicationId;
+      this.blockedError = "";
+      const r = await callJsonApi("ops", { action: "override_blocked", application_id: applicationId });
+      if (!r || !r.ok) {
+        this.blockedError = (r && r.error) || `Failed to override ${applicationId}.`;
+      }
+      this.busyId = "";
+      await this.loadBlocked();
+    },
+
+    async inspectResumeStatus(applicationId) {
+      if (!applicationId || applicationId === "-") return;
+      this.inspector = { mode: "resume_status", appId: applicationId, loading: true, error: "", data: null };
+      const r = await callJsonApi("ops", { action: "resume_status", application_id: applicationId });
+      if (!r || !r.ok) {
+        this.inspector = { mode: "resume_status", appId: applicationId, loading: false, error: (r && r.error) || "Failed to load resume status.", data: null };
+        return;
+      }
+      this.inspector = { mode: "resume_status", appId: applicationId, loading: false, error: "", data: r.data || {} };
+    },
+
+    async inspectScreenshots(applicationId) {
+      if (!applicationId || applicationId === "-") return;
+      this.inspector = { mode: "screenshots", appId: applicationId, loading: true, error: "", data: null };
+      const r = await callJsonApi("ops", { action: "screenshots", application_id: applicationId });
+      if (!r || !r.ok) {
+        this.inspector = { mode: "screenshots", appId: applicationId, loading: false, error: (r && r.error) || "Failed to load screenshots.", data: null };
+        return;
+      }
+      this.inspector = { mode: "screenshots", appId: applicationId, loading: false, error: "", data: r.data || {} };
+    },
+
+    async loadDiagnostic(kind) {
+      this.diag = { mode: kind, loading: true, error: "", data: null };
+      const r = await callJsonApi("ops", { action: kind });
+      if (!r || !r.ok) {
+        this.diag = { mode: kind, loading: false, error: (r && r.error) || `Failed to load ${kind}.`, data: null };
+        return;
+      }
+      this.diag = { mode: kind, loading: false, error: "", data: r.data || {} };
+    },
+
+    async runRetentionSweep() {
+      this.retentionRunning = true;
+      this.retentionError = "";
+      this.retentionResult = null;
+      const payload = { action: "retention_prune" };
+      if (this.retentionDays !== "" && this.retentionDays !== null && this.retentionDays !== undefined) {
+        payload.days = Number(this.retentionDays);
+      }
+      const r = await callJsonApi("ops", payload);
+      if (!r || !r.ok) {
+        this.retentionError = (r && r.error) || "Failed to run retention sweep.";
+      } else {
+        this.retentionResult = r.data || {};
+      }
+      this.retentionRunning = false;
     },
 
     async loadHistory(cid) {
@@ -305,6 +577,11 @@
       this.detectionsData = null;
       this.historyError = "";
       this.detectionsError = "";
+      this.stuckData = null;
+      this.stuckError = "";
+      this.blockedData = null;
+      this.blockedError = "";
+      this.inspector = { mode: "", appId: "", loading: false, error: "", data: null };
       if (this.selectedCampaignId) {
         await this.loadCampaignData();
       }

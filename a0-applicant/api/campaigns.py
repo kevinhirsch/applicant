@@ -4,7 +4,7 @@ The Campaigns UI is served by the a0 shell, but the Applicant engine is internal
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/campaigns``
 API, keeping the engine the single source of truth for campaign state. Multiple actions
 dispatched by ``action``: ``list``, ``create``, ``update``, ``clone``, ``guardrails``,
-``pipeline_summary``.
+``pipeline_summary``, ``delete``.
 
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
@@ -116,6 +116,11 @@ def dispatch(input: dict) -> dict:
     if action == "pipeline_summary":
         resolved = _resolve_campaign_id(cid)
         return _forward("GET", f"/api/campaigns/{resolved}/pipeline-summary")
+
+    if action == "delete":
+        if not cid:
+            return {"ok": False, "status": 400, "error": "campaign_id required"}
+        return _forward("DELETE", f"/api/campaigns/{cid}")
 
     return {"ok": False, "status": 400, "error": f"unknown campaigns action {action!r}"}
 

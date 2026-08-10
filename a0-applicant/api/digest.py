@@ -3,7 +3,8 @@
 The Digest UI is served by the a0 shell, but the Applicant engine is internal-only
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/digest``
 API, keeping the engine the single source of truth for digest state. Multiple actions
-dispatched by ``action``: ``get``, ``recap``, ``approve``, ``decline``.
+dispatched by ``action``: ``get``, ``recap``, ``approve``, ``decline``, ``deliver``,
+``email``, ``presence``.
 
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
@@ -90,6 +91,16 @@ def dispatch(input: dict) -> dict:
         if not application_id:
             return {"ok": False, "status": 400, "error": "application_id required"}
         return _forward("POST", f"/api/digest/applications/{application_id}/decline", {"feedback_text": input.get("reason")})
+
+    if action == "deliver":
+        return _forward("POST", f"/api/digest/{cid}/deliver", None)
+
+    if action == "email":
+        return _forward("GET", f"/api/digest/{cid}/email")
+
+    if action == "presence":
+        present = bool((input or {}).get("present", True))
+        return _forward("POST", "/api/digest/presence", {"present": present})
 
     return {"ok": False, "status": 400, "error": f"unknown digest action {action!r}"}
 

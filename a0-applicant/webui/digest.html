@@ -42,6 +42,8 @@
   <div class="toolbar">
     <button class="btn primary" @click="refresh()" :disabled="busy">↻ Refresh</button>
     <button class="btn" @click="recap()" :disabled="busy">📊 Weekly recap</button>
+    <button class="btn" @click="forceDeliver()" :disabled="busy">🚀 Force deliver</button>
+    <button class="btn" @click="previewEmail()" :disabled="busy">✉️ Preview email</button>
   </div>
 
   <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading digest…</div>
@@ -114,6 +116,23 @@
 
     async init() {
       await this.load();
+      // FR-NOTIF-2: signal web-portal presence so the notifier can hold the
+      // Discord ready-ping while the user is actively looking at the digest
+      // here (mirrors the legacy frontend/static/applicant/js/digest.js).
+      this.setPresence(true);
+      document.addEventListener('visibilitychange', () => {
+        this.setPresence(document.visibilityState === 'visible');
+      });
+      window.addEventListener('focus', () => this.setPresence(true));
+      window.addEventListener('blur', () => this.setPresence(false));
+    },
+
+    async setPresence(present) {
+      try {
+        await callJsonApi("digest", { action: "presence", present: present });
+      } catch (e) {
+        /* presence is best-effort */
+      }
     },
 
     async load() {
@@ -141,8 +160,13 @@
 
     async approve(applicationId) {
       this.busy = true;
-      await callJsonApi("digest", { action: "approve", application_id: applicationId });
+      this.fatalError = "";
+      const r = await callJsonApi("digest", { action: "approve", application_id: applicationId });
       this.busy = false;
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't approve that role.";
+        return;
+      }
       await this.load();
     },
 
@@ -150,9 +174,14 @@
       const reason = (this.declineReasons[applicationId] || "").trim();
       if (!reason) return;
       this.busy = true;
-      await callJsonApi("digest", { action: "decline", application_id: applicationId, reason: reason });
-      this.declineReasons[applicationId] = "";
+      this.fatalError = "";
+      const r = await callJsonApi("digest", { action: "decline", application_id: applicationId, reason: reason });
       this.busy = false;
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't decline that role.";
+        return;
+      }
+      this.declineReasons[applicationId] = "";
       await this.load();
     },
 
@@ -182,11 +211,44 @@
       this.recapMessage = "";
       const r = await callJsonApi("digest", { action: "recap" });
       if (r && r.ok && r.data) {
-        this.recapMessage = r.data.recap || r.data.message || JSON.stringify(r.data);
+        // render_weekly_recap_message() returns {subject, body, ...} — "body" is
+        // the actual first-person recap sentence (was reading nonexistent
+        // "recap"/"message" keys, so this box silently stayed empty).
+        this.recapMessage = r.data.body || r.data.recap || r.data.message || JSON.stringify(r.data);
       } else {
         this.fatalError = (r && r.error) || "Weekly recap failed.";
       }
       this.busy = false;
+    },
+
+    async forceDeliver() {
+      this.busy = true;
+      this.fatalError = "";
+      this.recapMessage = "";
+      const r = await callJsonApi("digest", { action: "deliver" });
+      this.busy = false;
+      if (r && r.ok && r.data) {
+        const d = r.data;
+        const channels = (d.delivered_channels || []).join(', ') || 'no channels';
+        const count = d.row_count || 0;
+        this.recapMessage = `Delivered ${count} role${count === 1 ? '' : 's'} via ${channels}. Subject: "${d.email_subject || ''}"`;
+      } else {
+        this.fatalError = (r && r.error) || "Force deliver failed.";
+      }
+    },
+
+    async previewEmail() {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("digest", { action: "email" });
+      this.busy = false;
+      if (r && r.ok && r.data && r.data.html) {
+        const blob = new Blob([r.data.html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+      } else {
+        this.fatalError = (r && r.error) || "Couldn't build the email preview.";
+      }
     }
   }));
   })();

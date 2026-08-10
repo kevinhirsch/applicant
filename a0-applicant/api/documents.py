@@ -3,8 +3,10 @@
 The Documents UI is served by the a0 shell, but the Applicant engine is internal-only
 ("api:8000"). This handler forwards the UI's calls to the engine's "/api/documents/..." and
 "/api/outcomes/..." APIs, keeping the engine the single source of truth for document state.
-Six actions dispatched by "action": "list" (GET), "provenance" (GET), "approve" (POST),
-"decline" (POST), "redline" (POST), "snapshot" (GET).
+Actions dispatched by "action": "list" (GET), "provenance" (GET), "approve" (POST),
+"decline" (POST), "redline" (POST), "snapshot" (GET), "variants" (GET), "approve_variant"
+(POST), "promote_variant" (POST), "cover_letter" (POST), "flagged_facts" (GET), "jd_match"
+(GET), "set_aggressiveness" (POST), "screening_library" (GET), "screening_reuse" (POST).
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -80,6 +82,78 @@ def dispatch(input: dict) -> dict:
         if not application_id:
             return {"ok": False, "status": 400, "error": "application_id required"}
         return _forward("GET", f"/api/outcomes/applications/{application_id}/snapshot")
+
+    # Tech-debt fix (Drafting & Materials, P0 UNEXPOSED): the résumé-variant
+    # library + its approve/promote gate had a working engine route but zero
+    # proxy action, so a GENERATED variant routed to review was unreachable
+    # from the plugin UI.
+    if action == "variants":
+        campaign_id = (input or {}).get("campaign_id")
+        if not campaign_id:
+            return {"ok": False, "status": 400, "error": "campaign_id required"}
+        return _forward("GET", f"/api/documents/variants/{campaign_id}")
+
+    if action == "approve_variant":
+        variant_id = (input or {}).get("variant_id")
+        if not variant_id:
+            return {"ok": False, "status": 400, "error": "variant_id required"}
+        return _forward("POST", f"/api/documents/variants/{variant_id}/approve")
+
+    if action == "promote_variant":
+        variant_id = (input or {}).get("variant_id")
+        if not variant_id:
+            return {"ok": False, "status": 400, "error": "variant_id required"}
+        return _forward("POST", f"/api/documents/variants/{variant_id}/promote")
+
+    # Tech-debt fix (Drafting & Materials, P0 pipeline-visibility gap): cover
+    # letter generation, flagged-facts, and JD-match had working engine routes
+    # but no proxy action, so the review UI could not surface them.
+    if action == "cover_letter":
+        body = {
+            "campaign_id": (input or {}).get("campaign_id"),
+            "application_id": (input or {}).get("application_id"),
+            "true_source": (input or {}).get("true_source") or "",
+            "jd_terms": (input or {}).get("jd_terms") or [],
+            "campaign_default": bool((input or {}).get("campaign_default") or False),
+            "role_requires": (input or {}).get("role_requires"),
+        }
+        return _forward("POST", "/api/documents/cover-letter", body)
+
+    if action == "flagged_facts":
+        document_id = (input or {}).get("document_id")
+        if not document_id:
+            return {"ok": False, "status": 400, "error": "document_id required"}
+        return _forward("GET", f"/api/documents/{document_id}/flagged-facts")
+
+    if action == "jd_match":
+        application_id = (input or {}).get("application_id")
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("GET", f"/api/documents/jd-match/{application_id}")
+
+    # Tech-debt fix (Drafting & Materials, P1 UNEXPOSED): the truthful-framing
+    # aggressiveness dial (FR-RESUME-9) has been live on the engine since #187
+    # but had no proxy action to set it.
+    if action == "set_aggressiveness":
+        body = {"aggressiveness": (input or {}).get("aggressiveness")}
+        return _forward("POST", "/api/documents/aggressiveness", body)
+
+    # Tech-debt fix (Drafting & Materials, P1 UNEXPOSED): reuse of a previously
+    # generated screening-answer library entry (product-gaps #20) had working
+    # engine routes but no proxy action.
+    if action == "screening_library":
+        campaign_id = (input or {}).get("campaign_id")
+        if not campaign_id:
+            return {"ok": False, "status": 400, "error": "campaign_id required"}
+        return _forward("GET", f"/api/documents/screening-answer-library/{campaign_id}")
+
+    if action == "screening_reuse":
+        body = {
+            "campaign_id": (input or {}).get("campaign_id"),
+            "application_id": (input or {}).get("application_id"),
+            "question": (input or {}).get("question"),
+        }
+        return _forward("POST", "/api/documents/screening-answer-library/reuse", body)
 
     return {"ok": False, "status": 400, "error": f"unknown documents action {action!r}"}
 

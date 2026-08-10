@@ -2,8 +2,11 @@
 
 The model-endpoints UI is served by the a0 shell, but the Applicant engine is internal-only
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/model-endpoints``
-API, keeping the engine the single source of truth for endpoint configuration. Five actions
-dispatched by ``action``: ``list``, ``add``, ``test``, ``remove``, ``models``.
+API, keeping the engine the single source of truth for endpoint configuration. Actions
+dispatched by ``action``: ``list``, ``add``, ``test``, ``remove``, ``models``, ``toggle``,
+``use_model``. ``use_model`` forwards to the setup router's
+``POST /api/setup/llm/from-endpoint`` (a sibling engine route, not this router's own) so
+picking a model from a saved endpoint wires it straight into the LLM ladder.
 
 SECURITY: secret fields (api_key) are passed straight through in the request body and never
 logged, printed, or echoed.
@@ -72,6 +75,19 @@ def dispatch(input: dict) -> dict:
         if not eid:
             return {"ok": False, "status": 400, "error": "endpoint_id required for models action"}
         return _forward("GET", f"/api/model-endpoints/{eid}/models")
+
+    if action == "toggle":
+        eid = str((input or {}).get("endpoint_id") or "").strip()
+        if not eid:
+            return {"ok": False, "status": 400, "error": "endpoint_id required for toggle action"}
+        return _forward("PATCH", f"/api/model-endpoints/{eid}")
+
+    if action == "use_model":
+        eid = str((input or {}).get("endpoint_id") or "").strip()
+        model = str((input or {}).get("model") or "").strip()
+        if not eid or not model:
+            return {"ok": False, "status": 400, "error": "endpoint_id and model required for use_model action"}
+        return _forward("POST", "/api/setup/llm/from-endpoint", {"endpoint_id": eid, "model": model})
 
     return {"ok": False, "status": 400, "error": f"unknown model_endpoints action {action!r}"}
 

@@ -103,11 +103,14 @@
           </div>
         </template>
 
-        <template x-for="item in historyItems" :key="item.id || item.ts">
+        <template x-for="item in historyItems" :key="item.run_id || item.id || item.ts">
           <div class="result-card">
-            <div class="title" x-text="item.text || item.action || 'Survey entry'"></div>
+            <div class="title" x-text="item.text || item.topic || item.action || 'Feedback entry'"></div>
             <div class="meta">
-              <span x-text="item.action || 'unknown'"></span>
+              <span x-text="item.kind || item.action || 'unknown'"></span>
+              <template x-if="item.topic">
+                <span> · <span x-text="item.topic"></span></span>
+              </template>
               <template x-if="item.ts">
                 <span> · <span x-text="item.ts"></span></span>
               </template>
@@ -119,7 +122,7 @@
               <div style="margin-top:6px;font-size:.82rem;white-space:pre-wrap;" x-text="JSON.stringify(item.answers, null, 2)"></div>
             </template>
             <template x-if="item.criteria_delta">
-              <div style="margin-top:4px;font-size:.78rem;color:var(--color-text-secondary,#6b7683);" x-text="item.criteria_delta"></div>
+              <div style="margin-top:4px;font-size:.78rem;color:var(--color-text-secondary,#6b7683);" x-text="JSON.stringify(item.criteria_delta)"></div>
             </template>
           </div>
         </template>
@@ -195,7 +198,6 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
 
     async submitFreetext() {
       if (!this.freetextText.trim() || !this.selectedCampaignId) return;
-      this.submitting = true;
       this.fatalError = "";
       const payload = {
         action: "freetext",
@@ -203,8 +205,16 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
         text: this.freetextText.trim(),
       };
       if (this.freetextCriteriaDelta.trim()) {
-        payload.criteria_delta = this.freetextCriteriaDelta.trim();
+        // The engine's FreeTextIn.criteria_delta is a dict — sending the raw
+        // string here 422'd every submission that used this optional field.
+        try {
+          payload.criteria_delta = JSON.parse(this.freetextCriteriaDelta.trim());
+        } catch (e) {
+          this.fatalError = "Invalid JSON in criteria delta.";
+          return;
+        }
       }
+      this.submitting = true;
 
       const r = await callJsonApi("feedback", payload);
       if (!r || !r.ok) {

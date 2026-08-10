@@ -28,6 +28,33 @@
   <h1>⚡ Easy Apply <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=easy_apply')" title="Help for easy_apply">?</button></h1>
   <div class="sub" x-text="statusText" x-show="!loading && !fatalError && data"></div>
 
+  <div class="err" x-show="consentError" x-text="consentError"></div>
+
+  <!-- P0 (#842/9.7): the consent screen the code comments describe existed only as a
+       read-only badge — there was no way to actually grant it from this plugin, so
+       the feature 409s forever. give_consent forwards to the engine's dedicated
+       POST /api/setup/easy-apply-consent (the only source of truth for acceptance). -->
+  <template x-if="consent && !consent.given">
+    <div class="status-card" style="border-color:var(--color-warning-text,#8a6d3b)">
+      <p style="font-weight:600;font-size:.9rem;margin:0 0 .4rem">Turn on Easy Apply assisted mode</p>
+      <p style="font-size:.82rem;color:var(--color-text-secondary,#6b7683);margin:0 0 .6rem">
+        Easy Apply deep-links you to the posting with your prepared materials and a checklist.
+        It never logs into the job board, fills a field, or submits anything on your behalf —
+        EEO / work-authorization questions are always yours to answer.
+      </p>
+      <button class="btn primary" @click="giveConsent()" :disabled="consenting">
+        <span x-text="consenting ? 'Enabling…' : 'Accept & enable Easy Apply'"></span>
+      </button>
+    </div>
+  </template>
+
+  <template x-if="consent && consent.given">
+    <div class="status-card">
+      <span class="badge">✓ Easy Apply enabled</span>
+      <span class="badge" x-show="consent.given_at" x-text="'since ' + consent.given_at" style="margin-left:6px"></span>
+    </div>
+  </template>
+
   <div class="toolbar">
     <select x-model="selectedCampaign" @change="lookupStatus()">
       <option value="">Loading campaigns…</option>
@@ -89,9 +116,26 @@
     statusText: "",
     loading: false,
     fatalError: "",
+    consent: null,
+    consenting: false,
+    consentError: "",
 
     async init() {
       await this.loadCampaigns();
+      await this.loadConsent();
+    },
+
+    async loadConsent() {
+      const r = await callJsonApi("easy_apply", { action: "consent_status" });
+      if (r && r.ok) this.consent = r.data || null;
+    },
+
+    async giveConsent() {
+      this.consenting = true; this.consentError = "";
+      const r = await callJsonApi("easy_apply", { action: "give_consent" });
+      this.consenting = false;
+      if (!r || !r.ok) { this.consentError = (r && r.error) || "Couldn't record consent."; return; }
+      this.consent = r.data || { given: true };
     },
 
     async loadCampaigns() {

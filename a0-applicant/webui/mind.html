@@ -27,13 +27,20 @@
   .amind .badge.env{background:#d4edda;color:#155724}
   .amind .badge.user{background:#cce5ff;color:#004085}
   .amind .section-label{font-size:.85rem;font-weight:600;margin:12px 0 6px;color:var(--color-text-secondary,#6b7683)}
+  .amind .playbook-lookup{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .amind .playbook-lookup input{flex:1;min-width:160px;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .amind .playbook-form{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .amind .playbook-form select,.amind .playbook-form input{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem}
+  .amind .playbook-form input.key{flex:1;min-width:100px}
+  .amind .playbook-form input.text{flex:2;min-width:160px}
+  .amind .audit-list{margin:4px 0 0;padding-left:18px;font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
 </style>
 
 <div class="amind" x-data="mindPanel()">
   <h1>🧠 Mind <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=mind')" title="Help for mind">?</button></h1>
 
   <div class="tabs">
-    <template x-for="tab in ['memory','skills','curation']" :key="tab">
+    <template x-for="tab in ['memory','skills','curation','playbooks']" :key="tab">
       <div class="tab" x-bind:class="{ active: activeTab === tab }" @click="switchTab(tab)" x-text="tab.charAt(0).toUpperCase() + tab.slice(1)"></div>
     </template>
   </div>
@@ -52,7 +59,7 @@
             <div class="info">
               <div class="title" x-text="item.text || '(no text)'"></div>
               <div class="meta">
-                <span class="badge" x-bind:class="item.kind === 'env' ? 'env' : 'user'" x-text="item.kind || '?'"></span>
+                <span class="badge" x-bind:class="item.kind === 'environment' ? 'env' : 'user'" x-text="item.kind || '?'"></span>
                 <span x-show="item.scope" x-text="'scope: ' + item.scope"></span>
               </div>
             </div>
@@ -101,11 +108,65 @@
         </div>
         <div class="item-actions">
           <button class="btn primary" @click="approveProposal(proposal)" :disabled="busy">Approve</button>
+          <button class="btn danger" @click="denyProposal(proposal)" :disabled="busy" title="Discard this proposal — nothing is remembered or changed">Deny</button>
         </div>
       </div>
     </template>
     <div class="empty" x-show="curationData.length === 0">
       <p>No pending curation proposals.</p>
+    </div>
+  </div>
+
+  <!-- Playbooks Tab (ACE playbooks — a distinct, per-ATS curated strategy set,
+       updated via structured add/revise/retire deltas; not the free-text
+       "Saved playbooks" under Skills). -->
+  <div x-show="activeTab === 'playbooks' && !loading">
+    <div class="playbook-lookup">
+      <input type="text" x-model="playbookAts" placeholder="Job site, e.g. workday.com" @keydown.enter="loadPlaybook()">
+      <button class="btn" @click="loadPlaybook()" :disabled="busy || !playbookAts.trim()">Load</button>
+    </div>
+    <div class="err" x-show="playbookError" x-text="playbookError"></div>
+    <div class="loading" x-show="playbookLoading"><div class="spinner"></div></div>
+
+    <template x-if="playbookData && !playbookLoading">
+      <div>
+        <div class="section-label" x-text="'Strategies for ' + playbookAts"></div>
+        <template x-for="entry in (playbookData.entries || [])" :key="entry.key">
+          <div class="item">
+            <div class="info">
+              <div class="title" x-text="entry.key + ' (revision ' + entry.revision + ')'"></div>
+              <div class="meta" x-text="entry.text"></div>
+            </div>
+          </div>
+        </template>
+        <div class="empty" x-show="(playbookData.entries || []).length === 0">
+          <p x-text="'No curated strategies for ' + playbookAts + ' yet.'"></p>
+        </div>
+
+        <div class="section-label">Audit trail</div>
+        <ul class="audit-list" x-show="(playbookData.audit || []).length">
+          <template x-for="(a, idx) in (playbookData.audit || []).slice().reverse()" :key="idx">
+            <li x-text="a.op + ' “' + a.key + '”' + (a.text ? ': ' + a.text : '')"></li>
+          </template>
+        </ul>
+        <p x-show="(playbookData.audit || []).length === 0" style="font-size:.78rem;color:var(--color-text-secondary,#6b7683)">No changes recorded yet.</p>
+
+        <div class="section-label">Apply a change</div>
+        <div class="playbook-form">
+          <select x-model="deltaOp">
+            <option value="add">Add</option>
+            <option value="revise">Revise</option>
+            <option value="retire">Retire</option>
+          </select>
+          <input type="text" class="key" x-model="deltaKey" placeholder="Strategy key">
+          <input type="text" class="text" x-model="deltaText" placeholder="Strategy text (add / revise only)">
+          <button class="btn primary" @click="applyDelta()" :disabled="busy || !deltaKey.trim()">Apply</button>
+        </div>
+      </div>
+    </template>
+
+    <div class="empty" x-show="!playbookData && !playbookLoading && !playbookError">
+      <p>Look up a job site above to see its curated playbook.</p>
     </div>
   </div>
 </div>
@@ -124,6 +185,13 @@
     memoryData: { environment: [], user: [] },
     skillsData: [],
     curationData: [],
+    playbookAts: "",
+    playbookData: null,
+    playbookLoading: false,
+    playbookError: "",
+    deltaOp: "add",
+    deltaKey: "",
+    deltaText: "",
 
     async init() {
       await this.loadMemory();
@@ -188,6 +256,53 @@
       }
       this.busy = false;
       await this.loadCuration();
+    },
+
+    async denyProposal(proposal) {
+      this.busy = true;
+      this.fatalError = "";
+      const r = await callJsonApi("mind", { action: "deny", proposal_id: proposal.id });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to deny.";
+      }
+      this.busy = false;
+      await this.loadCuration();
+    },
+
+    async loadPlaybook() {
+      const ats = this.playbookAts.trim();
+      if (!ats) return;
+      this.playbookLoading = true;
+      this.playbookError = "";
+      this.playbookData = null;
+      const r = await callJsonApi("mind", { action: "playbook_get", ats });
+      if (!r || !r.ok) {
+        this.playbookError = (r && r.error) || "Couldn't load that playbook.";
+      } else {
+        this.playbookData = r.data || {};
+      }
+      this.playbookLoading = false;
+    },
+
+    async applyDelta() {
+      const ats = this.playbookAts.trim();
+      const key = this.deltaKey.trim();
+      if (!ats || !key) return;
+      this.busy = true;
+      this.playbookError = "";
+      const r = await callJsonApi("mind", {
+        action: "playbook_apply_deltas",
+        ats,
+        deltas: [{ op: this.deltaOp, key, text: this.deltaText.trim() }],
+      });
+      if (!r || !r.ok) {
+        this.playbookError = (r && r.error) || "Couldn't update that playbook.";
+      } else {
+        this.deltaKey = "";
+        this.deltaText = "";
+        await this.loadPlaybook();
+      }
+      this.busy = false;
     },
 
     async forgetItem(item) {

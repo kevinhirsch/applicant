@@ -53,15 +53,15 @@
       <div class="section">
         <h2>Current configuration</h2>
 
-        <div x-show="!discordWebhook && !appriseUrls && !ntfyUrl" class="empty">
+        <div x-show="!discordConfigured && !emailConfigured && !ntfyConfigured" class="empty">
           <h2>No channels configured</h2>
           <p>Add notification channels below to receive alerts about campaign status, updates, and activity.</p>
         </div>
 
-        <div x-show="discordWebhook" class="channel-entry">
+        <div x-show="discordConfigured" class="channel-entry">
           <div>
             <span class="cname">Discord</span>
-            <span class="cstatus" x-text="discordWebhook.slice(0,40) + '...'"></span>
+            <span class="cstatus">Configured</span>
           </div>
           <div style="display:flex;gap:6px">
             <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.discord === true">&#10003;</span>
@@ -72,10 +72,10 @@
           </div>
         </div>
 
-        <div x-show="appriseUrls" class="channel-entry">
+        <div x-show="emailConfigured" class="channel-entry">
           <div>
             <span class="cname">Email (SMTP)</span>
-            <span class="cstatus" x-text="appriseUrls.slice(0,40) + '...'"></span>
+            <span class="cstatus">Configured</span>
           </div>
           <div style="display:flex;gap:6px">
             <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.email === true">&#10003;</span>
@@ -86,10 +86,10 @@
           </div>
         </div>
 
-        <div x-show="ntfyUrl" class="channel-entry">
+        <div x-show="ntfyConfigured" class="channel-entry">
           <div>
             <span class="cname">ntfy</span>
-            <span class="cstatus" x-text="ntfyUrl.slice(0,40) + '...'"></span>
+            <span class="cstatus">Configured</span>
           </div>
           <div style="display:flex;gap:6px">
             <span style="color:var(--color-success-text,#1a7d1a);font-size:.8rem" x-show="lastTestResult.ntfy === true">&#10003;</span>
@@ -168,6 +168,9 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
       discordWebhook: '',
       appriseUrls: '',
       ntfyUrl: '',
+      discordConfigured: false,
+      emailConfigured: false,
+      ntfyConfigured: false,
       emailTimeoutMinutes: '',
       loading: false,
       fatalError: '',
@@ -207,9 +210,16 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
           const res = await callJsonApi('channels', { action: 'get' });
           if (res.ok) {
             const d = res.data || {};
+            // The engine no longer echoes the raw secrets back (GET /api/setup/channels
+            // returns *_configured booleans only) — drive the "Current configuration"
+            // display off those, and leave the edit fields blank rather than trying to
+            // prefill a value we were never sent.
             this.discordWebhook = d.discord_webhook_url || '';
             this.appriseUrls = d.apprise_urls || '';
             this.ntfyUrl = d.ntfy_url || '';
+            this.discordConfigured = !!d.discord_configured;
+            this.emailConfigured = !!d.email_configured;
+            this.ntfyConfigured = !!d.ntfy_configured;
             this.emailTimeoutMinutes = d.email_timeout_minutes != null ? String(d.email_timeout_minutes) : '';
             this.formDiscord = this.discordWebhook;
             this.formApprise = this.appriseUrls;

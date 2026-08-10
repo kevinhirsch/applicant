@@ -27,6 +27,11 @@
   .acriteria .item .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
   .acriteria .ghosted{opacity:.5;text-decoration:line-through}
   .acriteria .followup{background:var(--color-warning-bg,#fff3cd);border-left:3px solid var(--color-warning,#ffc107);padding:4px 8px;border-radius:4px;font-size:.8rem;margin-top:4px}
+  .acriteria .row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .acriteria .row-actions select{padding:4px 6px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.78rem}
+  .acriteria .btn.small{padding:4px 9px;font-size:.75rem}
+  .acriteria .signal{font-size:.72rem;padding:1px 6px;border-radius:8px;background:var(--color-panel,#e9edf1);margin-right:4px;display:inline-block}
+  .acriteria .item-actions{display:flex;gap:6px;margin-top:6px}
 </style>
 
 <div class="acriteria" x-data="trackerPanel()">
@@ -65,17 +70,37 @@
         <table x-show="boardApplications.length > 0">
           <thead>
             <tr>
-              <th>Role / Company</th>
-              <th>Stage / Status</th>
+              <th>Role</th>
+              <th>Status</th>
               <th>Updated</th>
+              <th>Record outcome</th>
             </tr>
           </thead>
           <tbody>
-            <template x-for="app in boardApplications" :key="app.id || app.application_id">
+            <template x-for="app in boardApplications" :key="app.application_id || app.id">
               <tr>
-                <td><strong x-text="app.role || app.position || '—'"></strong><br><span class="meta" x-text="app.company || app.organization || ''"></span></td>
-                <td x-text="app.stage || app.status || '—'"></td>
-                <td x-text="app.updated_at || app.updated || '—'"></td>
+                <td>
+                  <strong x-text="app.job_title || app.role_name || '—'"></strong>
+                  <span x-show="app.easy_apply" class="signal" title="Easy Apply">⚡ Easy Apply</span>
+                  <template x-for="s in (app.signals || [])" :key="s">
+                    <span class="signal" x-text="s"></span>
+                  </template>
+                </td>
+                <td x-text="(app.status || '—').replace(/_/g, ' ')"></td>
+                <td x-text="app.submitted_at || app.created_at || '—'"></td>
+                <td>
+                  <div class="row-actions">
+                    <select x-model="app._outcomeChoice">
+                      <option value="">Choose…</option>
+                      <option value="interview_invited">Interview invited</option>
+                      <option value="offer">Offer</option>
+                      <option value="rejected">Rejected</option>
+                      <option value="ghosted">Ghosted</option>
+                    </select>
+                    <button class="btn small" @click="recordOutcome(app)" :disabled="busyId === (app.application_id || app.id) || !app._outcomeChoice">Record</button>
+                    <button class="btn small" @click="archiveApplication(app)" :disabled="busyId === (app.application_id || app.id)">Archive</button>
+                  </div>
+                </td>
               </tr>
             </template>
           </tbody>
@@ -92,10 +117,16 @@
 
         <div x-show="attentionItems.length > 0">
           <template x-for="item in attentionItems" :key="item.id || item.application_id">
-            <div class="item" x-bind:class="{ ghosted: item.ghosted }">
-              <div class="title" x-text="item.role || item.position || item.title || '—'"></div>
-              <div class="meta" x-text="item.company || item.organization || ''"></div>
-              <div class="followup" x-show="item.followups_due" x-text="item.followups_due"></div>
+            <div class="item" x-bind:class="{ ghosted: item._kind === 'ghosted' }">
+              <div class="title" x-text="item.title || '—'"></div>
+              <div class="meta" x-show="item._kind === 'ghosted'" x-text="'Silent ' + (item.payload && item.payload.submission_age_days != null ? item.payload.submission_age_days : '?') + ' days (SLA ' + (item.payload && item.payload.sla_days != null ? item.payload.sla_days : '?') + ')'"></div>
+              <div class="followup" x-show="item._kind === 'followup'" x-text="(item.payload && item.payload.body) || 'Follow-up drafted, ready to review.'"></div>
+              <div class="item-actions" x-show="item._kind === 'followup'">
+                <button class="btn small primary" @click="approveFollowup(item)" :disabled="busyId === item.application_id">Approve &amp; send</button>
+              </div>
+              <div class="item-actions" x-show="item._kind === 'ghosted'">
+                <button class="btn small" @click="archiveApplication({ application_id: item.application_id })" :disabled="busyId === item.application_id">Archive</button>
+              </div>
             </div>
           </template>
         </div>
@@ -117,6 +148,8 @@
     attentionItems: [],
     loading: true,
     fatalError: "",
+    busyId: "",
+    actionError: "",
 
     async init() {
       this.loading = true;
@@ -160,12 +193,64 @@
           this.fatalError = (attnR && attnR.error) || "Couldn't reach the tracker attention engine.";
           this.attentionItems = [];
         } else {
+          // The engine returns two separate lists (ghosted / followups_due) rather
+          // than one flat "applications" array — tag each row with its source so
+          // the template can render/act on them distinctly.
           const d = attnR.data || {};
-          this.attentionItems = Array.isArray(d) ? d : (Array.isArray(d.applications) ? d.applications : []);
+          const ghosted = Array.isArray(d.ghosted) ? d.ghosted.map((x) => ({ ...x, _kind: "ghosted" })) : [];
+          const followups = Array.isArray(d.followups_due) ? d.followups_due.map((x) => ({ ...x, _kind: "followup" })) : [];
+          this.attentionItems = [...ghosted, ...followups];
         }
       }
 
       this.loading = false;
+    },
+
+    async recordOutcome(app) {
+      const id = app.application_id || app.id;
+      const outcomeType = app._outcomeChoice;
+      if (!id || !outcomeType) return;
+      this.busyId = id;
+      this.actionError = "";
+      const r = await callJsonApi("tracker", { action: "record_outcome", application_id: id, outcome_type: outcomeType });
+      this.busyId = "";
+      if (!r || !r.ok) {
+        this.actionError = (r && r.error) || "Failed to record outcome.";
+        this.fatalError = this.actionError;
+        return;
+      }
+      app._outcomeChoice = "";
+      await this.loadBoard();
+    },
+
+    async archiveApplication(app) {
+      const id = app.application_id || app.id;
+      if (!id) return;
+      this.busyId = id;
+      this.actionError = "";
+      const r = await callJsonApi("tracker", { action: "archive", application_id: id });
+      this.busyId = "";
+      if (!r || !r.ok) {
+        this.actionError = (r && r.error) || "Failed to archive application.";
+        this.fatalError = this.actionError;
+        return;
+      }
+      await this.loadBoard();
+    },
+
+    async approveFollowup(item) {
+      const id = item.application_id;
+      if (!id) return;
+      this.busyId = id;
+      this.actionError = "";
+      const r = await callJsonApi("tracker", { action: "approve_followup", application_id: id });
+      this.busyId = "";
+      if (!r || !r.ok) {
+        this.actionError = (r && r.error) || "Failed to approve follow-up.";
+        this.fatalError = this.actionError;
+        return;
+      }
+      await this.loadBoard();
     }
   }));
   })();

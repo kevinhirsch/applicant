@@ -35,6 +35,10 @@
   .aresearch .budget-item .label{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
   .aresearch .budget-item .ok{color:var(--color-success,#1a8a3f)}
   .aresearch .budget-item .empty-state{color:var(--color-text-secondary,#6b7683)}
+  .aresearch .section-err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:6px 10px;font-size:.8rem;margin-bottom:.5rem}
+  .aresearch .result-card .findings{margin:6px 0 0;padding-left:18px;font-size:.82rem;line-height:1.4}
+  .aresearch .result-card .sources{margin-top:6px;font-size:.78rem;display:flex;flex-direction:column;gap:2px}
+  .aresearch .result-card .sources a{color:var(--color-primary,#2d7ff9)}
 </style>
 
 <div class="aresearch" x-data="researchPanel()">
@@ -92,20 +96,37 @@
         </div>
       </div>
 
-      <!-- Cached results -->
+      <!-- Results (cache hits + fresh runs looked up this session — the engine has
+           no "list all cached for campaign" endpoint, only lookup-by-exact-query,
+           so this is a session-local history rather than a server-fetched list) -->
       <div class="section">
-        <h2>📄 Cached Results</h2>
+        <h2>📄 Results</h2>
+        <div class="err section-err" x-show="runError" x-text="runError"></div>
         <div class="empty" x-show="cachedResults.length === 0 && !cachedLoading">
           <h2>No cached results</h2>
-          <p>Run research or select a campaign with existing results.</p>
+          <p>Run a query above to see its brief here.</p>
         </div>
         <div x-show="cachedLoading" class="loading" style="padding:10px"><div class="spinner"></div></div>
-        <template x-for="result in cachedResults" :key="result.id || result.query">
+        <template x-for="result in cachedResults" :key="result.query">
           <div class="result-card">
-            <div class="title" x-text="result.title || result.query || 'Research result'"></div>
-            <div class="meta" x-text="'Query: ' + (result.query || '—') + ' | ' + (result.cached ? 'cached' : 'fresh')"></div>
-            <div class="body" x-show="result.summary" x-text="result.summary"></div>
-            <div class="body" x-show="!result.summary && result.content" x-text="result.content"></div>
+            <div class="title" x-text="result.query || 'Research result'"></div>
+            <div class="meta" x-text="result.cached ? 'cached' : 'fresh'"></div>
+            <div class="body" x-show="result.unavailable" x-text="'Unavailable: ' + (result.reason || 'unknown reason')"></div>
+            <template x-if="!result.unavailable">
+              <div>
+                <div class="body" x-show="result.summary" x-text="result.summary"></div>
+                <ul class="findings" x-show="(result.key_findings || []).length">
+                  <template x-for="f in (result.key_findings || [])" :key="f">
+                    <li x-text="f"></li>
+                  </template>
+                </ul>
+                <div class="sources" x-show="(result.sources || []).length">
+                  <template x-for="s in (result.sources || [])" :key="s.url || s.link || s.title">
+                    <a x-bind:href="s.url || s.link || '#'" target="_blank" rel="noopener noreferrer" x-text="s.title || s.name || s.url || s.link"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
           </div>
         </template>
       </div>
@@ -113,6 +134,7 @@
       <!-- Budget / Usage -->
       <div class="section">
         <h2>💰 Budget & Usage</h2>
+        <div class="err section-err" x-show="budgetError" x-text="budgetError"></div>
         <div class="budget-grid" x-show="budgetData && !budgetLoading">
           <div class="budget-item">
             <div class="value" x-bind:class="{ ok: budgetData?.available, 'empty-state': !budgetData?.available }" x-text="budgetData?.available ? '✓' : '✗'"></div>
@@ -128,7 +150,7 @@
           </div>
         </div>
         <div x-show="budgetLoading" class="loading" style="padding:10px"><div class="spinner"></div></div>
-        <div class="empty" x-show="!budgetData && !budgetLoading">
+        <div class="empty" x-show="!budgetData && !budgetLoading && !budgetError">
           <p>No budget data available.</p>
         </div>
       </div>
@@ -145,12 +167,20 @@
   window.Alpine.data("researchPanel", () => ({
     campaigns: [],
     selectedCampaignId: "",
+    // Session-local results the user has actually looked up (cache hits + fresh
+    // runs) — the engine only exposes lookup-by-exact-query, not "list all cached
+    // for this campaign", so there is nothing to blind-fetch on load.
     cachedResults: [],
     cachedLoading: false,
     budgetData: null,
     budgetLoading: false,
+    budgetError: "",
     loading: true,
+    // Reserved for the one truly fatal case (can't even load the campaign list) —
+    // section-level failures (budget, a single research run) use their own error
+    // fields below so one bad request never blanks the whole panel.
     fatalError: "",
+    runError: "",
     running: false,
     runQuery: "",
     runCompany: "",
@@ -176,72 +206,87 @@
       }
       this.loading = false;
       if (this.selectedCampaignId) {
-        await this.loadResearch();
+        await this.loadBudget();
       }
     },
 
-    async loadResearch() {
-      this.fatalError = "";
-      this.cachedLoading = true;
+    async loadBudget() {
+      this.budgetError = "";
       this.budgetLoading = true;
-      this.cachedResults = [];
       this.budgetData = null;
       const cid = this.selectedCampaignId || "__system__";
-
-      // Load cached results
-      const cachedR = await callJsonApi("research", { action: "cached", campaign_id: cid });
-      if (!cachedR || !cachedR.ok) {
-        if (cachedR && cachedR.status === 404) {
-          this.cachedResults = [];
-        } else {
-          this.fatalError = (cachedR && cachedR.error) || "Couldn't reach the research engine.";
-          this.cachedResults = [];
-        }
+      const budgetR = await callJsonApi("research", { action: "budget", campaign_id: cid });
+      if (!budgetR || !budgetR.ok) {
+        this.budgetData = null;
+        this.budgetError = (budgetR && budgetR.error) || "Couldn't reach the research engine for budget info.";
       } else {
-        const data = cachedR.data || {};
-        const reports = data.reports || data.results || [];
-        this.cachedResults = Array.isArray(reports) ? reports : (reports ? [reports] : []);
-      }
-      this.cachedLoading = false;
-
-      if (!this.fatalError) {
-        // Load budget
-        const budgetR = await callJsonApi("research", { action: "budget", campaign_id: cid });
-        if (!budgetR || !budgetR.ok) {
-          this.budgetData = null;
-        } else {
-          this.budgetData = budgetR.data || {};
-        }
+        this.budgetData = budgetR.data || {};
       }
       this.budgetLoading = false;
     },
 
-    async refreshAll() {
+    // Switching/refreshing a campaign only re-checks its budget — cached results
+    // are keyed by query, not fetchable in bulk, so switching campaigns clears the
+    // session-local results list (it would otherwise mix results from two campaigns).
+    async loadResearch() {
       this.cachedResults = [];
-      this.budgetData = null;
-      await this.loadResearch();
+      this.runError = "";
+      await this.loadBudget();
+    },
+
+    _upsertResult(report) {
+      const q = report && report.query;
+      if (!q) return;
+      const idx = this.cachedResults.findIndex((r) => r.query === q);
+      if (idx >= 0) this.cachedResults.splice(idx, 1, report);
+      else this.cachedResults.unshift(report);
     },
 
     async runResearch() {
-      if (!this.runQuery.trim() || !this.selectedCampaignId) return;
+      const query = this.runQuery.trim();
+      if (!query || !this.selectedCampaignId) return;
       this.running = true;
-      this.fatalError = "";
-      const payload = {
-        action: "run",
-        campaign_id: this.selectedCampaignId,
-        query: this.runQuery.trim(),
-      };
-      if (this.runCompany.trim()) payload.company = this.runCompany.trim();
-      if (this.runRole.trim()) payload.role = this.runRole.trim();
-      if (this.runContext.trim()) payload.context = this.runContext.trim();
-      if (this.runForce) payload.force = true;
+      this.runError = "";
+      const cid = this.selectedCampaignId;
 
-      const r = await callJsonApi("research", payload);
-      if (!r || !r.ok) {
-        this.fatalError = (r && r.error) || "Research run failed.";
+      try {
+        // Peek the cache for this EXACT query first (free, no budget spent) unless
+        // the user asked to force a fresh run — mirrors the workspace's
+        // cached/run lookup pattern instead of blind-listing "all cached" (which
+        // the engine has no endpoint for).
+        let report = null;
+        if (!this.runForce) {
+          const cachedR = await callJsonApi("research", { action: "cached", campaign_id: cid, query });
+          if (cachedR && cachedR.ok) {
+            report = cachedR.data;
+          } else if (cachedR && cachedR.status !== 404) {
+            // A real error (not just "nothing cached yet") — surface it, but keep
+            // trying the fresh run below rather than giving up.
+            this.runError = cachedR.error || "Couldn't check the research cache.";
+          }
+        }
+
+        if (!report) {
+          const payload = { action: "run", campaign_id: cid, query };
+          if (this.runCompany.trim()) payload.company = this.runCompany.trim();
+          if (this.runRole.trim()) payload.role = this.runRole.trim();
+          if (this.runContext.trim()) payload.context = this.runContext.trim();
+          if (this.runForce) payload.force = true;
+
+          const runR = await callJsonApi("research", payload);
+          if (!runR || !runR.ok) {
+            this.runError = (runR && runR.error) || "Research run failed.";
+          } else {
+            report = runR.data;
+            this.runError = "";
+          }
+        }
+
+        if (report) this._upsertResult(report);
+      } finally {
+        this.running = false;
       }
-      this.running = false;
-      await this.refreshAll();
+      await this.loadBudget();
     }
   }));
   })();

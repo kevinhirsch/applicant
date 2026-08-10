@@ -3,7 +3,10 @@
 The Easy Apply UI is served by the a0 shell, but the Applicant engine is internal-only
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/easy-apply``
 API, keeping the engine the single source of truth for easy-apply assisted-mode state.
-One action dispatched by ``action``: ``status``.
+Actions dispatched by ``action``: ``status``, ``consent_status`` (GET
+``/api/setup/easy-apply-consent``), ``give_consent`` (POST
+``/api/setup/easy-apply-consent`` — the ONLY way the assisted-mode consent screen's
+acceptance is recorded server-side; without this the feature 409s forever).
 
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
@@ -79,6 +82,12 @@ def dispatch(input: dict) -> dict:
         cid = _resolve_campaign_id(cid)
         pid = pid or "__default__"
         return _forward("GET", f"/api/easy-apply/{cid}/{pid}")
+
+    if action == "consent_status":
+        return _forward("GET", "/api/setup/easy-apply-consent")
+
+    if action == "give_consent":
+        return _forward("POST", "/api/setup/easy-apply-consent", {})
 
     return {"ok": False, "status": 400, "error": f"unknown easy-apply action {action!r}"}
 

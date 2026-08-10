@@ -48,6 +48,20 @@
       <div class="bar"><span :style="`width:${progress}%`"></span></div>
       <div class="pct"><span x-text="doneCount"></span> of <span x-text="SECTIONS.length"></span> sections done</div>
 
+      <!-- readiness card (P1: setup.py's GET /api/setup/status readiness/gating fields
+           had explicit "front door" UI intent in the code comments but no renderer
+           anywhere in the plugin) -->
+      <template x-if="readiness">
+        <div class="card" style="margin-bottom:1rem;padding:12px 16px">
+          <p style="margin:0;font-weight:600;font-size:.88rem" x-show="readiness.apply_ready">
+            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;color:var(--color-success-text,#155724)">check_circle</span>
+            Ready to apply — automated actions are unlocked.
+          </p>
+          <p style="margin:0;font-weight:600;font-size:.88rem" x-show="!readiness.apply_ready" x-text="readiness.apply_blocked_reason || 'Not ready to apply yet.'"></p>
+          <p class="muted" style="margin:.4rem 0 0" x-show="(readiness.suggested_attributes||[]).length" x-text="(readiness.suggested_attributes||[]).length + ' attribute suggestion(s) awaiting review.'"></p>
+        </div>
+      </template>
+
       <div class="steps">
         <template x-for="(s,i) in SECTIONS" :key="s.id">
           <span class="chip" :class="{done: isDone(s.id), active: i===step && !finished}" @click="goto(i)">
@@ -115,14 +129,25 @@
                   <p x-text="'Error: ' + (resumeResult.error || 'Unknown error')"></p>
                 </template>
               </div>
-              <template x-if="resumeResult.ok && resumeResult.data.health && resumeResult.data.health.verdict">
-                <p class="muted">Health: <span x-text="resumeResult.data.health.verdict"></span></p>
+              <template x-if="resumeResult.ok && resumeResult.data.resume_health && resumeResult.data.resume_health.verdict">
+                <p class="muted">Health: <span x-text="resumeResult.data.resume_health.verdict"></span></p>
               </template>
               <template x-if="resumeResult.ok && resumeResult.data.conflicts && resumeResult.data.conflicts.length > 0">
                 <div style="margin-top:.75rem;padding:.5rem;background:var(--color-warning-bg,#fff3cd);border-radius:8px">
                   <p style="font-weight:600;font-size:.85rem">Please confirm these items:</p>
-                  <template x-for="c in resumeResult.data.conflicts" :key="c.field">
-                    <p style="font-size:.82rem;margin:.2rem 0" x-text="c.field + ': ' + (c.parsed || '') + ' (currently: ' + (c.current || 'not set') + ')'"></p>
+                  <template x-for="c in resumeResult.data.conflicts" :key="c.attribute">
+                    <div style="font-size:.82rem;margin:.4rem 0;padding-bottom:.4rem;border-bottom:1px solid var(--color-border,#e2c66b)">
+                      <p style="margin:0 0 .3rem" x-text="c.attribute + ': résumé says \'' + (c.parsed_value || '(blank)') + '\', you said \'' + (c.interview_value || '(blank)') + '\''"></p>
+                      <template x-if="!c._resolved">
+                        <div style="display:flex;gap:6px">
+                          <button class="btn" style="padding:5px 10px;font-size:.78rem" @click="confirmConflict(c, true)" :disabled="c._confirming">Use résumé value</button>
+                          <button class="btn" style="padding:5px 10px;font-size:.78rem" @click="confirmConflict(c, false)" :disabled="c._confirming">Keep mine</button>
+                        </div>
+                      </template>
+                      <template x-if="c._resolved">
+                        <p class="muted" style="margin:0">Saved: <span x-text="c._resolvedValue || '(blank)'"></span></p>
+                      </template>
+                    </div>
                   </template>
                 </div>
               </template>
@@ -222,6 +247,7 @@
     uploading: false, resumeResult: null,
     state: { sections_complete: [] }, step: 0, form: {}, finished: false,
     readyState: { apply_ready: false, apply_missing: [] },
+    readiness: null,
 
     async init() {
       await this.refresh();
@@ -238,6 +264,10 @@
       if (!r || !r.ok) { this.fatalError = "Couldn't reach the setup engine. Is a model connected?"; return; }
       this.state = r.data || { sections_complete: [] };
       this.fatalError = "";
+      // Best-effort: the readiness card is advisory, never worth blocking the
+      // wizard's own state refresh on a status hiccup (P1, see main readiness card).
+      const rs = await callJsonApi("onboarding", { action: "status" });
+      if (rs && rs.ok) this.readiness = rs.data || null;
     },
     jumpToFirstIncomplete() {
       const done = new Set(this.state.sections_complete || []);
@@ -246,10 +276,28 @@
       this.loadForm();
     },
     loadForm() {
+      // P1: rehydrate from the engine's saved/resume-prefilled intake so revisiting
+      // an earlier section or resuming a later one never silently shows a blank form
+      // over already-saved (or resume-parsed) data.
       this.sectionError = "";
       const s = this.current;
       this.form = {};
-      if (s && s.id === "eeo") for (const f of s.fields) this.form[f.k] = "Decline to self-identify";
+      if (!s) return;
+      const saved = ((this.state.intake || {})[s.id]) || {};
+      if (s.id === "eeo") {
+        for (const f of s.fields) this.form[f.k] = saved[f.k] || "Decline to self-identify";
+        return;
+      }
+      for (const f of (s.fields || [])) {
+        let v = saved[f.k];
+        // The résumé-parse prefill (onboarding_service.py's resume-first bootstrap)
+        // writes identity's full name / key-attributes' skills under alternate keys
+        // than the wizard's own form fields; fall back to those so a resume upload's
+        // prefill actually shows up once the user reaches the section.
+        if ((v === undefined || v === null || v === "") && f.k === "full_name") v = saved.full_legal_name;
+        if ((v === undefined || v === null || v === "") && f.k === "skills") v = saved.technical_skills;
+        if (v !== undefined && v !== null) this.form[f.k] = v;
+      }
     },
     get current() { return this.SECTIONS[this.step] || null; },
     get doneCount() { return (this.state.sections_complete || []).length; },
@@ -261,6 +309,13 @@
 
     async save() {
       const s = this.current; if (!s) return;
+      // P0: the base_resume step's own "Upload & parse" button already POSTs to
+      // /api/a0-applicant/base_resume, which stores intake["base_resume"] and marks
+      // the section complete engine-side. Re-posting `this.form` here as a generic
+      // onboarding "section" would overwrite that parsed record with a client stub
+      // ({resume_parsed:true, parsed_data:...}) — this step's "Save & continue" only
+      // ever needs to advance the wizard, never to save anything itself.
+      if (s.id === "base_resume") { await this.refresh(); this.next(); return; }
       this.saving = true; this.sectionError = "";
       const r = await callJsonApi("onboarding", { action: "section", section: s.id, data: this.form });
       this.saving = false;
@@ -301,6 +356,16 @@
       } finally {
         this.uploading = false;
       }
+    },
+
+    async confirmConflict(c, useParsed) {
+      const value = useParsed ? c.parsed_value : c.interview_value;
+      c._confirming = true;
+      const r = await callJsonApi("onboarding", { action: "confirm_conflict", attribute: c.attribute, value });
+      c._confirming = false;
+      if (!r || !r.ok) { this.sectionError = this._err(r) || "Couldn't save that choice."; return; }
+      c._resolved = true;
+      c._resolvedValue = value;
     },
 
     async finish() {

@@ -14,6 +14,15 @@ extension dispatch through: ``shown`` (record the wizard was displayed once),
 read-merge-write — never clobbers section siblings), ``omit`` (explicit decline,
 field- or section-level).
 
+``status`` forwards to the engine's ``GET /api/setup/status`` — the readiness/gating
+payload (gate_open, apply_ready, apply_missing, suggested_attributes) the wizard's
+"front door" readiness card reads (P1: previously computed engine-side but never
+rendered anywhere in the plugin UI).
+
+``confirm_conflict`` forwards to ``POST /api/onboarding/{cid}/confirm-conflict`` — the
+per-field accept/keep-mine choice from the base_resume step's conflicts block (P1: the
+resolution UI was display-only without this action wired).
+
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
 """
@@ -80,6 +89,8 @@ def dispatch(input: dict) -> dict:
     action = str((input or {}).get("action") or "state").strip().lower()
     if action == "state":
         return _forward("GET", f"/api/onboarding/{cid}")
+    if action == "status":
+        return _forward("GET", "/api/setup/status")
     if action == "section":
         body = {"section": (input or {}).get("section"), "data": (input or {}).get("data") or {}}
         return _forward("POST", f"/api/onboarding/{cid}/section", body)
@@ -103,6 +114,12 @@ def dispatch(input: dict) -> dict:
             "note": (input or {}).get("note") or "",
         }
         return _forward("POST", f"/api/onboarding/{cid}/omit", body)
+    if action == "confirm_conflict":
+        body = {
+            "attribute": (input or {}).get("attribute"),
+            "value": (input or {}).get("value"),
+        }
+        return _forward("POST", f"/api/onboarding/{cid}/confirm-conflict", body)
     return {"ok": False, "status": 400, "error": f"unknown onboarding action {action!r}"}
 
 

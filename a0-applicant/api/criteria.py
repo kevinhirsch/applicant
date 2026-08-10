@@ -3,7 +3,8 @@
 The Criteria UI is served by the a0 shell, but the Applicant engine is internal-only
 ("api:8000"). This handler forwards the UI's calls to the engine's "/api/criteria/{cid}"
 API, keeping the engine the single source of truth for criteria state.
-Three actions dispatched by "action": "view" (GET), "signature" (GET), "apply_learned" (POST).
+Actions dispatched by "action": "view" (GET), "signature" (GET), "apply_learned" (POST),
+"alignment" (GET, posting-vs-past-wins explainability), "set_exploration_budget" (PUT).
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -82,6 +83,20 @@ def dispatch(input: dict) -> dict:
             "rationale": input.get("rationale"),
         }
         return _forward("POST", f"/api/criteria/{cid}/learned", body)
+
+    if action == "alignment":
+        posting_id = str((input or {}).get("posting_id") or "").strip()
+        if not posting_id:
+            return {"ok": False, "status": 400, "error": "posting_id required"}
+        return _forward("GET", f"/api/criteria/{cid}/alignment/{posting_id}")
+
+    if action == "set_exploration_budget":
+        budget = (input or {}).get("exploration_budget")
+        if budget is None:
+            return {"ok": False, "status": 400, "error": "exploration_budget required"}
+        return _forward(
+            "PUT", f"/api/criteria/{cid}/exploration-budget", {"exploration_budget": budget}
+        )
 
     return {"ok": False, "status": 400, "error": f"unknown criteria action {action!r}"}
 

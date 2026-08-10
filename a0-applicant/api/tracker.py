@@ -1,9 +1,13 @@
 """AZ3 (#840) — Tracker proxy: board + attention per campaign.
 
 The Tracker UI is served by the a0 shell, but the Applicant engine is internal-only
-("api:8000"). This handler forwards the UI's calls to the engine's "/api/post-submission/{cid}"
-and "/api/post-submission/{cid}/attention" API, keeping the engine the single source of truth.
-Two actions dispatched by "action": "board" (GET), "attention" (GET).
+("api:8000"). This handler forwards the UI's calls to the engine's "/api/post-submission/*"
+API, keeping the engine the single source of truth. Actions dispatched by "action":
+"board" (GET), "attention" (GET), "record_outcome" (POST .../outcome — the tracker's
+"record what happened" affordance: rejected/interview_invited/ghosted/offer), "archive"
+(POST .../archive), "scan_email" (POST .../scan-email), "approve_followup" (POST
+.../follow-up/approve). The last four were previously live on the engine with zero
+proxy consumer, leaving post-submission outcome tracking unreachable from the UI.
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -67,14 +71,56 @@ def _resolve_campaign_id(raw: str | None) -> str:
 
 
 def dispatch(input: dict) -> dict:
-    cid = _resolve_campaign_id((input or {}).get("campaign_id"))
-    action = str((input or {}).get("action") or "board").strip().lower()
+    input = input or {}
+    action = str(input.get("action") or "board").strip().lower()
 
     if action == "board":
+        cid = _resolve_campaign_id(input.get("campaign_id"))
         return _forward("GET", f"/api/post-submission/{cid}")
 
     if action == "attention":
+        cid = _resolve_campaign_id(input.get("campaign_id"))
         return _forward("GET", f"/api/post-submission/{cid}/attention")
+
+    if action == "record_outcome":
+        application_id = str(input.get("application_id") or "").strip()
+        outcome_type = str(input.get("outcome_type") or "").strip()
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        if not outcome_type:
+            return {"ok": False, "status": 400, "error": "outcome_type required"}
+        body = {"outcome_type": outcome_type, "reason": input.get("reason")}
+        return _forward("POST", f"/api/post-submission/applications/{application_id}/outcome", body)
+
+    if action == "archive":
+        application_id = str(input.get("application_id") or "").strip()
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        return _forward("POST", f"/api/post-submission/applications/{application_id}/archive", None)
+
+    if action == "scan_email":
+        application_id = str(input.get("application_id") or "").strip()
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        body = {"subject": input.get("subject") or "", "body": input.get("body") or ""}
+        return _forward("POST", f"/api/post-submission/applications/{application_id}/scan-email", body)
+
+    if action == "approve_followup":
+        application_id = str(input.get("application_id") or "").strip()
+        if not application_id:
+            return {"ok": False, "status": 400, "error": "application_id required"}
+        body = {}
+        if input.get("subject") is not None:
+            body["subject"] = input.get("subject")
+        if input.get("body") is not None:
+            body["body"] = input.get("body")
+        if input.get("delay_hours") is not None:
+            body["delay_hours"] = input.get("delay_hours")
+        return _forward(
+            "POST",
+            f"/api/post-submission/applications/{application_id}/follow-up/approve",
+            body,
+        )
 
     return {"ok": False, "status": 400, "error": f"unknown tracker action {action!r}"}
 

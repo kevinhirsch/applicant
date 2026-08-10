@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
-<!-- AZ2 Notifications — panel for viewing and managing notifications. Driven by the engine via the a0-applicant notifications proxy (action=list|seen|deliver_now). -->
+<!-- AZ2 Notifications — panel for viewing and managing notifications. Driven by the engine via the a0-applicant notifications proxy (action=list|seen|deliver_now|presence). -->
 <style>
   .anotifications{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
   .anotifications h1{font-size:1.5rem;margin:0 0 .25rem}
@@ -45,7 +45,10 @@
           <span x-show="n.created_at" x-text="'at ' + n.created_at"></span>
         </div>
       </div>
-      <button class="btn" @click="markSeen(n.id)" :disabled="busy" x-show="!n.seen">Mark seen</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn" @click="window.openModal(n.deep_link)" x-show="n.deep_link">Open</button>
+        <button class="btn" @click="markSeen(n.id)" :disabled="busy" x-show="!n.seen">Mark seen</button>
+      </div>
     </div>
   </template>
 
@@ -67,14 +70,45 @@
     fatalError: "",
     busy: false,
     includeSeen: false,
+    _cursor: null,
+    _pollTimer: null,
+    _onVisibility: null,
 
     async init() {
       await this.load();
+      // No realtime 'notif' WS consumer exists yet (see TECH-DEBT-REGISTER Notifications
+      // & Channels); poll for what's new in the meantime using since/limit so a long-open
+      // tab isn't stuck showing a stale list.
+      this._pollTimer = setInterval(() => this.poll(), 20000);
+      // Web-presence heartbeat (FR-NOTIF-2): re-signal while the tab is visible so the
+      // in-app surface pre-empts the Discord escalation; clear it the moment it's hidden.
+      this._onVisibility = () => this.sendPresence(document.visibilityState === "visible");
+      document.addEventListener("visibilitychange", this._onVisibility);
+      this.sendPresence(document.visibilityState !== "hidden");
+    },
+
+    destroy() {
+      if (this._pollTimer) {
+        clearInterval(this._pollTimer);
+        this._pollTimer = null;
+      }
+      if (this._onVisibility) {
+        document.removeEventListener("visibilitychange", this._onVisibility);
+        this._onVisibility = null;
+      }
+      this.sendPresence(false);
+    },
+
+    _updateCursor(items) {
+      for (const it of items || []) {
+        if (it.created_at && (!this._cursor || it.created_at > this._cursor)) this._cursor = it.created_at;
+      }
     },
 
     async load() {
       this.loading = true;
       this.fatalError = "";
+      this._cursor = null;
       const r = await callJsonApi("notifications", { action: "list", include_seen: this.includeSeen });
       if (!r || !r.ok) {
         this.fatalError = (r && r.error) || "Couldn't reach the notifications engine.";
@@ -83,12 +117,38 @@
       } else {
         this.notifications = (r.data && r.data.items) || [];
         this.count = (r.data && r.data.count) || 0;
+        this._updateCursor(this.notifications);
       }
       this.loading = false;
     },
 
     async refresh() {
       await this.load();
+    },
+
+    async poll() {
+      if (this.busy || this.loading) return;
+      const params = { action: "list", include_seen: this.includeSeen, limit: 50 };
+      if (this._cursor) params.since = this._cursor;
+      const r = await callJsonApi("notifications", params);
+      if (!r || !r.ok) return;
+      const fresh = (r.data && r.data.items) || [];
+      if (!fresh.length) return;
+      const known = new Set(this.notifications.map((n) => n.id));
+      const additions = fresh.filter((n) => !known.has(n.id));
+      if (additions.length) {
+        this.notifications = [...additions, ...this.notifications];
+        this.count = this.notifications.length;
+      }
+      this._updateCursor(fresh);
+    },
+
+    async sendPresence(present) {
+      try {
+        await callJsonApi("notifications", { action: "presence", present: !!present });
+      } catch (e) {
+        // best-effort — a missed heartbeat just lets the freshness window decay
+      }
     },
 
     async markSeen(id) {

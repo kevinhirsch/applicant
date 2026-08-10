@@ -29,7 +29,12 @@ _Last updated: 2026-08-10 (midday)_
 
 ## 🔜 IN PROGRESS
 
-- **Tech-Debt audit (full fan-out, 13 domains)** — parallel auditors → consolidated `docs/TECH-DEBT-REGISTER.md` (UNWIRED / UNEXPOSED / DUP / PARTIAL). Then triage + burn down (expose unexposed, reuse/dedup, wire unwired, delete dead code).
+- **Tech-Debt burn-down (PARALLEL, overseer)** — audit DONE → `docs/TECH-DEBT-REGISTER.md` (128 items: 21 UNEXPOSED / 18 PARTIAL / 7 DUP / 7 UNWIRED; 4 P0). Now: parallel per-domain FIX agents (isolated worktrees, commit only) → coordinator cherry-picks + ONE batched rebuild/deploy → verify. Covers the 4 P0s (base-résumé overwrite, easy-apply consent, model-endpoint JSON/Form=B7, ops-allowlist recovery) + P1 UNEXPOSED/PARTIAL + DUP. Deferred to a later serial wave: the 18-file `_engine_client` consolidation (conflicts with everyone).
+
+### Landing page (APP-LP-1 shipped) — open follow-ups
+- [ ] channels.html "Current configuration" display reads response fields the API no longer returns (now `*_configured` booleans, by design) — fix the display. (Agent-flagged, pre-existing.)
+- [ ] Coordinator live **light-mode self-verify** (offered to Kevin) — toggle the live page to light + confirm readability myself (agent measured 5–11:1; I verified dark live + light via capture).
+- [ ] Post-burndown **full visual re-pass** (light+dark, all panels) once fixes land.
 
 ## ⏳ TODO
 
