@@ -301,6 +301,13 @@ class DigestService:
         "no warning" verdict could hide a real one for the rest of the day.
         """
         criteria = self._resolve_criteria(campaign_id, criteria)
+        # PERF (2026-08-10): load the campaign-wide collections ONCE, not per row. The
+        # per-row _presubmit_warnings duplicate + volume-cap checks EACH did a full
+        # list_for_campaign (ALL postings) on EVERY row -> 133 rows x 2 = 266 full
+        # scans (~1.4M ORM hydrations, ~167s) -> the digest GET timed out and the
+        # scheduler's auto-draft tick was starved. Hoisting makes it ~2 loads total.
+        _postings_by_id = {p.id: p for p in self._storage.postings.list_for_campaign(campaign_id)}
+        _applications = self._storage.applications.list_for_campaign(campaign_id)
         rows: list[dict] = []
         for posting, row in self._scored_pairs(campaign_id, criteria):
             row = dict(row)
@@ -311,7 +318,9 @@ class DigestService:
             # to inform the decision: surface the SAME checks here, read-only, so the
             # digest row itself carries a plain-language warning BEFORE approval. A
             # warning never excludes a row from the digest (unlike the pipeline block).
-            row["warnings"] = self._presubmit_warnings(campaign_id, posting)
+            row["warnings"] = self._presubmit_warnings(
+                campaign_id, posting, postings_by_id=_postings_by_id, applications=_applications
+            )
             row["_recency"] = self._recency_bonus(posting)
             rows.append(row)
         # Recency-aware rank-stacking (FR-DISC): best FIT first, lifted by a freshness
@@ -499,7 +508,9 @@ class DigestService:
         row["keyword_matched"] = matched
         row["keyword_missing"] = missing
 
-    def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
+    def _presubmit_warnings(
+        self, campaign_id: CampaignId, posting, *, postings_by_id=None, applications=None
+    ) -> list[dict]:
         """Human-readable presubmit-safety warnings for one digest row.
 
         Reuses ALL FOUR ``presubmit_safety`` checks unchanged (same reasons/
@@ -540,6 +551,8 @@ class DigestService:
                 posting,
                 self._storage,
                 cooldown_days=params.get("duplicate_cooldown_days", 30),
+                postings_by_id=postings_by_id,
+                applications=applications,
             )
         except PresubmitBlock as exc:
             warnings.append({"check": exc.check, "message": exc.reason})
@@ -551,6 +564,8 @@ class DigestService:
                 posting,
                 self._storage,
                 max_per_day=params.get("max_apps_per_company_per_day", 3),
+                postings_by_id=postings_by_id,
+                applications=applications,
             )
         except PresubmitBlock as exc:
             warnings.append({"check": exc.check, "message": exc.reason})

@@ -167,6 +167,8 @@ def check_duplicate_application(
     *,
     cooldown_days: int = _DEFAULT_DUPLICATE_COOLDOWN_DAYS,
     reference_date: date | None = None,
+    postings_by_id: dict | None = None,
+    applications: Any = None,
 ) -> None:
     """Raise ``PresubmitBlock`` if the same (company, role) was already applied
     to within the cooldown window.
@@ -208,8 +210,10 @@ def check_duplicate_application(
     # Perf (N+1): one campaign-scoped postings read instead of a
     # ``postings.get(app.posting_id)`` round-trip per application below — this
     # check runs before every submission attempt.
-    postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
-    for app in storage.applications.list_for_campaign(campaign_id):
+    if postings_by_id is None:
+        postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
+    _apps = applications if applications is not None else storage.applications.list_for_campaign(campaign_id)
+    for app in _apps:
         existing_posting = postings_by_id.get(app.posting_id)
         if existing_posting is None:
             continue
@@ -249,6 +253,8 @@ def check_per_company_volume_cap(
     *,
     max_per_day: int = _DEFAULT_MAX_APPS_PER_COMPANY_PER_DAY,
     reference_date: date | None = None,
+    postings_by_id: dict | None = None,
+    applications: Any = None,
 ) -> None:
     """Raise ``PresubmitBlock`` if the daily per-company volume cap would be
     exceeded by applying to this posting.
@@ -263,8 +269,10 @@ def check_per_company_volume_cap(
     count = 0
     # Perf (N+1): same fix as ``check_duplicate_application`` — one batch fetch
     # instead of a per-application ``postings.get()``.
-    postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
-    for app in storage.applications.list_for_campaign(campaign_id):
+    if postings_by_id is None:
+        postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
+    _apps = applications if applications is not None else storage.applications.list_for_campaign(campaign_id)
+    for app in _apps:
         existing_posting = postings_by_id.get(app.posting_id)
         if existing_posting is None:
             continue
