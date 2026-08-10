@@ -25,6 +25,7 @@ from applicant.application.services.pending_actions_service import (
     RESOLVE_ALREADY_RESOLVED,
 )
 from applicant.core.ids import ApplicationId, PendingActionId
+from applicant.core.rules.freshness import posting_freshness
 
 router = APIRouter(
     prefix="/api/pending-actions",
@@ -99,6 +100,13 @@ def _application_brief(application_id, storage, cache: dict) -> dict | None:
     pending-actions list is inherently small (things awaiting a human), so
     this stays cheap; never raises — a lookup failure degrades to ``None``
     fields rather than breaking the list (same posture as ``_ladder_status_for``).
+
+    Also carries the posting's freshness cue (``posted_date``/``posted_label``/
+    ``posted_relative``/``posted_stale`` — see ``core.rules.freshness``): the
+    same score-first-fit-scan for Pending Reviews is misleading on its own for
+    a role posted weeks ago (product ask, 2026-08-10), so every key present in
+    ``posting_freshness``'s result is folded into the brief. Omitted entirely
+    (not fabricated) when the posting carries neither timestamp.
     """
     if not application_id:
         return None
@@ -112,6 +120,7 @@ def _application_brief(application_id, storage, cache: dict) -> dict | None:
             title = app.job_title or app.role_name
             company = None
             viability_score = None
+            freshness = None
             # Carried so the landing page can exclude this posting from "Top
             # New Matches" (APP-LP-1) — a role already this far into review
             # has a draft in hand and showing it as an undrafted "new match"
@@ -124,12 +133,18 @@ def _application_brief(application_id, storage, cache: dict) -> dict | None:
                     title = title or posting.title
                     if posting.viability_score is not None:
                         viability_score = round(posting.viability_score * 100)
+                    freshness = posting_freshness(
+                        getattr(posting, "date_posted", None),
+                        getattr(posting, "first_seen", None),
+                    )
             brief = {
                 "job_title": title,
                 "company": company,
                 "viability_score": viability_score,
                 "posting_id": posting_id,
             }
+            if freshness:
+                brief.update(freshness)
     except Exception:  # pragma: no cover - defensive: read-only, never break the page
         brief = None
     cache[key] = brief

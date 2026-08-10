@@ -129,6 +129,10 @@
                                             <span class="lp-score" :class="scoreClass(g.score)" x-show="g.score !== null" x-text="g.score"></span>
                                             <div class="lp-review-role" :title="g.roleLabel" x-text="g.roleLabel"></div>
                                         </div>
+                                        <div class="lp-posted"
+                                             :class="{ 'lp-stale': g.postedStale }"
+                                             x-show="g.postedRelative"
+                                             x-text="(g.postedLabel || 'Posted') + ' ' + g.postedRelative"></div>
                                         <div class="lp-review-chips">
                                             <template x-for="item in g.items" :key="item.id">
                                                 <span class="badge" x-text="item.kindLabel"></span>
@@ -185,6 +189,10 @@
                                             <span class="lp-score" :class="scoreClass(row.viability_score)" x-text="Math.round(row.viability_score || 0)"></span>
                                             <span class="lp-match-title" x-text="row.title + (row.company ? ' · ' + row.company : '')"></span>
                                         </div>
+                                        <div class="lp-posted"
+                                             :class="{ 'lp-stale': row.posted_stale }"
+                                             x-show="row.posted_relative"
+                                             x-text="(row.posted_label || 'Posted') + ' ' + row.posted_relative"></div>
                                         <div class="lp-match-why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
                                         <div class="lp-error" x-show="rowError[row.posting_id]" x-text="rowError[row.posting_id]"></div>
                                     </div>
@@ -925,6 +933,30 @@
             line-height: 1.42;
         }
 
+        /* Freshness cue (product ask: the posting date says whether a fit
+           score is actually worth chasing). Fresh postings render as quiet
+           muted text — derived from --color-text so it stays legible in both
+           themes automatically. Stale postings (>21 days, core.rules.freshness
+           STALE_AFTER_DAYS) get the SAME fixed light-bg/dark-text warning pair
+           .lp-score-ok already uses, deliberately NOT theme-derived, so the
+           flag reads clearly regardless of light/dark mode (never white-on-
+           white / invisible-on-dark). */
+        .lp-posted {
+            width: fit-content;
+            color: color-mix(in srgb, var(--color-text) 68%, transparent);
+            font-size: 0.8rem;
+        }
+
+        .lp-posted.lp-stale {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.05rem 0.5rem;
+            border-radius: 999px;
+            background: var(--color-warning-bg, #fef5e6);
+            color: var(--color-warning-text, #8a6d1a);
+            font-weight: 560;
+        }
+
         .lp-match-actions {
             display: flex;
             flex-direction: column;
@@ -1324,6 +1356,15 @@
                             // Same posting.viability_score the Digest/Top New
                             // Matches surface reads — one score, one source.
                             score: typeof brief.viability_score === "number" ? brief.viability_score : null,
+                            // Posting freshness (core.rules.freshness, via the
+                            // engine's application_brief): "Posted" for a real
+                            // board date, "First seen" when only discovery's own
+                            // timestamp is known — never fabricated. Absent
+                            // (null) when the posting has neither, so the row
+                            // just omits the cue rather than showing garbage.
+                            postedLabel: brief.posted_label || null,
+                            postedRelative: brief.posted_relative || null,
+                            postedStale: !!brief.posted_stale,
                             items: [],
                             busy: false,
                         });

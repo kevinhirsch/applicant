@@ -29,6 +29,7 @@ from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.errors import IllegalStateTransition, InvalidInput, NotFound
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, JobPostingId, new_id
+from applicant.core.rules.freshness import posting_freshness
 from applicant.core.rules.jd_match import compute_jd_match
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
@@ -400,6 +401,19 @@ class DigestService:
                 # set at discovery time; never drives automation by itself).
                 "easy_apply": bool(getattr(posting, "easy_apply", False)),
             }
+            # Product ask (2026-08-10): a fresh row's fit score alone doesn't say
+            # whether the role is still worth chasing — a great-fit posting from a
+            # month ago is likely already filled. Surface WHEN it was posted (or,
+            # honestly, when discovery first saw it if the board never gave a real
+            # post date) plus a relative-age string and a staleness flag, so a
+            # stale-but-high-fit row visibly reads as lower-value. Omitted keys
+            # entirely when neither timestamp is on the posting (legacy rows) —
+            # the frontend must degrade gracefully, never render "Invalid Date".
+            freshness = posting_freshness(
+                getattr(posting, "date_posted", None), getattr(posting, "first_seen", None)
+            )
+            if freshness:
+                row.update(freshness)
             if self._scoring is not None:
                 # RESILIENT (2026-08-10): read the STORED viability score; NEVER call
                 # score_for_digest in this hot path. That scorer LLM-re-scores whenever
