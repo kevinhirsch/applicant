@@ -286,6 +286,11 @@ class Settings(BaseSettings):
     # ``available()`` is False, so callers degrade gracefully.
     workspace_url: str = Field(default="http://applicant-ui:7000", alias="WORKSPACE_URL")
     applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
+    # Owner attribution sent as X-Applicant-Owner on every owner-scoped workspace
+    # callback (research/calendar/emails/memory). The companion requires it non-empty
+    # or 400s ("Owner attribution required"). Single-user non-empty default so a fresh
+    # install's callbacks work out of the box; override via APPLICANT_OWNER (e.g. email).
+    applicant_owner: str = Field(default="applicant", alias="APPLICANT_OWNER")
     #: Backend selection for the WorkspacePort adapter. ``"real"`` (default) uses
     #: ``HttpWorkspaceClient`` which speaks HTTP to the companion workspace app.
     #: ``"mock"`` uses ``MockWorkspaceClient`` which serves deterministic fixture

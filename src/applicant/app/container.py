@@ -1067,6 +1067,7 @@ def build_container(settings: Settings | None = None) -> Container:
         workspace = HttpWorkspaceClient(
             base_url=settings.workspace_url,
             token=settings.applicant_internal_token,
+            default_owner=settings.applicant_owner,
         )
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
