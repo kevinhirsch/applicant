@@ -270,6 +270,22 @@ class _Overflow(Exception):
     """Internal: the prompt does not fit the active tier's context window."""
 
 
+class _ResponseFormatUnsupported(Exception):
+    """Internal: the provider rejected the native structured-output
+    ``response_format`` we sent (FR-LLM-4a) -- e.g. DeepSeek only accepts
+    ``{"type": "json_object"}``/``{"type": "text"}`` and 400s outright on
+    ``{"type": "json_schema"}`` (the shape ``_openai_build_request`` sends for
+    every ``json_schema`` completion, regardless of provider) BEFORE any text
+    is ever returned. Without this, that 400 fell through as an ordinary
+    ``httpx.HTTPStatusError`` and failed the whole tier -- so a provider
+    configured as a fallback tier (e.g. DeepSeek behind a flaky local primary)
+    could never actually serve a structured-output call, defeating the
+    fallback entirely. Raising this instead routes the SAME call into the
+    existing "native mode failed -> prompt-based fallback" branch in
+    ``_call_openai`` that a parseable-but-invalid native reply already uses.
+    """
+
+
 class OpenAICompatibleLLM:
     """LLMPort adapter over httpx. Configuration drives the OOBE gate (FR-UI-5).
 
@@ -622,8 +638,17 @@ class OpenAICompatibleLLM:
         payload = self._apply_prefix_cache(profile, payload)
         payload = self._apply_thinking_toggle(payload)
 
-        text, raw = self._post_openai(tier, url, payload)
-        usage = _sum_usage(None, profile.usage_extractor(raw))
+        usage: dict[str, int] | None = None
+        text, raw = "", {}
+        try:
+            text, raw = self._post_openai(tier, url, payload)
+            usage = _sum_usage(None, profile.usage_extractor(raw))
+        except _ResponseFormatUnsupported:
+            # FR-LLM-4a (P0 2026-08-10): the provider rejected native
+            # response_format:json_schema outright (e.g. DeepSeek) before any
+            # text was ever returned -- fall through to the SAME prompt-based
+            # fallback below with no native call to fold usage from.
+            pass
         structured = None
         try:
             if json_schema is not None:
@@ -633,9 +658,16 @@ class OpenAICompatibleLLM:
                     fb_messages = self._with_schema_prompt(messages, json_schema)
                     if _estimate_tokens(fb_messages) > tier.context_window:
                         raise _Overflow()
-                    # Rebuild request without native response_format, with schema prompt.
+                    # Rebuild request without native json_schema, with schema prompt.
                     fb_raw_messages = [_raw_message(m) for m in fb_messages]
                     fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
+                    # Ask for the widely-supported json_object mode instead of
+                    # leaving response_format unset entirely -- unlike json_schema
+                    # (which DeepSeek et al. reject outright), every OpenAI-
+                    # compatible provider we support accepts json_object; the
+                    # schema itself is still carried in the prompt instruction
+                    # above (FR-LLM-4a).
+                    fb_payload["response_format"] = {"type": "json_object"}
                     fb_payload = self._apply_prefix_cache(profile, fb_payload)
                     fb_payload = self._apply_thinking_toggle(fb_payload)
                     text, raw = self._post_openai(tier, url, fb_payload)
@@ -670,14 +702,30 @@ class OpenAICompatibleLLM:
         profile = get_profile(tier.provider, tier.base_url)
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
-            if resp.status_code in (400, 413, 422) and self._is_context_error(resp):
-                raise _Overflow()
+            if resp.status_code in (400, 413, 422):
+                if self._is_context_error(resp):
+                    raise _Overflow()
+                if self._sent_json_schema(payload):
+                    # FR-LLM-4a (P0 2026-08-10): a 400/413/422 while we asked for
+                    # native json_schema structured output, that is NOT a
+                    # context-overflow signal, almost always means the provider
+                    # rejected response_format:json_schema outright (DeepSeek and
+                    # similarly-limited OpenAI-compatible providers only support
+                    # json_object/text) -- fall back to the prompt-based schema
+                    # instruction instead of failing the whole tier.
+                    raise _ResponseFormatUnsupported()
             resp.raise_for_status()
             raw = resp.json()
         if not isinstance(raw, dict):
             raw = {}
         text = profile.extract_text(raw)
         return text, raw
+
+    @staticmethod
+    def _sent_json_schema(payload: dict[str, Any]) -> bool:
+        """True iff ``payload`` requested native ``response_format:json_schema``."""
+        fmt = payload.get("response_format") if isinstance(payload, dict) else None
+        return isinstance(fmt, dict) and fmt.get("type") == "json_schema"
 
     def _call_ollama(
         self,
