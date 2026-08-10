@@ -81,3 +81,54 @@ def test_learned_integral_is_proposed_not_auto_applied(svc, campaign):
     crit = svc.apply_learned_adjustment(campaign.id, adjustment={"titles": ["principal engineer"]})
     assert crit.titles == ()  # not applied
     assert crit.learned_adjustments["proposed_integral"] == {"titles": ["principal engineer"]}
+
+
+@pytest.mark.unit
+def test_edit_criteria_with_a_comma_separated_string_splits_into_titles(svc, campaign):
+    """P0 (2026-08-10): ``_apply`` did ``tuple(value)`` unconditionally for the
+    tuple fields (titles/locations/work_modes/keywords). When a caller passes a
+    STRING (a plausible shape for a free-text edit box, e.g.
+    "Scrum Master, RTE, Agile Coach"), ``tuple(str)`` shreds it into individual
+    CHARACTERS ('S', 'c', 'r', ...) instead of titles -- silently corrupting the
+    criteria that scoring/discovery match against (a title match becomes
+    impossible, so scoring degenerates to whatever non-title signals remain,
+    e.g. work-mode/salary alone -- see the live incident this fix closes:
+    scores like 98 for an obviously-unrelated role once titles were shredded).
+    A comma-separated string must split into trimmed titles instead."""
+    crit = svc.edit_criteria(
+        campaign.id,
+        changes={"titles": "Scrum Master, RTE, Agile Coach"},
+        confirm=True,
+    )
+    assert crit.titles == ("Scrum Master", "RTE", "Agile Coach")
+    # Persisted correctly too, not just the returned in-memory value.
+    assert svc.get_criteria(campaign.id).titles == ("Scrum Master", "RTE", "Agile Coach")
+
+
+@pytest.mark.unit
+def test_edit_criteria_with_a_list_of_titles_is_unaffected(svc, campaign):
+    """A list/tuple input (the normal API shape) must keep working exactly as
+    before -- the string guard must not change non-string behavior."""
+    crit = svc.edit_criteria(
+        campaign.id, changes={"titles": ["Staff Engineer", "Principal Engineer"]}, confirm=True,
+    )
+    assert crit.titles == ("Staff Engineer", "Principal Engineer")
+
+
+@pytest.mark.unit
+def test_edit_criteria_with_an_empty_string_yields_no_titles(svc, campaign):
+    """An empty/whitespace-only string must degrade to no titles, not a tuple
+    of whitespace characters."""
+    crit = svc.edit_criteria(campaign.id, changes={"titles": "   "}, confirm=True)
+    assert crit.titles == ()
+
+
+@pytest.mark.unit
+def test_learned_adjustment_with_a_string_keyword_also_splits_not_shreds(svc, campaign):
+    """The same guard must apply on the learned-adjustment path (non-integral
+    ``_apply`` call), not just the direct user-edit path -- both route through
+    the same ``_apply`` helper."""
+    crit = svc.apply_learned_adjustment(
+        campaign.id, adjustment={"keywords": "python, fastapi"}, rationale="approved roles"
+    )
+    assert crit.keywords == ("python", "fastapi")
