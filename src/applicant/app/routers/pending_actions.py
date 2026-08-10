@@ -87,8 +87,11 @@ def _ladder_status_for(payload: dict | None, notifications) -> dict | None:
 
 
 def _application_brief(application_id, storage, cache: dict) -> dict | None:
-    """Best-effort ``{job_title, company}`` for one item's ``application_id``
-    (APP-LP-1 — the landing-page "Pending Reviews" gadget groups by role).
+    """Best-effort ``{job_title, company, viability_score}`` for one item's
+    ``application_id`` (APP-LP-1 — the landing-page "Pending Reviews" gadget
+    groups by role and shows the SAME fit score the Digest/Top-New-Matches
+    surface reads from ``posting.viability_score`` — one field, one source of
+    truth, no separate scoring path).
 
     Two indexed PK lookups (application, then its posting) per DISTINCT
     application id — memoized in ``cache`` across the request since a role's
@@ -108,12 +111,25 @@ def _application_brief(application_id, storage, cache: dict) -> dict | None:
         if app is not None:
             title = app.job_title or app.role_name
             company = None
+            viability_score = None
+            # Carried so the landing page can exclude this posting from "Top
+            # New Matches" (APP-LP-1) — a role already this far into review
+            # has a draft in hand and showing it as an undrafted "new match"
+            # too is confusing/redundant, not a second useful signal.
+            posting_id = str(app.posting_id) if app.posting_id else None
             if app.posting_id:
                 posting = storage.postings.get(app.posting_id)
                 if posting is not None:
                     company = posting.company or None
                     title = title or posting.title
-            brief = {"job_title": title, "company": company}
+                    if posting.viability_score is not None:
+                        viability_score = round(posting.viability_score * 100)
+            brief = {
+                "job_title": title,
+                "company": company,
+                "viability_score": viability_score,
+                "posting_id": posting_id,
+            }
     except Exception:  # pragma: no cover - defensive: read-only, never break the page
         brief = None
     cache[key] = brief

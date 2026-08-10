@@ -1,7 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 48" role="img" aria-label="Applicant">
   <!-- Applicant wordmark. Rendered as a CSS mask (mask-image) filled with the
-       theme's --color-text, so only the glyph shapes matter. Replaces the base
-       Agent Zero wordmark in the overlay. -->
+       theme's text color variable, so only the glyph shapes matter. Replaces
+       the base wordmark in the overlay. NOTE: XML comments cannot contain a
+       literal double hyphen anywhere in their body (only as the closing
+       marker) — do not name the CSS custom property inline here again, it
+       breaks XML parsing and silently makes the whole file unparseable
+       (invisible mask, no visible error except an XML parse error). -->
   <text x="2" y="37" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
         font-size="40" font-weight="700" letter-spacing="0.5">Applicant</text>
 </svg>

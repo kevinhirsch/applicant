@@ -125,7 +125,10 @@
                             <template x-for="g in groups" :key="g.applicationId">
                                 <li class="lp-review-row">
                                     <div class="lp-review-info">
-                                        <div class="lp-review-role" :title="g.roleLabel" x-text="g.roleLabel"></div>
+                                        <div class="lp-review-title-row">
+                                            <span class="lp-score" :class="scoreClass(g.score)" x-show="g.score !== null" x-text="g.score"></span>
+                                            <div class="lp-review-role" :title="g.roleLabel" x-text="g.roleLabel"></div>
+                                        </div>
                                         <div class="lp-review-chips">
                                             <template x-for="item in g.items" :key="item.id">
                                                 <span class="badge" x-text="item.kindLabel"></span>
@@ -471,7 +474,7 @@
 
         .welcome-banner-html {
             max-width: 72ch;
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            color: color-mix(in srgb, var(--color-text) 72%, transparent);
             font-size: 0.92rem;
             line-height: 1.45;
         }
@@ -534,7 +537,7 @@
             gap: 0.4rem;
             border: 0;
             background: transparent;
-            color: color-mix(in srgb, var(--color-text) 64%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             cursor: pointer;
             font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
         }
@@ -591,7 +594,7 @@
             border: 0;
             border-radius: 8px;
             background: transparent;
-            color: color-mix(in srgb, var(--color-text) 64%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             cursor: pointer;
             font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
         }
@@ -639,7 +642,7 @@
 
         .system-resource-name,
         .system-resource-detail-title {
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             font-size: 0.82rem;
             font-weight: 430;
             letter-spacing: 0.02em;
@@ -702,7 +705,7 @@
         .lp-topbar-eyebrow {
             display: block;
             margin-bottom: 0.2rem;
-            color: color-mix(in srgb, var(--color-text) 50%, transparent);
+            color: color-mix(in srgb, var(--color-text) 78%, transparent);
             font-size: 0.76rem;
             font-weight: 560;
             letter-spacing: 0.07em;
@@ -787,7 +790,7 @@
             justify-items: center;
             gap: 0.55rem;
             padding: 1.5rem 0.5rem 0.4rem;
-            color: color-mix(in srgb, var(--color-text) 56%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             text-align: center;
         }
 
@@ -803,10 +806,16 @@
         }
 
         .lp-error {
+            /* Reuse the app-wide error-box pair (applicant-theme.css's .err /
+               every other panel's inline error style) instead of a translucent
+               red tint: that pattern measured ~1.5:1 contrast in light mode
+               (light-pink-on-light-pink) — a fixed dark-text-on-light-bg pair
+               is legible regardless of theme, exactly like .err everywhere else. */
             padding: 0.7rem 0.9rem;
             border-radius: 8px;
-            background: color-mix(in srgb, #ef4444 14%, transparent);
-            color: #f3a2a2;
+            background: var(--color-danger-bg, #fdecea);
+            color: var(--color-danger-text, #9b1c1c);
+            border: 1px solid var(--color-danger-border, #e8a0a0);
             font-size: 0.83rem;
             line-height: 1.4;
         }
@@ -866,12 +875,21 @@
 
         .lp-review-role,
         .lp-match-title {
+            min-width: 0;
             color: var(--color-text);
             font-size: 0.94rem;
             font-weight: 560;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .lp-review-title-row,
+        .lp-match-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            min-width: 0;
         }
 
         .lp-review-chips {
@@ -889,7 +907,7 @@
         .lp-view-all {
             display: inline-block;
             margin-top: 1rem;
-            color: color-mix(in srgb, var(--color-text) 62%, transparent);
+            color: color-mix(in srgb, var(--color-text) 72%, transparent);
             font-size: 0.85rem;
             font-weight: 520;
             text-decoration: none;
@@ -901,15 +919,8 @@
             outline: none;
         }
 
-        .lp-match-title-row {
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            min-width: 0;
-        }
-
         .lp-match-why {
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             font-size: 0.84rem;
             line-height: 1.42;
         }
@@ -944,13 +955,16 @@
         }
 
         .lp-score-good {
-            background: color-mix(in srgb, #22c55e 22%, transparent);
-            color: #22c55e;
+            /* Same fixed light-bg/dark-text success pair applicant-theme.css's
+               .badge.success uses — a translucent brand-color tint measured
+               ~1.8:1 contrast in light mode (green-on-light-green). */
+            background: var(--color-success-bg, #e8f8ef);
+            color: var(--color-success-text, #1a7a3a);
         }
 
         .lp-score-ok {
-            background: color-mix(in srgb, #f59e0b 24%, transparent);
-            color: #f0a942;
+            background: var(--color-warning-bg, #fef5e6);
+            color: var(--color-warning-text, #8a6d1a);
         }
 
         .lp-funnel {
@@ -991,7 +1005,7 @@
         }
 
         .lp-funnel-label {
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             font-size: 0.78rem;
             font-weight: 520;
         }
@@ -1023,7 +1037,7 @@
         }
 
         .lp-progress-label {
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             font-size: 0.78rem;
             font-weight: 520;
         }
@@ -1039,7 +1053,7 @@
             align-items: center;
             justify-content: space-between;
             margin-bottom: 0.55rem;
-            color: color-mix(in srgb, var(--color-text) 68%, transparent);
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
             font-size: 0.85rem;
             font-variant-numeric: tabular-nums;
         }
@@ -1208,6 +1222,15 @@
             (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a
         );
 
+        // Shared between lpPendingReviews and lpTopMatches (same module scope,
+        // no store plumbing needed): postings already in the review queue —
+        // i.e. already drafted — so Top New Matches can exclude them instead
+        // of showing "draft this" for a role that's already drafted. Both
+        // gadgets still fetch their OWN primary data independently (one
+        // gadget failing/slow never blocks the other); this is a best-effort
+        // cross-filter only, populated whenever Pending Reviews loads.
+        const reviewedPostingIds = new Set();
+
         // ── Header: active campaign name + notifications-connect affordance ──
         window.Alpine.data("lpHeader", () => ({
             campaignName: "Command center",
@@ -1298,9 +1321,15 @@
                         byApp.set(key, {
                             applicationId: item.application_id,
                             roleLabel: roleLabel || "Untitled role",
+                            // Same posting.viability_score the Digest/Top New
+                            // Matches surface reads — one score, one source.
+                            score: typeof brief.viability_score === "number" ? brief.viability_score : null,
                             items: [],
                             busy: false,
                         });
+                        // Already drafted (has material_review items) -> Top
+                        // New Matches should not also offer to "draft this".
+                        if (brief.posting_id) reviewedPostingIds.add(brief.posting_id);
                     }
                     byApp.get(key).items.push({
                         id: item.id,
@@ -1309,10 +1338,23 @@
                     });
                 }
 
-                const groups = Array.from(byApp.values());
+                // Best-fit-first: highest-scored roles reviewed first (same
+                // ordering intent as the digest's rank-stacking sort). Roles
+                // without a score (older demo data / not yet scored) sink to
+                // the bottom rather than being dropped.
+                const groups = Array.from(byApp.values()).sort(
+                    (a, b) => (b.score ?? -1) - (a.score ?? -1)
+                );
                 this.overflowCount = Math.max(0, groups.length - this.GROUP_CAP);
                 this.groups = groups.slice(0, this.GROUP_CAP);
                 this.loading = false;
+            },
+
+            scoreClass(score) {
+                if (score === null || score === undefined) return "";
+                if (score >= 75) return "lp-score-good";
+                if (score >= 55) return "lp-score-ok";
+                return "";
             },
 
             materialLabel(item) {
@@ -1388,8 +1430,14 @@
                 }
                 const allRows = (r.data && r.data.rows) || [];
                 this.emptyNote = (r.data && r.data.note) || "";
+                // Viable postings without a draft yet: one digest read, minus
+                // whatever Pending Reviews has already reported as drafted
+                // (reviewedPostingIds — see its declaration above) — two
+                // filtered views over the same underlying scored data, not a
+                // second scoring pipeline.
                 this.rows = allRows
                     .filter((row) => !this.dismissed.has(row.posting_id))
+                    .filter((row) => !reviewedPostingIds.has(row.posting_id))
                     .slice(0, this.CAP);
                 this.loading = false;
             },
