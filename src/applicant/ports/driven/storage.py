@@ -79,6 +79,11 @@ class JobPostingRepository(Protocol):
         """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring)."""
         ...
 
+    def count_scored_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Cheap ``COUNT(*)`` of postings with a stored ``viability_score`` (landing-page
+        pipeline funnel, APP-LP-1) — a single indexed count, never a full row scan."""
+        ...
+
 
 @runtime_checkable
 class ApplicationRepository(Protocol):
@@ -96,6 +101,14 @@ class ApplicationRepository(Protocol):
         self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
     ) -> list[Application]:
         """Applications in ``campaign_id`` whose status is in ``statuses``."""
+        ...
+
+    def count_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Cheap ``COUNT(*)`` of applications in ``campaign_id`` whose status is in
+        ``statuses`` (landing-page pipeline funnel, APP-LP-1) — a single indexed
+        count, never a full row hydration."""
         ...
 
 
@@ -157,6 +170,14 @@ class OutcomeEventRepository(Protocol):
     ) -> list[OutcomeEvent]: ...
     def exists_terminal_for_application(self, application_id: ApplicationId) -> bool:
         """True if a terminal (submitted/converted) outcome exists (idempotent submit)."""
+        ...
+
+    def count_distinct_applications_for_campaign(
+        self, campaign_id: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Distinct applications in ``campaign_id`` with at least one outcome event
+        whose ``type`` is in ``types`` (landing-page pipeline funnel's "interview"
+        stage, APP-LP-1) — one indexed join+count, never a per-row scan."""
         ...
 
 
@@ -247,6 +268,17 @@ class ActionEventRepository(Protocol):
     #: campaign-purge cascade so "Clear demo data" / a campaign delete leaves no
     #: residual audit rows). Returns the count deleted.
     def delete_for_campaign(self, campaign_id: CampaignId) -> int: ...
+
+    def list_since(
+        self, campaign_id: CampaignId, since: datetime, *, action: str | None = None
+    ) -> list[ActionEvent]:
+        """Events for ``campaign_id`` at/after ``since`` (landing-page daily-progress
+        gadget, APP-LP-1): a single indexed range scan on ``(campaign_id,
+        occurred_at)``, optionally narrowed to one ``action`` value. The window is
+        always small (a day or a few weeks of one campaign's activity), so callers
+        may filter the small returned set in Python instead of a bespoke query per
+        derived stat."""
+        ...
 
 
 class OnboardingProfileRepository(Protocol):

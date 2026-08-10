@@ -108,6 +108,14 @@ def get_cost_service(
     return _resolved(services, container, "cost_service")
 
 
+def get_pipeline_summary_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """Landing-page pipeline-funnel + daily-progress read model (APP-LP-1, CONC-REQ-1)."""
+    return _resolved(services, container, "pipeline_summary_service")
+
+
 def get_onboarding_service(container: Container = Depends(get_container)):
     return container.onboarding_service
 

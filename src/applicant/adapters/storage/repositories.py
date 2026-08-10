@@ -454,6 +454,21 @@ class JobPostingRepo:
         ).scalar()
         return result or 0
 
+    def count_scored_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Cheap ``COUNT(*)`` of scored postings (landing-page funnel, APP-LP-1).
+
+        Same shape as ``count_for_campaign`` — a single indexed count against the
+        ``ix_job_postings_campaign_viability`` index, never a full row scan.
+        """
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).select_from(m.JobPostingModel)
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+            .where(m.JobPostingModel.viability_score.isnot(None))
+        ).scalar()
+        return result or 0
+
 
 class ApplicationRepo:
     def __init__(self, session: Session) -> None:
@@ -527,6 +542,24 @@ class ApplicationRepo:
             .order_by(m.ApplicationModel.id)
         ).all()
         return [_application_to_entity(r) for r in rows]
+
+    def count_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Cheap ``COUNT(*)`` variant of ``list_by_status`` (landing-page pipeline
+        funnel, APP-LP-1) — a single indexed count against
+        ``ix_applications_campaign_status``, never a full row hydration.
+        """
+        if not statuses:
+            return 0
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).select_from(m.ApplicationModel)
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.ApplicationModel.status.in_([s.value for s in statuses]))
+        ).scalar()
+        return result or 0
 
 
 class ResumeVariantRepo:
@@ -794,6 +827,29 @@ class OutcomeEventRepo:
             .limit(1)
         ).first()
         return row is not None
+
+    def count_distinct_applications_for_campaign(
+        self, campaign_id: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Distinct applications with a matching outcome (landing-page funnel's
+        "interview" stage, APP-LP-1) — one indexed join+count, mirroring
+        ``list_for_campaign``'s join shape but returning only a number.
+        """
+        if not types:
+            return 0
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count(func.distinct(m.OutcomeEventModel.application_id)))
+            .select_from(m.OutcomeEventModel)
+            .join(
+                m.ApplicationModel,
+                m.OutcomeEventModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.OutcomeEventModel.type.in_(types))
+        ).scalar()
+        return result or 0
 
 
 class ApplicationScreenshotRepo:
@@ -1527,6 +1583,24 @@ class ActionEventRepo:
             .delete(synchronize_session=False)
             or 0
         )
+
+    def list_since(self, campaign_id, since, *, action: str | None = None):
+        """Events at/after ``since`` (landing-page daily-progress gadget, APP-LP-1).
+
+        A single indexed range scan on ``ix_action_events_campaign_occurred`` — the
+        window callers pass in is always small (today, or a few weeks back), so
+        this stays cheap without needing a bespoke aggregate query per derived stat.
+        """
+        stmt = (
+            select(m.ActionEventModel)
+            .where(m.ActionEventModel.campaign_id == campaign_id)
+            .where(m.ActionEventModel.occurred_at >= since)
+        )
+        if action is not None:
+            stmt = stmt.where(m.ActionEventModel.action == action)
+        stmt = stmt.order_by(m.ActionEventModel.occurred_at)
+        rows = self._s.scalars(stmt).all()
+        return [_action_event_to_entity(r) for r in rows]
 
 
 def _action_event_to_entity(row):

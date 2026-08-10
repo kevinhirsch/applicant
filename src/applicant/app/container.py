@@ -144,6 +144,9 @@ class Container:
     # daily target/hard cap; monthly projection). Per-request rebuilt against the
     # request session, exactly like campaign_service/data_lifecycle_service above.
     cost_service: Any = None
+    # APP-LP-1: landing-page pipeline-funnel + daily-progress read model.
+    # Per-request rebuilt against the request session, like cost_service above.
+    pipeline_summary_service: Any = None
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
@@ -1095,6 +1098,15 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.application.services.cost_service import CostService
 
     cost_service = CostService(storage)
+    # APP-LP-1: landing-page pipeline-funnel + daily-progress read model. Cheap
+    # indexed counts only (see PipelineSummaryService docstring) — safe as a
+    # process-lived singleton default, rebuilt per-request below like its
+    # storage-bound siblings (CONC-REQ-1).
+    from applicant.application.services.pipeline_summary_service import (
+        PipelineSummaryService,
+    )
+
+    pipeline_summary_service = PipelineSummaryService(storage)
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     # #44 (dark-engine audit): ONE process-lived EpisodicLessonLedger for the whole
@@ -2018,10 +2030,17 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         # P1-6: request-scoped cost & pace guardrails read model (CONC-REQ-1).
         rs_cost = CostService(req_storage)
+        # APP-LP-1: request-scoped pipeline-summary read model (CONC-REQ-1).
+        from applicant.application.services.pipeline_summary_service import (
+            PipelineSummaryService as _RsPipelineSummaryService,
+        )
+
+        rs_pipeline_summary = _RsPipelineSummaryService(req_storage)
         return {
             "storage": req_storage,
             "data_lifecycle_service": rs_data_lifecycle,
             "cost_service": rs_cost,
+            "pipeline_summary_service": rs_pipeline_summary,
             "pending_actions_service": rs_pas,
             "digest_service": rs_digest,
             "attribute_cloud_service": rs_attr,
@@ -2267,6 +2286,7 @@ def build_container(settings: Settings | None = None) -> Container:
         campaign_service=campaign_service,
         data_lifecycle_service=data_lifecycle_service,
         cost_service=cost_service,
+        pipeline_summary_service=pipeline_summary_service,
         onboarding_service=onboarding_service,
         font_service=font_service,
         conversion_service=conversion_service,

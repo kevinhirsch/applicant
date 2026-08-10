@@ -4,6 +4,10 @@
     <script type="module">
         import { store } from "/components/welcome/welcome-store.js";
     </script>
+    <!-- APP-LP-1: theme tokens (colors/spacing/typography scale) shared with every
+         other Applicant panel — reused here for the landing-page gadgets so the
+         whole app speaks one visual language, light + dark. -->
+    <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
 </head>
 
 <body>
@@ -65,41 +69,242 @@
                         </button>
                     </section>
 
-                    <section class="welcome-today" aria-label="Today">
-                        <x-component path="/plugins/applicant/webui/today.html"></x-component>
+                    <!-- APP-LP-1: slim utility header — active campaign + the
+                         notifications-connect affordance (kept per the story; the
+                         upstream AI-accounts/Connect-Channels marketing cards below
+                         are cut by simply never rendering welcome-actions-end here). -->
+                    <header class="lp-topbar" x-data="lpHeader()" x-init="init()">
+                        <div class="lp-topbar-info">
+                            <span class="lp-topbar-eyebrow">Command center</span>
+                            <h1 class="lp-topbar-campaign" x-text="campaignName"></h1>
+                        </div>
+                        <button type="button"
+                                class="lp-notif-pill"
+                                :class="{ 'is-connected': connected }"
+                                @click="openChannels()"
+                                :aria-label="connected ? 'Notification channels connected — manage' : 'Connect notifications so alerts reach you'"
+                                :title="connected ? 'Notification channels connected — manage' : 'Connect notifications so alerts reach you'">
+                            <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
+                            <span x-text="connected ? 'Notifications on' : 'Connect notifications'"></span>
+                        </button>
+                    </header>
+
+                    <!-- ① Pending Reviews — the hero of the page. -->
+                    <section class="lp-gadget lp-pending-reviews" aria-label="Pending Reviews"
+                              x-data="lpPendingReviews()" x-init="init(); window.addEventListener('applicant:refresh-today', () => load())">
+                        <header class="welcome-panel-header">
+                            <h2>Pending Reviews
+                                <span class="lp-count-badge" x-show="!loading && !fatalError && count > 0" x-text="count"></span>
+                            </h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        @click="load()"
+                                        :disabled="loading"
+                                        title="Refresh"
+                                        aria-label="Refresh Pending Reviews">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                            </div>
+                        </header>
+
+                        <div class="lp-skeleton" x-show="loading">
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                        </div>
+
+                        <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                        <div class="lp-empty" x-show="!loading && !fatalError && groups.length === 0">
+                            <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+                            <p>You're all caught up — nothing waiting on review.</p>
+                        </div>
+
+                        <ul class="lp-review-list" x-show="!loading && !fatalError && groups.length > 0">
+                            <template x-for="g in groups" :key="g.applicationId">
+                                <li class="lp-review-row">
+                                    <div class="lp-review-info">
+                                        <div class="lp-review-role" :title="g.roleLabel" x-text="g.roleLabel"></div>
+                                        <div class="lp-review-chips">
+                                            <template x-for="item in g.items" :key="item.id">
+                                                <span class="badge" x-text="item.kindLabel"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="lp-review-actions">
+                                        <button class="btn" type="button" @click="review(g)">Review</button>
+                                        <button class="btn primary" type="button" @click="approve(g)" :disabled="g.busy">Approve</button>
+                                        <button class="btn" type="button" @click="snooze(g)" :disabled="g.busy">Snooze</button>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+
+                        <a class="lp-view-all" href="javascript:void(0)" x-show="!loading && overflowCount > 0" @click="viewAll()">
+                            View all <span x-text="count"></span> in Today →
+                        </a>
                     </section>
 
-                    <section class="welcome-lower-grid">
-                        <x-extension id="welcome-actions-end"></x-extension>
+                    <!-- ② Top New Matches. -->
+                    <section class="lp-gadget lp-top-matches" aria-label="Top New Matches" x-data="lpTopMatches()" x-init="init()">
+                        <header class="welcome-panel-header">
+                            <h2>Top New Matches</h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        @click="load()"
+                                        :disabled="loading"
+                                        title="Refresh"
+                                        aria-label="Refresh Top New Matches">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                            </div>
+                        </header>
 
-                        <article class="welcome-system-card"
-                                 x-show="$store.welcomeStore.systemResourceBanner"
-                                 x-transition.opacity>
-                            <header class="welcome-panel-header">
-                                <h2 x-text="$store.welcomeStore.systemResourceBanner?.title || 'System Resources'"></h2>
-                                <div class="welcome-panel-actions">
-                                    <button class="welcome-panel-icon-button"
-                                            type="button"
-                                            :disabled="$store.welcomeStore.bannersLoading"
-                                            @click.stop="$store.welcomeStore.refreshBanners(true)"
-                                            title="Refresh"
-                                            aria-label="Refresh System Resources">
-                                        <span class="material-symbols-outlined">refresh</span>
-                                    </button>
-                                    <button class="welcome-panel-icon-button"
-                                            type="button"
-                                            x-show="$store.welcomeStore.systemResourceBanner?.dismissible !== false"
-                                            @click.stop="$store.welcomeStore.dismissBanner($store.welcomeStore.systemResourceBanner?.id || 'system-resources')"
-                                            title="Dismiss"
-                                            aria-label="Dismiss System Resources">
-                                        <span class="material-symbols-outlined">close</span>
-                                    </button>
+                        <div class="lp-skeleton" x-show="loading">
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                        </div>
+
+                        <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                        <div class="lp-empty" x-show="!loading && !fatalError && rows.length === 0">
+                            <span class="material-symbols-outlined" aria-hidden="true">search</span>
+                            <p x-text="emptyNote || 'No new matches right now — check back after the next discovery run.'"></p>
+                        </div>
+
+                        <ul class="lp-match-list" x-show="!loading && !fatalError && rows.length > 0">
+                            <template x-for="row in rows" :key="row.posting_id">
+                                <li class="lp-match-row">
+                                    <div class="lp-match-info">
+                                        <div class="lp-match-title-row">
+                                            <span class="lp-score" :class="scoreClass(row.viability_score)" x-text="Math.round(row.viability_score || 0)"></span>
+                                            <span class="lp-match-title" x-text="row.title + (row.company ? ' · ' + row.company : '')"></span>
+                                        </div>
+                                        <div class="lp-match-why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
+                                        <div class="lp-error" x-show="rowError[row.posting_id]" x-text="rowError[row.posting_id]"></div>
+                                    </div>
+                                    <div class="lp-match-actions">
+                                        <div class="lp-row-buttons">
+                                            <button class="btn" type="button" @click="skip(row)" :disabled="busy[row.posting_id]">Skip</button>
+                                            <button class="btn primary" type="button" @click="draftThis(row)" :disabled="busy[row.posting_id]">Draft this</button>
+                                        </div>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </section>
+
+                    <!-- ③ Pipeline Funnel + ④ Daily Progress share one cheap read
+                         (campaigns.pipeline_summary) but render as two distinct cards. -->
+                    <template x-if="true">
+                        <div x-data="lpPipelineProgress()" x-init="init()" style="display: contents;">
+                            <section class="lp-gadget lp-pipeline-funnel" aria-label="Pipeline Funnel">
+                                <header class="welcome-panel-header">
+                                    <h2>Pipeline Funnel</h2>
+                                    <div class="welcome-panel-actions">
+                                        <button class="welcome-panel-icon-button"
+                                                type="button"
+                                                @click="load()"
+                                                :disabled="loading"
+                                                title="Refresh"
+                                                aria-label="Refresh Pipeline Funnel">
+                                            <span class="material-symbols-outlined">refresh</span>
+                                        </button>
+                                    </div>
+                                </header>
+
+                                <div class="lp-skeleton" x-show="loading">
+                                    <div class="lp-skeleton-row"></div>
                                 </div>
-                            </header>
-                            <div class="welcome-system-body"
-                                 x-html="$store.welcomeStore.systemResourceBanner?.html || ''"></div>
-                        </article>
-                    </section>
+
+                                <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                                <div class="lp-funnel" x-show="!loading && !fatalError">
+                                    <template x-for="stage in stages" :key="stage.key">
+                                        <div class="lp-funnel-stage">
+                                            <div class="lp-funnel-value" x-text="stage.value"></div>
+                                            <div class="lp-funnel-label" x-text="stage.label"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </section>
+
+                            <!-- ④ Daily Progress. -->
+                            <section class="lp-gadget lp-daily-progress" aria-label="Daily Progress">
+                                <header class="welcome-panel-header">
+                                    <h2>Daily Progress</h2>
+                                </header>
+
+                                <div class="lp-skeleton" x-show="loading">
+                                    <div class="lp-skeleton-row"></div>
+                                </div>
+
+                                <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                                <template x-if="!loading && !fatalError">
+                                    <div>
+                                        <div class="lp-progress-grid">
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value" x-text="drafted"></div>
+                                                <div class="lp-progress-label">Drafted today</div>
+                                            </div>
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value" x-text="submitted"></div>
+                                                <div class="lp-progress-label">Submitted today</div>
+                                            </div>
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value">
+                                                    <span x-text="streak"></span>
+                                                    <span class="material-symbols-outlined" style="font-size: 1.1rem; vertical-align: -0.1rem;" x-show="streak > 0" aria-hidden="true">local_fire_department</span>
+                                                </div>
+                                                <div class="lp-progress-label">Day streak</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="lp-progress-target" x-show="target > 0">
+                                            <div class="lp-target-row">
+                                                <span>Today's target</span>
+                                                <span x-text="appsToday + ' of ' + target"></span>
+                                            </div>
+                                            <div class="lp-target-track">
+                                                <span class="lp-target-fill" :style="`width: ${attainmentPct}%`"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </section>
+                        </div>
+                    </template>
+
+                    <article class="welcome-system-card"
+                             x-show="$store.welcomeStore.systemResourceBanner"
+                             x-transition.opacity>
+                        <header class="welcome-panel-header">
+                            <h2 x-text="$store.welcomeStore.systemResourceBanner?.title || 'System Resources'"></h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        :disabled="$store.welcomeStore.bannersLoading"
+                                        @click.stop="$store.welcomeStore.refreshBanners(true)"
+                                        title="Refresh"
+                                        aria-label="Refresh System Resources">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        x-show="$store.welcomeStore.systemResourceBanner?.dismissible !== false"
+                                        @click.stop="$store.welcomeStore.dismissBanner($store.welcomeStore.systemResourceBanner?.id || 'system-resources')"
+                                        title="Dismiss"
+                                        aria-label="Dismiss System Resources">
+                                    <span class="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+                        </header>
+                        <div class="welcome-system-body"
+                             x-html="$store.welcomeStore.systemResourceBanner?.html || ''"></div>
+                    </article>
                 </main>
 
                 <x-extension id="welcome-screen-end"></x-extension>
@@ -151,25 +356,9 @@
             display: flex;
             flex-direction: column;
             gap: 1.55rem;
-            width: min(100%, 1220px);
+            width: min(100%, 840px);
             margin: 0 auto;
             padding-top: 4rem;
-        }
-
-        .welcome-hero h1 {
-            margin: 0;
-            color: var(--color-text);
-            font-size: clamp(2rem, 3.4vw, 2.75rem);
-            font-weight: 440;
-            letter-spacing: 0;
-            line-height: 1.08;
-        }
-
-        .welcome-hero p {
-            margin: 0.5rem 0 0;
-            color: color-mix(in srgb, var(--color-text) 66%, transparent);
-            font-size: clamp(1.08rem, 1.8vw, 1.35rem);
-            line-height: 1.35;
         }
 
         .welcome-composer {
@@ -216,9 +405,9 @@
         }
 
         .welcome-banner,
-        .welcome-action-card,
         .welcome-panel-card,
-        .welcome-system-card {
+        .welcome-system-card,
+        .lp-gadget {
             border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
             background: color-mix(in srgb, var(--color-panel) 78%, var(--color-background) 22%);
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.026);
@@ -370,133 +559,20 @@
             font-size: 0.82rem;
         }
 
-        .welcome-quick-section {
-            display: grid;
-            gap: 0.82rem;
-        }
-
-        .welcome-quick-section h2,
-        .welcome-panel-header h2 {
-            margin: 0;
-            color: var(--color-text);
-            font-size: 1.05rem;
-            font-weight: 520;
-            line-height: 1.2;
-        }
-
-        .welcome-actions {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 1rem;
-            width: 100%;
-        }
-
-        .welcome-action-card {
-            display: grid;
-            grid-template-columns: auto minmax(0, 1fr) auto;
-            align-items: center;
-            gap: 1rem;
-            min-height: 6.1rem;
-            border-radius: 8px;
-            padding: 1.05rem 1rem;
-            color: inherit;
-            cursor: pointer;
-            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
-            text-align: left;
-            transition:
-                border-color 0.18s ease,
-                background-color 0.18s ease,
-                box-shadow 0.18s ease,
-                transform 0.18s ease;
-        }
-
-        .welcome-action-card.is-wide {
-            grid-column: span 2;
-        }
-
-        .welcome-action-card:hover,
-        .welcome-action-card:focus-visible {
-            border-color: color-mix(in srgb, var(--color-border) 88%, var(--color-text) 12%);
-            background: color-mix(in srgb, var(--color-panel) 86%, var(--color-background) 14%);
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.036),
-                0 16px 34px rgba(0, 0, 0, 0.18);
-            outline: none;
-            transform: translateY(-1px);
-        }
-
-        .welcome-action-icon {
-            color: #2f6bff;
-            font-size: 2.35rem;
-            line-height: 1;
-        }
-
-        .welcome-action-copy {
-            display: grid;
-            min-width: 0;
-            gap: 0.28rem;
-        }
-
-        .welcome-action-title {
-            color: var(--color-text);
-            font-size: 1rem;
-            font-weight: 520;
-            line-height: 1.25;
-        }
-
-        .welcome-action-description {
-            color: color-mix(in srgb, var(--color-text) 58%, transparent);
-            font-size: 0.92rem;
-            line-height: 1.42;
-        }
-
-        .welcome-action-arrow {
-            color: var(--color-text);
-            font-size: 1.35rem;
-            opacity: 0.8;
-        }
-
-        .welcome-lower-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            grid-template-areas:
-                "accounts accounts channels channels"
-                "system system system system";
-            gap: 1rem;
-            align-items: stretch;
-        }
-
-        .welcome-lower-grid .discovery-slot {
-            display: contents;
-        }
-
-        .welcome-lower-grid .discovery-features-panel {
-            grid-area: channels;
-            min-height: 0;
-        }
-
-        .welcome-lower-grid .discovery-account-card {
-            grid-area: accounts;
-        }
-
-        .welcome-lower-grid .discovery-undismiss {
-            grid-column: 1 / -1;
-        }
-
-        .welcome-system-card {
-            grid-area: system;
-            min-width: 0;
-            border-radius: 8px;
-            padding: 1.6rem 1.7rem;
-            text-align: left;
-        }
-
         .welcome-panel-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 1rem;
             margin-bottom: 1.5rem;
+        }
+
+        .welcome-panel-header h2 {
+            margin: 0;
+            color: var(--color-text);
+            font-size: 1.05rem;
+            font-weight: 520;
+            line-height: 1.2;
         }
 
         .welcome-panel-actions {
@@ -534,6 +610,13 @@
 
         .welcome-panel-icon-button .material-symbols-outlined {
             font-size: 1.18rem;
+        }
+
+        .welcome-system-card {
+            min-width: 0;
+            border-radius: 8px;
+            padding: 1.6rem 1.7rem;
+            text-align: left;
         }
 
         .system-resource-body {
@@ -602,21 +685,383 @@
             font-size: 0.88rem;
         }
 
+        /* ── APP-LP-1: landing-page command-center gadgets ── */
+
+        .lp-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .lp-topbar-info {
+            min-width: 0;
+        }
+
+        .lp-topbar-eyebrow {
+            display: block;
+            margin-bottom: 0.2rem;
+            color: color-mix(in srgb, var(--color-text) 50%, transparent);
+            font-size: 0.76rem;
+            font-weight: 560;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .lp-topbar-campaign {
+            margin: 0;
+            color: var(--color-text);
+            font-size: 1.3rem;
+            font-weight: 560;
+            line-height: 1.25;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 46ch;
+        }
+
+        .lp-notif-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex: 0 0 auto;
+            height: 2.35rem;
+            padding: 0 0.95rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-panel) 78%, var(--color-background) 22%);
+            color: color-mix(in srgb, var(--color-text) 76%, transparent);
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+        }
+
+        .lp-notif-pill .material-symbols-outlined {
+            font-size: 1.1rem;
+        }
+
+        .lp-notif-pill:hover,
+        .lp-notif-pill:focus-visible {
+            border-color: color-mix(in srgb, var(--color-border) 88%, var(--color-text) 12%);
+            color: var(--color-text);
+            outline: none;
+        }
+
+        .lp-notif-pill.is-connected {
+            border-color: color-mix(in srgb, #22c55e 45%, var(--color-border) 55%);
+            color: color-mix(in srgb, var(--color-text) 86%, transparent);
+        }
+
+        .lp-notif-pill.is-connected .material-symbols-outlined {
+            color: #22c55e;
+        }
+
+        .lp-gadget {
+            padding: 1.6rem 1.7rem;
+            border-radius: 8px;
+            text-align: left;
+        }
+
+        .lp-count-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.5rem;
+            height: 1.5rem;
+            margin-left: 0.5rem;
+            padding: 0 0.42rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 16%, transparent);
+            color: var(--color-primary, #2f6bff);
+            font-size: 0.8rem;
+            font-weight: 620;
+            vertical-align: middle;
+        }
+
+        .lp-empty {
+            display: grid;
+            justify-items: center;
+            gap: 0.55rem;
+            padding: 1.5rem 0.5rem 0.4rem;
+            color: color-mix(in srgb, var(--color-text) 56%, transparent);
+            text-align: center;
+        }
+
+        .lp-empty .material-symbols-outlined {
+            font-size: 1.8rem;
+            opacity: 0.6;
+        }
+
+        .lp-empty p {
+            margin: 0;
+            font-size: 0.9rem;
+            max-width: 42ch;
+        }
+
+        .lp-error {
+            padding: 0.7rem 0.9rem;
+            border-radius: 8px;
+            background: color-mix(in srgb, #ef4444 14%, transparent);
+            color: #f3a2a2;
+            font-size: 0.83rem;
+            line-height: 1.4;
+        }
+
+        .lp-skeleton {
+            display: grid;
+            gap: 0.6rem;
+        }
+
+        .lp-skeleton-row {
+            height: 3.4rem;
+            border-radius: 8px;
+            background: linear-gradient(90deg,
+                color-mix(in srgb, var(--color-panel) 55%, transparent) 25%,
+                color-mix(in srgb, var(--color-panel) 85%, transparent) 37%,
+                color-mix(in srgb, var(--color-panel) 55%, transparent) 63%);
+            background-size: 400% 100%;
+            animation: lp-shimmer 1.4s ease infinite;
+        }
+
+        @keyframes lp-shimmer {
+            0% { background-position: 100% 0; }
+            100% { background-position: 0 0; }
+        }
+
+        .lp-review-list,
+        .lp-match-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 0.65rem;
+        }
+
+        .lp-review-row,
+        .lp-match-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.1rem;
+            padding: 0.9rem 1.05rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--color-background) 42%, transparent);
+        }
+
+        .lp-match-row {
+            align-items: flex-start;
+        }
+
+        .lp-review-info,
+        .lp-match-info {
+            min-width: 0;
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        .lp-review-role,
+        .lp-match-title {
+            color: var(--color-text);
+            font-size: 0.94rem;
+            font-weight: 560;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .lp-review-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .lp-review-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex: 0 0 auto;
+        }
+
+        .lp-view-all {
+            display: inline-block;
+            margin-top: 1rem;
+            color: color-mix(in srgb, var(--color-text) 62%, transparent);
+            font-size: 0.85rem;
+            font-weight: 520;
+            text-decoration: none;
+        }
+
+        .lp-view-all:hover,
+        .lp-view-all:focus-visible {
+            color: var(--color-primary, #2f6bff);
+            outline: none;
+        }
+
+        .lp-match-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            min-width: 0;
+        }
+
+        .lp-match-why {
+            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            font-size: 0.84rem;
+            line-height: 1.42;
+        }
+
+        .lp-match-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.4rem;
+            flex: 0 0 auto;
+        }
+
+        .lp-row-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .lp-score {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            min-width: 2.4rem;
+            height: 1.5rem;
+            padding: 0 0.5rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-border) 60%, transparent);
+            color: color-mix(in srgb, var(--color-text) 78%, transparent);
+            font-size: 0.78rem;
+            font-weight: 640;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .lp-score-good {
+            background: color-mix(in srgb, #22c55e 22%, transparent);
+            color: #22c55e;
+        }
+
+        .lp-score-ok {
+            background: color-mix(in srgb, #f59e0b 24%, transparent);
+            color: #f0a942;
+        }
+
+        .lp-funnel {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0;
+        }
+
+        .lp-funnel-stage {
+            position: relative;
+            display: grid;
+            justify-items: center;
+            gap: 0.35rem;
+            padding: 0.3rem 0.5rem;
+            text-align: center;
+        }
+
+        .lp-funnel-stage::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.4rem;
+            width: 1px;
+            height: 1.7rem;
+            background: color-mix(in srgb, var(--color-border) 60%, transparent);
+        }
+
+        .lp-funnel-stage:first-child::before {
+            display: none;
+        }
+
+        .lp-funnel-value {
+            color: var(--color-text);
+            font-size: 1.55rem;
+            font-weight: 620;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.15;
+        }
+
+        .lp-funnel-label {
+            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            font-size: 0.78rem;
+            font-weight: 520;
+        }
+
+        .lp-progress-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1.1rem;
+        }
+
+        .lp-progress-stat {
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .lp-progress-value {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            color: var(--color-text);
+            font-size: 1.55rem;
+            font-weight: 620;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.15;
+        }
+
+        .lp-progress-value .material-symbols-outlined {
+            color: #f59e0b;
+        }
+
+        .lp-progress-label {
+            color: color-mix(in srgb, var(--color-text) 58%, transparent);
+            font-size: 0.78rem;
+            font-weight: 520;
+        }
+
+        .lp-progress-target {
+            margin-top: 1.2rem;
+            padding-top: 1.1rem;
+            border-top: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+        }
+
+        .lp-target-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.55rem;
+            color: color-mix(in srgb, var(--color-text) 68%, transparent);
+            font-size: 0.85rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .lp-target-track {
+            height: 0.6rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-border) 70%, transparent);
+        }
+
+        .lp-target-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--color-primary, #2f6bff);
+            transition: width 0.25s ease;
+        }
+
         @media (max-width: 1180px) {
             .welcome-container {
                 padding-inline: clamp(1.25rem, 4vw, 3rem);
-            }
-
-            .welcome-actions {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .welcome-lower-grid {
-                grid-template-columns: 1fr;
-                grid-template-areas:
-                    "accounts"
-                    "channels"
-                    "system";
             }
 
             .welcome-shell {
@@ -635,20 +1080,40 @@
                 padding-top: 4rem;
             }
 
-            .welcome-actions {
-                grid-template-columns: 1fr;
-                gap: 0.75rem;
+            .lp-gadget {
+                padding: 1.25rem 1.1rem;
             }
 
-            .welcome-action-card,
-            .welcome-action-card.is-wide {
-                grid-column: auto;
-                min-height: 5.25rem;
-                padding: 0.85rem;
+            .lp-funnel {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                row-gap: 1.1rem;
             }
 
-            .welcome-action-icon {
-                font-size: 2rem;
+            .lp-funnel-stage::before {
+                display: none;
+            }
+
+            .lp-progress-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.7rem;
+            }
+
+            .lp-review-row,
+            .lp-match-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .lp-review-actions {
+                justify-content: flex-start;
+            }
+
+            .lp-match-actions {
+                align-items: stretch;
+            }
+
+            .lp-row-buttons {
+                justify-content: flex-end;
             }
 
             .welcome-composer .input-row {
@@ -712,7 +1177,7 @@
             }
 
             .welcome-system-card {
-                padding: 1.15rem;
+                padding: 1.25rem 1.1rem;
             }
 
             .system-resource-meter {
@@ -735,6 +1200,303 @@
             }
         }
     </style>
+
+    <script>
+    (() => {
+        const _apiP = import("/js/api.js");
+        const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi(
+            (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a
+        );
+
+        // ── Header: active campaign name + notifications-connect affordance ──
+        window.Alpine.data("lpHeader", () => ({
+            campaignName: "Command center",
+            connected: false,
+
+            async init() {
+                this.loadCampaign();
+                this.loadChannels();
+            },
+
+            async loadCampaign() {
+                try {
+                    const r = await callJsonApi("campaigns", { action: "list" });
+                    const list = (r && r.ok && r.data && r.data.campaigns) || [];
+                    const active = list.find((c) => c.active) || list[0];
+                    if (active && active.name) this.campaignName = active.name;
+                } catch (e) {
+                    // keep default label — never block the header on this
+                }
+            },
+
+            async loadChannels() {
+                try {
+                    const r = await callJsonApi("channels", { action: "get" });
+                    const d = (r && r.ok && r.data) || {};
+                    // GET /api/setup/channels deliberately never echoes back a saved
+                    // webhook/URL (it would leak a live secret to the client) — it
+                    // reports configured-or-not booleans instead.
+                    this.connected = !!(
+                        d.channels_configured ||
+                        d.discord_configured ||
+                        d.email_configured ||
+                        d.ntfy_configured
+                    );
+                } catch (e) {
+                    this.connected = false;
+                }
+            },
+
+            openChannels() {
+                window.openModal("/plugins/applicant/webui/channels.html");
+            },
+        }));
+
+        // ── ① Pending Reviews ──
+        const KIND_AFFORDANCE = {
+            digest_approval: "digest.html",
+            material_review: "documents.html",
+            final_approval: "documents.html",
+            missing_attr: "attributes.html",
+            integral_change: "compare.html",
+        };
+
+        window.Alpine.data("lpPendingReviews", () => ({
+            loading: true,
+            fatalError: "",
+            count: 0,
+            groups: [],
+            overflowCount: 0,
+            GROUP_CAP: 5,
+
+            async init() {
+                await this.load();
+            },
+
+            async load() {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("pending", { action: "list", campaign_id: "__system__" });
+                if (!r || !r.ok) {
+                    this.fatalError = "Couldn't reach the review queue — check back in a moment.";
+                    this.groups = [];
+                    this.count = 0;
+                    this.loading = false;
+                    return;
+                }
+                const items = (r.data && r.data.items) || [];
+                this.count = (r.data && r.data.count) ?? items.length;
+
+                const byApp = new Map();
+                for (const item of items) {
+                    const key = item.application_id || item.id;
+                    if (!byApp.has(key)) {
+                        const brief = item.application_brief || {};
+                        let roleLabel = item.title;
+                        if (brief.job_title && brief.company) roleLabel = `${brief.job_title} · ${brief.company}`;
+                        else if (brief.job_title) roleLabel = brief.job_title;
+                        byApp.set(key, {
+                            applicationId: item.application_id,
+                            roleLabel: roleLabel || "Untitled role",
+                            items: [],
+                            busy: false,
+                        });
+                    }
+                    byApp.get(key).items.push({
+                        id: item.id,
+                        kind: item.kind,
+                        kindLabel: this.materialLabel(item),
+                    });
+                }
+
+                const groups = Array.from(byApp.values());
+                this.overflowCount = Math.max(0, groups.length - this.GROUP_CAP);
+                this.groups = groups.slice(0, this.GROUP_CAP);
+                this.loading = false;
+            },
+
+            materialLabel(item) {
+                const cleaned = String(item.title || "").replace(/\s*ready for review\.?$/i, "").trim();
+                return cleaned || item.kind;
+            },
+
+            review(g) {
+                const first = g.items[0] || {};
+                const panel = KIND_AFFORDANCE[first.kind] || "documents.html";
+                const qs = g.applicationId ? `?application_id=${encodeURIComponent(g.applicationId)}` : "";
+                window.openModal(`/plugins/applicant/webui/${panel}${qs}`);
+            },
+
+            async approve(g) {
+                g.busy = true;
+                await callJsonApi("pending", {
+                    action: "resolve_bulk",
+                    campaign_id: "__system__",
+                    action_ids: g.items.map((i) => i.id),
+                });
+                g.busy = false;
+                await this.load();
+            },
+
+            async snooze(g) {
+                g.busy = true;
+                for (const item of g.items) {
+                    await callJsonApi("pending", { action: "snooze", action_id: item.id, hours: 24 });
+                }
+                g.busy = false;
+                await this.load();
+            },
+
+            viewAll() {
+                window.openModal("/plugins/applicant/webui/today.html");
+            },
+        }));
+
+        // ── ② Top New Matches ──
+        window.Alpine.data("lpTopMatches", () => ({
+            loading: true,
+            fatalError: "",
+            rows: [],
+            emptyNote: "",
+            busy: {},
+            rowError: {},
+            dismissed: new Set(),
+            CAP: 5,
+
+            async init() {
+                await this.load();
+            },
+
+            async load(_isRetry = false) {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("digest", { action: "get" });
+                if (!r || !r.ok) {
+                    // The digest read is the slowest gadget call on this page (a
+                    // per-posting warnings pass the engine deliberately never
+                    // caches — see DigestCache's docstring). One transparent
+                    // retry absorbs an occasional slow/timed-out first attempt
+                    // (cold cache, a network blip) before showing an error —
+                    // still bounded, still never hangs the page.
+                    if (!_isRetry) {
+                        return this.load(true);
+                    }
+                    this.fatalError = "Matches are taking longer than usual to load — check back in a moment.";
+                    this.rows = [];
+                    this.loading = false;
+                    return;
+                }
+                const allRows = (r.data && r.data.rows) || [];
+                this.emptyNote = (r.data && r.data.note) || "";
+                this.rows = allRows
+                    .filter((row) => !this.dismissed.has(row.posting_id))
+                    .slice(0, this.CAP);
+                this.loading = false;
+            },
+
+            scoreClass(score) {
+                const n = Number(score) || 0;
+                if (n >= 75) return "lp-score-good";
+                if (n >= 55) return "lp-score-ok";
+                return "";
+            },
+
+            async draftThis(row) {
+                this.busy = { ...this.busy, [row.posting_id]: true };
+                this.rowError = { ...this.rowError, [row.posting_id]: "" };
+                const r = await callJsonApi("digest", { action: "approve", application_id: row.posting_id });
+                this.busy = { ...this.busy, [row.posting_id]: false };
+                if (!r || !r.ok) {
+                    this.rowError = { ...this.rowError, [row.posting_id]: (r && r.error) || "Couldn't draft this one — try again." };
+                    return;
+                }
+                this.dismissed.add(row.posting_id);
+                this.rows = this.rows.filter((r2) => r2.posting_id !== row.posting_id);
+            },
+
+            async skip(row) {
+                this.busy = { ...this.busy, [row.posting_id]: true };
+                this.rowError = { ...this.rowError, [row.posting_id]: "" };
+                const r = await callJsonApi("digest", {
+                    action: "decline",
+                    application_id: row.posting_id,
+                    reason: "Skipped from the landing page",
+                });
+                this.busy = { ...this.busy, [row.posting_id]: false };
+                if (!r || !r.ok) {
+                    this.rowError = { ...this.rowError, [row.posting_id]: (r && r.error) || "Couldn't skip this one — try again." };
+                    return;
+                }
+                this.dismissed.add(row.posting_id);
+                this.rows = this.rows.filter((r2) => r2.posting_id !== row.posting_id);
+            },
+        }));
+
+        // ── ③ Pipeline Funnel + ④ Daily Progress (one shared cheap read) ──
+        window.Alpine.data("lpPipelineProgress", () => ({
+            loading: true,
+            fatalError: "",
+            stages: [],
+            drafted: 0,
+            submitted: 0,
+            streak: 0,
+            target: 0,
+            appsToday: 0,
+
+            async init() {
+                await this.load();
+            },
+
+            async load() {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("campaigns", { action: "pipeline_summary" });
+                if (!r || !r.ok) {
+                    this.fatalError = "Couldn't reach the pipeline engine — check back in a moment.";
+                    this.stages = [];
+                    this.loading = false;
+                    return;
+                }
+                const data = r.data || {};
+                const f = data.funnel || {};
+                this.stages = [
+                    { key: "discovered", label: "Discovered", value: f.discovered || 0 },
+                    { key: "scored", label: "Scored", value: f.scored || 0 },
+                    { key: "drafted", label: "Drafted", value: f.drafted || 0 },
+                    { key: "submitted", label: "Submitted", value: f.submitted || 0 },
+                    { key: "interview", label: "Interview", value: f.interview || 0 },
+                ];
+                this.drafted = (data.today && data.today.drafted) || 0;
+                this.submitted = (data.today && data.today.submitted) || 0;
+                this.streak = data.streak_days || 0;
+                this.loading = false;
+
+                // Best-effort: today's applications-vs-target needs the resolved
+                // campaign id (pipeline_summary just resolved one server-side).
+                // Never blocks the two cards above, which already rendered.
+                if (data.campaign_id) {
+                    try {
+                        const g = await callJsonApi("campaigns", {
+                            action: "guardrails",
+                            campaign_id: data.campaign_id,
+                        });
+                        if (g && g.ok && g.data && g.data.today) {
+                            this.appsToday = g.data.today.applications_today || 0;
+                            this.target = g.data.today.daily_target || 0;
+                        }
+                    } catch (e) {
+                        // target stays 0 -> the target row just hides itself
+                    }
+                }
+            },
+
+            get attainmentPct() {
+                if (!this.target) return 0;
+                return Math.max(0, Math.min(100, Math.round((this.appsToday / this.target) * 100)));
+            },
+        }));
+    })();
+    </script>
 </body>
 
 </html>

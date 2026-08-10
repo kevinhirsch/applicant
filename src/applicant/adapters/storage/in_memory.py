@@ -133,6 +133,14 @@ class _PostingRepo:
         """Mirrors ``JobPostingRepo.count_for_campaign`` (perf audit #6)."""
         return sum(1 for p in self._d.values() if p.campaign_id == cid)
 
+    def count_scored_for_campaign(self, cid: CampaignId) -> int:
+        """Mirrors ``JobPostingRepo.count_scored_for_campaign`` (APP-LP-1)."""
+        return sum(
+            1
+            for p in self._d.values()
+            if p.campaign_id == cid and p.viability_score is not None
+        )
+
     def delete_for_campaign(self, cid: CampaignId) -> int:
         stale = [k for k, p in self._d.items() if p.campaign_id == cid]
         for k in stale:
@@ -196,6 +204,17 @@ class _ApplicationRepo:
                 if a.campaign_id == cid and a.status in wanted
             ),
             key=lambda a: str(a.id),
+        )
+
+    def count_by_status(
+        self, cid: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Mirrors ``ApplicationRepo.count_by_status`` (APP-LP-1)."""
+        if not statuses:
+            return 0
+        wanted = set(statuses)
+        return sum(
+            1 for a in self._d.values() if a.campaign_id == cid and a.status in wanted
         )
 
     def ids_for_campaign(self, cid: CampaignId) -> set[str]:
@@ -392,6 +411,23 @@ class _OutcomeRepo:
             e.application_id == aid and e.type in TERMINAL_OUTCOME_TYPES
             for e in self._l
         )
+
+    def count_distinct_applications_for_campaign(
+        self, cid: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Mirrors ``OutcomeEventRepo.count_distinct_applications_for_campaign``
+        (landing-page funnel's "interview" stage, APP-LP-1)."""
+        if not types:
+            return 0
+        wanted = set(types)
+        matched: set[str] = set()
+        for e in self._l:
+            if e.type not in wanted:
+                continue
+            app = self._applications.get(e.application_id)
+            if app is not None and app.campaign_id == cid:
+                matched.add(str(e.application_id))
+        return len(matched)
 
     def delete_for_applications(self, application_ids: set[str]) -> int:
         before = len(self._l)
@@ -1034,6 +1070,22 @@ class _ActionEventRepo:
         for k in doomed:
             del self._d[k]
         return len(doomed)
+
+    def list_since(self, campaign_id, since, *, action: str | None = None):
+        """Mirrors ``ActionEventRepo.list_since`` (landing-page daily-progress
+        gadget, APP-LP-1)."""
+        from applicant.core.ids import CampaignId as _Cid
+
+        cid = _Cid(str(campaign_id))
+        matches = [
+            e
+            for e in self._d.values()
+            if e.campaign_id == cid
+            and e.occurred_at >= since
+            and (action is None or e.action == action)
+        ]
+        matches.sort(key=lambda e: (e.occurred_at, e.id))
+        return matches
 
 
 class InMemoryStorage:

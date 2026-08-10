@@ -50,6 +50,27 @@
   --radius-lg: 12px;
 }
 
+/* APP-LP-1 fix: the five --ap-color-* aliases above resolve var(--color-*, ...)
+   AT :root — a CSS custom property's value is fixed once, at the element that
+   declares it, then simply inherits unchanged to descendants. index.css's own
+   light/dark switch works by re-declaring --color-panel/--color-border/etc. on
+   `.light-mode` (added to <body>, not <html>), which sits BELOW :root in the
+   tree. Without this block, --ap-color-* keeps whatever --color-* equalled at
+   :root (always the dark default, since :root itself never carries
+   `.light-mode`) no matter what <body> overrides — every panel that styles
+   itself via .btn/.badge/.card/etc (all of them) rendered dark chips/borders
+   even with light mode on. Mirroring index.css's own :root + .light-mode
+   two-block pattern here re-resolves the aliases wherever `.light-mode` is
+   actually applied, fixing it at the root cause for every consumer at once.
+   Dark mode is untouched (this block only matches once .light-mode is set). */
+.light-mode {
+  --ap-color-primary: var(--color-primary, #4361ee);
+  --ap-color-text: var(--color-text, #2c2c2c);
+  --ap-color-background: var(--color-background, #f5f7fa);
+  --ap-color-panel: var(--color-panel, #e8ecf1);
+  --ap-color-border: var(--color-border, #d4d9e0);
+}
+
 /* ── Global reset ── */
 *, *::before, *::after { box-sizing: border-box; }
 

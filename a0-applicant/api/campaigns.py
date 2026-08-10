@@ -3,7 +3,8 @@
 The Campaigns UI is served by the a0 shell, but the Applicant engine is internal-only
 (``api:8000``). This handler forwards the UI's calls to the engine's ``/api/campaigns``
 API, keeping the engine the single source of truth for campaign state. Multiple actions
-dispatched by ``action``: ``list``, ``create``, ``update``, ``clone``, ``guardrails``.
+dispatched by ``action``: ``list``, ``create``, ``update``, ``clone``, ``guardrails``,
+``pipeline_summary``.
 
 Self-contained (plugin sibling-imports are unreliable); the pure ``dispatch``/``_forward``
 logic is module-level so it is unit-testable without the framework.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -43,6 +45,33 @@ def _normalize_list(res: dict) -> dict:
     if res.get("ok") and isinstance(res.get("data"), list):
         res["data"] = {"campaigns": res["data"]}
     return res
+
+
+_ACTIVE_CAMPAIGN_CACHE: dict = {"id": None, "ts": 0.0}
+_ACTIVE_CAMPAIGN_TTL_S = 30
+
+
+def _resolve_campaign_id(raw: str | None) -> str:
+    """Map missing/'__system__' campaign_id to the single active campaign (MVP is
+    single-campaign), mirroring the same helper in the digest/pending/tracker
+    proxies. Explicit non-system ids pass through unchanged. Fails CLOSED to the
+    raw value on ANY problem so callers that already resolved an id are unaffected."""
+    cid = str(raw or "__system__").strip() or "__system__"
+    if cid != "__system__":
+        return cid
+    now = time.time()
+    if _ACTIVE_CAMPAIGN_CACHE["id"] and (now - _ACTIVE_CAMPAIGN_CACHE["ts"]) < _ACTIVE_CAMPAIGN_TTL_S:
+        return _ACTIVE_CAMPAIGN_CACHE["id"]
+    result = _forward("GET", "/api/campaigns")
+    campaigns = result.get("data") if result.get("ok") else None
+    if isinstance(campaigns, list) and campaigns:
+        active = next((c for c in campaigns if isinstance(c, dict) and c.get("active")), campaigns[0])
+        resolved = active.get("id") if isinstance(active, dict) else None
+        if resolved:
+            _ACTIVE_CAMPAIGN_CACHE["id"] = resolved
+            _ACTIVE_CAMPAIGN_CACHE["ts"] = now
+            return resolved
+    return cid
 
 
 def dispatch(input: dict) -> dict:
@@ -83,6 +112,10 @@ def dispatch(input: dict) -> dict:
         if not cid:
             return {"ok": False, "status": 400, "error": "campaign_id required"}
         return _forward("GET", f"/api/campaigns/{cid}/guardrails")
+
+    if action == "pipeline_summary":
+        resolved = _resolve_campaign_id(cid)
+        return _forward("GET", f"/api/campaigns/{resolved}/pipeline-summary")
 
     return {"ok": False, "status": 400, "error": f"unknown campaigns action {action!r}"}
 
