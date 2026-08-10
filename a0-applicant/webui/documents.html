@@ -144,7 +144,7 @@
           </div>
           <div class="err" x-show="coverLetterError" x-text="coverLetterError"></div>
           <div class="empty" x-show="coverLetterResult && coverLetterResult.generated === false">
-            <p x-text="coverLetterResult.reason || 'This role does not warrant a cover letter.'"></p>
+            <p x-text="coverLetterResult?.reason || 'This role does not warrant a cover letter.'"></p>
           </div>
 
           <div class="empty" x-show="documents.length === 0 && !documentsLoading">
@@ -242,15 +242,15 @@
 
           <div x-show="jdMatchData && !jdMatchLoading">
             <div style="font-size:.85rem;margin-bottom:6px">
-              Coverage: <strong x-text="Math.round((jdMatchData.coverage || 0) * 100) + '%'"></strong>
+              Coverage: <strong x-text="Math.round((jdMatchData?.coverage || 0) * 100) + '%'"></strong>
             </div>
-            <div style="font-size:.8rem;margin-bottom:4px" x-show="jdMatchData.matched && jdMatchData.matched.length">
+            <div style="font-size:.8rem;margin-bottom:4px" x-show="jdMatchData?.matched && jdMatchData?.matched.length">
               <div style="font-weight:600;margin-bottom:2px">Matched:</div>
-              <div class="doc-content"><template x-for="t in jdMatchData.matched" :key="t"><span style="color:#155724;margin-right:8px" x-text="t"></span></template></div>
+              <div class="doc-content"><template x-for="t in jdMatchData?.matched" :key="t"><span style="color:#155724;margin-right:8px" x-text="t"></span></template></div>
             </div>
-            <div style="font-size:.8rem" x-show="jdMatchData.missing && jdMatchData.missing.length">
+            <div style="font-size:.8rem" x-show="jdMatchData?.missing && jdMatchData?.missing.length">
               <div style="font-weight:600;margin-bottom:2px">Missing:</div>
-              <div class="doc-content"><template x-for="t in jdMatchData.missing" :key="t"><span style="color:#721c24;margin-right:8px" x-text="t"></span></template></div>
+              <div class="doc-content"><template x-for="t in jdMatchData?.missing" :key="t"><span style="color:#721c24;margin-right:8px" x-text="t"></span></template></div>
             </div>
           </div>
         </div>

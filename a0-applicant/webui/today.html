@@ -50,7 +50,7 @@
         <div class="meta">
           <span class="kind" x-text="item.kind"></span>
           <span x-text="item.created_at ? item.created_at.slice(0,10) : ''"></span>
-          <span class="urgency" x-show="item.metadata && item.metadata.urgency" x-text="item.metadata.urgency"></span>
+          <span class="urgency" x-show="item.metadata && item.metadata.urgency" x-text="item.metadata?.urgency"></span>
         </div>
       </div>
       <div class="actions">

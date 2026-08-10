@@ -74,7 +74,7 @@
         </div>
         <div class="feedback-err" x-show="feedbackError[row.posting_id]" x-text="feedbackError[row.posting_id]"></div>
         <div class="feedback-confirm" x-show="feedbackResult[row.posting_id]">
-          ✓ Feedback saved<template x-if="(feedbackResult[row.posting_id].likes||[]).length"><span> · likes: <span x-text="feedbackResult[row.posting_id].likes.join(', ')"></span></span></template><template x-if="(feedbackResult[row.posting_id].dislikes||[]).length"><span> · dislikes: <span x-text="feedbackResult[row.posting_id].dislikes.join(', ')"></span></span></template>
+          ✓ Feedback saved<template x-if="(feedbackResult[row.posting_id]?.likes||[]).length"><span> · likes: <span x-text="feedbackResult[row.posting_id]?.likes.join(', ')"></span></span></template><template x-if="(feedbackResult[row.posting_id]?.dislikes||[]).length"><span> · dislikes: <span x-text="feedbackResult[row.posting_id]?.dislikes.join(', ')"></span></span></template>
         </div>
       </div>
       <div class="actions">

@@ -45,8 +45,8 @@
        (GET /api/setup/llm/tiers -> {tiers, routing}) but discarded by this panel —
        render which endpoint is actually serving + whether it reordered the ladder. -->
   <div class="inst" x-show="!loading && routing" style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center">
-    <span x-show="!routing.enabled">Smart routing is off — the ladder runs in its configured order.</span>
-    <template x-if="routing.enabled">
+    <span x-show="!routing?.enabled">Smart routing is off — the ladder runs in its configured order.</span>
+    <template x-if="routing?.enabled">
       <span>
         <strong>Smart routing:</strong> on<span x-show="routing.prefer_local"> (prefers local)</span> —
         <span x-show="routing.active_endpoint">serving from <strong x-text="routing.active_endpoint.name || routing.active_endpoint.base_url"></strong></span>
@@ -54,7 +54,7 @@
         <span x-show="routing.reordered"> — ladder reordered live</span>
       </span>
     </template>
-    <span x-show="routing.health" x-text="routing.health ? (routing.health.endpoints_online + '/' + routing.health.endpoints_total + ' endpoints online, ' + routing.health.local_available + ' local') : ''"></span>
+    <span x-show="routing?.health" x-text="routing?.health ? (routing?.health.endpoints_online + '/' + routing?.health.endpoints_total + ' endpoints online, ' + routing?.health.local_available + ' local') : ''"></span>
   </div>
 
   <template x-if="!loading">
