@@ -2,11 +2,17 @@
 
 Viability scoring from the JD: *can the user reasonably get this role?* — distinct from
 resume-fit coverage (FR-RESUME-7, Phase 3). When the configured model is available the
-score is a **semantic judgment** by the LLM (entry/L1 tier) of how well the posting
-matches the candidate's stated criteria — role/seniority fit, skills overlap, work mode,
-location, and comp. When no model is configured (or a call fails) it falls back to a
-zero-token deterministic signal over criteria/JD overlap via local embeddings
-(NFR-TOKEN-1), so scoring never hard-depends on the network.
+score is a **semantic judgment** by the LLM (entry/L1 tier, local) of how well the
+posting matches the candidate's stated criteria — role/seniority fit, skills overlap,
+work mode, location, and comp. The local tier is deliberately the cheap default, but it
+is also SLOW and intermittently 500s/times out on the large scoring prompt: on that
+failure (model-resiliency requirement) ``_base_score`` makes ONE deterministic
+escalation to the configured DeepSeek cloud fallback tier (the same rung
+``material_service.py`` already relies on for drafting) and uses ITS score before ever
+touching the embedding signal. Only when BOTH the local and fallback calls fail (or no
+model is configured at all) does it fall back to a zero-token deterministic signal over
+criteria/JD overlap via local embeddings (NFR-TOKEN-1), so scoring never hard-depends
+on the network.
 
 When a LearningService is supplied, the score is biased toward the **converting-role
 signature** (FR-LEARN-5): a role that looks like what has actually converted for this
@@ -552,36 +558,78 @@ class ScoringService:
     ) -> tuple[float, str, bool]:
         """Base viability in [0, 1] + a plain-language rationale + a DEGRADED flag.
 
-        Prefer the configured model's semantic judgment (entry/L1 tier); fall back to
-        the local zero-token lexical-overlap signal when no model is configured or a
-        call fails — the digest must never hard-depend on the network.
+        Prefer the configured model's semantic judgment (entry/L1 tier, local).
+        The local model is the SLOW, SOMETIMES-flaky rung of the ladder — it
+        intermittently 500s or times out on the large scoring prompt. On that
+        failure (or any other unusable reply — a parseable-but-scoreless JSON,
+        say) this now makes ONE deterministic escalation to the configured
+        DeepSeek cloud FALLBACK tier (the same rung the drafting/material path
+        already relies on — see ``material_service._HEAVY_WRITING_START_TIER``
+        and ``config.py``'s ``LLM_FALLBACK_*`` settings) and uses ITS score,
+        before ever touching the local zero-token embedding signal. Only when
+        BOTH the local call and the fallback call fail does this degrade to the
+        embedding signal — the digest must never hard-depend on the network, but
+        a weak lexical-overlap guess must never pre-empt a real model that was
+        available and simply never asked (Kevin's explicit resiliency
+        requirement).
 
-        The third element, ``degraded``, is True ONLY when an LLM tier IS configured
-        but the call failed and this fell back to the embedding signal — the case
-        the P0 durability fix (``ScoringService._persist_or_defer``) guards against:
-        a transient failure must not be persisted as if it were an authoritative LLM
-        judgment, or it permanently buries a posting below the viability threshold
-        with no retry. ``degraded`` is False both when the LLM succeeds AND when no
-        LLM is configured at all — in the latter case the embedding signal IS the
-        authoritative score by design (NFR-TOKEN-1), exactly as before.
+        Note: for a plain transport/HTTP failure at tier 1 (timeout, 500,
+        connection refused), ``OpenAICompatibleLLM.complete`` usually climbs the
+        ladder to the fallback tier ON ITS OWN, inside the SAME call — so the
+        first ``self._llm_base`` attempt below often already returns the
+        fallback's real score directly. The explicit second attempt here exists
+        for the case that climb can't cover: tier 1 answers 200 OK but the reply
+        carries no usable ``score`` (a scoring-specific validation failure that
+        happens in ``_llm_base``, after ``complete()`` has already "succeeded"
+        and returned) — nothing inside the adapter's ladder loop ever saw that
+        as a failure to climb past, so without this explicit retry it would fall
+        straight to the embedding signal with the fallback tier never even
+        asked.
+
+        The third element, ``degraded``, is True ONLY when an LLM tier IS
+        configured but BOTH the local attempt and (when one exists) the fallback
+        attempt failed and this fell back to the embedding signal — the case the
+        P0 durability fix (``ScoringService._persist_or_defer``) guards against:
+        a transient failure must not be persisted as if it were an authoritative
+        LLM judgment, or it permanently buries a posting below the viability
+        threshold with no retry. ``degraded`` is False when either attempt
+        succeeds AND when no LLM is configured at all — in the latter case the
+        embedding signal IS the authoritative score by design (NFR-TOKEN-1),
+        exactly as before.
         """
         llm = self._llm
         if llm is not None and getattr(llm, "is_configured", lambda: False)():
             try:
-                score, rationale = self._llm_base(posting, criteria)
+                score, rationale = self._llm_base(posting, criteria, start_tier=1)
                 return score, rationale, False
-            except Exception as exc:  # noqa: BLE001 - any model/parse failure degrades
-                # #345: do NOT swallow the failure silently. A model reply that parses
-                # but carries no ``score`` key (or any other model/parse error) must be
-                # surfaced — naming the missing score — BEFORE we degrade to the local
-                # embedding signal, so an operator can see a model is misbehaving rather
-                # than only noticing a quietly-worse score.
+            except Exception as local_exc:  # noqa: BLE001 - any model/parse failure escalates
+                # #345 / model-resiliency: do NOT swallow the failure silently. A
+                # model reply that parses but carries no ``score`` key (or any
+                # other model/parse error) must be surfaced — naming the missing
+                # score — BEFORE any degrade, so an operator can see a model is
+                # misbehaving rather than only noticing a quietly-worse score.
                 _std_log.warning(
-                    "viability model returned no usable score (%s); degrading to the "
-                    "local embedding signal for posting %s",
-                    exc,
+                    "viability model (local tier) returned no usable score (%s); "
+                    "checking for a configured cloud fallback tier before any "
+                    "degrade for posting %s",
+                    local_exc,
                     getattr(posting, "id", "?"),
                 )
+                fallback_tier = self._fallback_start_tier()
+                if fallback_tier is not None:
+                    try:
+                        score, rationale = self._llm_base(
+                            posting, criteria, start_tier=fallback_tier
+                        )
+                        return score, rationale, False
+                    except Exception as fallback_exc:  # noqa: BLE001
+                        _std_log.warning(
+                            "viability model (DeepSeek fallback tier) ALSO "
+                            "returned no usable score (%s); degrading to the "
+                            "local embedding signal for posting %s",
+                            fallback_exc,
+                            getattr(posting, "id", "?"),
+                        )
                 base = self._embedding.similarity(criteria_text, jd_text)
                 return (
                     base,
@@ -601,10 +649,42 @@ class ScoringService:
             False,
         )
 
+    def _fallback_start_tier(self) -> int | None:
+        """1-based tier index of the configured cloud fallback rung, or ``None``.
+
+        ``SetupService.build_ladder()`` always appends the optional DeepSeek
+        fallback tier (``LLM_FALLBACK_*`` in ``config.py``) as the LAST rung,
+        below every locally-persisted tier — so "the ladder's last tier" IS "the
+        fallback tier" whenever the ladder holds more than one rung. Duck-types
+        the adapter's ``.ladder`` (a plain attribute on ``OpenAICompatibleLLM``,
+        passed through transparently by ``WedgeDetectingLLM.__getattr__`` and
+        absent on simple test doubles) so this needs no new wiring/flag — reuses
+        the SAME tier config the drafting/material path already escalates to
+        (mirrors ``material_service.py``'s ``_HEAVY_WRITING_START_TIER``
+        convention). Returns ``None`` when only the local tier is configured (or
+        ``self._llm`` exposes no ladder at all), so scoring skips the redundant
+        "retry the same already-failing local tier under a different index" call
+        and goes straight to the embedding degrade instead — cost-aware: a
+        cloud call is only ever attempted when a real second rung exists.
+        """
+        ladder = getattr(self._llm, "ladder", None)
+        try:
+            tier_count = len(ladder) if ladder is not None else 0
+        except TypeError:  # pragma: no cover - defensive, ladder is always Sized
+            tier_count = 0
+        return tier_count if tier_count > 1 else None
+
     def _llm_base(
-        self, posting: JobPosting, criteria: SearchCriteria
+        self, posting: JobPosting, criteria: SearchCriteria, *, start_tier: int = 1
     ) -> tuple[float, str]:
-        """Ask the model to score the posting against the criteria (0-100 + reason)."""
+        """Ask the model to score the posting against the criteria (0-100 + reason).
+
+        ``start_tier`` (1-based, default 1/local) is forwarded straight to
+        ``LLMPort.complete`` — ``_base_score`` calls this once at tier 1 and, on
+        failure, once more pinned at ``_fallback_start_tier()`` so the retry
+        actually reaches the configured DeepSeek fallback rung instead of
+        re-climbing from the same failing local tier.
+        """
         crit_lines = []
         if criteria.titles:
             crit_lines.append("Target titles: " + ", ".join(criteria.titles))
@@ -791,7 +871,7 @@ class ScoringService:
             "required": ["score", "rationale"],
         }
         result = self._llm.complete(
-            [system, user], start_tier=1, json_schema=schema, max_tokens=250
+            [system, user], start_tier=start_tier, json_schema=schema, max_tokens=250
         )
         data = result.structured or {}
         if not data and getattr(result, "text", ""):
