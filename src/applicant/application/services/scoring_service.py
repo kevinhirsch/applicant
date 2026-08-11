@@ -306,7 +306,16 @@ class ScoringService:
         Returns True iff the score was actually persisted (so the caller can decide
         whether firing a "scored" domain event is honest).
         """
-        if scoring.degraded and self._llm_configured():
+        # A LOW-tier source (raw searxng metasearch) is deterministically demoted
+        # (x0.72) regardless of the LLM, so a degraded value there is AUTHORITATIVE-
+        # low -- not a poisoned retry-candidate to protect. Persisting it lets a bulk
+        # re-score LOWER a stale high score (from a past LLM success, before the
+        # 2026-08-11 source demotion) instead of the defer rule preserving it forever;
+        # ``list_unscored_for_campaign`` never revisits a non-NULL score, so a stale
+        # high searxng row would otherwise be stuck. Real (high/medium/unknown-tier)
+        # roles keep the transient-retry protection below.
+        low_tier_source = source_reliability_multiplier(posting.source_key).multiplier < 1.0
+        if scoring.degraded and self._llm_configured() and not low_tier_source:
             failures = self._bump_transient_failures(posting)
             if failures < self._max_transient_retries:
                 return False  # leave unscored for retry; do not persist the poisoned value

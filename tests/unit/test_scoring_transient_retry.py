@@ -112,6 +112,32 @@ class TestTransientLlmFailureLeavesPostingRetryable:
         stored = storage.postings.get(posting.id)
         assert stored.viability_score is None
 
+    def test_low_tier_searxng_degraded_score_persists_not_deferred(self):
+        # A raw-searxng (low-tier) source is deterministically demoted (x0.72)
+        # regardless of the LLM, so a degraded value is authoritative-low and MUST
+        # persist -- otherwise a stale high score (from a past LLM success, before
+        # the source demotion) is stuck forever, since list_unscored_for_campaign
+        # never revisits a non-NULL score. Real (high/medium-tier) roles still defer.
+        storage = InMemoryStorage()
+        cid = CampaignId(new_id())
+        posting = JobPosting(
+            id=JobPostingId(new_id()),
+            campaign_id=cid,
+            source_url="https://example.com/jobs/1",
+            source_key="searxng",
+            title="Delivery Manager, Backend Platform",
+            company="Acme",
+            description="Build Python services with Django and Postgres.",
+        )
+        storage.postings.add(posting)
+        storage.commit()
+
+        svc = ScoringService(storage, _FailingLLM(), LocalEmbedding())
+        scoring = svc.score_viability(posting.id, _criteria(cid))
+        assert scoring.degraded is True
+        stored = storage.postings.get(posting.id)
+        assert stored.viability_score is not None  # persisted (low-tier), not deferred
+
     def test_unscored_postings_still_returns_it_for_retry(self):
         storage = InMemoryStorage()
         cid = CampaignId(new_id())
