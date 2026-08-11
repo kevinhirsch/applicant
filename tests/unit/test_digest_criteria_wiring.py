@@ -105,10 +105,11 @@ def test_viability_scoring_uses_configured_model_when_available():
     crit = CriteriaService(storage, llm=None).get_criteria(cid)
     posting = JobPosting(
         # NOT "Senior Backend Engineer" -- this test pins that a CONFIGURED
-        # model's score reaches the caller unmodified; a real "<discipline>
-        # Engineer" title now short-circuits OUT_OF_DOMAIN before the model
-        # is ever called (applicant.core.rules.role_domain_fit).
-        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Backend Specialist",
+        # model's score reaches the caller unmodified. Under
+        # role_domain_fit's ALLOWLIST posture (round 2) the title must
+        # plainly match an in-domain role family or the gate short-circuits
+        # before the model is ever called.
+        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Delivery Manager",
         company="A", source_url="http://x", description="python go",
     )
     result = scoring.score_posting(posting, crit)
@@ -138,7 +139,7 @@ def test_score_for_digest_reuses_persisted_until_criteria_change():
     scoring = ScoringService(storage, llm=_CountingLLM(), embedding=LocalEmbedding())
     pid = _add_posting(
         # NOT "Senior Backend Engineer" -- see the rename note above.
-        storage, cid, title="Senior Backend Specialist", company="A", description="python go",
+        storage, cid, title="Senior Delivery Manager", company="A", description="python go",
     )
 
     s1 = scoring.score_for_digest(storage.postings.get(pid), crit)

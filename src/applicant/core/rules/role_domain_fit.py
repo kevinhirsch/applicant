@@ -3,40 +3,50 @@
 Viability scoring's LLM rubric (``application/services/scoring_service.py``'s
 ``_llm_base`` ``system_text``, GATE 2) already carries natural-language
 instructions telling the model to score off-domain roles low. In production
-against a real discovery queue that instruction was NOT reliable enough on
-its own: nearly every posting scored 85-100 regardless of role, including
-titles with zero plausible relationship to agile delivery — "Key Accounts
+that instruction was NOT reliable enough on its own — TWICE. The first
+incident: nearly every posting scored 85-100 regardless of role, including
+titles with zero plausible relationship to agile delivery ("Key Accounts
 Executive", "Senior Product Security Engineer II", "Sr. Video Editor
-(short-form)", "Applied AI Architect", "Research Advisor" all landed in the
-90s alongside real Scrum Master / RTE postings. Prompt-only calibration was
-attempted twice and failed both times to hold under the full real-queue
-distribution (a narrow labeled eval passing 0 FP/0 FN does not guarantee the
-rubric generalizes to titles the eval never saw).
+(short-form)", "Applied AI Architect", "Research Advisor" all in the 90s).
+A first fix added this module as a DENYLIST (named off-domain families —
+"Software Engineer", "Product Manager", "Legal/Counsel", etc. — were capped;
+everything else fell through to the LLM). That was deployed and re-scored
+against the live queue, and the queue was STILL dominated by garbage the
+denylist had no name for: YC "is hiring" announcements, a bare platform name
+("LinkedIn") captured as a title, "Sr. Zendesk Developer", "Senior Salesforce
+Engineer", "Affiliate EAP Counsellor", "Market Manager", "Startup
+Partnerships Lead", "Partner Director - EMEA" — none of these match any
+denylist entry, so they fell through UNCLASSIFIED to the LLM, which scored
+them ~100 too. The LLM simply cannot discriminate reliably for this narrow a
+profile — a growing denylist will always be one unseen title behind it.
 
-This module is a SECOND, DETERMINISTIC, no-LLM, no-IO line of defense,
-mirroring :mod:`applicant.core.rules.posting_quality`'s design: given a
-posting's title (primary signal) and description (fallback), it classifies
-the ROLE — not the posting's authenticity, which is ``posting_quality``'s
-job — into one of three buckets against Kevin's candidate taxonomy (a senior
-Agile delivery leader: Scrum Master, RTE, Agile Coach, Delivery Manager,
-Iteration Manager, agile-flavored TPM/Program Manager):
+**This module is therefore an ALLOWLIST, not a denylist.** A posting can
+reach a viable score ONLY if its title plainly names one of Kevin's target
+agile-delivery role families. Every other title — whether it plainly names a
+KNOWN off-domain family (kept, for a more specific/legible rejection reason)
+or is simply unrecognized — is capped. The LLM never sees a title this gate
+didn't allow through, and never gets a chance to lift one back up; it only
+ever RANKS among postings the allowlist already let through (including the
+LeSS > SAFe taste preference, unchanged).
 
-* **IN_DOMAIN** — the title plainly names one of Kevin's target role
-  families. Caller should let the LLM/embedding fit score proceed normally
-  (including the LeSS > SAFe taste preference) — this gate never lifts or
-  boosts a score, it only ever prevents one.
-* **OUT_OF_DOMAIN** — the title plainly names a role family that is
-  categorically not agile-delivery work (IC/engineering-management software
-  roles, product management/design, data science, sales, legal, finance,
-  marketing, video editing, generic research). The caller should hard-cap
-  the score low WITHOUT an LLM call — that is the whole point: a keyword-
-  dense, senior-sounding, well-paid off-domain JD must never talk the LLM
-  into a high score again.
-* **UNCLASSIFIED** — neither list matches (an unfamiliar or ambiguous
-  title, e.g. a bare "Program Manager" with no agile/delivery context
-  anywhere). Caller should fall through to the normal LLM/embedding scoring
-  path, unmodified — this gate is conservative by design and only fires
-  on a clear signal, never on absence of one.
+Given a posting's title (primary signal) and description (fallback, used
+only for the bare-"Program Manager" context check), :func:`classify_role_domain`
+returns a tri-state verdict:
+
+* **IN_DOMAIN** (``in_domain=True``) — the title plainly names a target role
+  family (see :data:`_IN_DOMAIN_PATTERNS` / the bare-Program-Manager-with-
+  context case). The caller lets the LLM/embedding fit score proceed
+  normally — this gate never lifts or boosts a score, it only ever prevents
+  one.
+* **OUT_OF_DOMAIN** (``in_domain=False``) — the title plainly names a KNOWN
+  off-domain family (IC/engineering-management software roles, product
+  management/design, data science, sales, legal, finance, marketing, video
+  editing, research). Kept as its own bucket purely for a more specific
+  rejection ``reason`` string; gated identically to UNCLASSIFIED below.
+* **UNCLASSIFIED** (``in_domain=None``) — neither list matches. Under the
+  OLD denylist posture this fell through to the LLM; under the CURRENT
+  allowlist posture it is gated exactly like OUT_OF_DOMAIN — see
+  :func:`is_allowlisted`, the single source of truth callers must use.
 
 Precedence: IN_DOMAIN is checked before OUT_OF_DOMAIN, so a title carrying
 both signals (e.g. "generic Engineering Manager" is out-of-domain per the
@@ -45,9 +55,12 @@ in-domain phrase "Agile Delivery") resolves IN_DOMAIN — this mirrors the
 product requirement that a generic Engineering Manager title is only
 off-domain "unless explicitly agile-delivery".
 
-Like ``posting_quality``, this is intentionally a curated pattern set, not an
-ML classifier — extend the tuples below as new false positives/negatives are
-observed in the live queue.
+Like ``posting_quality``, the pattern lists are curated, not an ML
+classifier — extend :data:`_IN_DOMAIN_PATTERNS` FIRST as new real in-profile
+title phrasings are observed (a false negative here silently buries a real
+role — the allowlist must stay comprehensive); extend
+:data:`_OUT_OF_DOMAIN_PATTERNS` only for a nicer rejection reason, since an
+unnamed off-domain title is already gated as UNCLASSIFIED regardless.
 """
 
 from __future__ import annotations
@@ -57,17 +70,25 @@ from dataclasses import dataclass
 
 #: A role plainly IN Kevin's target profile — checked FIRST (see module
 #: docstring precedence note). ``(label, pattern)`` pairs; the label is for
-#: observability only, never branched on by callers.
+#: observability only, never branched on by callers. Seniority prefixes
+#: ("Senior"/"Lead"/"Principal"/"Sr.") need no separate entries — every
+#: pattern here is a substring match, so e.g. "Senior Scrum Master" already
+#: matches the bare "Scrum Master" pattern.
 _IN_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Scrum Master", re.compile(r"\bscrum\s*master\b", re.IGNORECASE)),
     ("Release Train Engineer / RTE", re.compile(r"\brelease\s+train\s+engineer\b|\brte\b", re.IGNORECASE)),
-    ("Agile Coach", re.compile(r"\bagile\s+coach\b", re.IGNORECASE)),
+    (
+        "Agile/Agility/Scrum/Kanban Coach",
+        re.compile(r"\b(agile|agility|scrum|kanban)\s+coach\b", re.IGNORECASE),
+    ),
     ("Agile Delivery", re.compile(r"\bagile\s+delivery\b", re.IGNORECASE)),
     ("Delivery Manager / Lead", re.compile(r"\bdelivery\s+(manager|lead)\b", re.IGNORECASE)),
     ("Iteration Manager", re.compile(r"\biteration\s+manager\b", re.IGNORECASE)),
     ("Technical Program Manager / TPM", re.compile(r"\btechnical\s+program\s+manager\b|\btpm\b", re.IGNORECASE)),
     ("Agile Program Manager", re.compile(r"\bagile\s+program\s+manager\b", re.IGNORECASE)),
     ("Team Coach (SAFe SM/TC)", re.compile(r"\bteam\s+coach\b", re.IGNORECASE)),
+    ("Agile Transformation", re.compile(r"\bagile\s+transformation\b", re.IGNORECASE)),
+    ("Ways of Working", re.compile(r"\bways\s+of\s+working\b", re.IGNORECASE)),
 )
 
 #: A bare "Program Manager" (no Technical/Agile qualifier — those are matched
@@ -83,21 +104,23 @@ _AGILE_DELIVERY_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: A role plainly OUT of Kevin's target profile — checked only after the
-#: IN_DOMAIN patterns above find nothing. ``(label, pattern)`` pairs.
+#: A role plainly, NAMEABLY out of Kevin's target profile — checked only
+#: after the IN_DOMAIN patterns above find nothing. ``(label, pattern)``
+#: pairs. NOTE: under the allowlist posture (see module docstring) this
+#: bucket is gated IDENTICALLY to UNCLASSIFIED — it exists only to give a
+#: more specific, legible rejection reason for known-common off-domain
+#: families, not because matching it changes the outcome.
 _OUT_OF_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # IC / engineering-discipline "<discipline> Engineer" titles — the
-    # discipline word must be adjacent to "Engineer" (a bare "Engineer" with
-    # no discipline stays UNCLASSIFIED, not OUT_OF_DOMAIN, on purpose: too
-    # many neutral test/placeholder titles and legitimately ambiguous real
-    # titles use "Engineer" alone).
+    # discipline word must be adjacent to "Engineer".
     (
         "software/IC engineering discipline",
         re.compile(
             r"\b(software|security|devops|dev\s*ops|frontend|front-end|"
             r"backend|back-end|full[- ]?stack|data|platform|storage|"
-            r"infrastructure|ml|machine\s+learning|site\s+reliability|sre)\s+"
-            r"engineers?\b",
+            r"infrastructure|ml|machine\s+learning|site\s+reliability|sre|"
+            r"salesforce|zendesk|qa|test|quality\s+assurance)\s+"
+            r"engineers?\b|\bdevelopers?\b",
             re.IGNORECASE,
         ),
     ),
@@ -112,9 +135,19 @@ _OUT_OF_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Product Manager / Designer / UX", re.compile(r"\bproduct\s+(manager|designer)s?\b|\bux\s+(designer|researcher)s?\b", re.IGNORECASE)),
     ("Video Editor", re.compile(r"\bvideo\s+editors?\b", re.IGNORECASE)),
     ("Accounting / Finance", re.compile(r"\baccountants?\b|\baccounts?\s+payable\b|\bfinance\s+manager\b", re.IGNORECASE)),
-    ("Legal / Counsel", re.compile(r"\bcounsels?\b|\blegal\b|\battorneys?\b", re.IGNORECASE)),
-    ("Sales / Account Executive", re.compile(r"\bsales\b|\baccount\s+executives?\b|\bkey\s+accounts?\b", re.IGNORECASE)),
-    ("Marketing", re.compile(r"\bmarketing\b|\bpaid\s+media\b", re.IGNORECASE)),
+    (
+        "Legal / Counsel",
+        re.compile(r"\bcounsels?\b|\bcounsellors?\b|\bcounselors?\b|\blegal\b|\battorneys?\b", re.IGNORECASE),
+    ),
+    (
+        "Sales / Account Executive / Partnerships",
+        re.compile(
+            r"\bsales\b|\baccount\s+executives?\b|\bkey\s+accounts?\b|\baes?\b|"
+            r"\bpartnerships?\s+(lead|manager|director)\b|\bpartner\s+director\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("Marketing", re.compile(r"\bmarketing\b|\bpaid\s+media\b|\bmarket\s+manager\b", re.IGNORECASE)),
     ("Research Advisor", re.compile(r"\bresearch\s+advisors?\b", re.IGNORECASE)),
     # Generic software-engineering MANAGEMENT — "unless explicitly
     # agile-delivery" (handled by the IN_DOMAIN-checked-first precedence).
@@ -135,9 +168,11 @@ class RoleDomainVerdict:
     """Outcome of the role domain-fit gate.
 
     ``in_domain`` is a tri-state, not a bool: ``True`` = plainly in Kevin's
-    target profile, ``False`` = plainly out of it, ``None`` = unclassified
-    (neither list matched — callers must treat this exactly like ``True``
-    for gating purposes: only ``False`` should ever suppress a score).
+    target profile, ``False`` = plainly, NAMEABLY out of it, ``None`` =
+    unclassified (neither list matched). Do NOT branch on ``in_domain``
+    directly for gating — use :func:`is_allowlisted`, which correctly
+    treats ``False`` and ``None`` the same way (see module docstring: this
+    is an ALLOWLIST, so only ``True`` passes).
     """
 
     in_domain: bool | None
@@ -158,6 +193,9 @@ def classify_role_domain(title: str, description: str = "") -> RoleDomainVerdict
     IN_DOMAIN patterns are checked before OUT_OF_DOMAIN ones, so a title
     that plainly names both (e.g. "Engineering Manager, Agile Delivery")
     resolves IN_DOMAIN.
+
+    Callers making a gating decision should use :func:`is_allowlisted` on
+    the result rather than inspecting ``in_domain`` directly.
     """
     title = (title or "").strip()
     description = (description or "").strip()
@@ -182,9 +220,8 @@ def classify_role_domain(title: str, description: str = "") -> RoleDomainVerdict
                     signal="in_domain_program_manager_with_context",
                 )
             # Bare Program Manager with NO agile/delivery context anywhere:
-            # deliberately left UNCLASSIFIED (not OUT_OF_DOMAIN) — the
-            # taxonomy names no generic-Program-Manager denylist entry, so
-            # this falls through to the normal LLM/embedding path.
+            # UNCLASSIFIED, not an explicit OUT_OF_DOMAIN denylist hit — but
+            # still gated by is_allowlisted() exactly the same either way.
             return RoleDomainVerdict(
                 in_domain=None,
                 reason=(
@@ -197,12 +234,31 @@ def classify_role_domain(title: str, description: str = "") -> RoleDomainVerdict
             if pattern.search(title):
                 return RoleDomainVerdict(
                     in_domain=False,
-                    reason=f'Title matches the out-of-domain role family "{label}": "{title}".',
+                    reason=f'Title matches the known out-of-domain role family "{label}": "{title}".',
                     signal="out_of_domain_title",
                 )
 
     return RoleDomainVerdict(
         in_domain=None,
-        reason="No in-domain or out-of-domain role-family signal detected in the title.",
+        reason=(
+            "Title does not plainly match any in-domain agile-delivery role "
+            "family on the allowlist — gated (not a known match) rather than "
+            "passed through to the LLM."
+        ),
         signal="",
     )
+
+
+def is_allowlisted(verdict: RoleDomainVerdict) -> bool:
+    """The single source of truth for gating decisions (ALLOWLIST posture).
+
+    ``True`` only when ``verdict.in_domain is True`` — an unclassified role
+    (``None``) is gated exactly like an explicitly out-of-domain one
+    (``False``); only a title that plainly matched the in-domain allowlist
+    is let through to the LLM/embedding fit score. See the module docstring
+    for why this replaced an earlier denylist-only posture (it left too many
+    real off-domain titles — YC "is hiring" announcements, "Sr. Zendesk
+    Developer", "Market Manager", "Partner Director - EMEA", etc. —
+    unclassified and therefore un-gated).
+    """
+    return verdict.in_domain is True

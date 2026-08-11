@@ -101,11 +101,13 @@ def _posting(cid: CampaignId) -> JobPosting:
         id=JobPostingId(new_id()),
         campaign_id=cid,
         source_url="https://example.com/jobs/1",
-        # NOT "Senior Backend Engineer" -- a real "<discipline> Engineer" title
-        # short-circuits OUT_OF_DOMAIN before the LLM is ever called
-        # (applicant.core.rules.role_domain_fit); use the same in-domain title
-        # the transient-retry/fallback-tier test suites already rely on.
-        title="Senior Backend Specialist",
+        # NOT "Senior Backend Engineer" -- role_domain_fit's gate is now an
+        # ALLOWLIST (round 2 of the miscalibration fix): the title must
+        # plainly match an in-domain role family or it short-circuits
+        # before the LLM is ever called, regardless of whether it also
+        # names a KNOWN off-domain family. Use the same in-domain title the
+        # transient-retry/fallback-tier test suites rely on.
+        title="Senior Delivery Manager",
         company="Acme",
         description="Build Python services with Django and Postgres.",
     )

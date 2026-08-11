@@ -211,10 +211,10 @@ class TestEscalationToFallbackTier:
             source_url="https://example.com/jobs/1",
             # NOT "Senior Backend Engineer" -- this test pins tier-escalation
             # fallback behavior, which requires the LLM tiers to actually be
-            # reached; a real "<discipline> Engineer" title now
-            # short-circuits OUT_OF_DOMAIN before any tier is ever called
-            # (applicant.core.rules.role_domain_fit).
-            title="Senior Backend Specialist",
+            # reached. Under role_domain_fit's ALLOWLIST posture (round 2)
+            # the title must plainly match an in-domain role family or the
+            # gate short-circuits before any tier is ever called.
+            title="Senior Delivery Manager",
             company="Acme",
             description="Build Python services.",
         )

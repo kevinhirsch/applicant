@@ -1,18 +1,28 @@
 """Unit tests for applicant.core.rules.role_domain_fit (role domain-fit gate).
 
-Pure, deterministic, no IO — see the module docstring for the IN_DOMAIN /
-OUT_OF_DOMAIN / UNCLASSIFIED tri-state design and precedence rules. This
-suite is the ROCK-SOLID deterministic layer the catastrophic scoring
-miscalibration fix depends on (see the backlog item / incident report):
-nearly every posting in the live queue scored 85-100 regardless of role
-relevance, so this gate must NOT rely on an LLM to hold the line.
+Pure, deterministic, no IO — see the module docstring for the ALLOWLIST
+design (a posting can be viable ONLY if its title plainly matches an
+IN_DOMAIN role family; OUT_OF_DOMAIN and UNCLASSIFIED are gated identically
+via :func:`is_allowlisted`) and the precedence rules. This suite is the
+ROCK-SOLID deterministic layer the catastrophic scoring-miscalibration fix
+depends on: a first, denylist-only version of this gate was deployed and
+re-scored against the live queue, and the queue was STILL dominated by
+garbage the denylist had no name for (YC "is hiring" announcements, a bare
+platform name, "Sr. Zendesk Developer", "Market Manager", "Partner Director
+- EMEA", ...) because it fell through UNCLASSIFIED to an LLM that cannot
+reliably discriminate for this narrow a profile. This gate must NOT rely on
+an LLM to hold the line.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from applicant.core.rules.role_domain_fit import RoleDomainVerdict, classify_role_domain
+from applicant.core.rules.role_domain_fit import (
+    RoleDomainVerdict,
+    classify_role_domain,
+    is_allowlisted,
+)
 
 
 @pytest.mark.unit
@@ -34,11 +44,24 @@ class TestInDomainTitles:
             "Technical Program Manager, Agile Delivery & Release Management",
             "Senior TPM, Agile Program Management",
             "Agile Program Manager",
+            "Enterprise Agile Coach",
+            "Principal Agile Coach",
+            "Agility Coach",
+            "Scrum Coach",
+            "Kanban Coach",
+            "Agile Delivery Lead",
+            "Agile Delivery Manager",
+            "Agile Transformation Lead",
+            "Director of Agile Transformation",
+            "Agile Transformation Coach",
+            "Ways of Working Lead",
+            "Head of Ways of Working",
         ],
     )
     def test_title_is_in_domain(self, title: str) -> None:
         verdict = classify_role_domain(title)
         assert verdict.in_domain is True, verdict.reason
+        assert is_allowlisted(verdict) is True, verdict.reason
 
     def test_engineering_manager_with_explicit_agile_delivery_is_in_domain(self) -> None:
         # "generic Engineering Manager" is out-of-domain "unless explicitly
@@ -47,7 +70,19 @@ class TestInDomainTitles:
         assert verdict.in_domain is True, verdict.reason
 
     def test_bare_program_manager_with_agile_context_in_title_is_in_domain(self) -> None:
+        # "Agile Transformation" is itself now an unconditional in-domain
+        # pattern, so this resolves via the generic in-domain-title branch
+        # rather than the bare-Program-Manager-with-context special case --
+        # either way the outcome (allowed through) is what matters here.
         verdict = classify_role_domain("Program Manager - Agile Transformation Office")
+        assert verdict.in_domain is True, verdict.reason
+
+    def test_bare_program_manager_with_non_transformation_agile_context_is_in_domain(
+        self,
+    ) -> None:
+        # Exercises the bare-Program-Manager-with-context branch specifically
+        # (no unconditional in-domain phrase in the title itself).
+        verdict = classify_role_domain("Senior Program Manager, Scrum Delivery")
         assert verdict.in_domain is True, verdict.reason
         assert verdict.signal == "in_domain_program_manager_with_context"
 
@@ -110,11 +145,18 @@ class TestOutOfDomainTitles:
             "Corporate Counsel",
             "Account Executive, Enterprise Sales",
             "Marketing Manager",
+            "Sr. Zendesk Developer",
+            "Senior Salesforce Engineer",
+            "Affiliate EAP Counsellor",
+            "Market Manager",
+            "Startup Partnerships Lead",
+            "Partner Director - EMEA",
         ],
     )
     def test_additional_out_of_domain_categories(self, title: str) -> None:
         verdict = classify_role_domain(title)
         assert verdict.in_domain is False, verdict.reason
+        assert is_allowlisted(verdict) is False, verdict.reason
 
     def test_generic_engineering_manager_without_agile_context_is_out_of_domain(self) -> None:
         verdict = classify_role_domain("Manager, Software Engineering - DevEx AI Tools")
@@ -123,29 +165,74 @@ class TestOutOfDomainTitles:
 
 @pytest.mark.unit
 class TestUnclassifiedTitles:
-    """Neither list matches -> UNCLASSIFIED (None) -> callers must pass through
-    to the normal LLM/embedding scoring path, never suppressing the score."""
+    """Neither list matches -> UNCLASSIFIED (``in_domain=None``).
 
-    def test_bare_engineer_is_unclassified(self) -> None:
+    Under the CURRENT allowlist posture (see module docstring), UNCLASSIFIED
+    is gated EXACTLY like OUT_OF_DOMAIN -- ``is_allowlisted()`` returns
+    False for both. (An earlier denylist-only version of this gate let
+    UNCLASSIFIED pass through un-gated; that was the bug the coordinator's
+    live re-score caught -- YC "is hiring" announcements, "Market Manager",
+    "Partner Director - EMEA" etc. all fell through unclassified and were
+    then scored ~100 by an LLM that cannot discriminate this narrow a
+    profile. See ``TestRealQueueGarbageIsNeverAllowlisted`` below.)
+    """
+
+    def test_bare_engineer_is_unclassified_and_gated(self) -> None:
         verdict = classify_role_domain("Engineer")
         assert verdict.in_domain is None, verdict.reason
+        assert is_allowlisted(verdict) is False
 
-    def test_bare_manager_is_unclassified(self) -> None:
+    def test_bare_manager_is_unclassified_and_gated(self) -> None:
         verdict = classify_role_domain("Manager")
         assert verdict.in_domain is None, verdict.reason
+        assert is_allowlisted(verdict) is False
 
-    def test_bare_program_manager_with_no_context_anywhere_is_unclassified(self) -> None:
+    def test_bare_program_manager_with_no_context_anywhere_is_unclassified_and_gated(
+        self,
+    ) -> None:
         verdict = classify_role_domain("Program Manager, Robotics")
         assert verdict.in_domain is None, verdict.reason
         assert verdict.signal == ""
+        assert is_allowlisted(verdict) is False
 
-    def test_unrelated_title_is_unclassified(self) -> None:
+    def test_unrelated_title_is_unclassified_and_gated(self) -> None:
         verdict = classify_role_domain("Warehouse Associate")
         assert verdict.in_domain is None, verdict.reason
+        assert is_allowlisted(verdict) is False
 
-    def test_empty_title_is_unclassified(self) -> None:
+    def test_empty_title_is_unclassified_and_gated(self) -> None:
         verdict = classify_role_domain("")
         assert verdict.in_domain is None, verdict.reason
+        assert is_allowlisted(verdict) is False
+
+
+@pytest.mark.unit
+class TestRealQueueGarbageIsNeverAllowlisted:
+    """The exact titles the coordinator's live re-score found STILL scoring
+    ~98-100 after the first (denylist-only) version of this gate shipped --
+    every one of these is UNCLASSIFIED under the old posture (none match a
+    named OUT_OF_DOMAIN family) and MUST now be rejected by is_allowlisted()
+    regardless of whether classify_role_domain calls it False or None."""
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "LinkedIn",
+            "Sr. Zendesk Developer",
+            "Senior Salesforce Engineer",
+            "Affiliate EAP Counsellor",
+            "Market Manager",
+            "Startup Partnerships Lead",
+            "Partner Director - EMEA",
+            "UpCodes is hiring remote Account Executives",
+        ],
+    )
+    def test_real_queue_garbage_title_is_never_allowlisted(self, title: str) -> None:
+        verdict = classify_role_domain(title)
+        assert is_allowlisted(verdict) is False, (
+            f"{title!r} must be gated, got in_domain={verdict.in_domain} "
+            f"({verdict.reason})"
+        )
 
 
 @pytest.mark.unit

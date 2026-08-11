@@ -24,12 +24,16 @@ catastrophic-miscalibration fix — prompt-only calibration of the LLM rubric al
 tried twice and failed against the real discovery queue, where nearly every posting
 scored 85-100 regardless of relevance): :func:`~applicant.core.rules.posting_quality
 .check_posting_quality` floors non-postings (search-index pages, comparison/guide
-articles, a methodology's own glossary page) to near zero, and
-:func:`~applicant.core.rules.role_domain_fit.classify_role_domain` caps plainly
-off-domain roles (IC/engineering-management software roles, product management,
-data science, sales, legal, finance, marketing, video editing, research) low —
-BEFORE the LLM ever runs, so neither can be talked back up by keyword density,
-seniority, or pay. Both are pure/no-IO and only ever suppress a score, never lift one.
+articles, a methodology's own glossary page, a "<Company> is hiring" announcement, a
+bare platform name captured as the title) to near zero, and
+:func:`~applicant.core.rules.role_domain_fit.classify_role_domain` (via
+:func:`~applicant.core.rules.role_domain_fit.is_allowlisted`) is an ALLOWLIST, not a
+denylist — a posting can reach a viable score ONLY if its title plainly names one of
+Kevin's target agile-delivery role families; everything else (a known off-domain
+family OR simply unrecognized) is capped low. BEFORE the LLM ever runs, so neither gate
+can be talked back up by keyword density, seniority, or pay, and the LLM only ever
+RANKS within the allowlisted set. Both gates are pure/no-IO and only ever suppress a
+score, never lift one.
 
 The viability **threshold defaults to 60** (on a 0..100 scale) and is configurable per
 campaign; ``is_viable`` gates which postings reach the digest. A digest GET re-runs on
@@ -49,7 +53,7 @@ from applicant.core.events import ViabilityScored, event_bus
 from applicant.core.ids import JobPostingId
 from applicant.core.rules.posting_quality import check_posting_quality
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
-from applicant.core.rules.role_domain_fit import classify_role_domain
+from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import ChatMessage
 
@@ -497,14 +501,23 @@ class ScoringService:
                     f"regardless of keyword overlap: {quality.reason}"
                 ),
             )
+        # ALLOWLIST posture (not a denylist — see role_domain_fit's module
+        # docstring for the live-queue incident that forced this): only a
+        # title is_allowlisted() (plainly matches an in-domain role family)
+        # is let through. An UNCLASSIFIED title is gated exactly like an
+        # explicitly OUT_OF_DOMAIN one — a growing denylist could never keep
+        # up with real-queue noise (YC "is hiring" blasts, "Sr. Zendesk
+        # Developer", "Market Manager", "Partner Director - EMEA", ...) that
+        # the LLM alone scored ~100 once it fell through unclassified.
         domain = classify_role_domain(posting.title, posting.description or "")
-        if domain.in_domain is False:
+        if not is_allowlisted(domain):
             return ViabilityScoring(
                 posting_id=posting.id,
                 score=_OUT_OF_DOMAIN_SCORE,
                 rationale=(
-                    "Off-domain role — capped regardless of seniority, pay, "
-                    f"or remote match: {domain.reason}"
+                    "Not an allowlisted agile-delivery role — capped "
+                    "regardless of seniority, pay, or remote match: "
+                    f"{domain.reason}"
                 ),
             )
 

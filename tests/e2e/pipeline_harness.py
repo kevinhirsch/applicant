@@ -227,8 +227,13 @@ def run_pipeline_to_stop_boundary() -> dict:
         # lexical scorer must discriminate (discovery's network fetch is the only
         # non-hermetic part; its OUTPUT — postings in storage — is what the rest of
         # the pipeline consumes, so we seed that output directly).
+        # NOT "Python Engineer" -- role_domain_fit's gate is now an
+        # ALLOWLIST (round 2 of the miscalibration fix): the title must
+        # plainly match an in-domain role family or scoring short-circuits
+        # to a fixed low cap before the real lexical/embedding scorer ever
+        # discriminates it from the off-criteria posting below.
         match_pid = _seed_posting(
-            storage, cid, title="Python Engineer",
+            storage, cid, title="Delivery Manager, Python Engineer",
             description="Build python fastapi services",
         )
         _seed_posting(

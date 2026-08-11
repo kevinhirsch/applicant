@@ -169,6 +169,13 @@ class TestTitlePatterns:
         )
         assert verdict.is_posting is False
 
+    def test_how_to_title(self) -> None:
+        verdict = check_posting_quality(
+            "How to Become a Release Train Engineer",
+            "https://example-unknown-blog.com/how-to-become-an-rte",
+        )
+        assert verdict.is_posting is False
+
     def test_jobs_pipe_site_suffix_title(self) -> None:
         verdict = check_posting_quality(
             "Release Train Engineer Jobs, Employment | SomeSite",
@@ -218,6 +225,58 @@ class TestTitlePatterns:
         verdict = check_posting_quality(
             "Senior Release Train Engineer in Charlotte, North Carolina, USA",
             "https://careers.teksystems.com/us/en/job/JP-006193499/x",
+        )
+        assert verdict.is_posting is True
+
+
+@pytest.mark.unit
+class TestHiringAnnouncementTitles:
+    """"<Company> (YC ...) is hiring" -- a company/startup announcement with
+    NO specific role named. Live-queue false positives that scored 100/100
+    before this fix (all four from the coordinator's re-score report)."""
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Miso (YC S16) is hiring for U.S. expansion",
+            "CollectWise (YC F24) Is Hiring",
+            "DrDroid (YC W23) Is Hiring",
+            "Adaptional (YC S25) Is Hiring",
+        ],
+    )
+    def test_yc_is_hiring_announcement_is_non_posting(self, title: str) -> None:
+        verdict = check_posting_quality(title, "https://www.workatastartup.com/jobs/123456")
+        assert verdict.is_posting is False
+        assert verdict.signal == "title_pattern"
+
+    def test_a_real_specific_role_title_is_not_caught_by_is_hiring(self) -> None:
+        # "is hiring" mid-title but a real role clearly follows and the
+        # phrase is not anchored at the end -- must NOT be flagged.
+        verdict = check_posting_quality(
+            "Acme is hiring a Senior Scrum Master to lead our Agile Release Train",
+            "https://boards.greenhouse.io/acme/jobs/123",
+        )
+        assert verdict.is_posting is True
+
+
+@pytest.mark.unit
+class TestBarePlatformNameTitles:
+    """A title that IS just the source platform's name, no role at all -- a
+    scraping artifact (another live-queue false positive: a posting titled
+    bare "LinkedIn" scored viable)."""
+
+    @pytest.mark.parametrize(
+        "title",
+        ["LinkedIn", "Indeed", "linkedin", "  LinkedIn  ", "Glassdoor", "Workday", "Google"],
+    )
+    def test_bare_platform_name_is_non_posting(self, title: str) -> None:
+        verdict = check_posting_quality(title, "https://example.com/jobs/1")
+        assert verdict.is_posting is False
+        assert verdict.signal == "bare_platform_name"
+
+    def test_platform_name_plus_a_real_role_is_not_flagged(self) -> None:
+        verdict = check_posting_quality(
+            "Scrum Master - LinkedIn", "https://www.linkedin.com/jobs/view/scrum-master-1"
         )
         assert verdict.is_posting is True
 

@@ -1,25 +1,35 @@
 """Regression eval for the catastrophic viability-scoring miscalibration fix.
 
-Live incident this guards against: against the real discovery queue, nearly
-EVERY posting scored 85-100 regardless of relevance to Kevin's profile
-(senior Agile delivery leader: Scrum Master / RTE / Agile Coach / Delivery
-Manager / agile-flavored TPM), including a blog article ("The Most Important
-Agile Delivery Roles: Explained Simply", 100/100) and roles with zero
-plausible relationship to agile delivery ("Key Accounts Executive" 98,
-"Senior Product Security Engineer II" 93, "Sr. Video Editor (short-form)"
-93, "Applied AI Architect" 93, "Research Advisor" 93, ...). Prompt-only
-calibration of the LLM rubric (``ScoringService._llm_base``'s
-``system_text``) was attempted twice and failed both times to hold against
-the real distribution.
+ROUND 1 incident: against the real discovery queue, nearly EVERY posting
+scored 85-100 regardless of relevance to Kevin's profile (senior Agile
+delivery leader: Scrum Master / RTE / Agile Coach / Delivery Manager /
+agile-flavored TPM), including a blog article ("The Most Important Agile
+Delivery Roles: Explained Simply", 100/100) and roles with zero plausible
+relationship to agile delivery ("Key Accounts Executive" 98, "Senior Product
+Security Engineer II" 93, "Sr. Video Editor (short-form)" 93, "Applied AI
+Architect" 93, "Research Advisor" 93, ...). Prompt-only calibration of the
+LLM rubric (``ScoringService._llm_base``'s ``system_text``) was attempted
+twice and failed both times. The round-1 fix added ``role_domain_fit`` as a
+DENYLIST of named off-domain families, deployed, and re-scored.
 
-The fix is two DETERMINISTIC, no-LLM gates wired into ``ScoringService._score``
-(see its module docstring): :func:`~applicant.core.rules.posting_quality
-.check_posting_quality` (non-posting floor) and
-:func:`~applicant.core.rules.role_domain_fit.classify_role_domain`
-(off-domain cap). This file is the ROCK-SOLID regression pin for BOTH gates
-against ``tests/eval/fixtures/domain_fit_real_queue_labels.json`` — the 17
-exact catastrophic titles from the live incident (1 non-posting + 16
-off-domain) plus 5 real/reconstructed in-profile positives — proved two ways:
+ROUND 2 incident: the live queue was STILL dominated by garbage the round-1
+denylist had no name for -- YC "is hiring" announcements with no role named,
+a bare platform name ("LinkedIn") captured as a title, "Sr. Zendesk
+Developer", "Senior Salesforce Engineer", "Affiliate EAP Counsellor",
+"Market Manager", "Startup Partnerships Lead", "Partner Director - EMEA" --
+none matched a denylist entry, so they fell through UNCLASSIFIED to the LLM,
+which scored them ~98-100 too. The fix: flip ``role_domain_fit`` to an
+ALLOWLIST (:func:`~applicant.core.rules.role_domain_fit.is_allowlisted`) --
+a posting reaches a viable score ONLY if its title plainly matches an
+in-domain role family; UNCLASSIFIED is now gated exactly like an explicit
+denylist hit. ``posting_quality`` also gained two new non-posting patterns
+(hiring announcements, bare platform names) for the round-2 NON_POSTING
+cases.
+
+This file is the ROCK-SOLID regression pin for BOTH gates against
+``tests/eval/fixtures/domain_fit_real_queue_labels.json`` — the round-1 +
+round-2 catastrophic titles from the live incidents plus real/reconstructed
+in-profile positives — proved two ways:
 
 1. Directly against the pure rule functions (no ScoringService involved at
    all) — this is the part that must be bulletproof.
@@ -43,7 +53,7 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
 from applicant.core.rules.posting_quality import check_posting_quality
-from applicant.core.rules.role_domain_fit import classify_role_domain
+from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.ports.driven.llm import LLMResult
 
 _FIXTURE_PATH = (
@@ -164,9 +174,12 @@ class TestDeterministicRulesAloneAgainstTheRealQueueFixture:
                 misses.append(row["id"])
         assert not misses, f"NON_POSTING rows not caught by posting_quality: {misses}"
 
-    def test_every_out_of_domain_row_is_caught_by_role_domain_fit(
-        self, fixture_rows: list[dict]
-    ) -> None:
+    def test_every_out_of_domain_row_is_not_allowlisted(self, fixture_rows: list[dict]) -> None:
+        # NOTE: uses is_allowlisted(), not a strict ``in_domain is False``
+        # check -- under the ALLOWLIST posture (round 2), an OUT_OF_DOMAIN
+        # fixture row may resolve via an explicit denylist hit
+        # (in_domain=False) OR simply fail to match the allowlist at all
+        # (in_domain=None, UNCLASSIFIED); both must be gated identically.
         misses = []
         for row in fixture_rows:
             if row["label"] != "OUT_OF_DOMAIN":
@@ -178,9 +191,9 @@ class TestDeterministicRulesAloneAgainstTheRealQueueFixture:
                 row["title"], row["source_url"], row.get("description") or ""
             ).is_posting, f"{row['id']} unexpectedly flagged as a non-posting"
             verdict = classify_role_domain(row["title"], row.get("description") or "")
-            if verdict.in_domain is not False:
-                misses.append((row["id"], verdict.reason))
-        assert not misses, f"OUT_OF_DOMAIN rows not caught by role_domain_fit: {misses}"
+            if is_allowlisted(verdict):
+                misses.append((row["id"], verdict.in_domain, verdict.reason))
+        assert not misses, f"OUT_OF_DOMAIN rows wrongly allowlisted: {misses}"
 
     def test_every_in_domain_row_passes_both_gates(self, fixture_rows: list[dict]) -> None:
         failures = []
@@ -194,8 +207,8 @@ class TestDeterministicRulesAloneAgainstTheRealQueueFixture:
                 failures.append((row["id"], "wrongly flagged NON_POSTING", quality.reason))
                 continue
             domain = classify_role_domain(row["title"], row.get("description") or "")
-            if domain.in_domain is False:
-                failures.append((row["id"], "wrongly flagged OUT_OF_DOMAIN", domain.reason))
+            if not is_allowlisted(domain):
+                failures.append((row["id"], "wrongly gated (not allowlisted)", domain.reason))
         assert not failures, f"IN_DOMAIN rows wrongly gated: {failures}"
 
 

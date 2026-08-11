@@ -458,10 +458,12 @@ def score_declined_posting(t05ctx):
         id=JobPostingId(new_id()),
         campaign_id=cid,
         # NOT "Frontend Engineer" -- this scenario is about the #237
-        # feature-stats taste-bias signal, unrelated to role-domain-fit; a
-        # real "Frontend Engineer" title now short-circuits OUT_OF_DOMAIN
-        # before taste_bias ever runs (applicant.core.rules.role_domain_fit).
-        title="Frontend Specialist",
+        # feature-stats taste-bias signal, unrelated to role-domain-fit.
+        # Under role_domain_fit's ALLOWLIST posture (round 2) the title
+        # must plainly match an in-domain role family or taste_bias never
+        # runs at all -- "frontend" stays in the description so the
+        # declined "frontend" keyword feature is still present.
+        title="Delivery Manager, Frontend Platform",
         company="Acme",
         source_url="https://acme.test/fe",
         work_mode="remote",
@@ -621,7 +623,13 @@ def posting_scored_fixed(t05ctx):
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
-        title="Senior Python Engineer",
+        # NOT "Senior Python Engineer" -- this scenario counts embedding
+        # ``.similarity()`` calls to prove reuse-vs-recompute; under
+        # role_domain_fit's ALLOWLIST posture the title must plainly match
+        # an in-domain role family or the domain gate short-circuits BEFORE
+        # the embedding is ever called, permanently pinning the call count
+        # at 0 and breaking the "fresh score is computed" assertion.
+        title="Senior Delivery Manager",
         company="Acme",
         source_url="https://acme.test/job",
         work_mode="remote",
@@ -683,7 +691,11 @@ def posting_cold_start(t05ctx):
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
-        title="Senior Python Engineer",
+        # NOT "Senior Python Engineer" -- see the rename note above; this
+        # scenario also needs the signature-alignment code to actually run
+        # (post-learning score must exceed the cold score), which the
+        # domain gate would otherwise short-circuit before ever reaching.
+        title="Senior Delivery Manager",
         company="Acme",
         source_url="https://acme.test/job",
         work_mode="remote",

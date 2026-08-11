@@ -171,8 +171,16 @@ def test_seeded_campaign_reaches_stop_boundary_with_human_review_and_no_autosubm
     # off-criteria one, so the real lexical scorer must discriminate). Discovery's
     # network fetch is the non-hermetic part; its OUTPUT (postings in storage) is what
     # the rest of the pipeline consumes, so we seed that output directly. ---
+    # NOT "Python Engineer" -- role_domain_fit's gate is now an ALLOWLIST
+    # (round 2 of the miscalibration fix): the title must plainly match an
+    # in-domain role family or scoring short-circuits to a fixed low cap
+    # before the real lexical/embedding scorer ever discriminates it from
+    # the off-criteria posting below.
     match_pid = _seed_posting(
-        storage, cid, title="Python Engineer", description="Build python fastapi services"
+        storage,
+        cid,
+        title="Delivery Manager, Python Engineer",
+        description="Build python fastapi services",
     )
     off_pid = _seed_posting(
         storage, cid, title="Warehouse Associate", description="Lift boxes in a depot"
@@ -204,9 +212,9 @@ def test_seeded_campaign_reaches_stop_boundary_with_human_review_and_no_autosubm
 
     scores = {p.title: p.viability_score for p in storage.postings.list_for_campaign(cid)}
     assert all(v is not None for v in scores.values()), "every discovered posting must be scored"
-    assert scores["Python Engineer"] > scores["Warehouse Associate"], (
-        "the real scorer must rank the on-criteria role above the off-criteria one"
-    )
+    assert (
+        scores["Delivery Manager, Python Engineer"] > scores["Warehouse Associate"]
+    ), "the real scorer must rank the on-criteria role above the off-criteria one"
 
     # The digest payload is readable over HTTP (the in-app updates surface).
     digest_payload = client.get(f"/api/digest/{cid_str}").json()

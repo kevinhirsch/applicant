@@ -82,10 +82,13 @@ def _make_posting():
         campaign_id="camp-1",
         # NOT "Backend Engineer" -- these #344/#345 scenarios exercise the
         # cold-start-neutral-score / loose-JSON-parse paths in ScoringService,
-        # unrelated to the role-domain-fit gate; a real "<discipline> Engineer"
-        # title would now be short-circuited OUT_OF_DOMAIN before either path
-        # under test ever runs (applicant.core.rules.role_domain_fit).
-        title="Backend Specialist",
+        # unrelated to the role-domain-fit gate. Under the ALLOWLIST posture
+        # (round 2 of the miscalibration fix) the deterministic gates run
+        # UNCONDITIONALLY, even with no criteria set -- so the title must
+        # plainly match an in-domain role family or the gate short-circuits
+        # before the neutral-score / loose-JSON-parse path under test is
+        # ever reached (applicant.core.rules.role_domain_fit).
+        title="Delivery Manager",
         company="Acme",
         source_url="https://example.test/jobs/1",
         description="Build and run backend services in Python.",

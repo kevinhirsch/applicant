@@ -207,7 +207,16 @@ def test_one_tick_drives_discovery_digest_prefill_and_learning(tmp_path):
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _seed_campaign(storage)
-    approved = _seed_posting(storage, cid, title="Python Engineer", approve=True)
+    # NOT "Python Engineer" -- role_domain_fit's gate is now an ALLOWLIST
+    # (round 2 of the miscalibration fix): the title must plainly match an
+    # in-domain role family or scoring short-circuits to a fixed low cap
+    # before the real lexical/embedding scorer ever runs, which would tie
+    # both postings at the identical gate score below. Keeps "Python"/
+    # "Engineering" so the criteria keyword overlap this test also
+    # exercises is unaffected.
+    approved = _seed_posting(
+        storage, cid, title="Delivery Manager, Python Engineer", approve=True
+    )
     # A second, off-criteria posting: discovered + scored but BELOW the viability bar
     # (the real lexical scorer discriminates), so it is excluded from the digest.
     _seed_posting(storage, cid, title="Warehouse Associate")
@@ -228,7 +237,10 @@ def test_one_tick_drives_discovery_digest_prefill_and_learning(tmp_path):
     # on-criteria role outscores the off-criteria one.
     assert all(p.viability_score is not None for p in postings)
     by_title = {p.title: p.viability_score for p in postings}
-    assert by_title["Python Engineer"] > by_title["Warehouse Associate"]
+    assert (
+        by_title["Delivery Manager, Python Engineer"]
+        > by_title["Warehouse Associate"]
+    )
 
     # --- daily digest: a digest-approval pending action per VIABLE posting (FR-DIG-1).
     # Only the viable role makes the digest; the below-threshold one is dropped.
@@ -272,7 +284,10 @@ def test_multi_day_ticks_progress_and_curation_is_idempotent(tmp_path):
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _seed_campaign(storage)
-    _seed_posting(storage, cid, title="Python Engineer", approve=True)
+    # NOT "Python Engineer" -- see the rename note in the previous test;
+    # this posting must actually clear the viability threshold to progress
+    # through digest -> approval -> the human-review gate.
+    _seed_posting(storage, cid, title="Delivery Manager, Python Engineer", approve=True)
 
     sched, prefill, ledger = _assemble(storage, orch, cid)
 

@@ -73,10 +73,12 @@ def _posting(cid: CampaignId) -> JobPosting:
         source_url="https://example.com/jobs/1",
         # NOT "Senior Backend Engineer" -- this file pins the transient-LLM-
         # failure retry/persist behavior, which requires the LLM to actually
-        # be reached; a real "<discipline> Engineer" title now short-circuits
-        # OUT_OF_DOMAIN before the LLM is ever called
-        # (applicant.core.rules.role_domain_fit).
-        title="Senior Backend Specialist",
+        # be reached. Under role_domain_fit's ALLOWLIST posture (round 2 of
+        # the miscalibration fix) ANY title that doesn't plainly match an
+        # in-domain role family is gated -- not just a named off-domain one
+        # -- so the title must actually BE in-domain now, not merely
+        # "not obviously off-domain".
+        title="Senior Delivery Manager, Backend Platform",
         company="Acme",
         description="Build Python services with Django and Postgres.",
     )

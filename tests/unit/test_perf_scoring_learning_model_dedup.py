@@ -84,10 +84,10 @@ def _campaign_and_posting(storage):
         campaign_id=cid,
         # NOT "Senior Backend Engineer" -- this file pins learning-model
         # load-call counts and taste/signature rationale text, unrelated to
-        # role-domain-fit; a real "<discipline> Engineer" title now
-        # short-circuits OUT_OF_DOMAIN before either mechanism runs
-        # (applicant.core.rules.role_domain_fit).
-        title="Senior Backend Specialist",
+        # role-domain-fit. Under role_domain_fit's ALLOWLIST posture
+        # (round 2) the title must plainly match an in-domain role family
+        # or the gate short-circuits before either mechanism runs.
+        title="Senior Delivery Manager",
         company="Acme Corp",
         source_url="https://acme.test/job",
         description="Python, Go, distributed systems.",

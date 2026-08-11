@@ -55,10 +55,11 @@ def _posting(cid):
         campaign_id=cid,
         source_url="https://example.com/jobs/1",
         # NOT "Senior Backend Engineer" -- this file pins the LLM
-        # SYSTEM-prompt content, which requires the LLM to actually run; a
-        # real "<discipline> Engineer" title now short-circuits OUT_OF_DOMAIN
-        # before the LLM is ever called (applicant.core.rules.role_domain_fit).
-        title="Senior Backend Specialist",
+        # SYSTEM-prompt content, which requires the LLM to actually run.
+        # Under role_domain_fit's ALLOWLIST posture (round 2) the title
+        # must plainly match an in-domain role family or the gate
+        # short-circuits before the LLM is ever called.
+        title="Senior Delivery Manager",
         company="Acme",
         description="Build Python services.",
     )

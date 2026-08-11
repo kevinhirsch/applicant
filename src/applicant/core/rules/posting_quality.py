@@ -41,10 +41,18 @@ Detection is layered, cheapest/most-precise first:
 3. **Title patterns** — generalizes to aggregator/article domains not in the
    curated lists above: "X vs Y" comparison posts, "<query> Jobs | <Site>"
    aggregator suffixes, a leading result COUNT ("132 ... jobs", "1,000+ ...
-   jobs", "Top 158 ... Jobs"), career-guide/explainer phrasing, hourly-rate
-   query-style titles ("$51-$83/hr ... Jobs"), and "Jobs Near Me"/"Now Hiring"
-   marketing phrasing.
-4. **Description boilerplate** — a captured "description" that is actually a
+   jobs", "Top 158 ... Jobs"), career-guide/explainer/"how to" phrasing,
+   hourly-rate query-style titles ("$51-$83/hr ... Jobs"), "Jobs Near
+   Me"/"Now Hiring" marketing phrasing, and a "<Company> (YC ...) is
+   hiring"-style ANNOUNCEMENT with no specific role named (e.g. "Miso (YC
+   S16) is hiring for U.S. expansion" — a real live-queue false positive
+   that scored 100/100 before this fix).
+4. **Bare platform/job-board name** — a title that, once trimmed, IS just a
+   known job-board/platform brand ("LinkedIn", "Indeed", ...) with no role
+   named at all — a scraping artifact where the SOURCE platform got
+   captured as the title, not a real opening (another live-queue false
+   positive: a posting titled bare "LinkedIn" scored viable).
+5. **Description boilerplate** — a captured "description" that is actually a
    site's related-jobs sidebar/navigation text (e.g. LinkedIn's "45,261 open
    jobs · ... jobs · ... jobs" block) rather than real posting content, even
    when the URL itself looks like a specific listing.
@@ -52,7 +60,11 @@ Detection is layered, cheapest/most-precise first:
 A title/URL/description that matches NONE of these is treated as a real
 posting — this module is a NEGATIVE gate (denylist of known noise patterns),
 never a positive allowlist, so it never penalizes a real posting just for
-being unfamiliar.
+being unfamiliar. (Compare :mod:`applicant.core.rules.role_domain_fit`,
+which — precisely because a denylist alone proved too easy to slip past —
+IS a positive allowlist for role relevance; this module stays a denylist
+because "is this a real posting at all" is a much narrower, more precisely
+enumerable question than "is this role relevant to Kevin".)
 
 # WIRING: ``scoring_service.py``'s ``ScoringService._score`` now calls
 # ``check_posting_quality(posting.title, posting.source_url,
@@ -162,8 +174,18 @@ _TITLE_GUIDE_RE = re.compile(
     r"key\s+differences|critical\s+\w+\s+roles|"
     r"roles?\s+and\s+responsibilit(y|ies)|"
     r"understanding\s+(the\s+)?(differences?|roles?)|"
-    r"avoiding\s+roles?\s+ambiguity",
+    r"avoiding\s+roles?\s+ambiguity|"
+    r"\bhow\s+to\b",
     re.IGNORECASE,
+)
+#: "<Company> (YC S16) is hiring for U.S. expansion" / "<Company> Is Hiring"
+#: — a company/startup ANNOUNCEMENT with no specific role named, common on
+#: YC's "Work at a Startup" board and similar aggregators. Anchored toward
+#: the END of the title (optionally with a short generic "for ..." clause)
+#: so a real posting that happens to mention "is hiring" mid-title while
+#: still naming an actual role afterward is NOT caught by this.
+_TITLE_HIRING_ANNOUNCEMENT_RE = re.compile(
+    r"\bis\s+hiring\b(\s+for\b[^,;|]{0,50})?\s*[.!]?\s*$", re.IGNORECASE
 )
 #: "<query> Jobs | <Site>" / "<query> Jobs, Employment | <Site>" aggregator
 #: title suffix — "jobs" as its own word immediately (optionally via
@@ -192,11 +214,42 @@ _TITLE_MARKETING_RE = re.compile(
 
 _TITLE_NON_POSTING_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("comparison-article title (\"X vs Y\")", _TITLE_COMPARISON_RE),
-    ("career-guide / explainer title", _TITLE_GUIDE_RE),
+    ("career-guide / explainer / how-to title", _TITLE_GUIDE_RE),
     ('aggregator "Jobs | <Site>" title suffix', _TITLE_JOBS_PIPE_RE),
     ("title leads with a result COUNT (search-results page)", _TITLE_LEADING_COUNT_RE),
     ("hourly-rate query-style aggregator title", _TITLE_RATE_JOBS_RE),
     ('"Jobs Near Me" / "Now Hiring" aggregator marketing title', _TITLE_MARKETING_RE),
+    ('"<Company> is hiring" announcement with no role named', _TITLE_HIRING_ANNOUNCEMENT_RE),
+)
+
+# === bare platform/job-board name captured as the title ====================
+#: A title that, once trimmed of whitespace/trailing punctuation, IS just one
+#: of these — no role named at all. A scraping artifact (the SOURCE platform
+#: captured instead of the actual job title), not a real opening. Curated,
+#: same style/rationale as ``_KNOWN_NON_JOB_DOMAINS`` — extend as observed.
+_BARE_PLATFORM_NAME_TITLES: frozenset[str] = frozenset(
+    {
+        "linkedin",
+        "indeed",
+        "glassdoor",
+        "ziprecruiter",
+        "dice",
+        "dice.com",
+        "monster",
+        "simplyhired",
+        "built in",
+        "builtin",
+        "greenhouse",
+        "lever",
+        "workday",
+        "careerbuilder",
+        "handshake",
+        "wellfound",
+        "angellist",
+        "google",
+        "google jobs",
+        "google cse",
+    }
 )
 
 # === description boilerplate (bad-scrape) signal ============================
@@ -269,6 +322,18 @@ def check_posting_quality(
                 )
 
     if title:
+        bare = title.strip().rstrip(".").lower()
+        if bare in _BARE_PLATFORM_NAME_TITLES:
+            return PostingQualityVerdict(
+                is_posting=False,
+                reason=(
+                    f'Title is just the bare platform/job-board name "{title}" '
+                    "with no role named — almost certainly a scraping artifact "
+                    "(the source platform captured instead of a job title), "
+                    "not a real posting."
+                ),
+                signal="bare_platform_name",
+            )
         for reason, pattern in _TITLE_NON_POSTING_PATTERNS:
             if pattern.search(title):
                 return PostingQualityVerdict(
