@@ -13,6 +13,7 @@ import pytest
 
 from applicant.core.rules.ranking_factors import (
     classify_remote,
+    fit_to_profile_multiplier,
     source_reliability_multiplier,
 )
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
@@ -87,3 +88,22 @@ class TestSeniorAgileLeadershipAllowlist:
 
     def test_regression_out_of_domain_still_rejected(self):
         assert not is_allowlisted(classify_role_domain("Registered Nurse, ICU"))
+
+
+@pytest.mark.unit
+class TestBigTechTpmReachTier:
+    def test_staff_tpm_is_a_reach(self):
+        for t in (
+            "Staff Technical Program Manager, Simulation",
+            "Sr. Staff Technical Program Manager",
+            "Senior Staff Technical Program Manager",
+            "Principal Technical Program Manager",
+        ):
+            assert fit_to_profile_multiplier(t).multiplier == pytest.approx(0.65), t
+
+    def test_plain_tpm_stays_moderate_not_reach(self):
+        # A plain (non-staff/principal) TPM is a stretch, not a big-tech reach.
+        assert fit_to_profile_multiplier("Technical Program Manager").multiplier == pytest.approx(0.85)
+
+    def test_scrum_master_stays_strong_fit(self):
+        assert fit_to_profile_multiplier("Senior Scrum Master").multiplier == pytest.approx(1.10)
