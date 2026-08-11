@@ -49,6 +49,8 @@ retired front-door traceability and serves as the single source of truth for por
 | channels (notification channels) | `webui/channels.html` | `api/channels.py` | delivered | |
 | connections (email+calendar) | `webui/connections.html` | `api/connections.py` | delivered |
 | savejob (save a job) | `webui/savejob.html` | `api/savejob.py` | delivered | |
+| model-config (per-use-case model config) | `webui/model_config.html` | `api/model_config.py` | delivered | EPIC MODEL-CONFIG |
+| stealth (anti-detect/egress posture) | `webui/stealth.html` | `api/stealth.py` | delivered | EPIC STEALTH |
 
 ### Utility / meta surfaces
 
@@ -73,8 +75,8 @@ retired front-door traceability and serves as the single source of truth for por
 
 ### Delivery status summary
 
-- **Fully delivered (panel + proxy, engine-wired):** 32 surfaces (28 named + 3 utility)
-- **Partial (no engine proxy — static/shell-level):** 2 (config, help)
+- **Fully delivered (panel + proxy, engine-wired):** 40 surfaces (35 named + 5 utility)
+- **Partial (no engine proxy — static/shell-level):** 3 (config, help, keyboard shortcuts)
 - **Gated / present-but-disabled:** 1 (compare — product decision)
 
 No front-door retirement is needed; the mapping is complete and real. This document serves

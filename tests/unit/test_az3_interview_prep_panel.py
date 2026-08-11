@@ -25,7 +25,16 @@ class TestInterviewPrepPanel:
         assert ".aintprep" in html
 
     def test_has_alpine_data(self, html):
-        assert "window.Alpine.data('aintprep')" in html
+        # commit 44c3c155b ("fix(ui): repair panel errors surfaced by a full
+        # monkey-crawl (23->0 broken panels)") fixed a REAL bug this test used to
+        # pin the broken form of: `x-data="window.Alpine.data('X')"` is Alpine's
+        # GETTER (returns undefined outside a running Alpine context), so the
+        # component never instantiated -- cascading into "aintprep is not
+        # defined" at runtime. The fix switched every affected panel (interview_
+        # prep included) to the correct `x-data="X()"` shorthand. Assert the
+        # component is both registered AND invoked via the corrected call site.
+        assert "window.Alpine.data('aintprep', " in html
+        assert 'x-data="aintprep()"' in html
 
     def test_has_campaign_picker(self, html):
         assert "callJsonApi('campaigns'" in html

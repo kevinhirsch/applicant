@@ -49,7 +49,12 @@ class TestAutomationDispatch:
 
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "get"})
-        assert seen == {"method": "GET", "path": "/api/automation"}
+        # The engine's setup router is mounted at prefix "/api/setup" (see
+        # src/applicant/app/routers/setup.py's APIRouter(prefix="/api/setup", ...)
+        # and its @router.get("/automation")), so the real forwarded path is
+        # "/api/setup/automation" -- matching this proxy's own docstring/dispatch
+        # code, which the "/api/automation" the assertion used to pin never was.
+        assert seen == {"method": "GET", "path": "/api/setup/automation"}
 
     def test_set_forwards_put_with_body(self, mod):
         seen = {}
@@ -61,7 +66,9 @@ class TestAutomationDispatch:
         with patch.object(mod, "_forward", fake):
             r = mod.dispatch({"action": "set", "approval_timeout_days": 7})
         assert seen["method"] == "PUT"
-        assert seen["path"] == "/api/automation"
+        # See test_get_forwards_get: the engine's setup router prefix makes this
+        # "/api/setup/automation", not "/api/automation".
+        assert seen["path"] == "/api/setup/automation"
         assert seen["body"] == {"approval_timeout_days": 7}
 
     def test_set_sends_all_fields(self, mod):

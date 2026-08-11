@@ -42,6 +42,10 @@ BACKEND_ONLY = {
     # EPIC REVIEW-UX (RUX): the review proxy has no dedicated *.html panel — the
     # Review modal lives inside documents.html (reuse-first), so it is backend-only.
     "review",
+    # a0-applicant/api/explain.py (2026-08-10): the explain proxy landed this
+    # session; its dedicated EXPLAIN UI panel is deliberately deferred to a
+    # later wave, so it is backend-only for now.
+    "explain",
 }
 
 # Frontend-only panels (no corresponding API proxy)
