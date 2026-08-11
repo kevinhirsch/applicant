@@ -133,6 +133,27 @@ function createModalElement(path) {
   };
 }
 
+// B12: derive a clean, human-readable modal title from a component path when
+// the loaded document has no <title> of its own (true of every Applicant
+// panel fragment today) — previously the raw path (e.g.
+// "/plugins/applicant/webui/model_endpoints.html?application_id=…") was
+// dumped straight into the modal header. Strips any query/hash, drops the
+// directory + extension, and turns "model_endpoints" into "Model Endpoints".
+// Falls back to the original path only if nothing sensible can be derived
+// (e.g. a blank/root path), so the header is never left blank.
+export function friendlyTitleFromPath(path) {
+  try {
+    const clean = String(path || "").split(/[?#]/)[0];
+    const base = clean.split("/").filter(Boolean).pop() || "";
+    const stem = base.replace(/\.[a-zA-Z0-9]+$/, "");
+    const words = stem.replace(/[_-]+/g, " ").trim();
+    if (!words) return path;
+    return words.replace(/\b\w/g, (c) => c.toUpperCase());
+  } catch {
+    return path;
+  }
+}
+
 // Function to open modal with content from URL
 export async function openModal(modalPath, beforeClose = null) {
   const openCtx = { modalPath, modal: null, cancel: false };
@@ -170,8 +191,9 @@ export async function openModal(modalPath, beforeClose = null) {
       // Use importComponent which now returns the parsed document
       importComponent(componentPath, modal.body)
         .then((doc) => {
-          // Set the title from the document
-          modal.title.innerHTML = doc.title || modalPath;
+          // Set the title from the document; B12: never dump the raw path
+          // when the fragment has no <title> — derive a friendly one instead.
+          modal.title.innerHTML = doc.title || friendlyTitleFromPath(modalPath);
           if (doc.html && doc.html.classList) {
             const inner = modal.element.querySelector(".modal-inner");
             if (inner) inner.classList.add(...doc.html.classList);
