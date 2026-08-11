@@ -13,7 +13,7 @@
 **STANDING PRINCIPLE — reuse-first, no redundancy (ONGOING):** Never build a component, service, or endpoint that duplicates one that already exists — reuse it. A new UI view is a THIN layer over existing data/actions (e.g. landing-page gadgets read the same scored Digest data + reuse the same review actions; they do not re-derive them). Any new endpoint/service must justify why an existing one didn't suffice. Check for redundancy in EVERY review (use `/simplify`) — a component that re-implements or re-derives what another already provides is a defect, and features silently drift/drop between the copies (e.g. the match-score badge lost when Pending Reviews forked from the Digest).
 Env: prod `10.0.1.11:8000` · model vLLM `10.0.1.225:8000` (qwen3.6:27b) · branch `claude/refactor-agent-zero-applicant-xn7xoc`.
 
-_Last updated: 2026-08-11 (Fit Engine + Companion epics added from ADR-0011..0014)._
+_Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-0011..0014)._
 
 ---
 
@@ -214,3 +214,40 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics added from ADR-0011..001
   - *Given* the conversation moves from job-frustration toward genuine distress, *Then* the agent responds with warmth and without judgment, surfaces real human/crisis support, and never positions itself as a substitute for human connection or clinical help (care boundary).
   - *Given* a high-stakes/nuanced turn, *Then* it may escalate to a stronger model tier (the local/DeepSeek ladder carries these qualities deliberately, not by assumption).
 - **DoD:** chat rebuilt on fit-model + memory grounding with gated, transparent, reversible actions; care-boundary guardrails (distress recognition + resource surfacing) first-class; model-escalation path wired; TDD+BDD; verified on 10.0.1.11; fresh-install resilient. **Guardrails: never auto-submit; never substitute for human/professional support.**
+
+---
+
+## 🪜 STORY LADDERS — Fit Engine + Companion (current state → fully implemented) (Kevin, 2026-08-11)
+_Each new epic decomposed into sequenced user stories bridging what exists today to the fully-implemented ADR. ✅ = already shipped this session. Every story carries the standing DoR/AC(BDD)/DoD; the one-line AC below is the executable intent, reuse-first._
+
+### FIT-MODEL (ADR-0011) — current: flat attribute cloud only
+- **FM-1 CandidateProfile entity + schema.** *AC:* a typed per-campaign entity holds title-history (role/level/tenure/primary-vs-stretch), typed certs, degree-presence, industries (depth/recency), skills (evidence strength), quantified wins, tech-depth. *Reuse:* `core/entities/` style.
+- **FM-2 Deterministic derivation.** *AC:* `CandidateProfileService` populates the structural fields from `onboarding.base_resume` (parsed) + `AttributeCloudService`, no LLM.
+- **FM-3 LLM-assisted derivation.** *AC:* normalize noisy titles, infer level, write the human-readable fit rationale via the wired LLM tier; stored + re-derivable.
+- **FM-4 Derive strong-fit / viable-stretch bands.** *AC:* the model computes the candidate's strong-fit + stretch role families **with a rationale each**, from the model (not hand-authored).
+- **FM-5 Persist + refresh + degrade.** *AC:* persisted per campaign; re-derives only on résumé/profile change (cached); a sparse résumé degrades to today's attribute-only behavior.
+- **FM-6 Fit model in the Profile UI.** *AC:* Kevin sees his derived competitiveness model + bands in the Profile panel and can correct them (feeds back to derivation).
+
+### FIT-SCORING (ADR-0012) — current: ✅ FS-1 shipped; scoring still uses the hardcoded Agile allowlist
+- **FS-1 ✅ Deterministic ranking factors + US-remote gate (`5e981b678`).** recency · SAFe-penalty · pay · seniority · fit-to-profile · degree-requirement multipliers + a hard US-remote gate. *Verified:* Kevin's rejected SAFe/stale/low-pay case 95→45%; a Scrum Master out-ranks an equally-fresh big-tech TPM.
+- **FS-2 Derive the allowlist from the fit model.** *AC:* `role_domain_fit.derive_from_profile(candidate_model)` replaces the hardcoded Agile list with a per-candidate one (generalizes; #46). *(Depends on FM-4.)*
+- **FS-3 Parse posting competitiveness signals.** *AC:* extract level + industry + degree-requirement from the description and match against the candidate model (title/level/industry fit), extending the FS-1 degree/seniority multipliers.
+- **FS-4 Wire scoring to the derived model.** *AC:* scoring uses the derived allowlist + competitiveness when a fit model exists; the hardcoded Agile list remains the fallback default (no regression).
+- **FS-5 Fit rationale → EXPLAIN.** *AC:* each score's fit reasoning (strong/stretch, degree gate, US-remote, freshness, pay) surfaces as the EXPLAIN greens/reds breakdown (ties EPIC EXPLAIN).
+- **FS-6 Generalization proof.** *AC:* a BDD scenario shows a DIFFERENT candidate/target role re-derives the fit tiers with no code change.
+
+### OUTCOME-LEARN (ADR-0013) — current: taste signals + converting-role-signature exist; no outcome funnel
+- **OL-1 Outcome funnel on the application.** *AC:* the application state machine carries applied→viewed→responded→screen→interview→offer→rejected/ghosted (unknown allowed). *Reuse:* `PostSubmissionService` + `applications` states.
+- **OL-2 One-tap outcome capture.** *AC:* Kevin marks an outcome from the review/tracker card in one tap.
+- **OL-3 Inbox/email-match outcome inference.** *AC:* recruiter replies auto-advance the funnel via the existing inbox-match plumbing; never fabricated.
+- **OL-4 Outcomes → fit model.** *AC:* families/companies/levels that draw responses strengthen the candidate's strong-fit signal; ghosts down-weight (extend `converting_role_signature`).
+- **OL-5 Outcomes → scoring weights.** *AC:* fit-scoring weights tune toward what actually converts for THIS candidate.
+- **OL-6 Reflection Coach on the real KPI.** *AC:* RC grades effectiveness on calls/interviews-earned (not volume) and applies transparent, reversible tweaks (ties EPIC AGENTS / ADR-0009).
+
+### COMPANION (ADR-0014) — current: ✅ CO-1 shipped; chat works but doesn't yet know Kevin
+- **CO-1 ✅ Revive the chat (`646fb6233`).** dead-on-load, wrong send-field, no-op Confirm all fixed; false job-title nag dropped.
+- **CO-2 Ground every turn in fit model + memory.** *AC:* `ChatService.converse` reads the fit model + durable curated memory + criteria + queue state so it speaks to Kevin's situation, not a generic applicant.
+- **CO-3 Honest fit guidance in chat.** *AC:* asked about a role, the agent gives the reach-vs-strong-fit read (reuse fit-scoring), never flattering a reach.
+- **CO-4 Gated action surface.** *AC:* tune criteria / re-score / draft / discard / explain via `ChatToolbox`, confirm-gated for integral changes, transparent + reversible, never auto-submit.
+- **CO-5 Care-boundary guardrails.** *AC:* on genuine distress, respond with warmth, surface real human/crisis support, never substitute for it or feign clinical competence.
+- **CO-6 Model-escalation.** *AC:* high-stakes/nuanced turns escalate to a stronger tier; the local/DeepSeek ladder carries the companion qualities deliberately.
