@@ -76,6 +76,12 @@ class TestSeniorAgileLeadershipAllowlist:
     def test_agile_leader_is_in_domain(self):
         assert is_allowlisted(classify_role_domain("Consultant, Agile Leader (Consultant, Scrum Master)"))
 
+    def test_agile_practitioner_is_in_domain(self):
+        # UHG/Optum "Agile Practitioner 2" (an RTE/Scrum Master role) -- "practice"
+        # does not substring-match "practitioner", so the family pattern must.
+        assert is_allowlisted(classify_role_domain("Agile Practitioner 2"))
+        assert is_allowlisted(classify_role_domain("Senior Agile Practitioner"))
+
     def test_regression_scrum_master_still_in_domain(self):
         assert is_allowlisted(classify_role_domain("Scrum Master"))
 
