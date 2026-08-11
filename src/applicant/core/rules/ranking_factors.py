@@ -326,15 +326,16 @@ _MODERATE_FIT_PATTERNS: tuple[re.Pattern[str], ...] = (
 _STRONG_FIT_MULTIPLIER = 1.10
 _MODERATE_FIT_MULTIPLIER = 0.85
 #: REACH -- a title Kevin has NEVER held, at a LEVEL beyond his realistic reach:
-#: a Staff / Principal / Sr-Staff / Distinguished **Technical Program Manager**
-#: (big-tech leveling, no TPM title history + a hard degree bar). Demoted well
-#: BELOW the moderate stretch tier so these don't clutter the top of queue above
-#: his real Scrum Master / Coach / Delivery lane. Still VIABLE (the allowlist
-#: admitted it) -- just ranked as the reach it is. A PLAIN "Technical Program
-#: Manager" (no staff/principal level) stays in the moderate tier.
+#: a LEVELED **Technical Program Manager** (Senior / Sr / Lead / Staff / Principal
+#: / Distinguished). Kevin has no TPM title history and no degree, and these are
+#: overwhelmingly big-tech reqs (waymo/lyft/roblox/instacart) with a hard degree
+#: bar, so a leveled TPM is a REACH, not a stretch -- demoted well BELOW his real
+#: Scrum Master / Coach / Delivery lane so it stops cluttering the top. Still
+#: VIABLE (the allowlist admitted it). A PLAIN "Technical Program Manager" (no
+#: level word) stays in the moderate stretch tier.
 _REACH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"\b(staff|principal|sr\.?\s+staff|senior\s+staff|distinguished)\b[\s\w,./-]{0,30}"
+        r"\b(staff|principal|distinguished|senior|sr\.?|lead)\b[\s\w,./-]{0,30}"
         r"\btechnical\s+program\s+manager\b",
         re.IGNORECASE,
     ),
