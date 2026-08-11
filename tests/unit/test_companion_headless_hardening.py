@@ -78,16 +78,23 @@ class TestCompanionHeadlessHardening:
             "companion should wait for api health, not just service_started"
         )
 
-    def test_engine_wiring_mind_backend_is_bridge(self):
-        """The engine must carry MIND_BACKEND=bridge to read companion memory."""
+    def test_engine_wiring_mind_backend_is_sql(self):
+        """The engine's MIND_BACKEND defaults to 'sql' (durable agent memory).
+
+        commit baf7642e3 (2026-08-10, "make sql the production agent-memory
+        default", #286) deliberately changed the prod-compose api service's
+        default from bridge->sql so the deployed engine's curated memory
+        survives restarts (sql degrades to the in-memory trio if Postgres is
+        unreachable, so boot is always safe -- see docker-compose.prod.yml's
+        own comment above this env var and config.py's mind_backend docs).
+        """
         compose = _load_compose(PROD_COMPOSE)
         api_svc = compose["services"]["api"]
         env = api_svc.get("environment", {})
         raw = env.get("MIND_BACKEND", "")
-        # MIND_BACKEND: ${MIND_BACKEND:-bridge} resolves to 'bridge' when unset
-        # Check either 'bridge' or the template default
-        assert "bridge" in raw, (
-            "engine MIND_BACKEND must default to 'bridge' for companion integration "
+        # MIND_BACKEND: ${MIND_BACKEND:-sql} resolves to 'sql' when unset.
+        assert "sql" in raw, (
+            "engine MIND_BACKEND must default to 'sql' for durable agent memory "
             f"(got {raw!r})"
         )
 

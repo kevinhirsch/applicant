@@ -53,13 +53,15 @@ def test_api_service_has_env_file_referencing_dotenv():
 
 @pytest.mark.unit
 def test_applicant_ui_env_file_still_references_dotenv():
-    # Regression guard on the working half — applicant-ui already had this
-    # wiring; make sure the api fix didn't accidentally clobber it.
+    # Regression guard on the working half — the front-door UI service already
+    # had this wiring; make sure the api fix didn't accidentally clobber it.
+    # commit 931e5b40b (2026-07-18, "AZ0-2: Compose integration -- a0 service +
+    # companion demotion") renamed this service from applicant-ui -> a0.
     spec = _load_compose()
-    ui = spec["services"]["applicant-ui"]
+    ui = spec["services"]["a0"]
 
     env_file = ui.get("env_file")
-    assert env_file, "applicant-ui service is missing an env_file directive"
+    assert env_file, "a0 (front-door UI) service is missing an env_file directive"
     assert isinstance(env_file, list)
     entry = env_file[0]
     assert isinstance(entry, dict)
