@@ -370,12 +370,12 @@
 
                   <!-- Redline result -->
                   <div x-show="redlineResults[doc.id || doc.document_id]" style="margin-top:8px">
-                    <div class="provenance-content" x-html="redlineResults[doc.id || doc.document_id].rendered_html || ''"></div>
-                    <div x-show="!redlineResults[doc.id || doc.document_id].rendered_html">
+                    <div class="provenance-content" x-html="redlineResults[doc.id || doc.document_id]?.rendered_html || ''"></div>
+                    <div x-show="!(redlineResults[doc.id || doc.document_id]?.rendered_html)">
                       <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Additions:</div>
-                      <div class="doc-content" style="margin-bottom:4px"><template x-for="a in redlineResults[doc.id || doc.document_id].additions" :key="a"><div style="color:#155724">+ <span x-text="a"></span></div></template></div>
+                      <div class="doc-content" style="margin-bottom:4px"><template x-for="a in (redlineResults[doc.id || doc.document_id]?.additions || [])" :key="a"><div style="color:#155724">+ <span x-text="a"></span></div></template></div>
                       <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Subtractions:</div>
-                      <div class="doc-content"><template x-for="s in redlineResults[doc.id || doc.document_id].subtractions" :key="s"><div style="color:#721c24">− <span x-text="s"></span></div></template></div>
+                      <div class="doc-content"><template x-for="s in (redlineResults[doc.id || doc.document_id]?.subtractions || [])" :key="s"><div style="color:#721c24">− <span x-text="s"></span></div></template></div>
                     </div>
                     <div class="doc-actions" style="margin-top:8px">
                       <button class="btn success small" @click="approveRedlineViaDoc(doc.id || doc.document_id)">✓ Apply Redline</button>
