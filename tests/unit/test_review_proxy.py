@@ -126,7 +126,9 @@ class TestReviewProxy:
             "posting_id": None,
         }
 
-    def test_regenerate_section_maps_to_apply_instruction(self, mod):
+    def test_regenerate_section_maps_to_regenerate_section_endpoint(self, mod):
+        # Fix B.1: regenerate ONE section now hits the real per-section endpoint,
+        # keyed by section_id + instruction (was wrongly pointed at apply-instruction).
         seen, fake = _capture(mod)
         with patch.object(mod, "_forward", fake):
             mod.dispatch(
@@ -138,9 +140,16 @@ class TestReviewProxy:
                     "campaign_id": "camp-x",
                 }
             )
-        assert seen["path"] == "/api/review/app-1/apply-instruction"
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/review/app-1/regenerate/section"
+        assert seen["body"]["section_id"] == "doc-7"
         assert seen["body"]["instruction"] == "make it punchier"
-        assert seen["body"]["document_ids"] == ["doc-7"]
+
+    def test_regenerate_section_requires_a_section_id(self, mod):
+        r = mod.dispatch(
+            {"action": "regenerate_section", "application_id": "app-1", "feedback": "x"}
+        )
+        assert r["ok"] is False and r["status"] == 400
 
     def test_apply_feedback_fans_across_sections(self, mod):
         seen, fake = _capture(mod)
@@ -156,7 +165,9 @@ class TestReviewProxy:
         assert seen["path"] == "/api/review/app-1/apply-instruction"
         assert seen["body"]["document_ids"] == []  # empty -> ALL sections
 
-    def test_regenerate_all_maps_to_apply_instruction(self, mod):
+    def test_regenerate_all_maps_to_regenerate_whole(self, mod):
+        # Fix B.2: "Regenerate whole app" now hits /regenerate/whole (was pointed at
+        # apply-instruction, which required non-empty feedback and errored with none).
         seen, fake = _capture(mod)
         with patch.object(mod, "_forward", fake):
             mod.dispatch(
@@ -167,8 +178,20 @@ class TestReviewProxy:
                     "campaign_id": "camp-x",
                 }
             )
-        assert seen["path"] == "/api/review/app-1/apply-instruction"
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/review/app-1/regenerate/whole"
         assert seen["body"]["instruction"] == "redo it"
+
+    def test_regenerate_all_allows_empty_feedback(self, mod):
+        # Fix B.2: no typed feedback must not error — the button forwards regardless.
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch(
+                {"action": "regenerate_all", "application_id": "app-1", "campaign_id": "camp-x"}
+            )
+        assert r["ok"] is True
+        assert seen["path"] == "/api/review/app-1/regenerate/whole"
+        assert seen["body"]["instruction"] == ""
 
     def test_saved_bucket_uses_resolved_campaign(self, mod):
         seen, fake = _capture(mod)
@@ -191,11 +214,57 @@ class TestReviewProxy:
         assert seen["path"] == "/api/feedback/freetext"
         assert seen["body"] == {"campaign_id": "camp-x", "text": "prefer earlier-stage startups"}
 
-    def test_edit_section_is_graceful_501(self, mod):
-        r = mod.dispatch(
-            {"action": "edit_section", "application_id": "app-1", "section_id": "d", "content": "x"}
-        )
-        assert r["ok"] is False and r["status"] == 501
+    def test_edit_section_forwards_to_edit_section_endpoint(self, mod):
+        # Fix B.4: inline edit now persists via a real engine endpoint (was 501).
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch(
+                {
+                    "action": "edit_section",
+                    "application_id": "app-1",
+                    "section_id": "doc-3",
+                    "content": "my edit",
+                }
+            )
+        assert r["ok"] is True
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/review/app-1/edit-section"
+        assert seen["body"] == {"section_id": "doc-3", "content": "my edit"}
+
+    def test_edit_section_requires_section_id(self, mod):
+        r = mod.dispatch({"action": "edit_section", "application_id": "app-1", "content": "x"})
+        assert r["ok"] is False and r["status"] == 400
+
+    def test_sections_forwards_to_sections_endpoint(self, mod):
+        # Fix A: dedicated sections action for the panel.
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            mod.dispatch({"action": "sections", "application_id": "app-1"})
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/review/app-1/sections"
+
+    def test_snapshot_by_posting_only_forwards_to_posting_snapshot(self, mod):
+        # Fix C: the Digest snapshot button sends only posting_id (no application_id).
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            mod.dispatch({"action": "snapshot", "posting_id": "post-42"})
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/review/posting/post-42/snapshot"
+
+    def test_prefill_hands_off_to_easy_apply_boundary(self, mod):
+        # Fix D: the review-UX prefill handoff routes to the easy-apply boundary
+        # surface. It fetches the assisted brief — it never fills or submits.
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            mod.dispatch(
+                {"action": "prefill", "campaign_id": "camp-x", "posting_id": "post-42"}
+            )
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/easy-apply/camp-x/post-42"
+
+    def test_prefill_requires_a_posting_id(self, mod):
+        r = mod.dispatch({"action": "prefill", "campaign_id": "camp-x"})
+        assert r["ok"] is False and r["status"] == 400
 
     def test_revert_feedback_is_graceful_501(self, mod):
         r = mod.dispatch({"action": "revert_feedback", "campaign_id": "camp-x", "adjustment_id": "a"})
