@@ -60,6 +60,7 @@ from applicant.core.rules.ranking_factors import (
     recency_multiplier,
     safe_penalty_multiplier,
     seniority_multiplier,
+    source_reliability_multiplier,
 )
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.ports.driven.llm import LLMResult
@@ -301,5 +302,6 @@ class TestEndToEndScoringServiceShortCircuit:
                 * seniority_multiplier(posting.title).multiplier
                 * fit_to_profile_multiplier(posting.title).multiplier
                 * degree_requirement_multiplier(posting.description).multiplier
+                * source_reliability_multiplier(posting.source_key).multiplier
             )
             assert scoring.score == pytest.approx(0.90 * expected_multiplier, abs=1e-6), row["id"]

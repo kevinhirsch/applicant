@@ -82,6 +82,7 @@ from applicant.core.rules.ranking_factors import (
     recency_multiplier,
     safe_penalty_multiplier,
     seniority_multiplier,
+    source_reliability_multiplier,
 )
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.observability.logging import get_logger
@@ -571,7 +572,7 @@ class ScoringService:
         # gated here — see ``ranking_factors.classify_remote``'s docstring —
         # so a scraper gap never silently buries a real, good, US-remote role.
         remote = classify_remote(
-            posting.work_mode, posting.location, posting.description or ""
+            posting.work_mode, posting.location, posting.description or "", title=posting.title
         )
         if remote.is_us_remote is False:
             return ViabilityScoring(
@@ -640,6 +641,7 @@ class ScoringService:
         seniority = seniority_multiplier(posting.title)
         fit = fit_to_profile_multiplier(posting.title)
         degree = degree_requirement_multiplier(posting.description or "")
+        source = source_reliability_multiplier(posting.source_key)
         ranking_multiplier = (
             recency.multiplier
             * safe.multiplier
@@ -647,13 +649,14 @@ class ScoringService:
             * seniority.multiplier
             * fit.multiplier
             * degree.multiplier
+            * source.multiplier
         )
         if ranking_multiplier != 1.0:
             score = max(0.0, min(1.0, score * ranking_multiplier))
             rationale += (
                 f"; ranking-adjusted x{ranking_multiplier:.2f} (recency: {recency.reason}; "
                 f"SAFe: {safe.reason}; pay: {pay.reason}; seniority: {seniority.reason}; "
-                f"fit: {fit.reason}; degree: {degree.reason})"
+                f"fit: {fit.reason}; degree: {degree.reason}; source: {source.reason})"
             )
         if remote.is_us_remote is None:
             rationale += f"; remote/US status could not be confirmed ({remote.reason})"

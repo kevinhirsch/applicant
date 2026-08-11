@@ -108,6 +108,12 @@ _IN_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Agile Program Manager", re.compile(r"\bagile\s+program\s+manager\b", re.IGNORECASE)),
     ("Team Coach (SAFe SM/TC)", re.compile(r"\bteam\s+coach\b", re.IGNORECASE)),
     ("Agile Transformation", re.compile(r"\bagile\s+transformation\b", re.IGNORECASE)),
+    # Senior agile-leadership titles that are squarely in-lane but were slipping
+    # to UNCLASSIFIED (floored): "Agile Practice"/"Agile Practice Management"
+    # (e.g. CVS "Senior Manager, Agile Practice Management") and "Agile Leader"
+    # (e.g. Nationwide "Consultant, Agile Leader"). These ARE his RTE/coach track.
+    ("Agile Practice / Practice Management", re.compile(r"\bagile\s+practice\b", re.IGNORECASE)),
+    ("Agile Leader", re.compile(r"\bagile\s+leader\b", re.IGNORECASE)),
     ("Ways of Working", re.compile(r"\bways\s+of\s+working\b", re.IGNORECASE)),
     # === ROUND 3 WIDENING: Program/Project management, admitted UNCONDITIONALLY
     # now (no longer requires agile/delivery context — Kevin is open to any
