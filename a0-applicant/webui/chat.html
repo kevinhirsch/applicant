@@ -145,23 +145,55 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
     },
 
     async loadConversation() {
-      this.fatalError = "";
       this.conversation = [];
       const cid = this.selectedCampaignId || "__system__";
 
+      // P0 fix: the engine has no persisted-history endpoint yet (the proxy's
+      // "history" action is unimplemented), so ANY failure here (unimplemented
+      // action, no history yet, a network hiccup) just means "start fresh" — it
+      // must NEVER set fatalError, since fatalError hides the whole panel
+      // (input row included) behind the "!fatalError" template guard, leaving
+      // the panel dead on load. A genuinely unreachable engine is already
+      // surfaced by init()'s campaigns-list fatalError above.
       const r = await callJsonApi("chat", { action: "history", campaign_id: cid });
-      if (!r || !r.ok) {
-        if (r && r.status === 404) {
-          this.conversation = [];
-        } else {
-          this.fatalError = (r && r.error) || "Couldn't load chat history.";
-          this.conversation = [];
-        }
-      } else {
+      if (r && r.ok) {
         const data = r.data || {};
         const items = data.items || data.messages || data.messages_history || [];
         this.conversation = Array.isArray(items) ? items : (items ? [items] : []);
       }
+    },
+
+    // Build the confirmation-gated pending change from a "send" reply, if any.
+    // The engine returns "proposed_changes" (attribute edits) and
+    // "control_actions" (criteria edits) — each entry carries its own
+    // requires_confirmation/applied flags (FR-FB-3); there is no single
+    // "pending_change" field, so this picks the first not-yet-applied one that
+    // still needs confirming.
+    _pendingConfirmFrom(data) {
+      const attr = (data.proposed_changes || []).find(
+        (p) => p && p.requires_confirmation && !p.applied
+      );
+      if (attr) {
+        return {
+          kind: "attribute",
+          name: attr.name,
+          value: attr.value,
+          message: `Set "${attr.name}" to "${attr.value}"?`,
+        };
+      }
+      const ctrl = (data.control_actions || []).find(
+        (a) => a && a.kind === "criteria" && a.requires_confirmation && !a.applied
+      );
+      if (ctrl) {
+        const changes = ctrl.detail || {};
+        const desc = Object.entries(changes)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+          .join(", ");
+        return { kind: "criteria", changes: changes, message: `Apply ${desc}?` };
+      }
+      // Forward-compat: honor an explicit pending_change if the proxy/engine
+      // ever starts sending one directly.
+      return data.pending_change || null;
     },
 
     async sendMessage() {
@@ -178,10 +210,13 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
       const pendingIdx = this.conversation.length;
       this.conversation.push({ role: "assistant", text: "", pending: true });
 
+      // P0 fix: the proxy's "send" action reads input["message"], not "text" —
+      // sending "text" meant every chat message silently 400'd before it ever
+      // reached ChatService.converse.
       const r = await callJsonApi("chat", {
         action: "send",
         campaign_id: this.selectedCampaignId,
-        text: text,
+        message: text,
       });
 
       if (!r || !r.ok) {
@@ -205,19 +240,53 @@ const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi
             this.conversation.splice(pendingIdx, 1);
           }
         }
-        // Check for pending attribute change
-        if (data.pending_change) {
-          this.pendingConfirm = data.pending_change;
+        // Check for a confirmation-gated pending change (attribute or criteria).
+        const pending = this._pendingConfirmFrom(data);
+        if (pending) {
+          this.pendingConfirm = pending;
         }
-        if (data.actions && data.actions.length > 0) {
+        if (data.actions && data.actions.length > 0 && this.conversation[pendingIdx]) {
           this.conversation[pendingIdx].actions = data.actions;
         }
       }
       this.sending = false;
     },
 
-    confirmChange() {
+    // P1 fix: Confirm must actually commit the gated change — it previously
+    // just cleared the banner client-side, so nothing the agent proposed was
+    // ever saved. Routes an attribute proposal to action="confirm" and a
+    // criteria proposal to action="confirm_criteria" (the SAME gate every
+    // other confirmed change goes through — FR-FB-3).
+    async confirmChange() {
       if (!this.pendingConfirm) return;
+      const pending = this.pendingConfirm;
+      const cid = this.selectedCampaignId || "__system__";
+      this.fatalError = "";
+
+      const r = await (pending.kind === "criteria"
+        ? callJsonApi("chat", {
+            action: "confirm_criteria",
+            campaign_id: cid,
+            changes: pending.changes || {},
+          })
+        : callJsonApi("chat", {
+            action: "confirm",
+            campaign_id: cid,
+            name: pending.name,
+            value: pending.value,
+          }));
+
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to confirm the change.";
+      } else {
+        this.conversation.push({
+          role: "assistant",
+          text:
+            pending.kind === "criteria"
+              ? "Done — I've updated your search criteria."
+              : `Done — I've updated ${pending.name}.`,
+        });
+      }
       this.pendingConfirm = null;
     }
   }));

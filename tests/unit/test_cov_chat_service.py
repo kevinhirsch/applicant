@@ -132,7 +132,9 @@ def test_unconfigured_llm_skips_completion_entirely():
 
 def test_no_gaps_uses_short_deterministic_reply():
     # When all core attributes + criteria are present, no gaps are appended and
-    # the short deterministic reply is returned (offline).
+    # the short deterministic reply is returned (offline). "current job title" is
+    # deliberately NOT set here -- it is not a core need (dark-engine audit): no
+    # onboarding section writes that key, so requiring it would report a gap forever.
     from applicant.application.services.campaign_service import CampaignService
 
     svc, storage = _svc()
@@ -144,7 +146,6 @@ def test_no_gaps_uses_short_deterministic_reply():
         ("last name", "Lovelace"),
         ("email address", "ada@x.com"),
         ("phone", "555-0100"),
-        ("current job title", "Engineer"),
     ]:
         svc.confirm_change(cid, name, value)
     svc._criteria.edit_criteria(
@@ -153,6 +154,16 @@ def test_no_gaps_uses_short_deterministic_reply():
     assert svc.identify_gaps(cid) == []
     result = svc.converse(cid, "anything else?")
     assert "integral will be confirmed" in result.message
+
+
+def test_current_job_title_is_never_a_reported_gap():
+    """Regression (dark-engine audit): identify_gaps() must never report "current
+    job title" missing -- no onboarding section writes that key, so it previously
+    reported a gap FOREVER, contradicting apply_ready=true from the apply-readiness
+    gate (which never required a title). Dropped from _CORE_NEEDS to align."""
+    svc, _ = _svc()
+    cid = CampaignId(new_id())
+    assert "current job title" not in svc.identify_gaps(cid)
 
 
 def test_canonical_onboarding_keys_are_not_reported_missing():

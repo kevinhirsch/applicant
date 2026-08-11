@@ -75,8 +75,11 @@ def test_brand_new_campaign_reports_every_core_gap(client):
     # core-needs set (identity attributes + search criteria), never fabricated.
     assert "email address" in body["gaps"]
     assert "phone" in body["gaps"]
-    assert "current job title" in body["gaps"]
     assert "target roles / search criteria" in body["gaps"]
+    # "current job title" is NOT a core need (dark-engine audit): no onboarding
+    # section writes that key, and the apply-readiness gate never required it either
+    # -- reporting it here would contradict apply_ready=true forever.
+    assert "current job title" not in body["gaps"]
 
 
 def test_gaps_shrink_as_real_attributes_and_criteria_are_added(client):
@@ -116,6 +119,50 @@ def test_gaps_route_matches_chat_service_identify_gaps_directly(client):
 
     r = client.get(f"/api/setup/{cid}/gaps")
     assert r.json()["gaps"] == expected
+
+
+def test_gaps_endpoint_never_disagrees_with_apply_readiness_on_job_title(client):
+    """Dark-engine audit: identify_gaps() must agree with the apply-readiness gate.
+
+    ``apply_readiness`` (core/rules/apply_readiness.py) has NEVER required a job
+    title. Before this fix, ``identify_gaps()`` falsely required "current job title"
+    forever (nothing in onboarding writes that key), so a fully-onboarded campaign
+    could show ``apply_ready=true`` from the gate while /gaps still listed a job
+    title as missing -- an unresolvable, contradictory nag. Seed a campaign that is
+    ready per the apply-readiness gate and confirm /gaps reports zero gaps too, with
+    no job-title attribute set anywhere.
+    """
+    container = client.app.state.container
+    cid = _seed_bare_campaign(container)
+
+    attrs = container.attribute_cloud_service
+    attrs.upsert(cid, "full_name", "Dana Lee", confirm=True)
+    attrs.upsert(cid, "email", "dana@example.com", confirm=True)
+    attrs.upsert(cid, "phone", "555-0100", confirm=True)
+    container.criteria_service.edit_criteria(
+        cid,
+        changes={
+            "titles": ["Backend Engineer"],
+            "work_modes": ["remote"],
+            "locations": ["Remote"],
+            "salary_floor": 120000,
+            "keywords": ["python"],
+        },
+        confirm=True,
+    )
+    # Stand in for a real résumé ingest (apply_readiness's own résumé check) --
+    # deliberately NO "title"/"current job title" attribute is ever set.
+    container.onboarding_service.has_base_resume = lambda campaign_id: True
+
+    readiness = container.onboarding_service.apply_readiness(str(cid))
+    assert readiness.ready is True
+    assert not any("title" in m.lower() for m in readiness.missing)
+
+    r = client.get(f"/api/setup/{cid}/gaps")
+    body = r.json()
+    assert body["gaps"] == []
+    assert body["complete"] is True
+    assert "current job title" not in body["gaps"]
 
 
 def test_gaps_route_for_unknown_campaign_is_well_formed(client):

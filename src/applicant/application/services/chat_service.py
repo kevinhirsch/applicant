@@ -33,9 +33,16 @@ log = logging.getLogger(__name__)
 
 #: Core needs a campaign must cover before it can apply confidently (FR-CHAT-1 gaps).
 #: Each is (display label, accepted attribute keys). Onboarding stores CANONICAL keys
-#: (``full_name`` / ``email`` / ``title`` / ``phone``) while the chat historically
-#: used spaced display labels; a need is a gap only when NONE of its synonyms is
-#: present, so a fully-onboarded profile is never falsely reported as "still missing".
+#: (``full_name`` / ``email`` / ``phone``) while the chat historically used spaced
+#: display labels; a need is a gap only when NONE of its synonyms is present, so a
+#: fully-onboarded profile is never falsely reported as "still missing".
+#:
+#: "current job title" was DELIBERATELY removed (dark-engine audit): no onboarding
+#: section ever writes that key, so this list previously reported it missing on EVERY
+#: campaign forever, contradicting ``apply_ready=true`` from the apply-readiness gate
+#: (``core/rules/apply_readiness.py``), which never required a job title in the first
+#: place. Dropped here to align with that gate rather than adding a phantom field
+#: nothing in onboarding populates.
 _CORE_NEEDS: tuple[tuple[str, frozenset[str]], ...] = (
     ("first name", frozenset(
         {"first name", "name", "full name", "full_name", "legal name",
@@ -44,8 +51,6 @@ _CORE_NEEDS: tuple[tuple[str, frozenset[str]], ...] = (
         {"last name", "name", "full name", "full_name", "legal name", "full_legal_name"})),
     ("email address", frozenset({"email address", "email"})),
     ("phone", frozenset({"phone", "phone number", "phone_number"})),
-    ("current job title", frozenset(
-        {"current job title", "title", "titles", "job title", "job_title", "current_title"})),
 )
 #: Back-compat: the bare display labels (used for the user-facing gap list + parsing).
 CORE_ATTRIBUTES: tuple[str, ...] = tuple(label for label, _ in _CORE_NEEDS)
