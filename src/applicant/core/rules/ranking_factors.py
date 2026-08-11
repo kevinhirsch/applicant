@@ -393,10 +393,17 @@ _DEGREE_HARD_REQUIRED_RE = re.compile(
 _DEGREE_HARD_REQUIRED_MULTIPLIER = 0.85
 
 
-def degree_requirement_multiplier(description: str) -> RankingFactor:
-    """Penalize a posting that HARD-requires a degree; neutral for
-    "preferred"/"or equivalent experience"/no mention at all -- never
-    over-penalize, most postings don't screen this hard in practice."""
+def degree_requirement_multiplier(
+    description: str, candidate_has_degree: bool = False
+) -> RankingFactor:
+    """Penalize a posting that HARD-requires a degree the CANDIDATE lacks (FS-3).
+
+    A candidate who HOLDS a degree MEETS the gate, so a degree-required posting is
+    no penalty for them -- this generalizes past the Kevin-hardcoded default
+    (``candidate_has_degree=False`` preserves existing behavior for no-degree
+    candidates). Neutral for "preferred"/"or equivalent experience"/no mention;
+    never over-penalize -- most postings don't screen this hard in practice.
+    """
     description = description or ""
     if not description:
         return RankingFactor(1.0, "no description to check for a degree requirement")
@@ -405,8 +412,13 @@ def degree_requirement_multiplier(description: str) -> RankingFactor:
             1.0, "degree mentioned but not a hard requirement (preferred/equivalent-experience escape)"
         )
     if _DEGREE_HARD_REQUIRED_RE.search(description):
+        if candidate_has_degree:
+            return RankingFactor(
+                1.0, "posting hard-requires a degree — the candidate holds one, so no penalty"
+            )
         return RankingFactor(
-            _DEGREE_HARD_REQUIRED_MULTIPLIER, "posting hard-requires a degree Kevin does not have"
+            _DEGREE_HARD_REQUIRED_MULTIPLIER,
+            "posting hard-requires a degree the candidate does not have",
         )
     return RankingFactor(1.0, "no hard degree requirement detected")
 

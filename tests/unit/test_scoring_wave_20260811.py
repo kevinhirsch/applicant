@@ -13,6 +13,7 @@ import pytest
 
 from applicant.core.rules.ranking_factors import (
     classify_remote,
+    degree_requirement_multiplier,
     fit_to_profile_multiplier,
     source_reliability_multiplier,
 )
@@ -108,3 +109,22 @@ class TestBigTechTpmReachTier:
 
     def test_scrum_master_stays_strong_fit(self):
         assert fit_to_profile_multiplier("Senior Scrum Master").multiplier == pytest.approx(1.10)
+
+
+@pytest.mark.unit
+class TestProfileAwareDegreeGate:
+    _JD = "Requirements: Bachelor's degree required in a related field, 5+ years experience."
+
+    def test_no_degree_candidate_is_penalized(self):
+        assert degree_requirement_multiplier(self._JD, candidate_has_degree=False).multiplier < 1.0
+
+    def test_degree_holder_is_not_penalized(self):
+        assert degree_requirement_multiplier(self._JD, candidate_has_degree=True).multiplier == pytest.approx(1.0)
+
+    def test_preferred_degree_is_never_penalized(self):
+        jd = "Bachelor's degree preferred or equivalent experience."
+        assert degree_requirement_multiplier(jd, candidate_has_degree=False).multiplier == pytest.approx(1.0)
+
+    def test_default_preserves_no_degree_behavior(self):
+        # Existing callers pass no flag -> defaults to no-degree penalty (Kevin).
+        assert degree_requirement_multiplier(self._JD).multiplier < 1.0
