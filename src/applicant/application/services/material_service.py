@@ -99,6 +99,30 @@ REFINEMENT_BUDGET = 2
 #: Aggressiveness dial persistence key in AppConfigStore (FR-RESUME-9).
 _AGGRESSIVENESS_CONFIG_KEY = "resume.aggressiveness"
 
+#: MAT-2 (#44): résumé SECTION HEADERS. When the factual screening-answer scoper
+#: picks the most question-relevant line of the résumé, a bare header like
+#: "PROFESSIONAL EXPERIENCE" shares tokens with a "describe your experience"-type
+#: question and gets selected -- leaking structure, not an answer, into a live
+#: screening field (observed on a real CVS application). These lines are skipped.
+_RESUME_SECTION_HEADERS = frozenset(
+    {
+        "professional experience", "work experience", "experience", "employment",
+        "employment history", "work history", "career history",
+        "education", "skills", "technical skills", "core skills", "key skills",
+        "certifications", "certification", "licenses", "license",
+        "professional summary", "summary", "profile", "objective",
+        "awards", "projects", "references", "contact", "contact information",
+        "achievements", "accomplishments", "qualifications",
+    }
+)
+
+
+def _is_resume_section_header(line: str) -> bool:
+    """True when ``line`` is (essentially) just a résumé SECTION HEADER -- structure,
+    not answerable content (#44/MAT-2). Normalizes case / trailing colon / spacing."""
+    text = (line or "").strip().rstrip(":").strip().lower()
+    return text in _RESUME_SECTION_HEADERS
+
 #: FR-RESUME-6 sprawl cap: max approved reusable parents kept per campaign before
 #: clustering collapses near-duplicates.
 VARIANT_CAP = 8
@@ -2003,11 +2027,16 @@ class MaterialService:
         # 3. Single-line source (already question-scoped): return it directly.
         if len(lines) <= 1:
             return source
-        # 2. Most question-relevant line by token overlap.
+        # 2. Most question-relevant line by token overlap. Skip bare résumé SECTION
+        # HEADERS ("PROFESSIONAL EXPERIENCE", "EDUCATION", ...): they share tokens with
+        # a "describe your experience"-type question and would otherwise win, leaking
+        # structure (not an answer) into the form field (#44/MAT-2).
         q_tokens = _word_tokens(question)
         best_line = ""
         best_overlap = 0
         for ln in lines:
+            if _is_resume_section_header(ln):
+                continue
             overlap = len(q_tokens & _word_tokens(ln))
             if overlap > best_overlap:
                 best_overlap = overlap
