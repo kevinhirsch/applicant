@@ -106,8 +106,23 @@ def test_the_container_threads_configured_ats_sources_into_discovery(monkeypatch
 
 
 def test_settings_default_ats_sources_are_empty_strings():
-    get_settings.cache_clear()
-    settings = get_settings()
+    """Pins the Settings FIELD default (Field(default="", ...)), not whatever
+    happens to be configured in this repo's actual .env right now.
+
+    ``get_settings()``/``Settings()`` read the repo-root ``.env`` (see
+    ``SettingsConfigDict(env_file=".env", ...)``) -- and since the 2026-08-07
+    keyless ATS discovery connectors were deployed, this repo's own .env
+    deliberately seeds ``DISCOVERY_GREENHOUSE_BOARDS``/``DISCOVERY_LEVER_
+    COMPANIES`` with ~20-30 real companies (see docs / the ATS-discovery
+    deploy notes). That's correct, live, intentional configuration for this
+    checkout, not a stale/broken default -- so it must not leak into an
+    unrelated Settings instance built here. ``_env_file=None`` bypasses the
+    .env file entirely, isolating the field's true class-level default from
+    whatever this particular checkout's .env happens to contain.
+    """
+    from applicant.app.config import Settings
+
+    settings = Settings(_env_file=None)
     assert settings.discovery_greenhouse_boards == ""
     assert settings.discovery_lever_companies == ""
 
