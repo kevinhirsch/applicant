@@ -40,18 +40,23 @@ from applicant.ports.driven.memory_store import MemoryStore
 from applicant.ports.driven.recall_index import RecallIndex
 from applicant.ports.driven.skill_store import SkillStore
 
-#: Backend identifiers for ``MIND_BACKEND`` (FR-MIND, §10, #307).
+#: Backend identifiers for ``MIND_BACKEND`` (FR-MIND, §10, #307, #286).
 MIND_BACKEND_IN_MEMORY = "in_memory"
 MIND_BACKEND_BRIDGE = "bridge"
 MIND_BACKEND_MEM0 = "mem0"
 MIND_BACKEND_LETTA = "letta"
 MIND_BACKEND_TEMPORAL = "temporal"
+#: The DURABLE, production backend (#286): the curated trio persisted to the shared
+#: SQLAlchemy storage stack so memory survives an engine restart. Reads stay local +
+#: single-query (no network) — unlike the disabled ``bridge`` backend.
+MIND_BACKEND_SQL = "sql"
 MIND_BACKENDS = (
     MIND_BACKEND_IN_MEMORY,
     MIND_BACKEND_BRIDGE,
     MIND_BACKEND_MEM0,
     MIND_BACKEND_LETTA,
     MIND_BACKEND_TEMPORAL,
+    MIND_BACKEND_SQL,
 )
 
 
@@ -65,15 +70,44 @@ class AgentMemory:
     backend: str
 
 
-def build_agent_memory(settings: Any, workspace_port: Any = None) -> AgentMemory:
+def build_agent_memory(
+    settings: Any,
+    workspace_port: Any = None,
+    *,
+    session_factory: Any = None,
+) -> AgentMemory:
     """Build the agent-memory trio for the configured ``MIND_BACKEND``.
 
     ``settings`` supplies ``mind_backend`` and the memory bounds; ``workspace_port``
     is the existing ``WorkspacePort`` (only its ``available()`` gate is used by the
-    bridge adapters). Falls back to ``in_memory`` for any unknown backend so boot is
-    always safe.
+    bridge adapters); ``session_factory`` is the shared SQLAlchemy sessionmaker the
+    container already builds — threaded in so the DURABLE ``sql`` backend can persist
+    (each op opens its own short-lived session). Falls back to ``in_memory`` for any
+    unknown backend, and for ``sql`` when no ``session_factory`` is wired (no DB
+    reachable), so boot + the hermetic test lane are always safe.
+
+    The keyword-only ``session_factory`` keeps the signature backward-compatible:
+    existing ``build_agent_memory(settings, workspace)`` callers are unchanged.
     """
     backend = getattr(settings, "mind_backend", MIND_BACKEND_IN_MEMORY)
+
+    if backend == MIND_BACKEND_SQL and session_factory is not None:
+        from applicant.adapters.memory.sql_backend import (
+            SqlMemoryStore,
+            SqlRecallIndex,
+            SqlSkillStore,
+        )
+
+        return AgentMemory(
+            memory=SqlMemoryStore(
+                session_factory,
+                memory_max_chars=getattr(settings, "memory_max_chars", 8000),
+                user_max_chars=getattr(settings, "user_max_chars", 4000),
+            ),
+            skills=SqlSkillStore(session_factory),
+            recall=SqlRecallIndex(session_factory),
+            backend=MIND_BACKEND_SQL,
+        )
 
     if backend == MIND_BACKEND_BRIDGE:
         return AgentMemory(

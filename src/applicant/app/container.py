@@ -1646,7 +1646,13 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     from applicant.application.services.run_history import RunHistoryProvider
 
-    agent_memory = build_agent_memory(settings, workspace)
+    # #286: thread the shared session_factory in so ``MIND_BACKEND=sql`` gets a
+    # real DB-backed, restart-surviving trio (each op opens its own short-lived
+    # session). Keyword-only + None-safe: the in_memory/bridge defaults and the
+    # no-DB fallback lane are byte-identical to before.
+    agent_memory = build_agent_memory(
+        settings, workspace, session_factory=session_factory
+    )
     # FR-MIND-5: give the already-built chatbot the advisory curated-memory + saved-
     # playbook context (the main ChatService is constructed above, before the substrate;
     # wire it additively so reasoning can consult memory without a construction cycle).
