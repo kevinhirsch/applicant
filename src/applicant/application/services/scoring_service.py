@@ -345,7 +345,17 @@ class ScoringService:
         # high searxng row would otherwise be stuck. Real (high/medium/unknown-tier)
         # roles keep the transient-retry protection below.
         low_tier_source = source_reliability_multiplier(posting.source_key).multiplier < 1.0
-        if scoring.degraded and self._llm_configured() and not low_tier_source:
+        # A REACH role (derived fit band) is deterministically demoted (x0.65)
+        # regardless of the LLM, so a degraded value is AUTHORITATIVE-low -- persist
+        # it rather than deferring, which would preserve a STALE HIGHER score (e.g.
+        # from before a fit-model fix, when a targeted TPM was mis-banded strong).
+        # Same rationale as the low-tier-source case.
+        try:
+            _pf = profile_fit(self._candidate_profile(posting.campaign_id), posting.title)
+        except Exception:  # pragma: no cover - defensive: never block persistence
+            _pf = None
+        is_reach = _pf is not None and _pf[0] == "reach"
+        if scoring.degraded and self._llm_configured() and not low_tier_source and not is_reach:
             failures = self._bump_transient_failures(posting)
             if failures < self._max_transient_retries:
                 return False  # leave unscored for retry; do not persist the poisoned value
