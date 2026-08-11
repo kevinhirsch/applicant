@@ -138,6 +138,25 @@ class TestTransientLlmFailureLeavesPostingRetryable:
         stored = storage.postings.get(posting.id)
         assert stored.viability_score is not None  # persisted (low-tier), not deferred
 
+    def test_reach_role_degraded_score_persists_not_deferred(self, monkeypatch):
+        # A REACH role (derived fit band) is deterministically demoted regardless of
+        # the LLM, so a degraded value is authoritative-low and MUST persist -- else a
+        # stale HIGHER score survives (the live TPM-mis-banded-strong regression).
+        import applicant.application.services.scoring_service as ss
+
+        monkeypatch.setattr(ss, "profile_fit", lambda profile, title: ("reach", 0.65))
+        storage = InMemoryStorage()
+        cid = CampaignId(new_id())
+        posting = _posting(cid)  # default (non-low-tier) source
+        storage.postings.add(posting)
+        storage.commit()
+
+        svc = ScoringService(storage, _FailingLLM(), LocalEmbedding())
+        scoring = svc.score_viability(posting.id, _criteria(cid))
+        assert scoring.degraded is True
+        stored = storage.postings.get(posting.id)
+        assert stored.viability_score is not None  # persisted (reach), not deferred
+
     def test_unscored_postings_still_returns_it_for_retry(self):
         storage = InMemoryStorage()
         cid = CampaignId(new_id())
