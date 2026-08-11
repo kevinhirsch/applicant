@@ -1095,8 +1095,17 @@ def build_container(settings: Settings | None = None) -> Container:
         greenhouse_boards=discovery_greenhouse_boards,
         lever_companies=discovery_lever_companies,
         stealth=stealth_config,
-        # Live seam: a rebuild of the aggregator re-resolves the saved posture.
+        # Live re-read (gap-close): threaded into every block-prone JobSpySource so
+        # per_source_proxy_policy / residential_enabled / residential_sticky_sessid /
+        # request_rate_per_min / block_detect_threshold / block_detect_statuses all
+        # govern the VERY NEXT fetch/escalation decision -- no restart, no rebuild of
+        # this boot-singleton aggregator (mirrors ``register_llm_config_change_hook`` /
+        # the browser's ``egress_provider`` live re-read).
         stealth_provider=lambda: _resolve_posture().stealth_config,
+        # An operator-pinned sticky sessid saved AFTER boot governs immediately too;
+        # empty/unpinned falls back to the STATIC per-boot id below (one residential
+        # identity for the process's life when nothing is pinned).
+        sessid_provider=lambda: _resolve_posture().sticky_sessid,
         flow_sessid=discovery_flow_sessid,
     )
     # Runtime add/remove ATS boards: persisted user-added boards are registered
@@ -1146,6 +1155,12 @@ def build_container(settings: Settings | None = None) -> Container:
         # restart (the container/browser are boot singletons). Selects the app-level
         # proxy only — never the host wg0/VPS route protecting the home IP.
         egress_provider=lambda: _egress_from_posture(_resolve_posture()),
+        # Live re-read (gap-close): ``engine``/``suppress_dns_leak`` were captured
+        # once at __init__ and never re-read like the egress/WebRTC fields above —
+        # thread matching live providers so a camoufox<->chromium toggle (or a future
+        # DNS-leak-suppression panel field) also governs WITHOUT a restart.
+        engine_provider=lambda: _resolve_posture().browser_engine,
+        suppress_dns_leak_provider=lambda: _resolve_posture().suppress_dns_leak,
         # Drive a real Chrome/Chromium for pre-fill in the deploy (BROWSER_REAL=true);
         # tests/CI leave it off and use the hermetic in-memory FakePageSource. Without
         # this the engine only ever SIMULATES pre-fill (FR-PREFILL-1/2).

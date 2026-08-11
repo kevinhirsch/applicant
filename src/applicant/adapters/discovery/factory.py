@@ -94,6 +94,7 @@ def build_default_discovery(
     lever_companies: tuple[str, ...] | None = None,
     stealth: StealthConfig | None = None,
     stealth_provider: Callable[[], StealthConfig | None] | None = None,
+    sessid_provider: Callable[[], str | None] | None = None,
     flow_sessid: str | None = None,
 ) -> JobSpySearxngDiscovery:
     """Build the default master-aggregator discovery adapter.
@@ -128,10 +129,23 @@ def build_default_discovery(
     path is used and behavior is byte-identical to before this epic.
 
     ``stealth_provider`` (EPIC STEALTH live re-read): a callable that RE-RESOLVES the
-    effective ``StealthConfig`` from the persisted Settings > Stealth posture. When
-    supplied it WINS over the static ``stealth`` at resolution time, so a rebuild of
-    the aggregator (or a future per-flow resolution) picks up a saved posture WITHOUT
-    a restart. ``None`` keeps the static ``stealth`` (byte-identical to before).
+    effective ``StealthConfig`` from the persisted Settings > Stealth posture. It is
+    threaded into every block-prone ``JobSpySource`` (the boards a stealth save
+    actually governs) so ``fetch()``/block-detect escalation re-resolve the LIVE
+    policy on EVERY call -- not just once here at aggregator-build time -- and into
+    the aggregator's ``PerBoardRateLimiter`` so ``request_rate_per_min`` is likewise
+    live. A save GOVERNS the very next fetch WITHOUT rebuilding the aggregator or
+    restarting the process. ``None`` (every existing caller/test) keeps the whole
+    resolution path byte-identical to before this epic: the STATIC ``stealth``
+    (already resolved once, right here, for the values threaded into each source's
+    constructor) is all any source ever sees.
+
+    ``sessid_provider``: a callable that RE-RESOLVES the operator-pinned
+    ``residential_sticky_sessid`` live (empty ⇒ nothing pinned). Threaded alongside
+    ``stealth_provider`` so a newly-pinned (or changed) sticky session id also
+    governs the NEXT fetch's residential decoration without a restart; an empty/
+    failed live read falls back to the STATIC ``flow_sessid`` below so a whole run
+    still shares ONE residential identity even when nothing is pinned.
     """
     proxy = ProxyConfig(proxies=proxies, enabled=bool(proxies))
 
@@ -203,6 +217,14 @@ def build_default_discovery(
                     if _resolved_stealth is not None
                     else 1
                 ),
+                # Live re-read (gap-close): threaded ONLY into the block-prone jobspy
+                # boards (the ones a stealth save actually governs, per
+                # ``BLOCK_PRONE_SOURCE_PREFIXES``) so a save governs the NEXT fetch
+                # without rebuilding this aggregator. ``None`` when the caller wired
+                # no ``stealth_provider`` -- byte-identical to before this fix.
+                stealth_provider=stealth_provider,
+                sessid_provider=sessid_provider,
+                flow_sessid=flow_sessid,
             )
         )
     if searxng_client is not None:
@@ -257,11 +279,22 @@ def build_default_discovery(
     # EPIC STEALTH (ST-5): human-like per-board pacing conserves residential
     # reputation. Build the aggregator's rate limiter from the stealth pacing
     # knobs when a policy is supplied; otherwise use the aggregator's own default.
+    def _rate_config() -> tuple[int, float]:
+        # Live re-read (gap-close): re-resolves ``request_rate_per_min`` from the
+        # LIVE stealth policy so a save governs the NEXT ``admit()`` call, not just
+        # this aggregator-build-time snapshot. Degrades to the snapshot on a
+        # provider failure/``None`` result.
+        current = _current_stealth()
+        if current is None:
+            return (_resolved_stealth.rate_max_calls, _resolved_stealth.rate_period_seconds)
+        return (current.rate_max_calls, current.rate_period_seconds)
+
     rate_limiter = None
     if _resolved_stealth is not None:
         rate_limiter = PerBoardRateLimiter(
             max_calls=_resolved_stealth.rate_max_calls,
             period_seconds=_resolved_stealth.rate_period_seconds,
+            config_provider=_rate_config if stealth_provider is not None else None,
         )
 
     return JobSpySearxngDiscovery(

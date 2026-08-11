@@ -309,3 +309,24 @@ def test_egress_policy_carries_suppress_webrtc():
     assert p.mode == "residential-proxy"
     # default from_settings keeps suppression on.
     assert EgressPolicy.from_settings(mode="direct", proxy_url="").suppress_webrtc is True
+
+
+# --------------------------------------------------------------------------- #
+# Statelessness: the resolver is the foundation the adapters' "live provider"
+# pattern (JobSpySource._current_stealth / PatchrightBrowser._current_egress)
+# depends on — it must carry NO hidden caching between calls, so a provider
+# closure that calls it fresh on every fetch/open() genuinely observes the
+# latest saved prefs, not a stale first-call snapshot.
+# --------------------------------------------------------------------------- #
+
+
+def test_resolver_is_stateless_across_repeated_calls_with_different_prefs():
+    settings = _settings()
+    first = resolve_stealth_posture(settings, {}, {"per_source_proxy_policy": "always"})
+    second = resolve_stealth_posture(settings, {}, {"per_source_proxy_policy": "never"})
+    # The SAME settings object, two DIFFERENT persisted prefs -> two genuinely
+    # different resolved configs (no cached/frozen result leaking across calls).
+    assert first.stealth_config.block_prone_policy == PROXY_POLICY_RESIDENTIAL
+    assert first.stealth_config.residential_proxy_enabled is True
+    assert second.stealth_config.block_prone_policy == PROXY_POLICY_VPS
+    assert second.stealth_config.residential_proxy_enabled is False

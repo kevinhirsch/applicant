@@ -82,6 +82,8 @@ class PatchrightBrowser:
         use_real_browser: bool = False,
         egress: EgressPolicy | None = None,
         egress_provider: Callable[[], EgressPolicy] | None = None,
+        engine_provider: Callable[[], str] | None = None,
+        suppress_dns_leak_provider: Callable[[], bool] | None = None,
         rng: random.Random | None = None,
         profiles: ProfileStore | None = None,
         source_factory=None,
@@ -141,6 +143,16 @@ class PatchrightBrowser:
         # ST-5: DNS-leak suppression (BROWSER_SUPPRESS_DNS_LEAK) threaded into the
         # launch alongside WebRTC — again a browser concern, never a host change.
         self._suppress_dns_leak = bool(suppress_dns_leak)
+        # EPIC STEALTH (live re-read, gap-close): ``engine`` (the camoufox toggle)
+        # and ``suppress_dns_leak`` were captured ONCE here and never re-read, unlike
+        # ``egress``/``suppress_webrtc`` above — so a Settings > Stealth save could
+        # change the persisted posture but the boot-singleton browser kept launching
+        # with the STALE engine/DNS-leak flag until a restart. These optional
+        # providers mirror ``egress_provider`` exactly: ``None`` (tests/legacy) keeps
+        # the boot-latched value; when wired, ``_current_engine``/
+        # ``_current_suppress_dns_leak`` re-resolve at FLOW time (each ``open()``).
+        self._engine_provider = engine_provider
+        self._suppress_dns_leak_provider = suppress_dns_leak_provider
         self._use_real_browser = use_real_browser
         # ADR-0004: server-derived gate for automated account creation (default OFF).
         self._automated_accounts = bool(automated_accounts)
@@ -399,6 +411,39 @@ class PatchrightBrowser:
                 return bool(flag)
         return self._suppress_webrtc
 
+    def _current_engine(self) -> str:
+        """The browser engine in effect RIGHT NOW (live when a provider is wired).
+
+        Mirrors :meth:`_current_egress`: when an ``engine_provider`` was supplied,
+        re-resolve the effective ``camoufox``/``chromium`` choice at flow time so a
+        Settings > Stealth save governs the NEXT ``open()`` without a restart. A
+        provider that returns blank/raises degrades to the boot-latched ``self._engine``
+        so a transient store read never breaks an in-flight open().
+        """
+        if self._engine_provider is not None:
+            try:
+                fresh = self._engine_provider()
+            except Exception:  # pragma: no cover - defensive: never break a flow
+                fresh = None
+            if fresh:
+                return str(fresh).strip().lower()
+        return self._engine
+
+    def _current_suppress_dns_leak(self) -> bool:
+        """The effective DNS-leak-suppression flag (live via its own provider).
+
+        Mirrors :meth:`_current_suppress_webrtc`. ``None``/a raising provider
+        degrades to the boot-latched ``self._suppress_dns_leak``.
+        """
+        if self._suppress_dns_leak_provider is not None:
+            try:
+                fresh = self._suppress_dns_leak_provider()
+            except Exception:  # pragma: no cover - defensive: never break a flow
+                fresh = None
+            if fresh is not None:
+                return bool(fresh)
+        return self._suppress_dns_leak
+
     def _make_source(
         self,
         ats,
@@ -451,7 +496,9 @@ class PatchrightBrowser:
                 "user_data_dir": user_data_dir,
                 "channel": self._channel,
                 "persona": self._persona,
-                "engine": self._engine,
+                # Live re-read (gap-close): the engine choice governs a Settings >
+                # Stealth save without a restart, exactly like the egress above.
+                "engine": self._current_engine(),
             }
             # ST-3/ST-5: thread the WebRTC/DNS-leak suppression flags into the launch
             # init script — passed only when the driver signature accepts them, so an
@@ -460,7 +507,7 @@ class PatchrightBrowser:
                 PlaywrightPageSource,
                 kwargs,
                 suppress_webrtc=self._current_suppress_webrtc(),
-                suppress_dns_leak=self._suppress_dns_leak,
+                suppress_dns_leak=self._current_suppress_dns_leak(),
             )
             return PlaywrightPageSource(fingerprint, **kwargs)
         return FakePageSource(ats)

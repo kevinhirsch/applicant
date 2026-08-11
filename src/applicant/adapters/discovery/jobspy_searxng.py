@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import inspect
 import time as _time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -30,7 +31,7 @@ from applicant.adapters.discovery.clients import GreenhouseClient, LeverClient
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
-from applicant.core.stealth_policy import is_block_error
+from applicant.core.stealth_policy import StealthConfig, is_block_error
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -54,19 +55,48 @@ class PerBoardRateLimiter:
     Separate from the campaign-level/capacity-service LLM rate limiter.
     """
 
-    def __init__(self, max_calls: int = 5, period_seconds: float = 60.0) -> None:
+    def __init__(
+        self,
+        max_calls: int = 5,
+        period_seconds: float = 60.0,
+        *,
+        config_provider: Callable[[], tuple[int, float]] | None = None,
+    ) -> None:
         self._max_calls = max_calls
         self._period = period_seconds
+        # EPIC STEALTH (live re-read, gap-close): an optional callable re-resolving
+        # ``(max_calls, period_seconds)`` from the live Settings > Stealth posture —
+        # mirrors ``JobSpySource``'s ``stealth_provider``/``PatchrightBrowser``'s
+        # ``egress_provider`` — so a saved ``request_rate_per_min`` governs the NEXT
+        # ``admit()`` call without rebuilding the aggregator. ``None`` (every
+        # existing caller) keeps the boot-latched limits, byte-identical to before.
+        self._config_provider = config_provider
         self._buckets: dict[str, _Bucket] = {}
 
+    def _current_limits(self) -> tuple[int, float]:
+        """The ``(max_calls, period_seconds)`` in effect RIGHT NOW.
+
+        A provider failure (or no provider) degrades to the boot-latched limits so
+        a transient store read never breaks a scheduled discovery run.
+        """
+        if self._config_provider is not None:
+            try:
+                max_calls, period_seconds = self._config_provider()
+            except Exception:  # pragma: no cover - defensive: never break a run
+                max_calls, period_seconds = None, None
+            if max_calls and period_seconds:
+                return int(max_calls), float(period_seconds)
+        return self._max_calls, self._period
+
     def admit(self, key: str) -> bool:
+        max_calls, period = self._current_limits()
         now = _time.monotonic()
         b = self._buckets.get(key)
         if b is None:
-            self._buckets[key] = _Bucket(tokens=self._max_calls - 1, refill_at=now + self._period)
+            self._buckets[key] = _Bucket(tokens=max_calls - 1, refill_at=now + period)
             return True
         if now >= b.refill_at:
-            self._buckets[key] = _Bucket(tokens=self._max_calls - 1, refill_at=now + self._period)
+            self._buckets[key] = _Bucket(tokens=max_calls - 1, refill_at=now + period)
             return True
         if b.tokens > 0:
             self._buckets[key] = _Bucket(tokens=b.tokens - 1, refill_at=b.refill_at)
@@ -77,12 +107,13 @@ class PerBoardRateLimiter:
         self._buckets.pop(key, None)
 
     def remaining(self, key: str) -> int:
+        max_calls, period = self._current_limits()
         now = _time.monotonic()
         b = self._buckets.get(key)
         if b is None:
-            return self._max_calls
+            return max_calls
         if now >= b.refill_at:
-            return self._max_calls
+            return max_calls
         return b.tokens
 
 
@@ -381,6 +412,9 @@ class JobSpySource:
         results_wanted: int = 100,
         escalation_proxy: ProxyConfig | None = None,
         escalation_max_retries: int = 1,
+        stealth_provider: Callable[[], StealthConfig | None] | None = None,
+        sessid_provider: Callable[[], str | None] | None = None,
+        flow_sessid: str | None = None,
     ) -> None:
         self.site = site
         self.key = f"jobspy:{site}"
@@ -397,6 +431,84 @@ class JobSpySource:
         #: Set True on the fetch when a block-detect escalation actually fired, so a
         #: caller/test can observe that the residential exit was used.
         self.used_escalation = False
+        # EPIC STEALTH (live re-read, gap-close): ``proxy``/``escalation_proxy``/
+        # ``escalation_max_retries`` above are the value resolved ONCE at aggregator-
+        # build time (``factory.build_default_discovery``) — a Settings > Stealth
+        # save (per_source_proxy_policy / residential_enabled /
+        # residential_sticky_sessid / block_detect_threshold / block_detect_statuses)
+        # otherwise needs a restart before it governs this source. An optional
+        # ``stealth_provider`` mirrors ``PatchrightBrowser``'s ``egress_provider``: when
+        # wired, ``fetch()``/``_maybe_escalate`` re-resolve the effective
+        # ``StealthConfig`` (and, via ``sessid_provider``, the live sticky sessid) on
+        # EVERY call instead of trusting the frozen constructor args. ``None`` (every
+        # existing caller) keeps this byte-identical to before this fix.
+        self._stealth_provider = stealth_provider
+        self._sessid_provider = sessid_provider
+        self._flow_sessid = flow_sessid
+
+    def _current_stealth(self) -> StealthConfig | None:
+        """The stealth policy in effect RIGHT NOW (live when a provider is wired).
+
+        Mirrors ``PatchrightBrowser._current_egress``. A provider failure (or no
+        provider at all) returns ``None`` so callers fall back to the boot-latched
+        ``ProxyConfig``/retry count/default block classifier — a transient store
+        read must never break a scheduled discovery run.
+        """
+        if self._stealth_provider is None:
+            return None
+        try:
+            return self._stealth_provider()
+        except Exception:  # pragma: no cover - defensive: never break a fetch
+            return None
+
+    def _current_sessid(self) -> str | None:
+        """The sticky-session id in effect RIGHT NOW.
+
+        An operator-pinned ``residential_sticky_sessid`` saved AFTER boot wins
+        immediately; an empty/failed live read falls back to the STATIC per-boot
+        ``flow_sessid`` so a whole discovery run still shares one residential
+        identity even when nothing is pinned (rather than a fresh random id per
+        fetch, which would defeat sticky-session conservation).
+        """
+        if self._sessid_provider is not None:
+            try:
+                live = self._sessid_provider()
+            except Exception:  # pragma: no cover - defensive: never break a fetch
+                live = None
+            if live:
+                return live
+        return self._flow_sessid
+
+    def _current_proxy(self) -> ProxyConfig:
+        """The baseline egress ``ProxyConfig`` for this source RIGHT NOW."""
+        stealth = self._current_stealth()
+        if stealth is None:
+            return self._proxy
+        urls = stealth.proxy_urls_for(self.key, sessid=self._current_sessid())
+        return ProxyConfig(proxies=tuple(urls), enabled=bool(urls))
+
+    def _current_escalation(self) -> tuple[ProxyConfig | None, int]:
+        """The (escalation-pool ``ProxyConfig`` or ``None``, max retries) RIGHT NOW."""
+        stealth = self._current_stealth()
+        if stealth is None:
+            return self._escalation_proxy, self._escalation_max_retries
+        sessid = self._current_sessid()
+        pool = stealth.escalation_pool(sessid)
+        retries = max(1, stealth.block_max_retries)
+        if not pool:
+            return None, retries
+        baseline = stealth.proxy_urls_for(self.key, sessid=sessid)
+        if tuple(pool) == tuple(baseline):
+            # Already residential at baseline -- nothing to escalate to.
+            return None, retries
+        return ProxyConfig(proxies=tuple(pool), enabled=True), retries
+
+    def _current_is_block_error(self, exc: Exception) -> bool:
+        """Classify ``exc`` as a bot-block using the LIVE ``block_detect_statuses``."""
+        stealth = self._current_stealth()
+        if stealth is not None:
+            return stealth.is_block_error(exc)
+        return is_block_error(exc)
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         location = criteria.locations[0] if criteria.locations else None
@@ -418,7 +530,9 @@ class JobSpySource:
             search_term=_search_term(criteria),
             location=location,
             results_wanted=self._results_wanted,
-            proxies=self._proxy.as_list(),
+            # Live re-read (gap-close): resolves the LIVE stealth policy when a
+            # provider is wired, else the boot-latched ``self._proxy`` (unchanged).
+            proxies=self._current_proxy().as_list(),
         )
         # cf25c17be's freshness window applies to every fetch; US-remote scoping only
         # applies when we defaulted the location ourselves.
@@ -476,22 +590,28 @@ class JobSpySource:
         failed) so the caller runs its normal swallow-and-report path. A failed
         escalation records ``last_error`` from the RETRY (the residential attempt
         is the meaningful outcome once we've decided the direct exit is blocked).
+
+        Live re-read (gap-close): the escalation pool, the retry budget AND the
+        block-detect classification (``block_detect_statuses``) all resolve from
+        the LIVE stealth policy when a provider is wired, so a Settings > Stealth
+        save governs the very next block-detect decision without a restart.
         """
-        if self._escalation_proxy is None or not is_block_error(exc):
+        escalation_proxy, escalation_max_retries = self._current_escalation()
+        if escalation_proxy is None or not self._current_is_block_error(exc):
             return None
-        escalation_list = self._escalation_proxy.as_list()
+        escalation_list = escalation_proxy.as_list()
         if not escalation_list:
             return None
         retry_kwargs = dict(scrape_kwargs, proxies=escalation_list)
         last_retry_error: Exception | None = None
-        for attempt in range(self._escalation_max_retries):
+        for attempt in range(escalation_max_retries):
             try:
                 rows = self._client.scrape(**retry_kwargs)
             except Exception as retry_exc:  # residential exit also failed
                 last_retry_error = retry_exc
                 # Only keep retrying while it's still a block (a hard non-block
                 # failure won't be cured by another residential attempt).
-                if not is_block_error(retry_exc):
+                if not self._current_is_block_error(retry_exc):
                     break
                 continue
             self.used_escalation = True
@@ -508,7 +628,7 @@ class JobSpySource:
             "discovery_escalation_failed",
             source=self.key,
             error=str(last_retry_error),
-            attempts=self._escalation_max_retries,
+            attempts=escalation_max_retries,
         )
         return None
 
