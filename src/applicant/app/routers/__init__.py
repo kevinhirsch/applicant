@@ -27,6 +27,7 @@ from applicant.app.routers import (
     discovery_sources,
     documents,
     easy_apply,
+    explain,
     feedback,
     fonts,
     gallery,
@@ -83,6 +84,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(conversion.router)
     app.include_router(attributes.router)
     app.include_router(digest.router)
+    # EXPLAIN backend: per-posting weighted greens/reds score breakdown, read-only
+    # this round (no dedicated panel yet — reached via the a0 explain proxy).
+    app.include_router(explain.router)
     app.include_router(feedback.router)
     # EPIC REVIEW-UX (RUX-1/2/3): the Pending-Reviews decide/refine workflow. Gated
     # behind require_llm_configured internally (like feedback/digest), so its order
