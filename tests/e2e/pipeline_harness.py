@@ -237,9 +237,17 @@ def run_pipeline_to_stop_boundary() -> dict:
         )
         storage.commit()
 
-        # SCORE + DIGEST: the real DigestService scores every posting via the real
-        # ScoringService and assembles the digest (only viable rows survive).
-        delivered = digest.deliver(cid, criteria.get_criteria(cid))
+        # SCORE + DIGEST: DigestService._build_scored_pairs (2026-08-10
+        # PERF/DRAFT-UNBLOCK fix, commit 005c41a57) reads an already-persisted
+        # viability_score instead of scoring inline -- production scores the
+        # unscored backlog in AgentLoop's background tick, BEFORE any digest is
+        # built (see AgentLoop._discover_and_digest). Mirror that here against the
+        # SAME criteria-service-loaded criteria the loop itself would use, then
+        # the real DigestService assembles the digest (only viable rows survive).
+        scoring_criteria = criteria.get_criteria(cid)
+        for posting in storage.postings.list_for_campaign(cid):
+            scoring.score_viability(posting.id, scoring_criteria)
+        delivered = digest.deliver(cid, scoring_criteria)
         rows = delivered.get("payload", {}).get("rows", [])
         scores = {
             p.title: p.viability_score for p in storage.postings.list_for_campaign(cid)

@@ -174,11 +174,27 @@ def test_seeded_campaign_reaches_stop_boundary_with_human_review_and_no_autosubm
     match_pid = _seed_posting(
         storage, cid, title="Python Engineer", description="Build python fastapi services"
     )
-    _seed_posting(storage, cid, title="Warehouse Associate", description="Lift boxes in a depot")
+    off_pid = _seed_posting(
+        storage, cid, title="Warehouse Associate", description="Lift boxes in a depot"
+    )
     storage.commit()
 
-    # --- SCORE + DIGEST: delivering the digest over the UI endpoint runs the real
-    # scoring + digest build (FR-DIG-1/3/4). The digest is reachable HTTP surface. ---
+    # --- SCORE: DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+    # commit 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline — production scores the unscored backlog in AgentLoop's background tick,
+    # BEFORE any digest is built (see AgentLoop._discover_and_digest). This test drives
+    # the digest deliver endpoint directly (the loop.tick() below only runs the later
+    # pre-fill leg), so mirror that background step here against the SAME
+    # criteria-service-loaded criteria the loop itself would use. ---
+    criteria_service = CriteriaService(storage)
+    scoring_criteria = criteria_service.get_criteria(cid)
+    _prescore = ScoringService(storage, llm=None, embedding=LocalEmbedding())
+    for pid in (match_pid, off_pid):
+        _prescore.score_viability(pid, scoring_criteria)
+
+    # --- DIGEST: delivering the digest over the UI endpoint runs the real digest
+    # build (FR-DIG-1/3/4) over the now-scored postings. The digest is reachable
+    # HTTP surface. ---
     deliver = client.post(f"/api/digest/{cid_str}/deliver")
     assert deliver.status_code == 200, deliver.text
     body = deliver.json()
