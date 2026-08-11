@@ -325,6 +325,21 @@ _MODERATE_FIT_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 _STRONG_FIT_MULTIPLIER = 1.10
 _MODERATE_FIT_MULTIPLIER = 0.85
+#: REACH -- a title Kevin has NEVER held, at a LEVEL beyond his realistic reach:
+#: a Staff / Principal / Sr-Staff / Distinguished **Technical Program Manager**
+#: (big-tech leveling, no TPM title history + a hard degree bar). Demoted well
+#: BELOW the moderate stretch tier so these don't clutter the top of queue above
+#: his real Scrum Master / Coach / Delivery lane. Still VIABLE (the allowlist
+#: admitted it) -- just ranked as the reach it is. A PLAIN "Technical Program
+#: Manager" (no staff/principal level) stays in the moderate tier.
+_REACH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(staff|principal|sr\.?\s+staff|senior\s+staff|distinguished)\b[\s\w,./-]{0,30}"
+        r"\btechnical\s+program\s+manager\b",
+        re.IGNORECASE,
+    ),
+)
+_REACH_MULTIPLIER = 0.65
 
 
 def fit_to_profile_multiplier(title: str) -> RankingFactor:
@@ -335,6 +350,13 @@ def fit_to_profile_multiplier(title: str) -> RankingFactor:
     normally happen for an allowlisted posting, but never penalize an
     unrecognized shape)."""
     title = title or ""
+    for pattern in _REACH_PATTERNS:
+        if pattern.search(title):
+            return RankingFactor(
+                _REACH_MULTIPLIER,
+                "reach: Staff/Principal-level Technical Program Manager -- a title/level Kevin "
+                "has no history for; ranked well below his Scrum Master/Coach/delivery lane",
+            )
     for pattern in _STRONG_FIT_PATTERNS:
         if pattern.search(title):
             return RankingFactor(
