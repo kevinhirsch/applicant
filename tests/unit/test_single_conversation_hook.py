@@ -24,11 +24,28 @@ _HOOK = (
 
 @pytest.fixture(scope="module", autouse=True)
 def _hermetic_helpers_extension():
-    """Provide a stub ``helpers.extension.Extension`` if the framework is absent."""
-    if "helpers" in sys.modules or "helpers.extension" in sys.modules:
+    """Provide a stub ``helpers.extension.Extension`` if a real one isn't importable.
+
+    Several other test modules in this suite stub a bare ``helpers`` package into
+    ``sys.modules`` (for ``helpers.api``, e.g. ``test_az3_automation_proxy.py``)
+    via ``sys.modules.setdefault("helpers", ...)`` and never tear it down. Under
+    pytest-xdist that pollution can leak into this module's worker process,
+    leaving ``helpers`` present in ``sys.modules`` but without a working
+    ``.extension.Extension`` — so checking mere key presence (the previous
+    behavior here) wrongly skipped stub installation and broke the hook import.
+    Detect the "present but not usable" case explicitly, and always restore
+    whatever was there before us.
+    """
+    existing_ext = sys.modules.get("helpers.extension")
+    if existing_ext is not None and hasattr(existing_ext, "Extension"):
         yield
         return
-    pkg = types.ModuleType("helpers")
+
+    prior_pkg = sys.modules.get("helpers")
+    prior_ext = sys.modules.get("helpers.extension")
+    had_extension_attr = hasattr(prior_pkg, "extension") if prior_pkg is not None else False
+
+    pkg = prior_pkg if prior_pkg is not None else types.ModuleType("helpers")
     ext = types.ModuleType("helpers.extension")
 
     class Extension:
@@ -39,8 +56,20 @@ def _hermetic_helpers_extension():
     sys.modules["helpers"] = pkg
     sys.modules["helpers.extension"] = ext
     yield
-    sys.modules.pop("helpers.extension", None)
-    sys.modules.pop("helpers", None)
+
+    if prior_ext is not None:
+        sys.modules["helpers.extension"] = prior_ext
+    else:
+        sys.modules.pop("helpers.extension", None)
+    if prior_pkg is not None:
+        if not had_extension_attr:
+            try:
+                delattr(prior_pkg, "extension")
+            except AttributeError:
+                pass
+        sys.modules["helpers"] = prior_pkg
+    else:
+        sys.modules.pop("helpers", None)
 
 
 def _load_hook():

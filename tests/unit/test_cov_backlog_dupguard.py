@@ -67,7 +67,7 @@ def _wire(*, presubmit_safety_params: dict | None = None) -> tuple:
         scoring,
         presubmit_safety_params=presubmit_safety_params,
     )
-    return storage, digest
+    return storage, digest, scoring
 
 
 def _campaign(storage) -> CampaignId:
@@ -77,7 +77,7 @@ def _campaign(storage) -> CampaignId:
     return cid
 
 
-def _posting(storage, cid, **overrides) -> JobPosting:
+def _posting(storage, cid, scoring=None, **overrides) -> JobPosting:
     defaults = dict(
         id=JobPostingId(new_id()),
         campaign_id=cid,
@@ -94,6 +94,15 @@ def _posting(storage, cid, **overrides) -> JobPosting:
     posting = JobPosting(**defaults)
     storage.postings.add(posting)
     storage.commit()
+    if scoring is not None:
+        # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+        # commit 005c41a57) reads an already-persisted viability_score instead of
+        # scoring inline, so a posting must already carry one (mirroring what
+        # AgentLoop's background scoring tick does in production) before
+        # ``digest.build_digest``/``build_digest_payload`` will surface it as a
+        # row at all. See tests/unit/test_cov_backlog_presubmit_verdicts_preview.py
+        # (commit f7cca75cf) for the identical fix pattern.
+        scoring.score_viability(posting.id)
     return posting
 
 
@@ -124,9 +133,9 @@ def test_the_two_checks_still_only_run_from_agent_loop_process_approvals():
 
 
 def test_scam_signal_surfaces_as_a_digest_row_warning_without_excluding_the_row():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
-    posting = _posting(storage, cid, company="Confidential")  # placeholder company
+    posting = _posting(storage, cid, scoring, company="Confidential")  # placeholder company
     rows = digest.build_digest(cid)
     assert len(rows) == 1, "a warning must not exclude the row from the digest"
     row = rows[0]
@@ -137,20 +146,22 @@ def test_scam_signal_surfaces_as_a_digest_row_warning_without_excluding_the_row(
 
 
 def test_clean_posting_has_no_warnings():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
-    _posting(storage, cid)
+    _posting(storage, cid, scoring)
     rows = digest.build_digest(cid)
     assert len(rows) == 1
     assert rows[0]["warnings"] == []
 
 
 def test_duplicate_application_at_same_company_and_title_surfaces_as_a_warning():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
     # An already-submitted application to the same (company, title) 5 days ago —
     # inside the default 30-day cooldown.
-    old_posting = _posting(storage, cid, title="Senior Backend Engineer", company="Acme Corp")
+    old_posting = _posting(
+        storage, cid, scoring, title="Senior Backend Engineer", company="Acme Corp",
+    )
     old_app = Application(
         id=ApplicationId(new_id()),
         campaign_id=cid,
@@ -164,7 +175,7 @@ def test_duplicate_application_at_same_company_and_title_surfaces_as_a_warning()
     # A freshly-discovered, DIFFERENT posting (different id) for the same
     # (company, normalized-title) pair.
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="Senior Backend Engineer",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="Senior Backend Engineer",
         company="Acme Corp",
     )
     rows = digest.build_digest(cid)
@@ -180,9 +191,11 @@ def test_in_flight_application_does_not_count_toward_the_duplicate_warning():
     """Mirrors check_duplicate_application's own contract: only TERMINAL
     applications count toward the cooldown — an in-flight one is being worked on
     now, not a completed duplicate."""
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
-    old_posting = _posting(storage, cid, title="Senior Backend Engineer", company="Acme Corp")
+    old_posting = _posting(
+        storage, cid, scoring, title="Senior Backend Engineer", company="Acme Corp",
+    )
     in_flight = Application(
         id=ApplicationId(new_id()),
         campaign_id=cid,
@@ -193,7 +206,7 @@ def test_in_flight_application_does_not_count_toward_the_duplicate_warning():
     storage.applications.add(in_flight)
     storage.commit()
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="Senior Backend Engineer",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="Senior Backend Engineer",
         company="Acme Corp",
     )
     rows = digest.build_digest(cid)
@@ -205,9 +218,11 @@ def test_digest_warning_thresholds_are_threaded_from_the_same_settings_dict_agen
     """A digest-row warning must reflect the SAME operator-configured cooldown as
     the pipeline-start block, not a hardcoded default that can silently drift from
     a configured PRESUBMIT_DUPLICATE_COOLDOWN_DAYS."""
-    storage, digest = _wire(presubmit_safety_params={"duplicate_cooldown_days": 0})
+    storage, digest, scoring = _wire(presubmit_safety_params={"duplicate_cooldown_days": 0})
     cid = _campaign(storage)
-    old_posting = _posting(storage, cid, title="Senior Backend Engineer", company="Acme Corp")
+    old_posting = _posting(
+        storage, cid, scoring, title="Senior Backend Engineer", company="Acme Corp",
+    )
     old_app = Application(
         id=ApplicationId(new_id()),
         campaign_id=cid,
@@ -218,7 +233,7 @@ def test_digest_warning_thresholds_are_threaded_from_the_same_settings_dict_agen
     storage.applications.add(old_app)
     storage.commit()
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="Senior Backend Engineer",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="Senior Backend Engineer",
         company="Acme Corp",
     )
     rows = digest.build_digest(cid)
@@ -234,9 +249,9 @@ def test_build_digest_payload_carries_the_warnings_through_to_the_top_level_rows
     """build_digest_payload (what the HTTP GET /api/digest/{id} route — and thus
     the workspace proxy + applicantDigest.js — actually reads) must not drop the
     warnings field build_digest computed."""
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
-    _posting(storage, cid, company="undisclosed")
+    _posting(storage, cid, scoring, company="undisclosed")
     payload = digest.build_digest_payload(cid)
     assert payload["rows"][0]["warnings"], "warnings must survive into the digest payload"
 

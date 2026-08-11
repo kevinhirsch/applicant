@@ -280,6 +280,13 @@ def test_digest_approval_resolves_pending_action_by_posting_id():
         work_mode="remote",
         description="python",
         source_key="jobspy:indeed",
+        # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+        # commit 005c41a57) reads an already-persisted viability_score instead of
+        # scoring inline -- an unscored posting is skipped from the digest
+        # entirely, regardless of whether a scoring service is even wired (this
+        # test intentionally passes scoring=None). Mirror what the background
+        # scoring tick would have persisted so the row surfaces.
+        viability_score=1.0,
     )
     storage.postings.add(posting)
     storage.commit()

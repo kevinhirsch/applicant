@@ -25,16 +25,18 @@ def _wire():
     embedding = LocalEmbedding()
     scoring = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
     digest = DigestService(storage, AppriseNotifier(), scoring)
-    return storage, digest
+    return storage, digest, scoring
 
 
-def _seed(storage, *, with_posting=True):
+def _seed(storage, *, with_posting=True, scoring=None):
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
+    pid = None
     if with_posting:
+        pid = JobPostingId(new_id())
         storage.postings.add(
             JobPosting(
-                id=JobPostingId(new_id()),
+                id=pid,
                 campaign_id=cid,
                 title="Senior Python Engineer",
                 company="Acme",
@@ -45,14 +47,20 @@ def _seed(storage, *, with_posting=True):
             )
         )
     storage.commit()
+    if scoring is not None and pid is not None:
+        # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+        # commit 005c41a57) reads an already-persisted viability_score instead of
+        # scoring inline. Mirror AgentLoop's background scoring tick so this
+        # seeded posting actually surfaces as a digest row.
+        scoring.score_viability(pid)
     return cid
 
 
 def test_email_body_has_hidden_preheader_span():
     """A hidden preview-text span is present so the inbox list shows a real
     summary instead of raw markup (lens 10 #31)."""
-    storage, digest = _wire()
-    cid = _seed(storage)
+    storage, digest, scoring = _wire()
+    cid = _seed(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     html_ = digest.render_email(cid, crit)["html"]
     assert "display:none" in html_
@@ -65,8 +73,8 @@ def test_email_body_uses_inline_styles_not_bare_border_table():
     """The old ``<table border='1' cellpadding='6'>`` raw grid must be gone —
     replaced by inline ``style=`` attributes (mail clients strip <style> blocks
     and don't support flex/grid, so inline style= is the only robust option)."""
-    storage, digest = _wire()
-    cid = _seed(storage)
+    storage, digest, scoring = _wire()
+    cid = _seed(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     html_ = digest.render_email(cid, crit)["html"]
     assert "border='1'" not in html_
@@ -78,8 +86,8 @@ def test_email_body_uses_inline_styles_not_bare_border_table():
 
 def test_email_body_still_lists_title_company_and_link():
     """Restyling must not drop any of the per-row data the email carries."""
-    storage, digest = _wire()
-    cid = _seed(storage)
+    storage, digest, scoring = _wire()
+    cid = _seed(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     html_ = digest.render_email(cid, crit)["html"]
     assert "Senior Python Engineer" in html_
@@ -95,7 +103,7 @@ def test_email_body_still_lists_title_company_and_link():
 def test_empty_day_variant_preserved_with_preheader():
     """The empty-day note path (FR-DIG-6) still renders, now with its own
     preheader carrying the same note text."""
-    storage, digest = _wire()
+    storage, digest, _scoring = _wire()
     cid = _seed(storage, with_posting=False)
     email = digest.render_email(cid)
     html_ = email["html"]
@@ -110,8 +118,8 @@ def test_email_body_starts_with_preheader_then_branded_shell():
     """P1-4 polish: the hidden preheader leads the body (so inbox snippet logic
     reads it first), and the branded shell — "Applicant" masthead, heading,
     footer with the Settings pointer — wraps the card list."""
-    storage, digest = _wire()
-    cid = _seed(storage)
+    storage, digest, scoring = _wire()
+    cid = _seed(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     html_ = digest.render_email(cid, crit)["html"]
     assert html_.startswith("<span")  # the hidden preheader span comes first
@@ -121,7 +129,7 @@ def test_email_body_starts_with_preheader_then_branded_shell():
     assert "Settings" in html_ and "Notifications" in html_
     assert "Nothing is ever submitted" in html_
     # The empty-day path carries the same shell.
-    storage2, digest2 = _wire()
+    storage2, digest2, _scoring2 = _wire()
     cid2 = _seed(storage2, with_posting=False)
     empty_html = digest2.render_email(cid2)["html"]
     assert ">Applicant</span>" in empty_html

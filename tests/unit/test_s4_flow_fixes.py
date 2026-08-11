@@ -854,8 +854,18 @@ def test_build_digest_no_scoring_emits_numeric_zero_score():
     storage = InMemoryStorage()
     cid = _make_campaign(storage)
     pid = JobPostingId(new_id())
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) skips a posting with NO persisted score at all, before the
+    # no-scoring-service fallback below is ever reached -- give it a placeholder
+    # score (any non-None value, mirroring a posting scored by a PRIOR scoring
+    # pass) so this test can reach and pin that fallback: with no scoring SERVICE
+    # wired, the row's score is always coerced to a flat numeric 0.0 regardless of
+    # whatever was persisted.
     storage.postings.add(
-        JobPosting(id=pid, campaign_id=cid, title="R", company="A", source_url="http://x")
+        JobPosting(
+            id=pid, campaign_id=cid, title="R", company="A", source_url="http://x",
+            viability_score=0.5,
+        )
     )
     digest = DigestService(storage, _SpyNotifier(), scoring=None)
     rows = digest.build_digest(cid)

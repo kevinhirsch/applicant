@@ -140,7 +140,13 @@ class _NullNotifier:
         pass
 
 
-def _seed_posting(storage, cid, *, description) -> JobPosting:
+def _seed_posting(storage, cid, *, description, viability_score=0.9) -> JobPosting:
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline — an unscored posting is skipped from the digest entirely, before
+    # ``_ViableScoring.is_viable`` is ever consulted. These tests exercise the
+    # digest's keyword-coverage attachment directly, so the posting must already
+    # carry a score, mirroring what the background scoring tick would persist.
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
@@ -148,6 +154,7 @@ def _seed_posting(storage, cid, *, description) -> JobPosting:
         company="Acme",
         source_url="https://example.com/job",
         description=description,
+        viability_score=viability_score,
     )
     storage.postings.add(posting)
     storage.commit()

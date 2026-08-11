@@ -128,7 +128,13 @@ class TestNormalizeRowTagsPosting:
 # --- digest: the channel shows per role --------------------------------------
 
 
-def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1"):
+def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1", viability_score=1.0):
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline — a posting with no score is skipped from the digest entirely. These
+    # tests exercise the digest's easy-apply tagging/rendering directly (no
+    # ScoringService is wired here), so the posting must already carry a score,
+    # mirroring what the background scoring tick would have persisted.
     return JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
@@ -139,6 +145,7 @@ def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1"):
         description="python backend",
         source_key="jobspy:linkedin",
         easy_apply=easy_apply,
+        viability_score=viability_score,
     )
 
 

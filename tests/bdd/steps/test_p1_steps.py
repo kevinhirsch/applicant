@@ -95,11 +95,19 @@ def postings_have_source(p1ctx):
 def scored_postings(p1ctx, storage, discovery, embedding):
     cid = CampaignId(new_id())
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
-    DiscoveryService(storage, discovery, embedding).run_discovery(cid, crit)
+    postings = DiscoveryService(storage, discovery, embedding).run_discovery(cid, crit)
     p1ctx["campaign_id"] = cid
     p1ctx["criteria"] = crit
     p1ctx["storage"] = storage
-    p1ctx["scoring"] = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
+    scoring = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline -- the step name ("...have been scored") means each posting must
+    # actually carry a persisted score before the digest is built, mirroring
+    # AgentLoop's background scoring tick.
+    for posting in postings:
+        scoring.score_viability(posting.id, crit)
+    p1ctx["scoring"] = scoring
 
 
 @when("the daily digest is built")
@@ -132,10 +140,13 @@ def digest_empty(p1ctx):
 
 
 # --- scoring + feedback ----------------------------------------------------
-@given("the viability threshold defaults to seventy")
+@given("the viability threshold defaults to sixty")
 def threshold_default(p1ctx, storage, embedding):
+    # tune(engine) commit 95977c0a9 (2026-08-07) deliberately lowered the
+    # default 70->60 so the digest surfaces a fuller shortlist of solid-fit
+    # roles; this pins the CURRENT product default, not the literal number 70.
     p1ctx["scoring"] = ScoringService(storage, llm=None, embedding=embedding)
-    assert p1ctx["scoring"].threshold == DEFAULT_VIABILITY_THRESHOLD == 70
+    assert p1ctx["scoring"].threshold == DEFAULT_VIABILITY_THRESHOLD == 60
 
 
 @when("a posting is scored against matching criteria")

@@ -178,9 +178,16 @@ def test_digest_keeps_user_added_posting_below_threshold():
             return False  # everything is below threshold
 
     storage = InMemoryStorage()
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of calling
+    # LowScorer.score_posting inline. A user-added posting is never skipped for
+    # lack of a score, but the score IT RENDERS still comes from the persisted
+    # value -- so pin the same 0.10 LowScorer would have produced, mirroring what
+    # a background scoring pass would already have written.
     user_added = JobPosting(
         id="p-user", campaign_id="camp-d1", title="Dream Role", company="Acme",
         source_url="https://acme.example/jobs/dream", source_key=USER_ADDED_SOURCE_KEY,
+        viability_score=0.10,
     )
     discovered = JobPosting(
         id="p-disc", campaign_id="camp-d1", title="Other Role", company="Globex",
