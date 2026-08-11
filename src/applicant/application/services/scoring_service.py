@@ -703,7 +703,10 @@ class ScoringService:
             fit = RankingFactor(_pf[1], f"derived fit band: {_pf[0]} (candidate profile)")
         else:
             fit = fit_to_profile_multiplier(posting.title)
-        degree = degree_requirement_multiplier(posting.description or "")
+        degree = degree_requirement_multiplier(
+            posting.description or "",
+            candidate_has_degree=self._candidate_profile(posting.campaign_id).has_degree,
+        )
         source = source_reliability_multiplier(posting.source_key)
         ranking_multiplier = (
             recency.multiplier
