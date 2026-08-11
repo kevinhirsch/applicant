@@ -251,6 +251,21 @@ class TestReviewProxy:
         assert seen["method"] == "GET"
         assert seen["path"] == "/api/review/posting/post-42/snapshot"
 
+    def test_draft_forwards_to_posting_draft_with_campaign_body(self, mod):
+        # RUX-1 fix D: a digest/top-match row is a pre-application posting; "draft"
+        # forwards to the posting-keyed engine draft endpoint carrying campaign_id.
+        seen, fake = _capture(mod)
+        with patch.object(mod, "_forward", fake):
+            mod.dispatch({"action": "draft", "posting_id": "post-42", "campaign_id": "camp-1"})
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/review/posting/post-42/draft"
+        assert seen["body"] == {"campaign_id": "camp-1"}
+
+    def test_draft_requires_a_posting_id(self, mod):
+        r = mod.dispatch({"action": "draft", "campaign_id": "camp-1"})
+        assert r["ok"] is False and r["status"] == 400
+        assert "posting_id required" in r["error"]
+
     def test_prefill_hands_off_to_easy_apply_boundary(self, mod):
         # Fix D: the review-UX prefill handoff routes to the easy-apply boundary
         # surface. It fetches the assisted brief — it never fills or submits.

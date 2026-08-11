@@ -93,10 +93,21 @@ class TestDeepLinkWiredIntoContext:
         # window.__applicantReview (ctx) still wins when present (digest.html's
         # flow); the query-param value is the fallback for entry points that
         # never set that global (welcome-screen.html's review()).
+        #
+        # Bug fix (P1, 404 "no such application"): this used to also fall back to
+        # ctx.posting_id, silently handing a posting id off as an application id
+        # whenever ctx.application_id was absent (digest.html's flow, before its own
+        # fix, left application_id unset on every pre-application posting). That
+        # fallback is gone -- digest.html's Review button now always drafts a real
+        # application first, so ctx.application_id is always genuine here.
         assert re.search(
-            r"this\.rvApplicationId\s*=\s*ctx\.application_id\s*\|\|\s*ctx\.posting_id\s*\|\|\s*deep\.application_id\s*\|\|\s*\"\"",
+            r"this\.rvApplicationId\s*=\s*ctx\.application_id\s*\|\|\s*deep\.application_id\s*\|\|\s*\"\"",
             html,
         ), "rvApplicationId must fall back to the deep-linked application_id"
+        assert not re.search(
+            r"this\.rvApplicationId\s*=\s*ctx\.application_id\s*\|\|\s*ctx\.posting_id",
+            html,
+        ), "rvApplicationId must never fall back to ctx.posting_id (that 404s)"
 
     def test_campaign_id_falls_back_to_deep_link(self, html):
         assert re.search(

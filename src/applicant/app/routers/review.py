@@ -52,6 +52,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from applicant.app.deps import (
+    get_digest_service,
     get_feedback_service,
     get_material_service,
     get_pending_actions_service,
@@ -60,6 +61,7 @@ from applicant.app.deps import (
 )
 from applicant.core.entities.generated_document import DocumentType
 from applicant.core.entities.revision_session import RevisionStatus
+from applicant.core.errors import NotFound
 from applicant.core.rules.freshness import posting_freshness
 
 router = APIRouter(
@@ -73,6 +75,10 @@ SNAPSHOT_KEY = "snapshot"
 
 
 # --- request models --------------------------------------------------------
+class DraftIn(BaseModel):
+    campaign_id: str
+
+
 class SaveForLaterIn(BaseModel):
     campaign_id: str
     title: str | None = None
@@ -247,9 +253,68 @@ def _serialize_section(storage, doc) -> dict:
     }
 
 
+def _linked_variant(storage, application_id):
+    """The app's linked GENERATED résumé variant, or ``None`` (P1 résumé-in-review).
+
+    ``ResumeVariant`` is a distinct entity from ``GeneratedDocument`` — it lives in its
+    own table (``storage.resume_variants``), keyed off ``Application.resume_variant_id``
+    — so it was never among ``_generated_docs`` and never appeared in ``/sections``.
+    """
+    from applicant.core.ids import ApplicationId
+
+    aid = application_id if not isinstance(application_id, str) else ApplicationId(application_id)
+    app = storage.applications.get(aid)
+    variant_id = getattr(app, "resume_variant_id", None) if app is not None else None
+    if variant_id is None:
+        return None
+    return storage.resume_variants.get(variant_id)
+
+
+def _serialize_variant(variant) -> dict:
+    """The app's résumé VARIANT in the same ``{section_id,label,content,status}`` shape
+    ``_serialize_section`` uses (P1 fix — the résumé never appeared in "Generated
+    answers" even though Continue already silently approves it via ``approve_variant``).
+
+    A variant is file-rendered (``storage_path`` — LaTeX/docx), not a plain-text
+    ``content`` string, so there is no inline body to preview/edit the way a cover
+    letter or screening answer has. ``kind: "resume"`` + ``variant_id`` let the panel
+    (and ``regenerate_section`` below) treat it as reviewable — status/approved reflect
+    the SAME review gate Continue enforces — and regeneratable via the existing
+    kind-based résumé path, without inventing a fabricated body.
+    """
+    coverage = (variant.fit_scores or {}).get("coverage")
+    coverage_note = (
+        f"coverage vs this role: {round(coverage * 100)}%"
+        if isinstance(coverage, (int, float))
+        else "not yet scored against this role"
+    )
+    return {
+        "section_id": str(variant.id),
+        "document_id": str(variant.id),
+        "variant_id": str(variant.id),
+        "kind": "resume",
+        "label": "Résumé",
+        "content": (
+            f"Tailored résumé variant — {coverage_note}. Résumé variants are "
+            "file-rendered, so there is no inline text preview here — use "
+            "Regenerate for a fresh tailored draft."
+        ),
+        "status": "approved" if bool(getattr(variant, "approved", False)) else "pending",
+        "approved": bool(getattr(variant, "approved", False)),
+    }
+
+
 def _sections_payload(storage, application_id) -> list[dict]:
-    """Every engine-generated section of an app, in the panel's binding shape (RUX-3)."""
-    return [_serialize_section(storage, d) for d in _generated_docs(storage, application_id)]
+    """Every engine-generated section of an app, in the panel's binding shape (RUX-3).
+
+    P1 fix: also carries the app's linked GENERATED résumé variant (when one exists)
+    alongside the cover letter / screening-answer ``GeneratedDocument`` sections.
+    """
+    sections = [_serialize_section(storage, d) for d in _generated_docs(storage, application_id)]
+    variant = _linked_variant(storage, application_id)
+    if variant is not None:
+        sections.append(_serialize_variant(variant))
+    return sections
 
 
 def _snapshot_html(snapshot: dict) -> str:
@@ -386,6 +451,42 @@ def posting_snapshot(posting_id: str, storage=Depends(get_storage)) -> dict:
         "snapshot_available": True,
         "html": _snapshot_html(snapshot),
         **_freshness_fields(posting),
+    }
+
+
+@router.post("/posting/{posting_id}/draft", status_code=201)
+def draft_from_posting(
+    posting_id: str,
+    body: DraftIn,
+    digest=Depends(get_digest_service),
+) -> dict:
+    """Draft (or find) the application for a POSTING, keyed by posting id (RUX-1 fix D).
+
+    A digest/top-match row is a pre-application POSTING with no ``application_id`` yet
+    (0 of 98 digest rows carried one) — there is nothing to open by application id
+    until one exists. "Review" on such a row must draft the application FIRST, never
+    pass the posting id off as an application id (that 404s "no such application").
+
+    Routes through the EXISTING draft-this path — reuses ``DigestService.approve``
+    (the same gated path the chat ``draft_application`` tool and the landing page's
+    "Draft this" button already use): find-or-create the application for this posting
+    and advance it into the pursue/draft pipeline. Materials are tailored from there
+    but stay review-gated — this never submits anything and never auto-approves
+    generated materials (that stays the human's call through Continue). Idempotent: a
+    second draft of the same posting finds the application already created and
+    returns it unchanged (no duplicate).
+    """
+    from applicant.core.ids import JobPostingId
+
+    try:
+        decision = digest.approve(JobPostingId(posting_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "application_id": str(decision.application_id),
+        "posting_id": posting_id,
+        "campaign_id": body.campaign_id,
+        "drafted": True,
     }
 
 
@@ -529,14 +630,25 @@ def regenerate_section(
       document in place via the ``open_revision`` -> ``apply_turn`` revision loop, so
       the section keeps its id (the panel merges the result by ``section_id``) and the
       turn never approves. Returns the consistent singular ``{section:{...}}`` shape.
+      P1 fix: a ``section_id`` that is not a ``GeneratedDocument`` falls back to the
+      app's linked résumé VARIANT (now that it appears in ``/sections`` too) — a
+      variant isn't free-text revised in place (it's selected/forked), so this routes
+      to the SAME ``select_or_generate`` the explicit ``kind="resume"`` mode below uses,
+      scoped to the application's own posting.
     * **by ``kind`` + sources** (the explicit API / BDD path): generate a FRESH section
       (``generate_cover_letter`` / ``generate_screening_answer`` / ``select_or_generate``).
 
     Either way the material is stored UNAPPROVED (review-gated).
     """
-    from applicant.core.ids import ApplicationId, CampaignId, GeneratedDocumentId, JobPostingId
+    from applicant.core.ids import (
+        ApplicationId,
+        CampaignId,
+        GeneratedDocumentId,
+        JobPostingId,
+        ResumeVariantId,
+    )
 
-    _require_app(storage, application_id)
+    app = _require_app(storage, application_id)
     aid = ApplicationId(application_id)
     cid = CampaignId(body.campaign_id)
 
@@ -544,22 +656,40 @@ def regenerate_section(
     if body.section_id:
         did = GeneratedDocumentId(body.section_id)
         doc = storage.documents.get(did)
-        if doc is None:
+        if doc is not None:
+            instruction = (body.instruction or "").strip() or (
+                "Give this section a fresh take — reframe and tighten it while staying "
+                "strictly truthful."
+            )
+            # A free-text revision turn: re-drafts the content, never approves (the turn
+            # loop is review-gated), and keeps the document id stable. ``true_source`` is
+            # derived server-side by the service when omitted (fabrication guard still
+            # runs).
+            material.apply_turn(
+                did, "free_text", instruction, true_source=(body.true_source or None)
+            )
+            return {
+                "section": _serialize_section(storage, storage.documents.get(did)),
+                "regenerated": True,
+                "review_gated": True,
+            }
+        # Not a GeneratedDocument -- the app's linked résumé VARIANT, if it matches.
+        variant = storage.resume_variants.get(ResumeVariantId(body.section_id))
+        if variant is None:
             raise HTTPException(
                 status_code=404, detail=f"no such section {body.section_id}"
             )
-        instruction = (body.instruction or "").strip() or (
-            "Give this section a fresh take — reframe and tighten it while staying "
-            "strictly truthful."
-        )
-        # A free-text revision turn: re-drafts the content, never approves (the turn
-        # loop is review-gated), and keeps the document id stable. ``true_source`` is
-        # derived server-side by the service when omitted (fabrication guard still runs).
-        material.apply_turn(
-            did, "free_text", instruction, true_source=(body.true_source or None)
+        if app.posting_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="this application has no linked posting to tailor the résumé against",
+            )
+        jd_terms = [t for t in (variant.targeted_jd_signature or "").split(",") if t]
+        result = material.select_or_generate(
+            cid, app.posting_id, jd_terms, body.true_source or "", application_id=aid
         )
         return {
-            "section": _serialize_section(storage, storage.documents.get(did)),
+            "section": _serialize_variant(result.variant),
             "regenerated": True,
             "review_gated": True,
         }
@@ -776,11 +906,20 @@ def edit_section(
     edit is unreviewed), and the durable revision session is opened so the later
     view-before-approve gate is satisfied. Nothing is submitted.
     """
-    from applicant.core.ids import GeneratedDocumentId
+    from applicant.core.ids import GeneratedDocumentId, ResumeVariantId
 
     _require_app(storage, application_id)
     did = GeneratedDocumentId(body.section_id)
     if storage.documents.get(did) is None:
+        # P1 fix: the app's linked résumé VARIANT now appears in /sections too, but a
+        # variant is file-rendered (no plain-text ``content`` field) -- give an
+        # honest, actionable 422 instead of a bare 404 when it lands here (Regenerate
+        # is the equivalent action for a résumé; inline text edit isn't supported).
+        if storage.resume_variants.get(ResumeVariantId(body.section_id)) is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Résumé variants can't be inline-edited — use Regenerate instead.",
+            )
         raise HTTPException(status_code=404, detail=f"no such section {body.section_id}")
     updated = material.set_section_content(did, body.content)
     return {

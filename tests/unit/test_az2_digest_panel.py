@@ -79,3 +79,27 @@ class TestDigestPanel:
         assert 'callJsonApi("feedback",' in html
         assert 'action: "posting"' in html
         assert 'posting_id:' in html and 'sentiment:' in html
+
+    def test_review_never_passes_posting_id_as_application_id(self, html):
+        """Bug fix (P1, 404 "no such application"): /api/digest rows are
+        pre-application POSTINGS with no application_id (0 of 98 in prod). The old
+        `row.application_id || row.posting_id` fallback silently passed a posting id
+        off as an application id, 404ing the review surface on every un-drafted row.
+        """
+        assert "row.application_id || row.posting_id" not in html
+        assert "async openReview(row)" in html, "openReview must await the draft call"
+
+    def test_review_drafts_the_application_before_opening_when_undrafted(self, html):
+        """An un-drafted row (no application_id yet) must be DRAFTED first -- routed
+        through the review proxy's dedicated draft action -- before the review
+        surface is ever opened."""
+        assert 'action: "draft"' in html
+        assert "posting_id: postingId" in html
+        # The modal is opened with the RESOLVED application id, never the raw
+        # row/posting id.
+        assert "encodeURIComponent(applicationId)" in html
+        assert "encodeURIComponent(row.posting_id)" not in html
+
+    def test_review_surfaces_a_draft_failure_instead_of_opening_a_broken_modal(self, html):
+        assert "reviewError" in html
+        assert "reviewBusy" in html

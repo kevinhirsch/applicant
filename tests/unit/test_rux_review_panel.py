@@ -116,6 +116,26 @@ class TestPerSectionReview:
         assert 'status' in html
 
 
+class TestResumeVariantSection:
+    """P1 fix: the app's linked résumé VARIANT (a distinct entity from
+    GeneratedDocument — file-rendered, no plain-text ``content``) now appears in
+    ``rvSections`` alongside the cover letter / screening answers. It renders through
+    the SAME generic per-section card, but "Save edit" isn't offered for it (there is
+    no free-text body to inline-edit) while "Regenerate" stays available."""
+
+    def test_save_edit_hidden_for_resume_kind(self, html):
+        assert "section.kind !== 'resume'" in html
+
+    def test_textarea_disabled_for_resume_kind(self, html):
+        assert "section.kind === 'resume'" in html
+
+    def test_regenerate_still_available_for_every_kind(self, html):
+        # The Save-edit button carries the kind guard; the Regenerate button must
+        # NOT — it stays reachable for a résumé section.
+        assert "x-show=\"section.kind !== 'resume'\" @click=\"rvSaveSection(section)\"" in html
+        assert "x-show=\"section.kind !== 'resume'\" @click=\"rvRegenerateSection(section)\"" not in html
+
+
 class TestFreeformProfileFeedback:
     """RUX-5: per-app freeform feedback → global profile, transparent + reversible."""
 

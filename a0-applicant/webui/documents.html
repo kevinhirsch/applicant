@@ -142,7 +142,13 @@
           </div>
         </div>
 
-        <!-- RUX-3: per-section inline edit + regenerate; apply-across + regenerate-all -->
+        <!-- RUX-3: per-section inline edit + regenerate; apply-across + regenerate-all.
+             P1 fix: the app's linked résumé VARIANT is now included in rvSections
+             (kind: "resume") so it renders here too, alongside the cover letter /
+             screening answers -- Continue already silently approves it. A variant is
+             file-rendered (no plain-text content to inline-edit -- it's selected/
+             forked, not free-text revised), so its "Save edit" is hidden; Regenerate
+             still works (the engine routes a résumé section_id to select_or_generate). -->
         <div class="rv-section-label" style="margin:10px 0 4px">Generated answers</div>
         <div class="empty" x-show="rvSections.length === 0" style="padding:14px">Nothing drafted for this role yet.</div>
         <template x-for="section in rvSections" :key="section.section_id">
@@ -151,9 +157,9 @@
               <span x-text="section.label || section.kind || 'Section'"></span>
               <span class="rv-status" x-show="section.status" x-text="section.status"></span>
             </div>
-            <textarea class="rv-textarea" x-model="section.content" :disabled="rvSectionBusy[section.section_id]"></textarea>
+            <textarea class="rv-textarea" x-model="section.content" :disabled="rvSectionBusy[section.section_id] || section.kind === 'resume'"></textarea>
             <div class="rv-section-actions">
-              <button class="btn small" @click="rvSaveSection(section)" :disabled="rvSectionBusy[section.section_id]">💾 Save edit</button>
+              <button class="btn small" x-show="section.kind !== 'resume'" @click="rvSaveSection(section)" :disabled="rvSectionBusy[section.section_id]">💾 Save edit</button>
               <input type="text" x-model="rvSectionFeedback[section.section_id]" placeholder="Feedback for this section…" :disabled="rvSectionBusy[section.section_id]">
               <button class="btn small" @click="rvRegenerateSection(section)" :disabled="rvSectionBusy[section.section_id]">♻️ Regenerate this section</button>
             </div>
@@ -975,7 +981,12 @@
       const ctx = (window.__applicantReview && typeof window.__applicantReview === "object") ? window.__applicantReview : {};
       const deep = parseReviewDeepLink(this._rvModalPath());
       this.rvPostingId = ctx.posting_id || "";
-      this.rvApplicationId = ctx.application_id || ctx.posting_id || deep.application_id || "";
+      // Bug fix (P1, 404 "no such application"): this used to fall back to
+      // ctx.posting_id when application_id was absent, silently handing a posting id
+      // off as an application id (documents.html/digest.html's Review buttons now
+      // always draft a real application first, so a genuine ctx.application_id is
+      // always present here — this fallback only ever masked that upstream bug).
+      this.rvApplicationId = ctx.application_id || deep.application_id || "";
       this.rvCampaignId = ctx.campaign_id || deep.campaign_id || "__system__";
       this.rvTitle = ctx.title || "";
       this.rvCompany = ctx.company || "";

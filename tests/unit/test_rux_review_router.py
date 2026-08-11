@@ -12,6 +12,8 @@ bucket, FeedbackService negative learning) rather than re-implementing anything.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,6 +21,7 @@ from fastapi.testclient import TestClient
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.app.deps import (
+    get_digest_service,
     get_feedback_service,
     get_material_service,
     get_pending_actions_service,
@@ -26,15 +29,18 @@ from applicant.app.deps import (
     require_llm_configured,
 )
 from applicant.app.routers.review import router as review_router
+from applicant.application.services.digest_service import DigestService
 from applicant.application.services.material_service import MaterialService
 from applicant.application.services.pending_actions_service import PendingActionsService
 from applicant.core.entities.application import Application
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.job_posting import JobPosting
+from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
     JobPostingId,
+    ResumeVariantId,
     new_id,
 )
 from applicant.core.state_machine import ApplicationState
@@ -59,12 +65,13 @@ class SpyFeedback:
         return {"folded": True, "sentiment": sentiment}
 
 
-def _build(storage, material, pending, feedback) -> TestClient:
+def _build(storage, material, pending, feedback, digest) -> TestClient:
     app = FastAPI()
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_material_service] = lambda: material
     app.dependency_overrides[get_pending_actions_service] = lambda: pending
     app.dependency_overrides[get_feedback_service] = lambda: feedback
+    app.dependency_overrides[get_digest_service] = lambda: digest
     app.dependency_overrides[require_llm_configured] = lambda: None
     app.include_router(review_router)
     return TestClient(app)
@@ -92,8 +99,16 @@ def feedback() -> SpyFeedback:
 
 
 @pytest.fixture
-def client(storage, material, pending, feedback) -> TestClient:
-    return _build(storage, material, pending, feedback)
+def digest(storage) -> DigestService:
+    # notification=None: draft-from-posting only exercises approve()/_application_for()
+    # / _close_loop(), all of which are None-safe for the optional notification/
+    # pending/learning ports (best-effort side effects — see their docstrings).
+    return DigestService(storage, notification=None)
+
+
+@pytest.fixture
+def client(storage, material, pending, feedback, digest) -> TestClient:
+    return _build(storage, material, pending, feedback, digest)
 
 
 def _seed(storage, *, with_posting=True) -> tuple[CampaignId, Application, JobPosting | None]:
@@ -160,6 +175,74 @@ def test_rux1_snapshot_is_captured_once_and_stable(client, storage):
 @pytest.mark.unit
 def test_rux1_source_404_for_unknown_application(client):
     r = client.get(f"/api/review/{new_id()}/source")
+    assert r.status_code == 404
+
+
+def _seed_posting_only(storage) -> tuple[CampaignId, JobPosting]:
+    """A bare POSTING with no application drafted yet (the digest-row shape)."""
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="Search", active=True))
+    posting = JobPosting(
+        id=JobPostingId(new_id()),
+        campaign_id=cid,
+        title="Platform Engineer",
+        company="Globex",
+        source_url="https://boards.globex.example/jobs/7",
+        location="Remote",
+        work_mode="remote",
+        salary="$200k",
+        description="Own the platform.",
+    )
+    storage.postings.add(posting)
+    storage.commit()
+    return cid, posting
+
+
+# === RUX-1 fix D: draft-from-posting (digest/top-match "Review" 404 fix) ===
+@pytest.mark.unit
+def test_draft_from_posting_creates_a_real_application(client, storage):
+    cid, posting = _seed_posting_only(storage)
+    assert storage.applications.get_by_posting(cid, posting.id) is None  # nothing drafted yet
+
+    r = client.post(f"/api/review/posting/{posting.id}/draft", json={"campaign_id": str(cid)})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["drafted"] is True
+    assert body["posting_id"] == str(posting.id)
+    app_id = body["application_id"]
+    # A REAL, distinct application id -- never the posting id passed off as one
+    # (the exact defect: digest.html used to fall back to row.posting_id).
+    assert app_id and app_id != str(posting.id)
+
+    created = storage.applications.get(ApplicationId(app_id))
+    assert created is not None
+    assert str(created.posting_id) == str(posting.id)
+
+    # The freshly drafted application now opens through the review surface -- the
+    # very 404 ("no such application") this fix closes.
+    r2 = client.get(f"/api/review/{app_id}/source")
+    assert r2.status_code == 200
+
+
+@pytest.mark.unit
+def test_draft_from_posting_is_idempotent(client, storage):
+    cid, posting = _seed_posting_only(storage)
+    first = client.post(
+        f"/api/review/posting/{posting.id}/draft", json={"campaign_id": str(cid)}
+    ).json()
+    second = client.post(
+        f"/api/review/posting/{posting.id}/draft", json={"campaign_id": str(cid)}
+    ).json()
+    # A second "Review" click on the same un-drafted row must not create a duplicate
+    # application -- both resolve to the same real application id.
+    assert first["application_id"] == second["application_id"]
+
+
+@pytest.mark.unit
+def test_draft_from_posting_404_for_unknown_posting(client):
+    r = client.post(
+        f"/api/review/posting/{new_id()}/draft", json={"campaign_id": str(new_id())}
+    )
     assert r.status_code == 404
 
 
@@ -381,6 +464,121 @@ def test_rux3_sections_endpoint_empty_for_app_with_no_drafts(client, storage):
     r = client.get(f"/api/review/{app.id}/sections")
     assert r.status_code == 200
     assert r.json()["sections"] == []
+
+
+def _seed_with_variant(storage, *, approved=False, coverage=0.5):
+    """An application with a LINKED, GENERATED résumé variant (P1 résumé-in-review:
+    the résumé never appeared in /sections even though Continue silently approves it).
+    """
+    cid, app, posting = _seed(storage)
+    variant = ResumeVariant(
+        id=ResumeVariantId(new_id()),
+        campaign_id=cid,
+        storage_path="variants/test.tex",
+        targeted_jd_signature="Python,Kubernetes",
+        approved=approved,
+        fit_scores={"coverage": coverage},
+    )
+    storage.resume_variants.add(variant)
+    app = dataclasses.replace(app, resume_variant_id=variant.id)
+    storage.applications.add(app)
+    storage.commit()
+    return cid, app, posting, variant
+
+
+# === P1: résumé-variant-in-review (never appeared in /sections) ============
+@pytest.mark.unit
+def test_p1_resume_variant_appears_in_sections(client, storage):
+    _, app, _, variant = _seed_with_variant(storage, coverage=0.75)
+    r = client.get(f"/api/review/{app.id}/sections")
+    assert r.status_code == 200
+    sections = r.json()["sections"]
+    resume = next((s for s in sections if s["kind"] == "resume"), None)
+    assert resume is not None, "the linked résumé variant must appear in /sections"
+    assert resume["section_id"] == str(variant.id)
+    assert resume["variant_id"] == str(variant.id)
+    assert resume["label"] == "Résumé"
+    assert resume["status"] == "pending"
+    assert resume["approved"] is False
+    assert "75%" in resume["content"]
+
+
+@pytest.mark.unit
+def test_p1_resume_variant_status_reflects_approval(client, storage):
+    _, app, _, variant = _seed_with_variant(storage, approved=True)
+    resume = next(
+        s for s in client.get(f"/api/review/{app.id}/sections").json()["sections"]
+        if s["kind"] == "resume"
+    )
+    assert resume["status"] == "approved"
+    assert resume["approved"] is True
+
+
+@pytest.mark.unit
+def test_p1_resume_variant_alongside_cover_letter(client, storage, material):
+    cid, app, _, variant = _seed_with_variant(storage)
+    doc = material.generate_cover_letter(cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True)
+    assert doc is not None
+    sections = client.get(f"/api/review/{app.id}/sections").json()["sections"]
+    kinds = {s["kind"] for s in sections}
+    assert kinds == {"cover_letter", "resume"}
+
+
+@pytest.mark.unit
+def test_p1_resume_variant_omitted_when_app_has_none_linked(client, storage):
+    _, app, _ = _seed(storage)  # no resume_variant_id
+    sections = client.get(f"/api/review/{app.id}/sections").json()["sections"]
+    assert all(s["kind"] != "resume" for s in sections)
+
+
+@pytest.mark.unit
+def test_p1_continue_still_approves_the_resume_variant_shown_in_sections(client, storage):
+    # Regression guard: Continue already approves the linked variant (RUX-2) -- this
+    # fix only makes it VISIBLE beforehand; it must not change Continue's behavior.
+    _, app, _, variant = _seed_with_variant(storage)
+    r = client.post(f"/api/review/{app.id}/continue")
+    assert r.status_code == 200
+    assert r.json()["approved_variant"] == str(variant.id)
+    resume = next(
+        s for s in client.get(f"/api/review/{app.id}/sections").json()["sections"]
+        if s["kind"] == "resume"
+    )
+    assert resume["status"] == "approved"
+
+
+@pytest.mark.unit
+def test_p1_resume_variant_is_regeneratable_via_section_id(client, storage):
+    # "Regeneratable": the panel's generic per-section button sends section_id --
+    # the engine must route a résumé section_id to select_or_generate (a variant is
+    # selected/forked, not free-text revised in place).
+    cid, app, posting, variant = _seed_with_variant(storage)
+    r = client.post(
+        f"/api/review/{app.id}/regenerate/section",
+        json={
+            "campaign_id": str(cid),
+            "section_id": str(variant.id),
+            "true_source": "\\section{Skills}\nPython developer who built pipelines.\n",
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["regenerated"] is True
+    assert body["review_gated"] is True
+    assert body["section"]["kind"] == "resume"
+    assert body["section"]["approved"] is False  # freshly (re)generated -> unapproved
+
+
+@pytest.mark.unit
+def test_p1_resume_variant_edit_section_is_a_clear_422_not_a_404(client, storage):
+    # Inline text edit isn't a résumé concept (file-rendered, not free-text) -- this
+    # must be an honest, actionable error, not a confusing bare 404.
+    _, app, _, variant = _seed_with_variant(storage)
+    r = client.post(
+        f"/api/review/{app.id}/edit-section",
+        json={"section_id": str(variant.id), "content": "new text"},
+    )
+    assert r.status_code == 422
+    assert "Regenerate" in r.json()["detail"]
 
 
 @pytest.mark.unit

@@ -12,6 +12,7 @@ the engine's REST endpoints (the same pattern ``a0-applicant/api/digest.py`` use
   * ``snapshot``               -> GET  /api/review/{application_id}/source   (app-keyed html)
                                -> GET  /api/review/posting/{posting_id}/snapshot (posting-keyed)
   * ``sections``               -> GET  /api/review/{application_id}/sections (RUX-3 fix A)
+  * ``draft``                  -> POST /api/review/posting/{posting_id}/draft (RUX-1 fix D)
   * ``decide`` (continue)      -> POST /api/review/{application_id}/continue (RUX-2)
   * ``decide`` (save_for_later)-> POST /api/review/{application_id}/save-for-later
   * ``decide`` (discard)       -> POST /api/review/{application_id}/discard
@@ -135,6 +136,16 @@ def dispatch(input: dict) -> dict:
         if err:
             return err
         return _forward("GET", f"/api/review/{aid}/sections")
+
+    # ``draft`` -> RUX-1 fix D: a digest/top-match row is a pre-application POSTING
+    # with no application_id yet. Draft (or find) the real application for it FIRST
+    # -- never let a posting id get passed off as an application id (that 404s "no
+    # such application" on every downstream review call).
+    if action == "draft":
+        pid = str(inp.get("posting_id") or "").strip()
+        if not pid:
+            return {"ok": False, "status": 400, "error": "posting_id required"}
+        return _forward("POST", f"/api/review/posting/{pid}/draft", {"campaign_id": cid})
 
     # --- RUX-2: three-way decision — Continue / Save-for-later / Discard ---
     if action == "decide":

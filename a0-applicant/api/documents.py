@@ -71,6 +71,19 @@ def dispatch(input: dict) -> dict:
         document_id = (input or {}).get("document_id")
         if not document_id:
             return {"ok": False, "status": 400, "error": "document_id required"}
+        # P0 fix (0/581 docs ever approved in prod): MaterialService.approve() 409s
+        # unless a revision session is already OPEN for this document -- the "approve
+        # only after viewing" gate, enforced server-side in the engine. The
+        # Documents-panel "Approve" / "Apply Redline" buttons (approveRedlineViaDoc
+        # calls approveDocument -> this same action) never opened one first, so every
+        # approve from this panel 409'd. Mirror EXACTLY how the Review & Refine
+        # "Continue" path does it (review.py continue_review: open_revision then
+        # approve): open the review session first -- idempotent, a no-op if a session
+        # is already open -- THEN approve. A failure opening the session is returned
+        # as-is rather than masked behind a confusing approve 409.
+        opened = _forward("POST", f"/api/documents/{document_id}/review")
+        if not opened.get("ok"):
+            return opened
         return _forward("POST", f"/api/documents/{document_id}/approve")
 
     if action == "decline":

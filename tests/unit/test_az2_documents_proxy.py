@@ -76,6 +76,42 @@ class TestDocumentsProxy:
         assert seen["method"] == "POST"
         assert seen["path"] == "/api/documents/doc1/approve"
 
+    def test_approve_opens_the_review_session_before_approving(self, mod):
+        # P0 (0/581 docs ever approved in prod): MaterialService.approve() 409s
+        # unless a revision session is already OPEN for this document. The
+        # Documents-panel "Approve" button must open one first -- mirroring
+        # EXACTLY how the Review & Refine "Continue" path does it (open_revision
+        # then approve) -- so the approve call no longer 409s.
+        calls = []
+
+        def fake(method, path, body=None, timeout=10):
+            calls.append((method, path))
+            return {"ok": True, "status": 200 if path.endswith("/review") else 201, "data": {}}
+
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "approve", "document_id": "doc1"})
+        assert calls == [
+            ("POST", "/api/documents/doc1/review"),
+            ("POST", "/api/documents/doc1/approve"),
+        ]
+        assert r["ok"] is True
+
+    def test_approve_returns_the_open_review_failure_without_approving(self, mod):
+        # If opening the review session itself fails, surface that failure -- never
+        # mask it behind a confusing downstream approve 409, and never approve
+        # without the gate having actually been satisfied.
+        calls = []
+
+        def fake(method, path, body=None, timeout=10):
+            calls.append((method, path))
+            return {"ok": False, "status": 500, "error": "engine hiccup"}
+
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "approve", "document_id": "doc1"})
+        assert calls == [("POST", "/api/documents/doc1/review")]
+        assert r["ok"] is False
+        assert r["status"] == 500
+
     def test_decline_forwards_post(self, mod):
         seen = {}
 

@@ -194,6 +194,7 @@
                                                 <span class="badge" x-text="item.kindLabel"></span>
                                             </template>
                                         </div>
+                                        <div class="lp-error" x-show="g.error" x-text="g.error" style="padding:0.35rem 0.6rem;font-size:0.78rem"></div>
                                     </div>
                                     <div class="lp-review-actions">
                                         <button class="btn" type="button" @click="review(g)">Review</button>
@@ -1718,6 +1719,7 @@
                             postedStale: !!brief.posted_stale,
                             items: [],
                             busy: false,
+                            error: "",
                         });
                         // Already drafted (has material_review items) -> Top
                         // New Matches should not also offer to "draft this".
@@ -1763,6 +1765,30 @@
 
             async approve(g) {
                 g.busy = true;
+                g.error = "";
+                // Bug fix (P1): this used to ONLY resolve the pending-review card
+                // (pending_actions.resolved = true) -- it never touched the
+                // application's materials, so this "Approve" looked identical to
+                // dismissing the card while nothing was actually approved. Route
+                // through the SAME review-gate decision the Review & Refine modal's
+                // "Continue" button uses -- approving the application's generated
+                // materials (MaterialService.approve, via open_revision first) --
+                // BEFORE dismissing the card, so both "Approve" affordances have the
+                // same real effect. A materials-approval failure leaves the card in
+                // the queue rather than silently dismissing a failed approval.
+                if (g.applicationId) {
+                    const r = await callJsonApi("review", {
+                        action: "decide",
+                        application_id: g.applicationId,
+                        campaign_id: "__system__",
+                        decision: "continue",
+                    });
+                    if (!r || !r.ok) {
+                        g.busy = false;
+                        g.error = (r && r.error) || "Couldn't approve this role's materials.";
+                        return;
+                    }
+                }
                 await callJsonApi("pending", {
                     action: "resolve_bulk",
                     campaign_id: "__system__",

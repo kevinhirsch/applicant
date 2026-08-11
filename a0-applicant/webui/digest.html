@@ -102,9 +102,11 @@
         </div>
         <!-- RUX-2/3/5: open the Review modal (decide / refine / teach-profile). Modal
              panels can't read a path query string, so hand the posting context over on
-             a global right before openModal (see review.html header comment). -->
-        <button class="btn" @click="openReview(row)" :disabled="busy">Review</button>
+             a global right before openModal (see review.html header comment). An
+             un-drafted row (no application_id yet) is drafted first — see openReview(). -->
+        <button class="btn" @click="openReview(row)" :disabled="busy || reviewBusy[row.posting_id]" x-text="reviewBusy[row.posting_id] ? 'Starting…' : 'Review'"></button>
       </div>
+      <div class="feedback-err" x-show="reviewError[row.posting_id]" x-text="reviewError[row.posting_id]"></div>
     </div>
   </template>
 
@@ -135,6 +137,8 @@
     feedbackError: {},
     snapshotBusy: {},
     snapshotError: {},
+    reviewBusy: {},
+    reviewError: {},
 
     // RUX-1: only ever render a real http(s) URL as a live link (defense in depth —
     // the engine already sanitizes source_url, but never trust it into an href blind).
@@ -147,16 +151,41 @@
     // posting. Modal-loaded panels can't read the modal path's query string, so hand
     // the posting context over on a global right before openModal; the query param is
     // kept only for backward-compat / a full-page open.
-    openReview(row) {
+    //
+    // Bug fix (P1, 404 "no such application"): /api/digest rows are pre-application
+    // POSTINGS -- ``row.application_id`` is absent on essentially every row (0 of 98
+    // in prod). It used to fall back to ``row.posting_id`` as the application id,
+    // which the review surface then 404'd on. A posting must be DRAFTED into a real
+    // application first -- routed through the existing draft-this path (the "draft"
+    // review action, which mirrors the "Approve" button / chat's draft_application
+    // tool: tailors materials but stays review-gated, never auto-submits) -- and only
+    // the REAL resulting application_id is ever handed to the review surface.
+    async openReview(row) {
+      const postingId = row.posting_id;
+      let applicationId = row.application_id || "";
+      if (!applicationId) {
+        this.reviewBusy = { ...this.reviewBusy, [postingId]: true };
+        this.reviewError[postingId] = "";
+        const r = await callJsonApi("review", {
+          action: "draft", posting_id: postingId, campaign_id: this.campaignId,
+        });
+        this.reviewBusy = { ...this.reviewBusy, [postingId]: false };
+        applicationId = (r && r.ok && r.data && r.data.application_id) || "";
+        if (!applicationId) {
+          this.reviewError[postingId] = (r && r.error) || "Couldn't start a draft for this role.";
+          return;
+        }
+        row.application_id = applicationId;  // cache — a second click skips the draft call
+      }
       window.__applicantReview = {
-        posting_id: row.posting_id,
-        application_id: row.application_id || row.posting_id,
+        posting_id: postingId,
+        application_id: applicationId,
         campaign_id: this.campaignId,
         title: row.title,
         company: row.company,
         source_url: row.link || "",
       };
-      window.openModal('/plugins/applicant/webui/documents.html?application_id=' + encodeURIComponent(row.posting_id));
+      window.openModal('/plugins/applicant/webui/documents.html?application_id=' + encodeURIComponent(applicationId));
     },
 
     // RUX-1: cached-snapshot fallback for a pulled/unreachable listing. Reuses the
