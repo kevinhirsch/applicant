@@ -599,6 +599,10 @@ class TestCreateAll:
             "follow_ups",
             "portfolio_attachments",
             "screening_answer_library",
+            # Agent-memory durable substrate (FR-MIND-1/2/3, #286).
+            "memory_entries",
+            "skills",
+            "recall_entries",
         }
         actual = set(table_names)
         assert actual == expected_tables, (
