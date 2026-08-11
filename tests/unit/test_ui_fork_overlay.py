@@ -150,6 +150,84 @@ class TestBrandingSourceConsistency:
             )
 
 
+class TestModalTitleOverlay:
+    """B12 (docs/APPLICANT-BACKLOG.md): every Applicant panel modal title must be
+    derived via friendlyTitleFromPath(), never the raw component path. The fix
+    landed only in the DEAD reference copy (agent-zero/webui/js/modals.js) --
+    but the deployed a0 image is built FROM the pinned upstream base image and
+    only layers on a0-applicant/ + the a0-webui/ overlay (docker/Dockerfile.a0);
+    the vendored agent-zero/webui/ subtree ships nowhere. So the fix never
+    reached users until it is also placed at the overlay path apply-branding.sh
+    actually copies onto /a0/webui/ at image-build time: a0-webui/js/modals.js.
+
+    IMPORTANT (discovered while building this fix, verified live against the
+    running containers): agent-zero/webui/js/modals.js (the "dead copy") is
+    ITSELF STALE relative to the pinned base image in docker/Dockerfile.a0
+    (sha256:7f8bc5cc...) -- the real pinned image's modals.js is 578 lines
+    (session-restore via persistRestorableModalStack/focusModal, an
+    isModalOpen() export other framework JS extensions depend on, a different
+    backdrop/z-index scheme, ...) vs. the dead copy's 393 lines. A verified
+    live test proved this: hot-copying the dead copy verbatim onto a running
+    instance's /a0/webui/js/modals.js broke JS-extension loading with
+    "module does not provide an export named 'isModalOpen'". So the overlay
+    here is NOT a straight copy of the dead copy -- it is the REAL pinned
+    base's modals.js (pulled from a live container running that exact image
+    digest) with ONLY the same two B12 hunks cherry-picked on top (see
+    docs/vendor-sync/ui-fork-cherry-pick.md's cherry-pick workflow). This is
+    flagged for a maintainer to also refresh the dead copy itself (or accept
+    it stays a stale reference and rely on this overlay directly).
+    """
+
+    OVERLAY_MODALS = A0_WEBUI / "js" / "modals.js"
+    DEAD_COPY_MODALS = PROJECT_ROOT / "agent-zero" / "webui" / "js" / "modals.js"
+
+    def test_overlay_modals_js_exists(self):
+        assert self.OVERLAY_MODALS.is_file(), (
+            "a0-webui/js/modals.js missing -- without it the build ships the "
+            "pristine upstream modals.js (no B12 fix) onto /a0/webui/js/modals.js"
+        )
+
+    def test_overlay_has_friendly_title_helper(self):
+        content = self.OVERLAY_MODALS.read_text()
+        assert "export function friendlyTitleFromPath(path)" in content
+
+    def test_overlay_wires_fallback_through_friendly_title(self):
+        content = self.OVERLAY_MODALS.read_text()
+        assert "doc.title || friendlyTitleFromPath(modalPath)" in content
+        # Regression guard: must never regress to dumping the raw path.
+        assert "doc.title || modalPath;" not in content
+
+    def test_overlay_preserves_real_base_functionality_the_stale_dead_copy_lacks(self):
+        # Regression guard for the exact live break this fix uncovered: the
+        # overlay must be built on the REAL current base file, not the stale
+        # dead copy -- proven by still carrying functionality (isModalOpen,
+        # used by other framework JS extensions) the dead copy doesn't have.
+        content = self.OVERLAY_MODALS.read_text()
+        assert "export function isModalOpen(" in content, (
+            "a0-webui/js/modals.js must be built on the real pinned base "
+            "file (which exports isModalOpen), not the stale dead copy in "
+            "agent-zero/webui/js/modals.js -- copying the stale file verbatim "
+            "breaks JS-extension loading on a real running instance"
+        )
+
+    def test_dead_copy_is_a_known_stale_reference_not_a_deploy_source(self):
+        # Documents the drift so nobody "fixes" the overlay back into a
+        # byte-for-byte copy of the dead tree: the dead copy predates
+        # functionality (isModalOpen and friends) the currently pinned base
+        # image already has. It is fine as a place to read/port a semantic
+        # fix from; it is not safe to `cp` wholesale onto the overlay.
+        assert self.DEAD_COPY_MODALS.is_file(), (
+            f"reference copy missing at {self.DEAD_COPY_MODALS}"
+        )
+        dead_lines = self.DEAD_COPY_MODALS.read_text().count("\n")
+        overlay_lines = self.OVERLAY_MODALS.read_text().count("\n")
+        assert dead_lines < overlay_lines, (
+            "if the dead copy ever catches up to (or exceeds) the overlay's "
+            "line count, re-verify whether it is safe to sync them again -- "
+            "this assertion just documents the drift discovered 2026-08-10"
+        )
+
+
 class TestDockerfileBuildStep:
     """Deliverable 1b (build): Dockerfile.a0 must apply the overlay at image-build time."""
 
