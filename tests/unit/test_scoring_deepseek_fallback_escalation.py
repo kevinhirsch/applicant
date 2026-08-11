@@ -43,6 +43,7 @@ from applicant.application.services.scoring_service import ScoringService
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
 from applicant.ports.driven.llm import LLMResult
 
 
@@ -106,8 +107,10 @@ def _posting(cid: CampaignId) -> JobPosting:
         # plainly match an in-domain role family or it short-circuits
         # before the LLM is ever called, regardless of whether it also
         # names a KNOWN off-domain family. Use the same in-domain title the
-        # transient-retry/fallback-tier test suites rely on.
-        title="Senior Delivery Manager",
+        # transient-retry/fallback-tier test suites rely on. NOT "Senior"
+        # either -- round 3's seniority ranking multiplier would scale the
+        # exact scores this file pins.
+        title="Delivery Manager",
         company="Acme",
         description="Build Python services with Django and Postgres.",
     )
@@ -143,11 +146,12 @@ class TestLocalFailureEscalatesToDeepSeekFallback:
         svc = ScoringService(storage, llm, LocalEmbedding())
         scoring = svc.score_viability(posting.id, _criteria(cid))
 
+        expected = min(1.0, 0.88 * fit_to_profile_multiplier(posting.title).multiplier)
         assert llm.calls == [1, 2], "must try local first, then escalate to the fallback"
         assert scoring.degraded is False, "a real fallback score is NOT a degraded score"
-        assert scoring.score == pytest.approx(0.88)
+        assert scoring.score == pytest.approx(expected)
         stored = storage.postings.get(posting.id)
-        assert stored.viability_score == pytest.approx(0.88)
+        assert stored.viability_score == pytest.approx(expected)
 
     def test_local_reply_with_no_usable_score_also_escalates(self):
         """The gap generic HTTP-failure ladder-climbing can't see: tier 1
@@ -168,9 +172,10 @@ class TestLocalFailureEscalatesToDeepSeekFallback:
         svc = ScoringService(storage, llm, LocalEmbedding())
         scoring = svc.score_viability(posting.id, _criteria(cid))
 
+        expected = min(1.0, 0.75 * fit_to_profile_multiplier(posting.title).multiplier)
         assert llm.calls == [1, 2]
         assert scoring.degraded is False
-        assert scoring.score == pytest.approx(0.75)
+        assert scoring.score == pytest.approx(expected)
 
 
 @pytest.mark.unit
@@ -217,9 +222,10 @@ class TestLocalSuccessNeverCallsDeepSeek:
         svc = ScoringService(storage, llm, LocalEmbedding())
         scoring = svc.score_viability(posting.id, _criteria(cid))
 
+        expected = min(1.0, 0.85 * fit_to_profile_multiplier(posting.title).multiplier)
         assert llm.calls == [1], "cost guard: no fallback call when local succeeds"
         assert scoring.degraded is False
-        assert scoring.score == pytest.approx(0.85)
+        assert scoring.score == pytest.approx(expected)
 
 
 @pytest.mark.unit

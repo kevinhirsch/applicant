@@ -53,6 +53,14 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
 from applicant.core.rules.posting_quality import check_posting_quality
+from applicant.core.rules.ranking_factors import (
+    degree_requirement_multiplier,
+    fit_to_profile_multiplier,
+    pay_multiplier,
+    recency_multiplier,
+    safe_penalty_multiplier,
+    seniority_multiplier,
+)
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.ports.driven.llm import LLMResult
 
@@ -277,7 +285,21 @@ class TestEndToEndScoringServiceShortCircuit:
                 failures.append((row["id"], pct, scoring.rationale))
         assert not failures, f"IN_DOMAIN rows were gated/suppressed: {failures}"
         # The fake LLM always answers 90 -- proves the score reaching the
-        # caller IS the LLM's judgment, not a coincidentally-similar gate cap.
+        # caller IS the LLM's judgment (times the round-3/round-4
+        # deterministic RANKING multipliers -- e.g. the SAFe-flavored Scrum
+        # Master/Team Coach row is deliberately ranked below its LLM base
+        # score, per ranking_factors.safe_penalty_multiplier -- see
+        # tests/unit/test_ranking_factors.py for that layer's own coverage),
+        # not a coincidentally-similar gate cap.
         for row in self._in_domain_rows(fixture_rows):
-            scoring = svc.score_posting(_posting_from_row(row), criteria)
-            assert scoring.score == pytest.approx(0.90), row["id"]
+            posting = _posting_from_row(row)
+            scoring = svc.score_posting(posting, criteria)
+            expected_multiplier = (
+                recency_multiplier(posting.date_posted).multiplier
+                * safe_penalty_multiplier(posting.title, posting.description).multiplier
+                * pay_multiplier(posting.salary, posting.description).multiplier
+                * seniority_multiplier(posting.title).multiplier
+                * fit_to_profile_multiplier(posting.title).multiplier
+                * degree_requirement_multiplier(posting.description).multiplier
+            )
+            assert scoring.score == pytest.approx(0.90 * expected_multiplier, abs=1e-6), row["id"]

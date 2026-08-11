@@ -22,8 +22,8 @@
     "days_ago": 4,
     "work_mode": "remote",
     "location": "Remote, United States",
-    "label": "HIGH",
-    "note": "ROUND-3 WIDENING positive: Program Manager (bare, no agile qualifier needed) -- US-remote, fresh, well-paid, senior."
+    "label": "MODERATE",
+    "note": "ROUND-3 WIDENING positive: Program Manager (bare, no agile qualifier needed) -- US-remote, fresh, well-paid, senior. ROUND 4: Kevin has no PM/TPM title history, so this is MODERATE/stretch fit -- stays viable but ranks below the STRONG-fit (Scrum Master/Agile Coach/Delivery Manager/RTE) set at comparable freshness."
   },
   {
     "id": "high-remote-project-manager",
@@ -35,8 +35,8 @@
     "days_ago": 5,
     "work_mode": "remote",
     "location": "Remote - US",
-    "label": "HIGH",
-    "note": "ROUND-3 WIDENING positive: Project Manager."
+    "label": "MODERATE",
+    "note": "ROUND-3 WIDENING positive: Project Manager. ROUND 4: MODERATE/stretch fit -- no PM title history."
   },
   {
     "id": "high-remote-delivery-manager",
@@ -61,8 +61,8 @@
     "days_ago": 3,
     "work_mode": "remote",
     "location": "Remote, United States",
-    "label": "HIGH",
-    "note": "ROUND-3 WIDENING positive: Product Operations."
+    "label": "MODERATE",
+    "note": "ROUND-3 WIDENING positive: Product Operations. ROUND 4: MODERATE/stretch fit."
   },
   {
     "id": "high-remote-pmo-lead",
@@ -74,8 +74,8 @@
     "days_ago": 6,
     "work_mode": "remote",
     "location": "Remote, United States",
-    "label": "HIGH",
-    "note": "ROUND-3 WIDENING positive: PMO."
+    "label": "MODERATE",
+    "note": "ROUND-3 WIDENING positive: PMO. ROUND 4: MODERATE/stretch fit."
   },
   {
     "id": "low-safe-rte-kevin-reported-case",
@@ -167,5 +167,57 @@
     "location": "Remote, United States",
     "label": "LOW",
     "note": "WRONG FIELD regression case: fresh, US-remote, extremely well-paid -- but off-domain (IC software engineering), so the role-domain-fit allowlist must cap it low regardless of every ranking factor being favorable."
+  },
+  {
+    "id": "round4-fit-pair-strong-scrum-master",
+    "title": "Senior Scrum Master",
+    "company": "BigTech Co (synthetic fixture -- not a real employer)",
+    "source_url": "https://boards.greenhouse.io/acmefixture/jobs/4000014",
+    "description": "Facilitate Scrum ceremonies for a cross-functional delivery team at a large technology company, framework-agnostic. Fully remote, United States.",
+    "salary": "$140,000 - $150,000",
+    "days_ago": 3,
+    "work_mode": "remote",
+    "location": "Remote, United States",
+    "label": "HIGH",
+    "note": "ROUND 4 FIT-TIER PAIR (positive): Scrum Master is Kevin's EXACT title history -- STRONG fit. Deliberately matched in freshness/pay/company-flavor to round4-fit-pair-moderate-tpm below for a direct, apples-to-apples 'Scrum Master must outrank an equally-fresh big-tech TPM' comparison."
+  },
+  {
+    "id": "round4-fit-pair-moderate-tpm",
+    "title": "Senior Technical Program Manager",
+    "company": "BigTech Co (synthetic fixture -- not a real employer)",
+    "source_url": "https://boards.greenhouse.io/acmefixture/jobs/4000015",
+    "description": "Drive cross-functional technical programs at a large technology company, coordinating engineering, product, and design stakeholders. Fully remote, United States.",
+    "salary": "$140,000 - $150,000",
+    "days_ago": 3,
+    "work_mode": "remote",
+    "location": "Remote, United States",
+    "label": "MODERATE",
+    "note": "ROUND 4 FIT-TIER PAIR (comparison): identical freshness/pay/seniority/company-flavor to round4-fit-pair-strong-scrum-master above, but Kevin has NO TPM title history -- MODERATE/stretch fit. Must rank strictly below the paired Scrum Master despite being otherwise identical. Still fully VIABLE on its own (round-3 allowlist widening intact)."
+  },
+  {
+    "id": "round4-degree-pair-no-requirement",
+    "title": "Scrum Master",
+    "company": "Acme (synthetic fixture -- not a real employer)",
+    "source_url": "https://boards.greenhouse.io/acmefixture/jobs/4000016",
+    "description": "Facilitate Scrum ceremonies for a cross-functional delivery team, framework-agnostic. 10+ years of relevant Agile delivery experience preferred. Fully remote, United States.",
+    "salary": "$130,000 - $145,000",
+    "days_ago": 3,
+    "work_mode": "remote",
+    "location": "Remote, United States",
+    "label": "HIGH",
+    "note": "ROUND 4 DEGREE-SIGNAL PAIR (baseline, no hard degree requirement): identical to round4-degree-pair-hard-requirement below except the description has no degree language at all. Kevin has no bachelor's degree."
+  },
+  {
+    "id": "round4-degree-pair-hard-requirement",
+    "title": "Scrum Master",
+    "company": "Acme (synthetic fixture -- not a real employer)",
+    "source_url": "https://boards.greenhouse.io/acmefixture/jobs/4000017",
+    "description": "Facilitate Scrum ceremonies for a cross-functional delivery team, framework-agnostic. Bachelor's degree required. Fully remote, United States.",
+    "salary": "$130,000 - $145,000",
+    "days_ago": 3,
+    "work_mode": "remote",
+    "location": "Remote, United States",
+    "label": "MODERATE",
+    "note": "ROUND 4 DEGREE-SIGNAL PAIR (hard requirement): identical to round4-degree-pair-no-requirement above except the description hard-requires a Bachelor's degree Kevin does not have. Must rank strictly below the no-requirement pair despite an otherwise-identical, still-strong-fit Scrum Master title. Still fully VIABLE on its own."
   }
 ]

@@ -264,3 +264,110 @@ class TestRankingFactorAndRemoteVerdictDataclasses:
         v = RemoteVerdict(True, "confirmed")
         assert v.is_us_remote is True
         assert v.reason == "confirmed"
+
+
+@pytest.mark.unit
+class TestFitToProfileMultiplier:
+    """Round 4: rank Kevin's EXACT title/cert history above the round-3
+    STRETCH families -- both stay viable, only ranking changes."""
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Scrum Master",
+            "Senior Scrum Master",
+            "Lead Scrum Master",
+            "Agile Coach",
+            "Agile Team Coach",
+            "Enterprise Agile Coach",
+            "Scrum Coach",
+            "Kanban Coach",
+            "Delivery Manager",
+            "Agile Delivery Manager",
+            "Agile Delivery Lead",
+            "Iteration Manager",
+            "Release Train Engineer",
+            "Agile Transformation Lead",
+            "Ways of Working Lead",
+        ],
+    )
+    def test_strong_fit_titles_are_boosted(self, title: str) -> None:
+        f = fit_to_profile_multiplier(title)
+        assert f.multiplier > 1.0, title
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Technical Program Manager",
+            "TPM",
+            "Program Manager",
+            "Senior Program Manager",
+            "Project Manager",
+            "PMO Lead",
+            "Product Operations Manager",
+            "Delivery Operations Manager",
+            "Chief of Staff",
+            "Operations Manager",
+        ],
+    )
+    def test_moderate_fit_titles_are_penalized_relative_to_strong(self, title: str) -> None:
+        f = fit_to_profile_multiplier(title)
+        assert f.multiplier < 1.0, title
+
+    def test_strong_fit_outranks_moderate_fit_directly(self) -> None:
+        strong = fit_to_profile_multiplier("Scrum Master")
+        moderate = fit_to_profile_multiplier("Technical Program Manager")
+        assert strong.multiplier > moderate.multiplier
+
+    def test_unrecognized_title_is_neutral(self) -> None:
+        f = fit_to_profile_multiplier("Warehouse Associate")
+        assert f.multiplier == pytest.approx(1.0)
+
+    def test_strong_signal_wins_when_title_names_both_tiers(self) -> None:
+        # A TPM title that ALSO explicitly says "Agile Delivery" is closer
+        # to Kevin's real background than a generic TPM -- strong wins.
+        f = fit_to_profile_multiplier("Technical Program Manager, Agile Delivery & Release Management")
+        assert f.multiplier == pytest.approx(1.10)
+
+
+@pytest.mark.unit
+class TestDegreeRequirementMultiplier:
+    """Round 4: Kevin has no bachelor's degree (homeschool HS + certs)."""
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Bachelor's degree required in a related field.",
+            "Bachelor degree is required.",
+            "Must have a Bachelor's degree.",
+            "Minimum a Bachelor's degree in Computer Science.",
+            "BS in Computer Science required.",
+            "Requires a Bachelor's degree or higher.",
+        ],
+    )
+    def test_hard_required_degree_is_penalized(self, description: str) -> None:
+        f = degree_requirement_multiplier(description)
+        assert f.multiplier < 1.0, description
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Bachelor's degree preferred but not required.",
+            "Bachelor's degree or equivalent experience required.",
+            "A degree is a plus but not necessary.",
+            "10+ years of relevant experience required; no specific degree required.",
+        ],
+    )
+    def test_soft_or_escaped_degree_language_is_neutral(self, description: str) -> None:
+        f = degree_requirement_multiplier(description)
+        assert f.multiplier == pytest.approx(1.0), description
+
+    def test_no_degree_mention_at_all_is_neutral(self) -> None:
+        f = degree_requirement_multiplier("We are seeking an experienced Scrum Master.")
+        assert f.multiplier == pytest.approx(1.0)
+
+    def test_empty_description_is_neutral(self) -> None:
+        f = degree_requirement_multiplier("")
+        assert f.multiplier == pytest.approx(1.0)
+        f2 = degree_requirement_multiplier(None)  # type: ignore[arg-type]
+        assert f2.multiplier == pytest.approx(1.0)

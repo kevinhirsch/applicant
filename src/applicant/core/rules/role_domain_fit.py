@@ -22,34 +22,54 @@ profile — a growing denylist will always be one unseen title behind it.
 
 **This module is therefore an ALLOWLIST, not a denylist.** A posting can
 reach a viable score ONLY if its title plainly names one of Kevin's target
-agile-delivery role families. Every other title — whether it plainly names a
-KNOWN off-domain family (kept, for a more specific/legible rejection reason)
-or is simply unrecognized — is capped. The LLM never sees a title this gate
-didn't allow through, and never gets a chance to lift one back up; it only
-ever RANKS among postings the allowlist already let through (including the
-LeSS > SAFe taste preference, unchanged).
+role families. Every other title — whether it plainly names a KNOWN
+off-domain family (kept, for a more specific/legible rejection reason) or is
+simply unrecognized — is capped. The LLM never sees a title this gate didn't
+allow through, and never gets a chance to lift one back up; it only ever
+RANKS among postings the allowlist already let through — both the LeSS >
+SAFe taste preference, and (round 3) the deterministic ranking factors in
+:mod:`applicant.core.rules.ranking_factors` (recency/pay/seniority/SAFe
+penalty + the US-remote hard gate), which rank WITHIN this allowlisted set.
+
+ROUND 3 WIDENING: Kevin is burnt out and now open to ANY fully-remote role
+he can credibly do — not just agile-delivery-core titles. The allowlist
+widened accordingly to also admit Program/Project Manager (bare — no longer
+requires agile context, unlike the round-2 design), PMO, Portfolio/Program
+Delivery Manager, and Delivery/Product/Program Operations, PLUS a
+conditional bucket (Chief of Staff, Operations Manager/Lead, Business
+Operations Lead) that requires delivery/program/agile CONTEXT in the title
+or description, since those titles are too generic to admit unconditionally.
+The denylist also grew two categories explicitly still out of scope: medical/
+clinical and the skilled trades. US-remote-ness is now enforced entirely by
+``ranking_factors.classify_remote`` as a SEPARATE hard gate in
+``ScoringService`` — this module answers ONLY "is the role family right",
+never location.
 
 Given a posting's title (primary signal) and description (fallback, used
-only for the bare-"Program Manager" context check), :func:`classify_role_domain`
+for the CONDITIONAL bucket's context check), :func:`classify_role_domain`
 returns a tri-state verdict:
 
 * **IN_DOMAIN** (``in_domain=True``) — the title plainly names a target role
-  family (see :data:`_IN_DOMAIN_PATTERNS` / the bare-Program-Manager-with-
-  context case). The caller lets the LLM/embedding fit score proceed
+  family (:data:`_IN_DOMAIN_PATTERNS`, unconditional) or a conditional one
+  WITH context present (:data:`_CONDITIONAL_IN_DOMAIN_PATTERNS`). The caller
+  lets the LLM/embedding fit score (then the ranking factors) proceed
   normally — this gate never lifts or boosts a score, it only ever prevents
   one.
 * **OUT_OF_DOMAIN** (``in_domain=False``) — the title plainly names a KNOWN
   off-domain family (IC/engineering-management software roles, product
-  management/design, data science, sales, legal, finance, marketing, video
-  editing, research). Kept as its own bucket purely for a more specific
-  rejection ``reason`` string; gated identically to UNCLASSIFIED below.
-* **UNCLASSIFIED** (``in_domain=None``) — neither list matches. Under the
-  OLD denylist posture this fell through to the LLM; under the CURRENT
+  management/design, data science, sales/partnerships, legal, finance,
+  marketing, research, medical/clinical, trades). Kept as its own bucket
+  purely for a more specific rejection ``reason`` string; gated identically
+  to UNCLASSIFIED below.
+* **UNCLASSIFIED** (``in_domain=None``) — neither list matches, OR a
+  conditional title matched but no context was found. Under the OLD
+  denylist posture this fell through to the LLM; under the CURRENT
   allowlist posture it is gated exactly like OUT_OF_DOMAIN — see
   :func:`is_allowlisted`, the single source of truth callers must use.
 
-Precedence: IN_DOMAIN is checked before OUT_OF_DOMAIN, so a title carrying
-both signals (e.g. "generic Engineering Manager" is out-of-domain per the
+Precedence: IN_DOMAIN (unconditional) is checked before the CONDITIONAL
+bucket, which is checked before OUT_OF_DOMAIN, so a title carrying multiple
+signals (e.g. "generic Engineering Manager" is out-of-domain per the
 taxonomy, but "Engineering Manager, Agile Delivery" also contains the
 in-domain phrase "Agile Delivery") resolves IN_DOMAIN — this mirrors the
 product requirement that a generic Engineering Manager title is only
@@ -89,18 +109,37 @@ _IN_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Team Coach (SAFe SM/TC)", re.compile(r"\bteam\s+coach\b", re.IGNORECASE)),
     ("Agile Transformation", re.compile(r"\bagile\s+transformation\b", re.IGNORECASE)),
     ("Ways of Working", re.compile(r"\bways\s+of\s+working\b", re.IGNORECASE)),
+    # === ROUND 3 WIDENING: Program/Project management, admitted UNCONDITIONALLY
+    # now (no longer requires agile/delivery context — Kevin is open to any
+    # fully-remote role he can credibly do, and generic program/project
+    # management is squarely in that range). "Portfolio Manager" is
+    # DELIBERATELY not matched bare — it collides with a common FINANCE/
+    # investment-management title; only the unambiguous compound "Program/
+    # Portfolio Delivery Manager" phrasing is covered, via the "Delivery
+    # Manager" pattern above.
+    ("Program Manager", re.compile(r"\bprogram\s+managers?\b", re.IGNORECASE)),
+    ("Project Manager", re.compile(r"\bproject\s+managers?\b", re.IGNORECASE)),
+    ("PMO", re.compile(r"\bpmo\b", re.IGNORECASE)),
+    (
+        "Delivery/Product/Program Operations",
+        re.compile(r"\b(delivery|product|program)\s+operations\b", re.IGNORECASE),
+    ),
 )
 
-#: A bare "Program Manager" (no Technical/Agile qualifier — those are matched
-#: unconditionally above) is only IN_DOMAIN when agile/delivery CONTEXT is
-#: present somewhere in the title or description — see module docstring.
-#: "Program Manager, Robotics" or "Program Manager, Supply Chain" alone must
-#: NOT be swept into scope just for containing the words "program manager".
-_BARE_PROGRAM_MANAGER_RE = re.compile(r"\bprogram\s+manager\b", re.IGNORECASE)
-_AGILE_DELIVERY_CONTEXT_RE = re.compile(
+#: ROUND 3 WIDENING: titles too generic to admit unconditionally, but
+#: plausibly in-domain when the title OR description shows real
+#: delivery/program/agile substance. "Business Operations Lead"/"Business
+#: Operations Manager" are covered by the same "Operations (Manager|Lead)"
+#: pattern (substring match), no separate entry needed.
+_CONDITIONAL_IN_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("Chief of Staff", re.compile(r"\bchief\s+of\s+staff\b", re.IGNORECASE)),
+    ("Operations Manager / Lead", re.compile(r"\boperations\s+(manager|lead)s?\b", re.IGNORECASE)),
+)
+_DELIVERY_PROGRAM_CONTEXT_RE = re.compile(
     r"\bagile\b|\bscrum\b|\bkanban\b|\bscaled\s+agile\b|\brelease\s+train\b|"
     r"\bpi\s+planning\b|\bagile\s+transformation\b|\bsafe\s+rte\b|"
-    r"\bsafe\s+scrum\s+master\b",
+    r"\bsafe\s+scrum\s+master\b|\bdelivery\b|\bprogram\s+management\b|"
+    r"\bpmo\b|\bportfolio\b|\bcross-functional\s+program\b|\bproduct\s+operations\b",
     re.IGNORECASE,
 )
 
@@ -160,6 +199,23 @@ _OUT_OF_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    # === ROUND 3 WIDENING: two more categories explicitly still out of scope.
+    (
+        "Medical / Clinical",
+        re.compile(
+            r"\bnurse\b|\bnursing\b|\bphysician\b|\bclinical\b|\btherapist\b|"
+            r"\bpharmacist\b|\bdietitian\b|\bmedical\s+(director|assistant|officer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Trades",
+        re.compile(
+            r"\belectrician\b|\bplumber\b|\bcarpenter\b|\bwelder\b|\bhvac\b|"
+            r"\bmechanic\b|\bmachinist\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
 
@@ -184,15 +240,16 @@ class RoleDomainVerdict:
 
 def classify_role_domain(title: str, description: str = "") -> RoleDomainVerdict:
     """Classify ``title`` (primary) + ``description`` (fallback context)
-    against Kevin's agile-delivery-leader target profile.
+    against Kevin's target profile.
 
     Pure, deterministic, no IO. Checks the title first; the description is
-    consulted only for the narrow "bare Program Manager needs agile/delivery
-    context" case (module docstring) since the taxonomy's other categories
-    are all unambiguous from the title alone in practice. Precedence:
-    IN_DOMAIN patterns are checked before OUT_OF_DOMAIN ones, so a title
-    that plainly names both (e.g. "Engineering Manager, Agile Delivery")
-    resolves IN_DOMAIN.
+    consulted only for the CONDITIONAL bucket's context check (module
+    docstring) since the unconditional/denylist categories are all
+    unambiguous from the title alone in practice. Precedence: unconditional
+    IN_DOMAIN patterns, then the CONDITIONAL bucket (with-context), then
+    OUT_OF_DOMAIN — so a title that plainly names both an unconditional
+    in-domain phrase and an out-of-domain one (e.g. "Engineering Manager,
+    Agile Delivery") resolves IN_DOMAIN.
 
     Callers making a gating decision should use :func:`is_allowlisted` on
     the result rather than inspecting ``in_domain`` directly.
@@ -208,28 +265,31 @@ def classify_role_domain(title: str, description: str = "") -> RoleDomainVerdict
                     reason=f'Title matches the in-domain role family "{label}": "{title}".',
                     signal="in_domain_title",
                 )
-        if _BARE_PROGRAM_MANAGER_RE.search(title):
-            haystack = f"{title} {description}"
-            if _AGILE_DELIVERY_CONTEXT_RE.search(haystack):
+        for label, pattern in _CONDITIONAL_IN_DOMAIN_PATTERNS:
+            if pattern.search(title):
+                haystack = f"{title} {description}"
+                if _DELIVERY_PROGRAM_CONTEXT_RE.search(haystack):
+                    return RoleDomainVerdict(
+                        in_domain=True,
+                        reason=(
+                            f'Title matches the conditional role family "{label}" AND '
+                            f'delivery/program/agile context is present: "{title}".'
+                        ),
+                        signal="in_domain_conditional_with_context",
+                    )
+                # A conditional title matched but NO delivery/program/agile
+                # context was found anywhere: UNCLASSIFIED, not an explicit
+                # OUT_OF_DOMAIN denylist hit — but still gated by
+                # is_allowlisted() exactly the same either way.
                 return RoleDomainVerdict(
-                    in_domain=True,
+                    in_domain=None,
                     reason=(
-                        'Title contains "Program Manager" AND agile/delivery '
-                        f'context is present: "{title}".'
+                        f'Title matches the conditional role family "{label}" but no '
+                        f'delivery/program/agile context was found in the title or '
+                        f'description: "{title}".'
                     ),
-                    signal="in_domain_program_manager_with_context",
+                    signal="",
                 )
-            # Bare Program Manager with NO agile/delivery context anywhere:
-            # UNCLASSIFIED, not an explicit OUT_OF_DOMAIN denylist hit — but
-            # still gated by is_allowlisted() exactly the same either way.
-            return RoleDomainVerdict(
-                in_domain=None,
-                reason=(
-                    'Title contains "Program Manager" but no agile/delivery '
-                    f'context was found in the title or description: "{title}".'
-                ),
-                signal="",
-            )
         for label, pattern in _OUT_OF_DOMAIN_PATTERNS:
             if pattern.search(title):
                 return RoleDomainVerdict(

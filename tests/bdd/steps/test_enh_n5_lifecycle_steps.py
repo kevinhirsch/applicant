@@ -178,7 +178,15 @@ def score_posting(n5ctx):
 
 @then("it receives the documented neutral score of seventy-five out of one hundred")
 def neutral_seventyfive(n5ctx):
-    assert n5ctx["scoring"].score == pytest.approx(0.75)
+    # The round-3/4 deterministic RANKING multipliers apply even on the
+    # no-criteria neutral-0.75 path (they reflect inherent posting quality,
+    # independent of the user's stated criteria) -- "Delivery Manager" is a
+    # round-4 STRONG fit-tier title, see ranking_factors.fit_to_profile_multiplier.
+    from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
+
+    posting = _make_posting()
+    expected = min(1.0, 0.75 * fit_to_profile_multiplier(posting.title).multiplier)
+    assert n5ctx["scoring"].score == pytest.approx(expected)
 
 
 @then("the posting is considered viable")

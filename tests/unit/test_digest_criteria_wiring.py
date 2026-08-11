@@ -22,6 +22,7 @@ from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
 from applicant.ports.driven.llm import LLMResult
 
 
@@ -105,15 +106,20 @@ def test_viability_scoring_uses_configured_model_when_available():
     crit = CriteriaService(storage, llm=None).get_criteria(cid)
     posting = JobPosting(
         # NOT "Senior Backend Engineer" -- this test pins that a CONFIGURED
-        # model's score reaches the caller unmodified. Under
+        # model's score reaches the caller (times the round-4 fit-to-profile
+        # ranking multiplier -- EVERY allowlisted title now falls in either
+        # the STRONG or MODERATE fit tier, so there is no "neutral" in-domain
+        # title left to dodge this with; "Delivery Manager" is STRONG fit,
+        # see ranking_factors.fit_to_profile_multiplier). Under
         # role_domain_fit's ALLOWLIST posture (round 2) the title must
         # plainly match an in-domain role family or the gate short-circuits
         # before the model is ever called.
-        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Delivery Manager",
+        id=JobPostingId(new_id()), campaign_id=cid, title="Delivery Manager",
         company="A", source_url="http://x", description="python go",
     )
     result = scoring.score_posting(posting, crit)
-    assert result.score == pytest.approx(0.91)
+    expected = min(1.0, 0.91 * fit_to_profile_multiplier(posting.title).multiplier)
+    assert result.score == pytest.approx(expected)
     assert "great match" in result.rationale
 
 

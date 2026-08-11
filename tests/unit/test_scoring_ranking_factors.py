@@ -1,22 +1,35 @@
-"""Round-3 regression eval: RANKING QUALITY within the allowlisted set.
+"""Round-3/round-4 regression eval: RANKING QUALITY within the allowlisted set.
 
 Kevin's own words on a role the (round-2) allowlist correctly kept viable
 but ranked 95: "too low pay, heavily SAFe, posted ~a month ago, not
 high-impact, no idea why it scored so high." The allowlist fixed RELEVANCE
 (in-domain vs not); it never touched WHICH allowlisted role is actually good
-for Kevin. This file is the end-to-end regression pin for the fix: four
-deterministic RANKING multipliers (recency, SAFe penalty, pay, seniority —
-``applicant.core.rules.ranking_factors``) plus a US-remote HARD gate, wired
-into ``ScoringService._score``.
+for Kevin. This file is the end-to-end regression pin for the fix: SIX
+deterministic RANKING multipliers (recency, SAFe penalty, pay, seniority,
+fit-to-profile, degree-requirement — ``applicant.core.rules.ranking_factors``)
+plus a US-remote HARD gate, wired into ``ScoringService._score``.
 
-Proved two ways against ``tests/eval/fixtures/ranking_factors_labels.json``:
+ROUND 4 (after reading Kevin's actual résumé): his real title history is
+EXCLUSIVELY Scrum Master/Agile Coach, with Scrum/Agile certs and no
+bachelor's degree. ``round4-fit-pair-*`` and ``round4-degree-pair-*`` rows
+below pin the two new factors on TOP of the round-3 gates/factors: a
+Scrum Master must outrank an equally-fresh big-tech TPM (both stay viable,
+fit ranks them), and a hard degree requirement ranks a posting lower.
+
+Proved several ways against ``tests/eval/fixtures/ranking_factors_labels.json``:
 
 1. HIGH vs LOW relative separation, with a FIXED-score fake LLM (always
    answers 95, Kevin's own reported number) so the effect measured is
    PURELY the deterministic ranking/gate layer, not LLM variance.
+   MODERATE-labeled rows (round-3-widened TPM/PM/PMO/Operations families —
+   still viable, just ranked below the round-4 STRONG-fit set) are excluded
+   from this strict binary comparison; see the dedicated round-4 pairwise
+   tests instead.
 2. The four HARD-GATED rows (onsite, two non-US-remote, one off-domain)
    never reach the LLM at all — an LLM double that raises if called proves
    the short-circuit is real.
+3. Round-4 pairwise comparisons: two rows identical in every dimension
+   except the ONE factor under test (fit-tier, degree requirement).
 """
 
 from __future__ import annotations
@@ -141,6 +154,13 @@ class TestHighVsLowRanking:
         high_scores: dict[str, float] = {}
         low_scores: dict[str, float] = {}
         for row in fixture_rows:
+            # MODERATE rows (round-3-widened TPM/PM/PMO/Operations families)
+            # are excluded from this strict HIGH-vs-LOW binary -- they are
+            # deliberately RANKED BELOW strong-fit HIGH rows (round 4) but
+            # are NOT meant to be lumped in with the gated/penalized LOW
+            # rows either. See the dedicated round-4 pairwise tests below.
+            if row["label"] == "MODERATE":
+                continue
             scoring = svc.score_posting(_posting_from_row(row), criteria)
             if row["label"] == "HIGH":
                 high_scores[row["id"]] = scoring.score
@@ -196,6 +216,63 @@ class TestHighVsLowRanking:
         pct = round(scoring.score * 100)
         assert pct < 60, f"Kevin's reported case must no longer score ~95, got {pct}: {scoring.rationale}"
         assert not svc.is_viable(scoring)
+
+
+@pytest.mark.unit
+class TestRound4FitAndDegreePairwiseComparisons:
+    """Round 4: two rows identical in every dimension except the ONE factor
+    under test (fit-tier, degree requirement) -- isolates each factor's
+    effect precisely, independent of everything else in the pipeline."""
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def fixture_rows(cls) -> list[dict]:
+        return _load_fixture()
+
+    @staticmethod
+    def _row(fixture_rows: list[dict], row_id: str) -> dict:
+        return next(r for r in fixture_rows if r["id"] == row_id)
+
+    def test_scrum_master_outranks_an_equally_fresh_big_tech_tpm(
+        self, fixture_rows: list[dict]
+    ) -> None:
+        cid = CampaignId(new_id())
+        svc = ScoringService(InMemoryStorage(), _FixedScoreLLM(), embedding=None)
+        criteria = _kevin_criteria(cid)
+
+        sm_row = self._row(fixture_rows, "round4-fit-pair-strong-scrum-master")
+        tpm_row = self._row(fixture_rows, "round4-fit-pair-moderate-tpm")
+        sm_score = svc.score_posting(_posting_from_row(sm_row), criteria).score
+        tpm_score = svc.score_posting(_posting_from_row(tpm_row), criteria).score
+
+        assert sm_score > tpm_score, (
+            f"Scrum Master ({sm_score:.3f}) must outrank an equally-fresh/paid "
+            f"big-tech TPM ({tpm_score:.3f}) -- Kevin's real title history is "
+            f"Scrum Master/Agile Coach, not TPM"
+        )
+        # Both stay genuinely viable -- fit is a ranking nudge, not a gate.
+        tpm_scoring = svc.score_posting(_posting_from_row(tpm_row), criteria)
+        assert svc.is_viable(tpm_scoring), "the MODERATE-fit TPM must still be viable, just ranked lower"
+
+    def test_degree_required_posting_ranks_below_the_no_requirement_pair(
+        self, fixture_rows: list[dict]
+    ) -> None:
+        cid = CampaignId(new_id())
+        svc = ScoringService(InMemoryStorage(), _FixedScoreLLM(), embedding=None)
+        criteria = _kevin_criteria(cid)
+
+        no_req_row = self._row(fixture_rows, "round4-degree-pair-no-requirement")
+        hard_req_row = self._row(fixture_rows, "round4-degree-pair-hard-requirement")
+        no_req_scoring = svc.score_posting(_posting_from_row(no_req_row), criteria)
+        hard_req_scoring = svc.score_posting(_posting_from_row(hard_req_row), criteria)
+
+        assert hard_req_scoring.score < no_req_scoring.score, (
+            f"a posting hard-requiring a degree ({hard_req_scoring.score:.3f}) must rank "
+            f"below an otherwise-identical posting with no such requirement "
+            f"({no_req_scoring.score:.3f}) -- Kevin has no bachelor's degree"
+        )
+        # Still viable on its own -- a ranking nudge, not a gate.
+        assert svc.is_viable(hard_req_scoring), "a degree requirement alone must not gate an otherwise-strong role"
 
 
 @pytest.mark.unit

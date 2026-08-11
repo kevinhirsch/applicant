@@ -38,6 +38,7 @@ from applicant.application.services.setup_service import SetupService
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
 from applicant.ports.driven.llm import ChatMessage, TierConfig, TierLadder
 from applicant.ports.driving.setup_wizard import LLMSettings
 
@@ -213,8 +214,12 @@ class TestEscalationToFallbackTier:
             # fallback behavior, which requires the LLM tiers to actually be
             # reached. Under role_domain_fit's ALLOWLIST posture (round 2)
             # the title must plainly match an in-domain role family or the
-            # gate short-circuits before any tier is ever called.
-            title="Senior Delivery Manager",
+            # gate short-circuits before any tier is ever called. EVERY
+            # allowlisted title now falls in a round-4 fit tier (STRONG or
+            # MODERATE -- there is no neutral one left); "Delivery Manager"
+            # is STRONG fit (ranking_factors.fit_to_profile_multiplier), so
+            # the exact score pinned below accounts for that multiplier.
+            title="Delivery Manager",
             company="Acme",
             description="Build Python services.",
         )
@@ -225,7 +230,8 @@ class TestEscalationToFallbackTier:
         criteria = SearchCriteria(campaign_id=cid, titles=("Backend Engineer",))
         scoring = svc.score_viability(posting.id, criteria)
 
+        expected = min(1.0, 0.82 * fit_to_profile_multiplier(posting.title).multiplier)
         assert scoring.degraded is False
-        assert scoring.score == pytest.approx(0.82)
+        assert scoring.score == pytest.approx(expected)
         stored = storage.postings.get(posting.id)
-        assert stored.viability_score == pytest.approx(0.82)
+        assert stored.viability_score == pytest.approx(expected)

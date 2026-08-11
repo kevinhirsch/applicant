@@ -56,6 +56,19 @@ class TestInDomainTitles:
             "Agile Transformation Coach",
             "Ways of Working Lead",
             "Head of Ways of Working",
+            # === ROUND 3 WIDENING: Program/Project mgmt, PMO, operations ===
+            "Program Manager, Robotics",
+            "Senior Program Manager",
+            "Staff Program Manager",
+            "Principal Program Manager",
+            "Project Manager",
+            "Senior Project Manager",
+            "Lead Project Manager",
+            "PMO Lead",
+            "PMO Manager",
+            "Delivery Operations Manager",
+            "Product Operations Lead",
+            "Program Operations Manager",
         ],
     )
     def test_title_is_in_domain(self, title: str) -> None:
@@ -77,14 +90,30 @@ class TestInDomainTitles:
         verdict = classify_role_domain("Program Manager - Agile Transformation Office")
         assert verdict.in_domain is True, verdict.reason
 
-    def test_bare_program_manager_with_non_transformation_agile_context_is_in_domain(
-        self,
-    ) -> None:
-        # Exercises the bare-Program-Manager-with-context branch specifically
-        # (no unconditional in-domain phrase in the title itself).
+    def test_bare_program_manager_is_now_unconditionally_in_domain(self) -> None:
+        # ROUND 3 WIDENING: "Program Manager" (bare, no agile qualifier) is
+        # now unconditionally in-domain -- Kevin is open to any fully-remote
+        # role he can credibly do, not just agile-flavored ones. This
+        # SUPERSEDES the round-2 "needs agile context" requirement.
         verdict = classify_role_domain("Senior Program Manager, Scrum Delivery")
         assert verdict.in_domain is True, verdict.reason
-        assert verdict.signal == "in_domain_program_manager_with_context"
+        assert verdict.signal == "in_domain_title"
+
+    def test_chief_of_staff_with_delivery_context_is_in_domain(self) -> None:
+        # Exercises the NEW conditional-with-context branch (round 3) --
+        # Chief of Staff / Operations Manager/Lead are too generic to admit
+        # unconditionally, so they need delivery/program/agile context.
+        verdict = classify_role_domain(
+            "Chief of Staff", description="Support the VP of Delivery with agile program management."
+        )
+        assert verdict.in_domain is True, verdict.reason
+        assert verdict.signal == "in_domain_conditional_with_context"
+
+    def test_operations_lead_with_pmo_context_is_in_domain(self) -> None:
+        verdict = classify_role_domain(
+            "Business Operations Lead", description="Own delivery cadence and PMO reporting for the org."
+        )
+        assert verdict.in_domain is True, verdict.reason
 
     def test_bare_program_manager_with_agile_context_in_description_is_in_domain(self) -> None:
         verdict = classify_role_domain(
@@ -151,6 +180,14 @@ class TestOutOfDomainTitles:
             "Market Manager",
             "Startup Partnerships Lead",
             "Partner Director - EMEA",
+            # === ROUND 3 WIDENING: newly-named categories ===
+            "Registered Nurse",
+            "Physician Assistant",
+            "Clinical Research Coordinator",
+            "Licensed Therapist",
+            "Electrician",
+            "Plumber",
+            "HVAC Technician",
         ],
     )
     def test_additional_out_of_domain_categories(self, title: str) -> None:
@@ -187,12 +224,25 @@ class TestUnclassifiedTitles:
         assert verdict.in_domain is None, verdict.reason
         assert is_allowlisted(verdict) is False
 
-    def test_bare_program_manager_with_no_context_anywhere_is_unclassified_and_gated(
+    def test_operations_manager_without_delivery_context_is_unclassified_and_gated(
         self,
     ) -> None:
-        verdict = classify_role_domain("Program Manager, Robotics")
+        # ROUND 3: "Operations Manager" is a CONDITIONAL title -- no
+        # delivery/program/agile context anywhere means it stays gated
+        # (unlike the now-unconditional "Program Manager", see
+        # TestInDomainTitles.test_bare_program_manager_is_now_unconditionally_in_domain).
+        verdict = classify_role_domain("Operations Manager", description="Manage warehouse operations.")
         assert verdict.in_domain is None, verdict.reason
         assert verdict.signal == ""
+        assert is_allowlisted(verdict) is False
+
+    def test_bare_portfolio_manager_is_unclassified_and_gated(self) -> None:
+        # Deliberately NOT on the allowlist -- collides with the common
+        # FINANCE/investment-management "Portfolio Manager" title. Only the
+        # unambiguous "Program/Portfolio Delivery Manager" compound is
+        # covered, via the "Delivery Manager" pattern.
+        verdict = classify_role_domain("Portfolio Manager", description="Manage an investment portfolio.")
+        assert verdict.in_domain is None, verdict.reason
         assert is_allowlisted(verdict) is False
 
     def test_unrelated_title_is_unclassified_and_gated(self) -> None:

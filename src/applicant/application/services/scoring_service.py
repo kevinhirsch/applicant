@@ -19,21 +19,42 @@ signature** (FR-LEARN-5): a role that looks like what has actually converted for
 campaign gets a small, transparent boost. Discovery and scoring thus both bend toward
 the learned signature.
 
-Before any of that runs, ``_score`` applies two DETERMINISTIC, no-LLM gates (the
+Before any of that runs, ``_score`` applies THREE DETERMINISTIC, no-LLM GATES (the
 catastrophic-miscalibration fix — prompt-only calibration of the LLM rubric alone was
-tried twice and failed against the real discovery queue, where nearly every posting
-scored 85-100 regardless of relevance): :func:`~applicant.core.rules.posting_quality
-.check_posting_quality` floors non-postings (search-index pages, comparison/guide
-articles, a methodology's own glossary page, a "<Company> is hiring" announcement, a
-bare platform name captured as the title) to near zero, and
-:func:`~applicant.core.rules.role_domain_fit.classify_role_domain` (via
-:func:`~applicant.core.rules.role_domain_fit.is_allowlisted`) is an ALLOWLIST, not a
-denylist — a posting can reach a viable score ONLY if its title plainly names one of
-Kevin's target agile-delivery role families; everything else (a known off-domain
-family OR simply unrecognized) is capped low. BEFORE the LLM ever runs, so neither gate
-can be talked back up by keyword density, seniority, or pay, and the LLM only ever
-RANKS within the allowlisted set. Both gates are pure/no-IO and only ever suppress a
-score, never lift one.
+tried repeatedly and failed against the real discovery queue, where nearly every
+posting scored 85-100 regardless of relevance):
+
+1. :func:`~applicant.core.rules.posting_quality.check_posting_quality` floors
+   non-postings (search-index pages, comparison/guide articles, a methodology's own
+   glossary page, a "<Company> is hiring" announcement, a bare platform name captured
+   as the title) to near zero.
+2. :func:`~applicant.core.rules.role_domain_fit.classify_role_domain` (via
+   :func:`~applicant.core.rules.role_domain_fit.is_allowlisted`) is an ALLOWLIST, not
+   a denylist, and (round 3) covers Kevin's FULL employable range — not just
+   agile-delivery-core — since he is open to any fully-remote role he can credibly do:
+   agile delivery, program/project management, PMO, delivery/product/program
+   operations, and (with delivery/program context) Chief of Staff / Operations
+   leadership. A posting can reach a viable score ONLY if its title plainly matches
+   one of those families; everything else (a known off-domain family OR simply
+   unrecognized) is capped low.
+3. (round 3) :func:`~applicant.core.rules.ranking_factors.classify_remote` — Kevin's
+   #1 DOMINANT hard requirement, FULL US-REMOTE, no exceptions. A confirmed non-remote
+   or remote-but-not-US-based posting is capped; a genuinely ambiguous one (no location
+   signal at all) is left un-gated so a scraper gap never buries a real US-remote role.
+
+All three run BEFORE the LLM ever executes, so none can be talked back up by keyword
+density, seniority, or pay, and the LLM only ever RANKS within the allowlisted,
+US-remote-or-ambiguous set. Then (round 3, closing the gap Kevin flagged — a viable
+role scored 95 despite being "too low pay, heavily SAFe, posted ~a month ago, not
+high-impact") four deterministic RANKING multipliers scale the FINAL score, never
+viability: :func:`~applicant.core.rules.ranking_factors.recency_multiplier` decays a
+stale posting, :func:`~applicant.core.rules.ranking_factors.safe_penalty_multiplier`
+ranks a SAFe-heavy role below a comparable LeSS/agnostic one (still fully viable —
+Kevin is SAFe/RTE-certified), :func:`~applicant.core.rules.ranking_factors
+.pay_multiplier` penalizes pay clearly below Kevin's target (unknown pay stays
+neutral), and :func:`~applicant.core.rules.ranking_factors.seniority_multiplier`
+gives a small boost to a Principal/Staff/Director/Head/Lead/Senior title. All five
+gates/factors are pure/no-IO.
 
 The viability **threshold defaults to 60** (on a 0..100 scale) and is configurable per
 campaign; ``is_viable`` gates which postings reach the digest. A digest GET re-runs on
@@ -53,6 +74,15 @@ from applicant.core.events import ViabilityScored, event_bus
 from applicant.core.ids import JobPostingId
 from applicant.core.rules.posting_quality import check_posting_quality
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
+from applicant.core.rules.ranking_factors import (
+    classify_remote,
+    degree_requirement_multiplier,
+    fit_to_profile_multiplier,
+    pay_multiplier,
+    recency_multiplier,
+    safe_penalty_multiplier,
+    seniority_multiplier,
+)
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import ChatMessage
@@ -89,6 +119,18 @@ _SIGNATURE_WEIGHT = 0.2
 #: headroom for future rubric/threshold tuning without re-touching these.
 _NON_POSTING_SCORE = 0.05
 _OUT_OF_DOMAIN_SCORE = 0.15
+
+#: ROUND-3 FIX: Kevin's own words on a role the allowlist correctly kept
+#: viable but ranked 95 — "too low pay, heavily SAFe, posted ~a month ago,
+#: not high-impact, no idea why it scored so high." The allowlist fixed
+#: RELEVANCE; it never touched RANKING QUALITY within the allowlisted set.
+#: US-remote is Kevin's #1 DOMINANT hard requirement (burnout — commuting/
+#: relocating is off the table) so it gets the SAME pre-LLM short-circuit
+#: treatment as the two gates above (cheap, and the LLM can never rescue a
+#: confirmed-non-US-remote posting); recency/SAFe/pay/seniority are RANKING
+#: multipliers applied to the final score instead, since they don't affect
+#: viability, only where a viable posting lands in the ranking.
+_NON_US_REMOTE_SCORE = 0.20
 
 #: P0 durability fix: how many CONSECUTIVE transient LLM failures a posting
 #: tolerates before the resilience valve gives up and persists the degraded
@@ -520,6 +562,26 @@ class ScoringService:
                     f"{domain.reason}"
                 ),
             )
+        # ROUND 3: Kevin's #1 DOMINANT hard requirement — FULL US-REMOTE, no
+        # exceptions for an otherwise-appealing role (burnout: commuting/
+        # relocating is off the table). A CONFIRMED non-remote or remote-
+        # but-not-from-the-US posting is capped exactly like the two gates
+        # above, before the LLM ever runs. A genuinely AMBIGUOUS remote
+        # status (``None`` — no location signal at all) is deliberately NOT
+        # gated here — see ``ranking_factors.classify_remote``'s docstring —
+        # so a scraper gap never silently buries a real, good, US-remote role.
+        remote = classify_remote(
+            posting.work_mode, posting.location, posting.description or ""
+        )
+        if remote.is_us_remote is False:
+            return ViabilityScoring(
+                posting_id=posting.id,
+                score=_NON_US_REMOTE_SCORE,
+                rationale=(
+                    "Not confirmed full US-remote — capped regardless of "
+                    f"role fit, pay, or seniority: {remote.reason}"
+                ),
+            )
 
         if criteria is None:
             criteria = SearchCriteria(campaign_id=posting.campaign_id)
@@ -558,6 +620,43 @@ class ScoringService:
                 f"; biased toward converting-role signature "
                 f"(alignment {alignment * 100:.0f}/100, FR-LEARN-5)"
             )
+        # ROUND 3: deterministic RANKING factors — recency/SAFe/pay/seniority
+        # never change VIABILITY (the gates above already decided that); they
+        # scale the final score so a stale/SAFe-heavy/underpaid/junior role
+        # settles lower than a fresh/agnostic-or-LeSS/well-paid/senior one
+        # WITHIN the allowlisted, US-remote-confirmed-or-ambiguous set — the
+        # exact gap Kevin reported (a role scored 95 despite being "too low
+        # pay, heavily SAFe, posted ~a month ago, not high-impact").
+        # ROUND 4: after reading Kevin's actual résumé, rank his EXACT-match
+        # families (Scrum Master/Agile Coach/Delivery Manager/RTE — his real
+        # title & cert history) above the round-3-widened STRETCH families
+        # (TPM/PM/PMO/Operations — no title history there, just an adjacent
+        # hook), and penalize a posting that hard-requires a degree he
+        # doesn't have (vs. "preferred"/"or equivalent experience", which he
+        # satisfies).
+        recency = recency_multiplier(posting.date_posted)
+        safe = safe_penalty_multiplier(posting.title, posting.description or "")
+        pay = pay_multiplier(posting.salary, posting.description or "")
+        seniority = seniority_multiplier(posting.title)
+        fit = fit_to_profile_multiplier(posting.title)
+        degree = degree_requirement_multiplier(posting.description or "")
+        ranking_multiplier = (
+            recency.multiplier
+            * safe.multiplier
+            * pay.multiplier
+            * seniority.multiplier
+            * fit.multiplier
+            * degree.multiplier
+        )
+        if ranking_multiplier != 1.0:
+            score = max(0.0, min(1.0, score * ranking_multiplier))
+            rationale += (
+                f"; ranking-adjusted x{ranking_multiplier:.2f} (recency: {recency.reason}; "
+                f"SAFe: {safe.reason}; pay: {pay.reason}; seniority: {seniority.reason}; "
+                f"fit: {fit.reason}; degree: {degree.reason})"
+            )
+        if remote.is_us_remote is None:
+            rationale += f"; remote/US status could not be confirmed ({remote.reason})"
         return ViabilityScoring(
             posting_id=posting.id, score=score, rationale=rationale, degraded=degraded
         )

@@ -34,6 +34,7 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.events import event_bus
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
 
 
 class _FailingLLM:
@@ -77,8 +78,10 @@ def _posting(cid: CampaignId) -> JobPosting:
         # the miscalibration fix) ANY title that doesn't plainly match an
         # in-domain role family is gated -- not just a named off-domain one
         # -- so the title must actually BE in-domain now, not merely
-        # "not obviously off-domain".
-        title="Senior Delivery Manager, Backend Platform",
+        # "not obviously off-domain". NOT "Senior" either -- round 3's
+        # seniority ranking multiplier would scale the exact score some of
+        # this file's tests pin.
+        title="Delivery Manager, Backend Platform",
         company="Acme",
         description="Build Python services with Django and Postgres.",
     )
@@ -173,9 +176,10 @@ class TestLegitimateCasesStillPersistImmediately:
         svc = ScoringService(storage, _SucceedingLLM(), LocalEmbedding())
         scoring = svc.score_viability(posting.id, _criteria(cid))
 
+        expected = min(1.0, 0.85 * fit_to_profile_multiplier(posting.title).multiplier)
         assert scoring.degraded is False
         stored = storage.postings.get(posting.id)
-        assert stored.viability_score == pytest.approx(0.85)
+        assert stored.viability_score == pytest.approx(expected)
 
     def test_no_llm_configured_persists_embedding_score_immediately(self):
         storage = InMemoryStorage()
