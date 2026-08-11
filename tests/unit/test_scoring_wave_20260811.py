@@ -92,17 +92,18 @@ class TestSeniorAgileLeadershipAllowlist:
 
 @pytest.mark.unit
 class TestBigTechTpmReachTier:
-    def test_staff_tpm_is_a_reach(self):
+    def test_leveled_tpm_is_a_reach(self):
         for t in (
             "Staff Technical Program Manager, Simulation",
             "Sr. Staff Technical Program Manager",
-            "Senior Staff Technical Program Manager",
+            "Senior Technical Program Manager, AI Transformation",
+            "Lead Technical Program Manager, Simulation",
             "Principal Technical Program Manager",
         ):
             assert fit_to_profile_multiplier(t).multiplier == pytest.approx(0.65), t
 
-    def test_plain_tpm_stays_moderate_not_reach(self):
-        # A plain (non-staff/principal) TPM is a stretch, not a big-tech reach.
+    def test_plain_unleveled_tpm_stays_moderate_not_reach(self):
+        # A PLAIN (unleveled) TPM is a stretch, not a leveled big-tech reach.
         assert fit_to_profile_multiplier("Technical Program Manager").multiplier == pytest.approx(0.85)
 
     def test_scrum_master_stays_strong_fit(self):
