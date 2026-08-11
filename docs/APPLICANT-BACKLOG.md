@@ -440,21 +440,21 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
 ## 🪜 STORY LADDERS — Fit Engine + Companion (current state → fully implemented) (Kevin, 2026-08-11)
 _Each new epic decomposed into sequenced user stories bridging what exists today to the fully-implemented ADR. ✅ = already shipped this session. Every story carries the standing DoR/AC(BDD)/DoD; the one-line AC below is the executable intent, reuse-first._
 
-### FIT-MODEL (ADR-0011) — current: flat attribute cloud only
-- **FM-1 CandidateProfile entity + schema.** *AC:* a typed per-campaign entity holds title-history (role/level/tenure/primary-vs-stretch), typed certs, degree-presence, industries (depth/recency), skills (evidence strength), quantified wins, tech-depth. *Reuse:* `core/entities/` style.
-- **FM-2 Deterministic derivation.** *AC:* `CandidateProfileService` populates the structural fields from `onboarding.base_resume` (parsed) + `AttributeCloudService`, no LLM.
+### FIT-MODEL (ADR-0011) — current: ✅ FM-1/FM-2/FM-4 shipped (entity + deterministic derivation + derived bands); LLM-assist / persist / Profile-UI open
+- **FM-1 ✅ CandidateProfile entity + schema (`9aeede2ab`).** typed per-campaign entity: title-history (role/level/tenure/primary-vs-stretch), typed certs, explicit degree-presence gate, industries (depth/recency), skills (evidence strength), quantified wins, tech-depth, DERIVED strong/stretch/reach bands. `band_for()` returns None until derived (graceful degrade). +5 tests.
+- **FM-2 ✅ Deterministic derivation (`68f5005d1`).** `derive_candidate_profile(campaign_id, attribute_cloud)` — held role FAMILIES (roles), the degree gate (education:*, carefully NOT tripping on a "Master Specialist" cert), certs, skills → the model, no LLM. *Verified vs Kevin's real attributes* (SM/RTE/Coach strong; PM stretch; TPM reach) AND generalized (a degree-holder who held TPM gets TPM strong). +10 tests.
 - **FM-3 LLM-assisted derivation.** *AC:* normalize noisy titles, infer level, write the human-readable fit rationale via the wired LLM tier; stored + re-derivable.
-- **FM-4 Derive strong-fit / viable-stretch bands.** *AC:* the model computes the candidate's strong-fit + stretch role families **with a rationale each**, from the model (not hand-authored).
+- **FM-4 ✅ Derive strong-fit / viable-stretch / reach bands (in `68f5005d1`).** the model computes strong/stretch/reach families **with a rationale each**, from the candidate's held roles + degree — not hand-authored.
 - **FM-5 Persist + refresh + degrade.** *AC:* persisted per campaign; re-derives only on résumé/profile change (cached); a sparse résumé degrades to today's attribute-only behavior.
 - **FM-6 Fit model in the Profile UI.** *AC:* Kevin sees his derived competitiveness model + bands in the Profile panel and can correct them (feeds back to derivation).
 
-### FIT-SCORING (ADR-0012) — current: ✅ FS-1 shipped; scoring still uses the hardcoded Agile allowlist
-- **FS-1 ✅ Deterministic ranking factors + US-remote gate (`5e981b678`).** recency · SAFe-penalty · pay · seniority · fit-to-profile · degree-requirement multipliers + a hard US-remote gate. *Verified:* Kevin's rejected SAFe/stale/low-pay case 95→45%; a Scrum Master out-ranks an equally-fresh big-tech TPM.
-- **FS-2 Derive the allowlist from the fit model.** *AC:* `role_domain_fit.derive_from_profile(candidate_model)` replaces the hardcoded Agile list with a per-candidate one (generalizes; #46). *(Depends on FM-4.)*
+### FIT-SCORING (ADR-0012) — current: ✅ FS-1/FS-2/FS-4/FS-6 shipped — scoring now consumes the DERIVED profile (hardcoded allowlist is the fallback); FS-3/FS-5 open
+- **FS-1 ✅ Deterministic ranking factors + US-remote gate (`5e981b678`).** recency · SAFe-penalty · pay · seniority · fit-to-profile · degree-requirement multipliers + a hard US-remote gate. Round-2 (this session): verified-source demotion, title-aware non-US gate, agile-leadership allowlist, leveled-TPM reach tier. *Verified:* Kevin's rejected SAFe/stale/low-pay case 95→45%.
+- **FS-2 ✅ Derive the fit tiers from the model (`10e7e8f80`).** `candidate_profile_derivation.profile_fit(profile, title)` replaces the hardcoded Agile allowlist + `fit_to_profile` tiers with per-candidate bands (generalizes; #46). A title whose family the profile bands strong/stretch/reach is in-lane, scored by that band (1.10/0.85/0.65).
 - **FS-3 Parse posting competitiveness signals.** *AC:* extract level + industry + degree-requirement from the description and match against the candidate model (title/level/industry fit), extending the FS-1 degree/seniority multipliers.
-- **FS-4 Wire scoring to the derived model.** *AC:* scoring uses the derived allowlist + competitiveness when a fit model exists; the hardcoded Agile list remains the fallback default (no regression).
-- **FS-5 Fit rationale → EXPLAIN.** *AC:* each score's fit reasoning (strong/stretch, degree gate, US-remote, freshness, pay) surfaces as the EXPLAIN greens/reds breakdown (ties EPIC EXPLAIN).
-- **FS-6 Generalization proof.** *AC:* a BDD scenario shows a DIFFERENT candidate/target role re-derives the fit tiers with no code change.
+- **FS-4 ✅ Wire scoring to the derived model (`10e7e8f80`).** scoring's fit gate + tier consult the derived profile when present; the hardcoded allowlist + fit tiers remain the fallback default when the profile is un-derived or silent on a title — **zero regression** (Kevin's derived bands equal the legacy tiers). Profile derived once per pass + cached; derivation never blocks scoring.
+- **FS-5 Fit rationale → EXPLAIN.** *AC:* each score's fit reasoning (strong/stretch, degree gate, US-remote, freshness, pay) surfaces as the EXPLAIN greens/reds breakdown (ties EPIC EXPLAIN). *(Partial: the rationale string already carries "derived fit band: <band>".)*
+- **FS-6 ✅ Generalization proof (`10e7e8f80`).** a unit scenario shows a DIFFERENT candidate (degree + held TPM) re-derives TPM as strong (not reach) with no code change.
 
 ### OUTCOME-LEARN (ADR-0013) — current: taste signals + converting-role-signature exist; no outcome funnel
 - **OL-1 Outcome funnel on the application.** *AC:* the application state machine carries applied→viewed→responded→screen→interview→offer→rejected/ghosted (unknown allowed). *Reuse:* `PostSubmissionService` + `applications` states.
