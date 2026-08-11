@@ -500,6 +500,95 @@ class PendingActionModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+# --- Agent-memory durable substrate (FR-MIND-1/2/3, #286) -------------------
+# The curated-memory / skills / recall trio persisted to the shared storage stack
+# so the "remembers you" substrate SURVIVES an engine restart (the prior durable
+# option — the bridge->companion callback — was disabled for stalling the read
+# path ~45s; these rows are read locally + single-query instead). Selected by
+# ``MIND_BACKEND=sql`` (adapters in ``adapters/memory/sql_backend.py``).
+
+
+class MemoryEntryModel(Base):
+    """One curated memory line (FR-MIND-1) — environment lesson or user preference.
+
+    An INTEGER autoincrement ``id`` (not the String(64) UUID the other tables use)
+    is deliberate: insertion order is load-bearing for this table — ``replace``
+    targets the FIRST matching line and ``snapshot`` keeps lines in order until the
+    char budget is spent — and an autoincrement PK gives a monotonic order that is
+    identical on SQLite (test lane) and Postgres (prod) with no tie-break ambiguity.
+    """
+
+    __tablename__ = "memory_entries"
+    # Single-query snapshot(): filter by (scope, campaign_id) then split by kind.
+    __table_args__ = (
+        Index(
+            "ix_memory_entries_scope_campaign_kind",
+            "scope",
+            "campaign_id",
+            "kind",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # NULL for global-scope entries; set only for campaign-scoped ones (FR-CRIT-4).
+    campaign_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="environment")
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="global")
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class SkillModel(Base):
+    """L1 procedural skill body (FR-MIND-2) — keyed by ``name`` like the port.
+
+    Mirrors the ``Skill`` dataclass: the ordered playbook sections
+    (``procedure``/``pitfalls``/``verification``) and ``tags`` are stored as portable
+    JSON arrays (JSONB on Postgres, JSON on SQLite) exactly like the other JSON
+    columns in this module.
+    """
+
+    __tablename__ = "skills"
+    __table_args__ = (Index("ix_skills_scope_campaign", "scope", "campaign_id"),)
+
+    name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0")
+    when_to_use: Mapped[str] = mapped_column(Text, default="")
+    procedure: Mapped[list] = mapped_column(JSONType, default=list)
+    pitfalls: Mapped[list] = mapped_column(JSONType, default=list)
+    verification: Mapped[list] = mapped_column(JSONType, default=list)
+    scope: Mapped[str] = mapped_column(String(32), default="global")
+    campaign_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="learned")
+    tags: Mapped[list] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class RecallEntryModel(Base):
+    """One recallable past-run/conversation excerpt (FR-MIND-3) — keyed by ``run_id``.
+
+    ``index`` upserts by ``run_id``; ``search`` does bounded, local, dependency-free
+    keyword ranking over these rows (no network — the read path must stay fast).
+    """
+
+    __tablename__ = "recall_entries"
+    __table_args__ = (Index("ix_recall_entries_campaign", "campaign_id"),)
+
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    campaign_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 ALL_TABLES = [
     CampaignModel,
     OnboardingProfileModel,
@@ -531,4 +620,8 @@ ALL_TABLES = [
     FollowUpModel,
     PortfolioAttachmentModel,
     ScreeningAnswerLibraryModel,
+    # Agent-memory durable substrate (FR-MIND-1/2/3, #286).
+    MemoryEntryModel,
+    SkillModel,
+    RecallEntryModel,
 ]
