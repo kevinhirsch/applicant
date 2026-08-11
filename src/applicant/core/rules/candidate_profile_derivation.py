@@ -75,6 +75,11 @@ def _families_from_text(text: str) -> list[tuple[str, str]]:
         if family not in seen and pattern.search(text or ""):
             seen.add(family)
             out.append((family, display))
+    # Subsumption: a compound title ("Technical/Agile Program Manager") also matches
+    # the generic "Program Manager" substring -- but it IS the specific role, not both,
+    # so drop the parent (else a TPM's reach band gets upgraded to PM's stretch).
+    if seen & {"technical_program_manager", "agile_program_manager"}:
+        out = [(f, d) for f, d in out if f != "program_manager"]
     return out
 
 
@@ -158,3 +163,37 @@ def derive_candidate_profile(
         derived=True,
         source_signature=signature,
     )
+
+
+#: Band -> ranking multiplier, matching ranking_factors' strong / moderate / reach
+#: fit tiers (1.10 / 0.85 / 0.65) so a DERIVED band scores IDENTICALLY to the legacy
+#: fit_to_profile tier where both agree -- the FS-2 wiring is behavior-preserving.
+_BAND_MULTIPLIER: dict[str, float] = {"strong": 1.10, "stretch": 0.85, "reach": 0.65}
+_BAND_RANK: dict[str, int] = {"strong": 3, "stretch": 2, "reach": 1}
+
+
+def families_from_title(title: str) -> list[str]:
+    """Role family keys named in a posting ``title`` (same map as the derivation)."""
+    return [f for f, _ in _families_from_text(title)]
+
+
+def profile_fit(profile: CandidateProfile, title: str) -> tuple[str, float] | None:
+    """Assess a posting ``title`` against the DERIVED profile (FS-2, ADR-0012).
+
+    Returns ``(band, multiplier)`` from the best-matched family's band (strong >
+    stretch > reach when a title names several), or ``None`` to signal the caller
+    to FALL BACK to the legacy allowlist / fit tiers -- when the profile is
+    un-derived, or no family the title names is banded (a derivation gap). This is
+    what lets the derived model replace the hardcoded allowlist with zero
+    regression: where the derivation is silent, legacy behavior is preserved.
+    """
+    if not getattr(profile, "derived", False):
+        return None
+    best: str | None = None
+    for fam in families_from_title(title):
+        band = profile.band_for(fam)
+        if band and (best is None or _BAND_RANK[band] > _BAND_RANK[best]):
+            best = band
+    if best is None:
+        return None
+    return best, _BAND_MULTIPLIER[best]

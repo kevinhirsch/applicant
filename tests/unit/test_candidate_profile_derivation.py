@@ -7,7 +7,12 @@ candidate yields different bands.
 
 import pytest
 
-from applicant.core.rules.candidate_profile_derivation import derive_candidate_profile
+from applicant.core.entities.candidate_profile import CandidateProfile
+from applicant.core.rules.candidate_profile_derivation import (
+    derive_candidate_profile,
+    families_from_title,
+    profile_fit,
+)
 from applicant.core.ids import CampaignId, new_id
 
 # Kevin's real education entries (verbatim shape from the live attribute cloud):
@@ -82,3 +87,31 @@ class TestGeneralization:
         p = derive_candidate_profile(CampaignId(new_id()), {"email": "x@y.com"})
         assert p.derived is False
         assert p.band_for("scrum_master") is None  # caller falls back to legacy allowlist
+
+
+@pytest.mark.unit
+class TestProfileFitWiring:
+    """FS-2: the (band, multiplier) the scorer consults, with legacy fallback."""
+
+    def _kevin(self):
+        return derive_candidate_profile(CampaignId(new_id()), _KEVIN_ATTRS)
+
+    def test_strong_stretch_reach_map_to_matching_multipliers(self):
+        p = self._kevin()
+        assert profile_fit(p, "Senior Scrum Master") == ("strong", 1.10)
+        assert profile_fit(p, "Program Manager, Payments") == ("stretch", 0.85)
+        assert profile_fit(p, "Staff Technical Program Manager") == ("reach", 0.65)
+
+    def test_title_with_multiple_families_takes_the_best_band(self):
+        # "Scrum Master / Release Train Engineer" -> both strong -> strong.
+        assert profile_fit(self._kevin(), "Scrum Master / Release Train Engineer") == ("strong", 1.10)
+
+    def test_unmatched_title_falls_back(self):
+        assert profile_fit(self._kevin(), "Registered Nurse, ICU") is None
+
+    def test_undrived_profile_falls_back(self):
+        assert profile_fit(CandidateProfile(campaign_id=CampaignId(new_id())), "Scrum Master") is None
+
+    def test_families_from_title(self):
+        fams = families_from_title("Senior Technical Program Manager")
+        assert "technical_program_manager" in fams

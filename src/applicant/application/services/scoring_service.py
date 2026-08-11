@@ -75,6 +75,7 @@ from applicant.core.ids import JobPostingId
 from applicant.core.rules.posting_quality import check_posting_quality
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
 from applicant.core.rules.ranking_factors import (
+    RankingFactor,
     classify_remote,
     degree_requirement_multiplier,
     fit_to_profile_multiplier,
@@ -83,6 +84,11 @@ from applicant.core.rules.ranking_factors import (
     safe_penalty_multiplier,
     seniority_multiplier,
     source_reliability_multiplier,
+)
+from applicant.core.entities.candidate_profile import CandidateProfile
+from applicant.core.rules.candidate_profile_derivation import (
+    derive_candidate_profile,
+    profile_fit,
 )
 from applicant.core.rules.role_domain_fit import classify_role_domain, is_allowlisted
 from applicant.observability.logging import get_logger
@@ -167,6 +173,10 @@ class ScoringService:
         self._storage = storage
         self._llm = llm
         self._embedding = embedding
+        # FS-2 (ADR-0011/0012): per-campaign derived CandidateProfile, computed once
+        # per scoring pass (this service is request/tick-scoped). Fit gate + tier
+        # consult it, falling back to the legacy allowlist when it's un-derived.
+        self._profile_cache: dict = {}
         self._threshold = threshold
         self._neutral_score = neutral_score
         # P0 durability fix: bounded retry budget before a degraded (embedding
@@ -200,6 +210,26 @@ class ScoringService:
     @property
     def threshold(self) -> int:
         return self._threshold
+
+    def _candidate_profile(self, campaign_id) -> CandidateProfile:
+        """The DERIVED CandidateProfile for ``campaign_id`` (FS-2), computed once
+        per scoring pass from the attribute cloud + cached. Any failure (no
+        attribute repo, sparse cloud) yields an un-derived profile so the fit gate
+        + tier fall back to the legacy allowlist -- profile derivation NEVER blocks
+        or regresses scoring."""
+        cached = self._profile_cache.get(campaign_id)
+        if cached is not None:
+            return cached
+        try:
+            attrs = {
+                a.name: a.value
+                for a in self._storage.attributes.list_for_campaign(campaign_id)
+            }
+            profile = derive_candidate_profile(campaign_id, attrs)
+        except Exception:  # pragma: no cover - defensive: never block scoring
+            profile = CandidateProfile(campaign_id=campaign_id)
+        self._profile_cache[campaign_id] = profile
+        return profile
 
     def score_viability(
         self, posting_id: JobPostingId, criteria: SearchCriteria | None = None
@@ -561,8 +591,14 @@ class ScoringService:
         # up with real-queue noise (YC "is hiring" blasts, "Sr. Zendesk
         # Developer", "Market Manager", "Partner Director - EMEA", ...) that
         # the LLM alone scored ~100 once it fell through unclassified.
+        # FS-2 (ADR-0011/0012): the DERIVED candidate profile decides fit when it
+        # has one -- a title whose role family it bands strong/stretch/reach is
+        # in-lane. Fall back to the legacy allowlist when the profile is un-derived
+        # or silent on this title, so a profile gap never regresses behavior.
+        profile = self._candidate_profile(posting.campaign_id)
         domain = classify_role_domain(posting.title, posting.description or "")
-        if not is_allowlisted(domain):
+        allowlisted = profile_fit(profile, posting.title) is not None or is_allowlisted(domain)
+        if not allowlisted:
             return ViabilityScoring(
                 posting_id=posting.id,
                 score=_OUT_OF_DOMAIN_SCORE,
@@ -648,7 +684,15 @@ class ScoringService:
         safe = safe_penalty_multiplier(posting.title, posting.description or "")
         pay = pay_multiplier(posting.salary, posting.description or "")
         seniority = seniority_multiplier(posting.title)
-        fit = fit_to_profile_multiplier(posting.title)
+        # FS-2: prefer the DERIVED profile's band multiplier (strong/stretch/reach);
+        # fall back to the legacy fit_to_profile tiers when the profile is un-derived
+        # or silent on this title. Kevin's derived bands equal the legacy tiers, so
+        # this is behavior-preserving for him while generalizing to any candidate.
+        _pf = profile_fit(self._candidate_profile(posting.campaign_id), posting.title)
+        if _pf is not None:
+            fit = RankingFactor(_pf[1], f"derived fit band: {_pf[0]} (candidate profile)")
+        else:
+            fit = fit_to_profile_multiplier(posting.title)
         degree = degree_requirement_multiplier(posting.description or "")
         source = source_reliability_multiplier(posting.source_key)
         ranking_multiplier = (
