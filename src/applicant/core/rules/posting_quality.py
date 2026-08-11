@@ -211,6 +211,16 @@ _TITLE_RATE_JOBS_RE = re.compile(
 _TITLE_MARKETING_RE = re.compile(
     r"jobs\s+near\s+me|\bnow\s+hiring\b|\bhiring\s+now\b", re.IGNORECASE
 )
+#: Bare "<role/keyword> Jobs" category/listings title — e.g. "Scrum Master
+#: Jobs", "Remote Agile Coach Jobs" — the plural word "jobs" as the FINAL
+#: word with no company or specific role. A searxng/aggregator CATEGORY-index
+#: page captured as a title, not a single opening. End-anchored + a required
+#: space before "jobs" so a real posting that merely contains the substring
+#: ("Jobs Platform Engineer", "MegaJobs Inc") is NOT caught; the narrower
+#: "<query> Jobs | <Site>" / leading-count / rate variants are handled above.
+_TITLE_BARE_JOBS_RE = re.compile(
+    r"^\s*[a-z][\w /&.'()+-]{1,60}\s+jobs\s*$", re.IGNORECASE
+)
 
 _TITLE_NON_POSTING_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("comparison-article title (\"X vs Y\")", _TITLE_COMPARISON_RE),
@@ -220,6 +230,7 @@ _TITLE_NON_POSTING_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("hourly-rate query-style aggregator title", _TITLE_RATE_JOBS_RE),
     ('"Jobs Near Me" / "Now Hiring" aggregator marketing title', _TITLE_MARKETING_RE),
     ('"<Company> is hiring" announcement with no role named', _TITLE_HIRING_ANNOUNCEMENT_RE),
+    ('bare "<role> Jobs" category/listings title', _TITLE_BARE_JOBS_RE),
 )
 
 # === bare platform/job-board name captured as the title ====================
