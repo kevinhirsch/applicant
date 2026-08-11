@@ -1,10 +1,18 @@
-"""AZ3 (#840) — Criteria proxy: view/get signature/apply learned adjustments per campaign.
+"""AZ3 (#840) — Criteria proxy: view/edit/get signature/apply learned adjustments per campaign.
 
 The Criteria UI is served by the a0 shell, but the Applicant engine is internal-only
 ("api:8000"). This handler forwards the UI's calls to the engine's "/api/criteria/{cid}"
 API, keeping the engine the single source of truth for criteria state.
-Actions dispatched by "action": "view" (GET), "signature" (GET), "apply_learned" (POST),
-"alignment" (GET, posting-vs-past-wins explainability), "set_exploration_budget" (PUT).
+Actions dispatched by "action": "view" (GET), "update"/"edit" (PUT, direct user edit of
+titles/locations/work_modes/keywords/salary_floor), "signature" (GET), "apply_learned"
+(POST), "alignment" (GET, posting-vs-past-wins explainability), "set_exploration_budget"
+(PUT).
+
+"update"/"edit" only forwards fields present in ``input`` (so an edit form can send a
+partial diff), plus the ``confirm``/``clear_learned`` flags. The engine's confirmation
+gate (FR-FB-3) 409s when an integral field (titles/locations/salary_floor) changes
+without ``confirm: true`` — the caller is expected to re-ask the user and retry with
+``confirm`` set, same as the attributes proxy's integral-field flow.
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -73,6 +81,19 @@ def dispatch(input: dict) -> dict:
 
     if action == "view":
         return _forward("GET", f"/api/criteria/{cid}")
+
+    if action in ("update", "edit"):
+        # Build body from only the keys present in input, so a partial edit (e.g. just
+        # keywords) doesn't accidentally re-send unrelated fields the user didn't touch.
+        body: dict = {}
+        for key in ("titles", "locations", "work_modes", "keywords", "salary_floor", "human_readable"):
+            if key in input:
+                body[key] = input[key]
+        if input.get("confirm"):
+            body["confirm"] = True
+        if input.get("clear_learned"):
+            body["clear_learned"] = True
+        return _forward("PUT", f"/api/criteria/{cid}", body)
 
     if action == "signature":
         return _forward("GET", f"/api/criteria/{cid}/signature")

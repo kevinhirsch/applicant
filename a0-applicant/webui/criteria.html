@@ -29,7 +29,7 @@
   .acriteria table td{padding:6px 8px;border-bottom:1px solid var(--color-border,#d8e0e6)}
   .acriteria .hr-text{font-size:.82rem;line-height:1.5;margin-bottom:.75rem;color:var(--color-text)}
   .acriteria textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;resize:vertical;min-height:60px;box-sizing:border-box}
-  .acriteria input[type="text"]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;box-sizing:border-box}
+  .acriteria input[type="text"],.acriteria input[type="number"]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;box-sizing:border-box}
   .acriteria .field-group{margin-bottom:.75rem}
   .acriteria .field-group label{display:block;font-weight:600;font-size:.82rem;margin-bottom:4px;color:var(--color-text-secondary,#6b7683)}
   .acriteria .signature-facet{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:10px}
@@ -64,7 +64,9 @@
     <div x-show="selectedCampaignId">
       <!-- Section 1: Criteria -->
       <div class="section">
-        <h2>📋 Criteria</h2>
+        <h2>📋 Criteria
+          <button class="btn" @click="startEditCriteria()" x-show="criteriaData && !editingCriteria" style="margin-left:auto;font-size:.78rem;padding:4px 10px">✏️ Edit</button>
+        </h2>
 
         <div x-show="!criteriaData">
           <div class="empty">
@@ -72,7 +74,41 @@
           </div>
         </div>
 
-        <div x-show="criteriaData">
+        <!-- Edit form: pre-filled from criteriaData, comma-separated for list fields. -->
+        <div x-show="criteriaData && editingCriteria">
+          <div class="field-group">
+            <label for="edit-titles-input">📌 Job Titles (comma-separated)</label>
+            <input type="text" id="edit-titles-input" x-model="editForm.titles" placeholder="e.g. Scrum Master, RTE, Agile Coach" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-workmodes-input">💼 Work Modes (comma-separated)</label>
+            <input type="text" id="edit-workmodes-input" x-model="editForm.work_modes" placeholder="e.g. remote, hybrid" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-locations-input">📍 Locations (comma-separated)</label>
+            <input type="text" id="edit-locations-input" x-model="editForm.locations" placeholder="e.g. Remote, Austin TX" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-salary-input">💰 Salary Floor</label>
+            <input type="number" id="edit-salary-input" x-model="editForm.salary_floor" step="1000" min="0" placeholder="e.g. 120000" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-keywords-input">🔑 Keywords (comma-separated)</label>
+            <input type="text" id="edit-keywords-input" x-model="editForm.keywords" placeholder="e.g. python, agile, scrum" :disabled="savingCriteria">
+          </div>
+
+          <div class="err" x-show="criteriaSaveError" x-text="criteriaSaveError"></div>
+
+          <div class="toolbar">
+            <button class="btn primary" @click="saveCriteria()" :disabled="savingCriteria">
+              <span x-show="!savingCriteria">💾 Save</span>
+              <span x-show="savingCriteria">Saving…</span>
+            </button>
+            <button class="btn" @click="cancelEditCriteria()" :disabled="savingCriteria">Cancel</button>
+          </div>
+        </div>
+
+        <div x-show="criteriaData && !editingCriteria">
           <div class="hr-text" x-show="criteriaData?.human_readable" x-text="criteriaData?.human_readable || ''"></div>
 
           <div x-show="criteriaData.titles && criteriaData.titles.length > 0">
@@ -202,6 +238,10 @@
     rationale: "",
     explorationBudgetInput: 0,
     savingBudget: false,
+    editingCriteria: false,
+    editForm: { titles: "", locations: "", work_modes: "", keywords: "", salary_floor: "" },
+    savingCriteria: false,
+    criteriaSaveError: "",
 
     async init() {
       this.loading = true;
@@ -277,6 +317,86 @@
         this.signatureData.exploration_budget = Number(this.explorationBudgetInput);
       }
       this.savingBudget = false;
+    },
+
+    startEditCriteria() {
+      const d = this.criteriaData || {};
+      this.editForm = {
+        titles: (d.titles || []).join(", "),
+        locations: (d.locations || []).join(", "),
+        work_modes: (d.work_modes || []).join(", "),
+        keywords: (d.keywords || []).join(", "),
+        salary_floor: (d.salary_floor === undefined || d.salary_floor === null) ? "" : d.salary_floor
+      };
+      this.criteriaSaveError = "";
+      this.editingCriteria = true;
+    },
+
+    cancelEditCriteria() {
+      this.editingCriteria = false;
+      this.criteriaSaveError = "";
+    },
+
+    // Diffs editForm against the last-loaded criteriaData and sends ONLY the fields
+    // that actually changed, so an edit that only touches keywords doesn't also
+    // re-send (and re-trigger the integral confirm gate for) titles/locations.
+    async saveCriteria(confirmChange) {
+      this.savingCriteria = true;
+      this.criteriaSaveError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      const d = this.criteriaData || {};
+
+      const toList = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const sameList = (a, b) => JSON.stringify(a) === JSON.stringify(b || []);
+
+      const newTitles = toList(this.editForm.titles);
+      const newLocations = toList(this.editForm.locations);
+      const newWorkModes = toList(this.editForm.work_modes);
+      const newKeywords = toList(this.editForm.keywords);
+      const salaryRaw = this.editForm.salary_floor;
+      const newSalaryFloor = (salaryRaw === "" || salaryRaw === null || salaryRaw === undefined)
+        ? null
+        : Number(salaryRaw);
+
+      const body = { action: "update", campaign_id: cid };
+      if (!sameList(newTitles, d.titles)) body.titles = newTitles;
+      if (!sameList(newLocations, d.locations)) body.locations = newLocations;
+      if (!sameList(newWorkModes, d.work_modes)) body.work_modes = newWorkModes;
+      if (!sameList(newKeywords, d.keywords)) body.keywords = newKeywords;
+      if (newSalaryFloor !== null && newSalaryFloor !== d.salary_floor) {
+        body.salary_floor = newSalaryFloor;
+      }
+
+      const hasChanges = Object.keys(body).some((k) => k !== "action" && k !== "campaign_id");
+      if (!hasChanges) {
+        this.savingCriteria = false;
+        this.editingCriteria = false;
+        return;
+      }
+
+      if (confirmChange) body.confirm = true;
+
+      const r = await callJsonApi("criteria", body);
+      if (!r || !r.ok) {
+        // Integral fields (titles/locations/salary_floor) need confirmation (HTTP 409);
+        // re-ask, then retry — same pattern as the attributes panel.
+        if (r && r.status === 409 && !confirmChange) {
+          this.savingCriteria = false;
+          if (window.confirm("This changes an integral criterion (titles, locations, or salary floor). Save this change?")) {
+            await this.saveCriteria(true);
+          } else {
+            this.criteriaSaveError = "Change not confirmed — nothing was saved.";
+          }
+          return;
+        }
+        this.criteriaSaveError = (r && r.error) || "Failed to save criteria.";
+        this.savingCriteria = false;
+        return;
+      }
+
+      this.editingCriteria = false;
+      this.savingCriteria = false;
+      await this.loadCriteriaAndSignature();
     },
 
     async applyLearnedAdjustment() {

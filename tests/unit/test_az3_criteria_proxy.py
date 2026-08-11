@@ -55,6 +55,126 @@ def test_view_forwards_get(mod):
     assert seen == {"method": "GET", "path": "/api/criteria/c1"}
 
 
+def test_update_forwards_put_with_only_present_fields(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({
+            "action": "update",
+            "campaign_id": "c1",
+            "keywords": ["python", "rust"],
+        })
+    assert seen["method"] == "PUT"
+    assert seen["path"] == "/api/criteria/c1"
+    # Only the field actually present in input is forwarded -- no titles/locations/
+    # salary_floor noise that would spuriously trip the integral confirm gate.
+    assert seen["body"] == {"keywords": ["python", "rust"]}
+
+
+def test_update_forwards_all_supported_fields_when_present(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({
+            "action": "update",
+            "campaign_id": "c1",
+            "titles": ["Scrum Master", "RTE"],
+            "locations": ["Remote"],
+            "work_modes": ["remote"],
+            "keywords": ["agile"],
+            "salary_floor": 120000,
+            "human_readable": "Senior agile roles",
+        })
+    assert seen["method"] == "PUT"
+    assert seen["path"] == "/api/criteria/c1"
+    assert seen["body"] == {
+        "titles": ["Scrum Master", "RTE"],
+        "locations": ["Remote"],
+        "work_modes": ["remote"],
+        "keywords": ["agile"],
+        "salary_floor": 120000,
+        "human_readable": "Senior agile roles",
+    }
+
+
+def test_update_forwards_confirm_flag(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({
+            "action": "update",
+            "campaign_id": "c1",
+            "titles": ["Scrum Master"],
+            "confirm": True,
+        })
+    assert seen["body"] == {"titles": ["Scrum Master"], "confirm": True}
+
+
+def test_update_forwards_clear_learned_flag(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({
+            "action": "update",
+            "campaign_id": "c1",
+            "keywords": ["python"],
+            "clear_learned": True,
+        })
+    assert seen["body"] == {"keywords": ["python"], "clear_learned": True}
+
+
+def test_update_without_confirm_omits_confirm_key(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({"action": "update", "campaign_id": "c1", "keywords": ["python"]})
+    assert "confirm" not in seen["body"]
+
+
+def test_update_propagates_409_from_engine(mod):
+    def fake(method, path, body=None, timeout=10):
+        return {"ok": False, "status": 409, "error": "Integral change requires confirmation"}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({"action": "update", "campaign_id": "c1", "titles": ["RTE"]})
+    assert r["ok"] is False
+    assert r["status"] == 409
+
+
+def test_edit_is_an_alias_for_update(mod):
+    seen = {}
+
+    def fake(method, path, body=None, timeout=10):
+        seen.update(method=method, path=path, body=body)
+        return {"ok": True, "status": 200, "data": {}}
+
+    with patch.object(mod, "_forward", fake):
+        r = mod.dispatch({"action": "edit", "campaign_id": "c1", "keywords": ["python"]})
+    assert seen["method"] == "PUT"
+    assert seen["path"] == "/api/criteria/c1"
+    assert seen["body"] == {"keywords": ["python"]}
+
+
 def test_signature_forwards_get(mod):
     seen = {}
 
