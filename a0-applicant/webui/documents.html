@@ -728,7 +728,14 @@
       const cid = this.selectedCampaignId;
       if (!cid) { this.applications = []; return; }
 
-      const r = await callJsonApi("tracker", { action: "board", campaign_id: cid });
+      // Bug fix: this used to call the "tracker"/"board" action, which proxies the
+      // post-submission tracker board (only applications already submitted or
+      // later). Auto-drafted applications sit at DIGESTED -- review-gated, never
+      // auto-submitted -- so they never showed up here even with a full digest
+      // queue ("No applications" despite dozens of digested drafts). The
+      // "documents"/"list_applications" action lists every application the
+      // Documents panel is actually meant to browse.
+      const r = await callJsonApi("documents", { action: "list_applications", campaign_id: cid });
       if (!r || !r.ok) {
         this.fatalError = (r && r.error) || "Couldn't load applications.";
         this.applications = [];

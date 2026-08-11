@@ -3,10 +3,11 @@
 The Documents UI is served by the a0 shell, but the Applicant engine is internal-only
 ("api:8000"). This handler forwards the UI's calls to the engine's "/api/documents/..." and
 "/api/outcomes/..." APIs, keeping the engine the single source of truth for document state.
-Actions dispatched by "action": "list" (GET), "provenance" (GET), "approve" (POST),
-"decline" (POST), "redline" (POST), "snapshot" (GET), "variants" (GET), "approve_variant"
-(POST), "promote_variant" (POST), "cover_letter" (POST), "flagged_facts" (GET), "jd_match"
-(GET), "set_aggressiveness" (POST), "screening_library" (GET), "screening_reuse" (POST).
+Actions dispatched by "action": "list" (GET), "list_applications" (GET), "provenance"
+(GET), "approve" (POST), "decline" (POST), "redline" (POST), "snapshot" (GET), "variants"
+(GET), "approve_variant" (POST), "promote_variant" (POST), "cover_letter" (POST),
+"flagged_facts" (GET), "jd_match" (GET), "set_aggressiveness" (POST), "screening_library"
+(GET), "screening_reuse" (POST).
 
 Self-contained (plugin sibling-imports are unreliable); the pure "dispatch"/"_forward"
 logic is module-level so it is unit-testable without the framework.
@@ -49,6 +50,16 @@ def dispatch(input: dict) -> dict:
         if not application_id:
             return {"ok": False, "status": 400, "error": "application_id required"}
         return _forward("GET", f"/api/documents/applications/{application_id}")
+
+    # Bug fix: the Documents panel's application picker was wrongly reusing the
+    # "tracker"/"board" proxy action (post-submission-only, excludes DIGESTED
+    # drafts awaiting review) -- see engine route docstring for the root cause.
+    # This action lists every application the panel should be able to browse.
+    if action == "list_applications":
+        campaign_id = (input or {}).get("campaign_id")
+        if not campaign_id:
+            return {"ok": False, "status": 400, "error": "campaign_id required"}
+        return _forward("GET", f"/api/documents/applications/campaign/{campaign_id}")
 
     if action == "provenance":
         document_id = (input or {}).get("document_id")

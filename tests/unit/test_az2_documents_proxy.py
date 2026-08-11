@@ -126,6 +126,27 @@ class TestDocumentsProxy:
         assert r["status"] == 400
         assert "application_id required" in r["error"]
 
+    def test_list_applications_forwards_get(self, mod):
+        # Bug fix: the Documents panel's application picker (No applications
+        # despite digested drafts existing) now goes through this action,
+        # instead of the post-submission tracker board.
+        seen = {}
+
+        def fake(method, path, body=None, timeout=10):
+            seen.update(method=method, path=path)
+            return {"ok": True, "status": 200, "data": {}}
+
+        with patch.object(mod, "_forward", fake):
+            r = mod.dispatch({"action": "list_applications", "campaign_id": "camp1"})
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/documents/applications/campaign/camp1"
+
+    def test_list_applications_missing_campaign_id_400(self, mod):
+        r = mod.dispatch({"action": "list_applications"})
+        assert r["ok"] is False
+        assert r["status"] == 400
+        assert "campaign_id required" in r["error"]
+
     def test_snapshot_missing_application_id_400(self, mod):
         r = mod.dispatch({"action": "snapshot"})
         assert r["ok"] is False

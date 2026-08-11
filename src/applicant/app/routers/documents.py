@@ -33,6 +33,7 @@ from applicant.core.errors import NotFound, ReviewRequired
 from applicant.core.ids import GeneratedDocumentId, ResumeVariantId
 from applicant.core.rules.jd_match import compute_jd_match  # product-gaps #23
 from applicant.core.rules.truthfulness import BANNED_PHRASES  # CRIT-profile
+from applicant.core.state_machine import ApplicationState  # bug-fix: Documents panel list
 
 router = APIRouter(
     prefix="/api/documents", tags=["documents"], dependencies=[Depends(require_llm_configured)]
@@ -178,6 +179,46 @@ def download_artifact(variant_id: str, material=Depends(get_material_service)) -
 @router.get("")
 def index() -> dict:
     return {"surface": "documents", "phase": 3, "status": "live"}
+
+
+@router.get("/applications/campaign/{campaign_id}")
+def list_applications_for_campaign(
+    campaign_id: str, storage=Depends(get_storage)
+) -> dict:
+    """Applications the Documents panel can browse for one campaign (bug fix).
+
+    The Documents panel previously reused the post-submission TRACKER board
+    (``GET /api/post-submission/{campaign_id}`` -> ``PostSubmissionService.
+    list_tracker_rows``), which ONLY returns applications already in/ past
+    ``TRACKER_STATES`` (submitted-or-later). Auto-draft (FR-AUTO,
+    ``AgentLoop._create_digested_application``) leaves its drafted
+    applications sitting at ``DIGESTED`` -- review-gated, never auto-submitted
+    -- so every application the digest actually produces was invisible here
+    ("No applications" even with a full digest queue).
+
+    This lists straight off ``ApplicationRepository.list_for_campaign`` (the
+    same unfiltered source ``AdminQueryService.application_history`` and
+    ``DigestService._presubmit_warnings`` already read), excluding only the
+    two pre-materials states (``DISCOVERED``/``SCORED``) where a posting has
+    not yet been promoted to a real application with anything to review.
+    """
+    apps = storage.applications.list_for_campaign(campaign_id)  # type: ignore[arg-type]
+    excluded = {ApplicationState.DISCOVERED, ApplicationState.SCORED}
+    return {
+        "campaign_id": campaign_id,
+        "applications": [
+            {
+                "id": str(a.id),
+                "application_id": str(a.id),
+                "status": a.status.value,
+                "role_name": a.role_name,
+                "job_title": a.job_title,
+                "label": a.role_name or a.job_title or str(a.id),
+            }
+            for a in apps
+            if a.status not in excluded
+        ],
+    }
 
 
 @router.get("/applications/{application_id}")

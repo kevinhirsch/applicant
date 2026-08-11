@@ -22,8 +22,14 @@ class TestDocumentsPanel:
     def test_list_campaigns_via_callJsonApi(self, html):
         assert 'callJsonApi("campaigns", { action: "list" }' in html
 
-    def test_tracker_board_via_callJsonApi(self, html):
-        assert 'callJsonApi("tracker", { action: "board"' in html
+    def test_applications_list_via_callJsonApi(self, html):
+        # Bug fix: the picker must list applications through the DOCUMENTS proxy's
+        # "list_applications" action, not the post-submission tracker board (which
+        # excludes every application still sitting at DIGESTED awaiting review).
+        assert 'callJsonApi("documents", { action: "list_applications"' in html
+
+    def test_tracker_board_no_longer_used_for_the_application_picker(self, html):
+        assert 'callJsonApi("tracker", { action: "board"' not in html
 
     def test_document_list_via_callJsonApi(self, html):
         assert 'callJsonApi("documents", { action: "list"' in html
