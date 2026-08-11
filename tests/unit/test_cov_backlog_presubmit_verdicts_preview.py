@@ -23,6 +23,21 @@ Each assertion below was verified failing by hand (temporarily reverting the
 two new ``try/except`` blocks in ``_presubmit_warnings``, rerunning, seeing a
 real failure — either an empty ``warnings`` list or a missing check name — then
 restoring; ``git diff`` clean afterward) before this file was landed.
+
+2026-08-10 update: ``DigestService``'s PERF/DRAFT-UNBLOCK fix (commit
+005c41a57) made the digest row-building path a pure READ over an already-
+persisted ``viability_score`` — an unscored, non-user-added posting is now
+SKIPPED entirely rather than scored inline (see
+``DigestService._build_scored_pairs``; without this, the digest GET timed out
+and starved the scheduler's auto-draft tick). That predates and is unrelated
+to the scoring-rubric calibration commits (e05b515b0/4bda75519) — confirmed by
+reverting scoring_service.py to its pre-calibration state and re-running these
+tests, which still failed identically. In production, AgentLoop's background
+scoring tick persists a score before the digest is ever built; ``_posting``
+below now mirrors that (via ``scoring.score_viability``) so these tests
+exercise the digest's real read-only contract instead of an inline-scoring
+path that no longer exists. ``threshold=0`` in ``_wire`` means the score's
+VALUE never matters here — only the presubmit-safety warning does.
 """
 
 from __future__ import annotations
@@ -69,7 +84,7 @@ def _wire(*, presubmit_safety_params: dict | None = None) -> tuple:
         scoring,
         presubmit_safety_params=presubmit_safety_params,
     )
-    return storage, digest
+    return storage, digest, scoring
 
 
 def _campaign(storage) -> CampaignId:
@@ -79,7 +94,7 @@ def _campaign(storage) -> CampaignId:
     return cid
 
 
-def _posting(storage, cid, **overrides) -> JobPosting:
+def _posting(storage, cid, scoring=None, **overrides) -> JobPosting:
     defaults = dict(
         id=JobPostingId(new_id()),
         campaign_id=cid,
@@ -96,6 +111,13 @@ def _posting(storage, cid, **overrides) -> JobPosting:
     posting = JobPosting(**defaults)
     storage.postings.add(posting)
     storage.commit()
+    if scoring is not None:
+        # See the module docstring's 2026-08-10 update: the digest no longer
+        # scores inline, so a posting must already carry a persisted
+        # ``viability_score`` (mirroring AgentLoop's background scoring tick)
+        # before ``digest.build_digest``/``build_digest_payload`` will surface
+        # it as a row at all.
+        scoring.score_viability(posting.id)
     return posting
 
 
@@ -116,14 +138,14 @@ def _application(storage, cid, posting, *, status, created_at) -> Application:
 
 
 def test_per_company_volume_cap_surfaces_as_a_digest_row_warning_without_excluding_the_row():
-    storage, digest = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 1})
+    storage, digest, scoring = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 1})
     cid = _campaign(storage)
     now = datetime.now(UTC)
-    existing = _posting(storage, cid, title="Existing Role", company="Acme Corp")
+    existing = _posting(storage, cid, scoring, title="Existing Role", company="Acme Corp")
     _application(storage, cid, existing, status=ApplicationState.APPROVED, created_at=now)
 
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
     )
     rows = digest.build_digest(cid)
     assert len(rows) == 2, "a warning must not exclude the row from the digest"
@@ -138,9 +160,9 @@ def test_per_company_volume_cap_surfaces_as_a_digest_row_warning_without_excludi
 
 
 def test_per_company_volume_cap_warning_absent_when_under_the_cap():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
-    _posting(storage, cid)
+    _posting(storage, cid, scoring)
     rows = digest.build_digest(cid)
     assert len(rows) == 1
     assert not any(w["check"] == "per_company_volume" for w in rows[0]["warnings"])
@@ -150,14 +172,14 @@ def test_volume_cap_digest_warning_threaded_from_the_same_settings_dict_agentloo
     """A digest-row warning must reflect the SAME operator-configured cap as the
     pipeline-start block, not a hardcoded default that can silently drift from a
     configured PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY."""
-    storage, digest = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 5})
+    storage, digest, scoring = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 5})
     cid = _campaign(storage)
     now = datetime.now(UTC)
-    existing = _posting(storage, cid, title="Existing Role", company="Acme Corp")
+    existing = _posting(storage, cid, scoring, title="Existing Role", company="Acme Corp")
     _application(storage, cid, existing, status=ApplicationState.APPROVED, created_at=now)
 
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
     )
     rows = digest.build_digest(cid)
     new_row = next(r for r in rows if r["posting_id"] == new_posting.id)
@@ -172,7 +194,7 @@ def test_volume_cap_digest_warning_threaded_from_the_same_settings_dict_agentloo
 
 
 def test_eligibility_sponsorship_mismatch_surfaces_as_a_digest_row_warning():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
     storage.onboarding_profiles.add(
         OnboardingProfile(
@@ -184,7 +206,7 @@ def test_eligibility_sponsorship_mismatch_surfaces_as_a_digest_row_warning():
     )
     storage.commit()
     _posting(
-        storage, cid,
+        storage, cid, scoring,
         description=(
             "We are unable to sponsor visas for this role; you must have "
             "permanent work authorization in the US. 5+ years experience in "
@@ -200,7 +222,7 @@ def test_eligibility_sponsorship_mismatch_surfaces_as_a_digest_row_warning():
 
 
 def test_eligibility_clearance_mismatch_surfaces_as_a_digest_row_warning():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
     storage.attributes.add(
         Attribute(
@@ -212,7 +234,7 @@ def test_eligibility_clearance_mismatch_surfaces_as_a_digest_row_warning():
     )
     storage.commit()
     _posting(
-        storage, cid,
+        storage, cid, scoring,
         description=(
             "This role requires an active top secret clearance. 5+ years "
             "experience in distributed systems, Python, and Go required."
@@ -224,7 +246,7 @@ def test_eligibility_clearance_mismatch_surfaces_as_a_digest_row_warning():
 
 
 def test_eligibility_warning_absent_when_profile_matches_the_posting():
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
     storage.onboarding_profiles.add(
         OnboardingProfile(
@@ -235,7 +257,7 @@ def test_eligibility_warning_absent_when_profile_matches_the_posting():
         )
     )
     storage.commit()
-    _posting(storage, cid)
+    _posting(storage, cid, scoring)
     rows = digest.build_digest(cid)
     assert not any(w["check"].startswith("eligibility_") for w in rows[0]["warnings"])
 
@@ -244,7 +266,7 @@ def test_eligibility_check_suppressed_when_disabled_via_settings():
     """Mirrors AgentLoop: eligibility is gated behind ``eligibility_enabled`` (an
     operator may not have filled in work-authorization intake yet, in which case
     the check would just be noise) — the digest must respect the same flag."""
-    storage, digest = _wire(presubmit_safety_params={"eligibility_enabled": False})
+    storage, digest, scoring = _wire(presubmit_safety_params={"eligibility_enabled": False})
     cid = _campaign(storage)
     storage.onboarding_profiles.add(
         OnboardingProfile(
@@ -256,7 +278,7 @@ def test_eligibility_check_suppressed_when_disabled_via_settings():
     )
     storage.commit()
     _posting(
-        storage, cid,
+        storage, cid, scoring,
         description=(
             "We are unable to sponsor visas for this role. 5+ years experience "
             "in distributed systems required."
@@ -272,7 +294,7 @@ def test_eligibility_check_suppressed_when_disabled_via_settings():
 def test_eligibility_check_runs_by_default_when_params_omit_the_flag():
     """When ``presubmit_safety_params`` is None/omits the key, the default must
     be enabled (matches AgentLoop's own ``.get("eligibility_enabled", True)``)."""
-    storage, digest = _wire()
+    storage, digest, scoring = _wire()
     cid = _campaign(storage)
     storage.onboarding_profiles.add(
         OnboardingProfile(
@@ -284,7 +306,7 @@ def test_eligibility_check_runs_by_default_when_params_omit_the_flag():
     )
     storage.commit()
     _posting(
-        storage, cid,
+        storage, cid, scoring,
         description=(
             "We are unable to sponsor visas for this role. 5+ years experience "
             "in distributed systems required."
@@ -297,13 +319,13 @@ def test_eligibility_check_runs_by_default_when_params_omit_the_flag():
 def test_build_digest_payload_carries_all_four_warning_kinds_through_to_the_top_level_rows():
     """build_digest_payload (what GET /api/digest/{id} — and thus the workspace
     proxy + applicantDigest.js — actually reads) must not drop the new warnings."""
-    storage, digest = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 1})
+    storage, digest, scoring = _wire(presubmit_safety_params={"max_apps_per_company_per_day": 1})
     cid = _campaign(storage)
     now = datetime.now(UTC)
-    existing = _posting(storage, cid, title="Existing Role", company="Acme Corp")
+    existing = _posting(storage, cid, scoring, title="Existing Role", company="Acme Corp")
     _application(storage, cid, existing, status=ApplicationState.APPROVED, created_at=now)
     new_posting = _posting(
-        storage, cid, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
+        storage, cid, scoring, id=JobPostingId(new_id()), title="New Role", company="Acme Corp",
     )
     payload = digest.build_digest_payload(cid)
     new_row = next(r for r in payload["rows"] if r["posting_id"] == new_posting.id)

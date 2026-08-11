@@ -56,13 +56,26 @@ def _add_posting(storage, cid, **kw) -> JobPostingId:
 def test_digest_self_loads_campaign_criteria_when_caller_omits_it():
     storage = InMemoryStorage()
     cid = _campaign_with_criteria(storage)
-    _add_posting(
+    pid = _add_posting(
         storage, cid, title="Senior Backend Engineer", company="A",
         description="python go kafka",
     )
     criteria = CriteriaService(storage, llm=None)
     scoring = ScoringService(storage, llm=None, embedding=LocalEmbedding(), threshold=0)
     digest = DigestService(storage, None, scoring, criteria=criteria)
+
+    # DigestService's PERF/DRAFT-UNBLOCK fix (2026-08-10, commit 005c41a57) made
+    # the digest row-building path a pure READ over an already-persisted
+    # ``viability_score`` -- it no longer LLM/embedding-scores inline (see
+    # ``DigestService._build_scored_pairs``: an unscored, non-user-added posting
+    # is now skipped rather than scored on the spot, so the digest GET never
+    # again times out the scheduler's auto-draft tick). In production,
+    # AgentLoop's background scoring tick persists the score -- threaded with
+    # the SAME self-loaded campaign criteria this test pins -- before the
+    # digest is ever built. Mirror that here so this test exercises the
+    # digest's actual read-only contract instead of an inline-scoring path
+    # that no longer exists.
+    scoring.score_viability(pid, criteria.get_criteria(cid))
 
     payload = digest.build_digest_payload(cid)  # front-door path: NO criteria threaded
 
