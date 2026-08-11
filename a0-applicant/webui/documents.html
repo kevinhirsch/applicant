@@ -118,6 +118,28 @@
             <div class="rv-muted" style="margin-top:4px">Discard archives the app (reversible) and feeds a negative learning signal.</div>
           </div>
           <div class="rv-ok" x-show="rvDecisionMessage" x-text="rvDecisionMessage"></div>
+
+          <!-- RUX-4: prefill / assisted-apply handoff. Only after Continue (which
+               approved the materials through the review gate). This HANDS OFF to the
+               human-gated easy-apply assisted flow — it never fills a field or submits;
+               the user opens the posting and applies themselves. -->
+          <div x-show="rvContinued" style="margin-top:8px">
+            <div class="rv-section-actions">
+              <button class="btn primary small" @click="rvPrefillHandoff()" :disabled="rvPrefillBusy">🤝 Prefill / Assisted apply</button>
+              <span class="rv-muted" x-show="rvPrefillBusy">opening…</span>
+            </div>
+            <div class="rv-muted" style="margin-top:4px">This opens an assisted-apply checklist and a link to the posting. Applicant never fills or submits anything for you — you do that yourself.</div>
+            <div class="err" x-show="rvPrefillError" x-text="rvPrefillError"></div>
+            <div class="rv-ok" x-show="rvPrefillBrief" style="margin-top:6px">
+              <div style="font-weight:600" x-show="rvPrefillBrief && rvPrefillBrief.title" x-text="'Assisted apply — ' + ((rvPrefillBrief && rvPrefillBrief.title) || '')"></div>
+              <a class="rv-source-link" x-show="rvPrefillBrief && isHttp(rvPrefillBrief.deep_link)" :href="rvPrefillBrief && rvPrefillBrief.deep_link" target="_blank" rel="noopener noreferrer">🔗 Open the posting to apply ↗</a>
+              <ol style="margin:6px 0 0 1.1rem;padding:0">
+                <template x-for="(step, i) in ((rvPrefillBrief && rvPrefillBrief.checklist) || [])" :key="i">
+                  <li style="font-size:.8rem;margin-bottom:2px" x-text="step"></li>
+                </template>
+              </ol>
+            </div>
+          </div>
         </div>
 
         <!-- RUX-3: per-section inline edit + regenerate; apply-across + regenerate-all -->
@@ -512,6 +534,10 @@
     rvShowDiscardReason: false,
     rvDiscardReason: "",
     rvDecisionMessage: "",
+    rvContinued: false,
+    rvPrefillBusy: false,
+    rvPrefillError: "",
+    rvPrefillBrief: null,
     rvSections: [],
     rvSectionBusy: {},
     rvSectionError: {},
@@ -920,6 +946,12 @@
     async loadReview() {
       this.rvLoading = true;
       this.rvError = "";
+      // A fresh review load is a fresh decision — clear any prior Continue/handoff
+      // state so the assisted-apply handoff never lingers onto a different app.
+      this.rvContinued = false;
+      this.rvPrefillBrief = null;
+      this.rvPrefillError = "";
+      this.rvDecisionMessage = "";
       const r = await callJsonApi("review", {
         action: "get",
         application_id: this.rvApplicationId,
@@ -988,10 +1020,46 @@
         return false;
       }
       const d = r.data || {};
-      if (decision === "continue") this.rvDecisionMessage = "Continuing — refine the answers below, then approve to prefill.";
+      if (decision === "continue") {
+        // Continue approved the materials through the review gate. Reveal the
+        // assisted-apply handoff — nothing is filled or submitted automatically.
+        this.rvContinued = true;
+        this.rvPrefillError = "";
+        this.rvPrefillBrief = null;
+        this.rvDecisionMessage = "Materials approved through the review gate. Refine below if needed, then use Prefill / Assisted apply to hand off — you fill and submit on the job board yourself.";
+      }
       else if (decision === "save") this.rvDecisionMessage = "Saved for later" + (d.bucket ? (" (" + d.bucket + ")") : "") + " — it's out of your active queue with a reminder nudge.";
       else if (decision === "discard") this.rvDecisionMessage = "Discarded (archived, reversible). Similar roles will rank lower.";
       return true;
+    },
+
+    // RUX-4: hand off to the human-gated easy-apply assisted flow. Fetches the deep
+    // link + checklist for this posting; it NEVER fills a field or submits anything.
+    async rvPrefillHandoff() {
+      if (!this.rvPostingId) {
+        this.rvPrefillError = "This role has no linked posting to hand off to.";
+        return;
+      }
+      this.rvPrefillBusy = true;
+      this.rvPrefillError = "";
+      this.rvPrefillBrief = null;
+      const r = await callJsonApi("review", {
+        action: "prefill",
+        campaign_id: this.rvCampaignId,
+        posting_id: this.rvPostingId,
+      });
+      this.rvPrefillBusy = false;
+      if (!r || !r.ok) {
+        if (r && (r.status === 409 || r.status_code === 409)) {
+          this.rvPrefillError = "Accept the Easy Apply assisted-mode consent screen in Settings first. Applicant never fills or submits for you.";
+        } else if (r && (r.status === 404 || r.status_code === 404)) {
+          this.rvPrefillError = "This role isn't an Easy Apply posting — open the source posting above and apply yourself.";
+        } else {
+          this.rvPrefillError = (r && r.error) || "Couldn't open the assisted-apply handoff.";
+        }
+        return;
+      }
+      this.rvPrefillBrief = r.data || {};
     },
 
     async rvConfirmDiscard() {

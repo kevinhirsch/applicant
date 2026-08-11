@@ -145,3 +145,20 @@ class TestStatesAndTheming:
         # UIKIT §1 live gap: --color-input-bg is a single :root literal (#fff) that is
         # invisible-on-white in dark mode. Cards/surfaces must not lean on it.
         assert 'var(--color-input-bg' not in html
+
+
+class TestPrefillHandoff:
+    """RUX-4: after Continue, a prefill/assist handoff to the human-gated assisted
+    flow. It must hand off — never fill or submit anything itself."""
+
+    def test_prefill_handoff_action_wired(self, html):
+        assert 'action: "prefill"' in html
+
+    def test_prefill_handoff_shown_after_continue(self, html):
+        # The handoff control only makes sense once Continue approved the materials.
+        assert 'rvContinued' in html
+
+    def test_prefill_handoff_does_not_autosubmit(self, html):
+        # The copy must make clear the human fills/submits — the app never does.
+        low = html.lower()
+        assert 'yourself' in low or 'never' in low
