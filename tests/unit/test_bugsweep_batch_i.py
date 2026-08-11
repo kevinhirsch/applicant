@@ -60,7 +60,14 @@ def _fk_sqlite_storage():
     return SqlAlchemyStorage(session), session, engine
 
 
-def _seed_posting(storage, cid, *, title="Senior Python Engineer"):
+def _seed_posting(storage, cid, *, title="Senior Python Engineer", viability_score=None):
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline -- an unscored posting is skipped from the digest entirely,
+    # regardless of whether a scoring service is even wired. Callers that
+    # exercise digest.deliver/approve pass viability_score explicitly (mirroring
+    # what the background scoring tick would have persisted); callers that don't
+    # touch the digest leave it None, unaffected.
     pid = JobPostingId(new_id())
     storage.postings.add(
         JobPosting(
@@ -72,6 +79,7 @@ def _seed_posting(storage, cid, *, title="Senior Python Engineer"):
             work_mode="remote",
             description="python fastapi",
             source_key="jobspy:indeed",
+            viability_score=viability_score,
         )
     )
     storage.commit()
@@ -92,14 +100,17 @@ def test_digest_deliver_commits_without_fk_violation_on_sqlite_fk():
         cid = CampaignId(new_id())
         storage.campaigns.add(Campaign(id=cid, name="C"))
         storage.commit()
-        pid = _seed_posting(storage, cid)
+        # A persisted score is required for the row to surface at all (2026-08-10
+        # PERF/DRAFT-UNBLOCK fix, commit 005c41a57); scoring=None below just means
+        # no scoring SERVICE is wired (the digest is a pure read either way).
+        pid = _seed_posting(storage, cid, viability_score=1.0)
 
         pending = PendingActionsService(storage)
         notifier = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
         digest = DigestService(
             storage,
             notifier,
-            scoring=None,  # no scoring -> every posting is a row
+            scoring=None,
             notification_service=NotificationService(notifier),
             pending_actions=pending,
         )
@@ -122,7 +133,7 @@ def test_digest_approve_resolves_pending_by_posting_id():
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
     storage.commit()
-    pid = _seed_posting(storage, cid)
+    pid = _seed_posting(storage, cid, viability_score=1.0)
 
     pending = PendingActionsService(storage)
     notifier = AppriseNotifier(discord_webhook_url="https://discord.test/wh")

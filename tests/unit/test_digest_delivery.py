@@ -25,6 +25,7 @@ from applicant.core.ids import (
     JobPostingId,
     new_id,
 )
+from applicant.core.state_machine import ApplicationState
 
 
 def _wire():
@@ -45,12 +46,13 @@ def _wire():
         notification_service=notif_svc,
         pending_actions=pending,
     )
-    return storage, digest, learning, criteria, pending, notifier
+    return storage, digest, scoring, learning, criteria, pending, notifier
 
 
-def _seed_campaign(storage, *, with_posting=True):
+def _seed_campaign(storage, *, with_posting=True, scoring=None):
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
+    pid = None
     if with_posting:
         pid = JobPostingId(new_id())
         storage.postings.add(
@@ -66,12 +68,18 @@ def _seed_campaign(storage, *, with_posting=True):
             )
         )
     storage.commit()
+    if scoring is not None and pid is not None:
+        # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+        # commit 005c41a57) reads an already-persisted viability_score instead of
+        # scoring inline. Mirror AgentLoop's background scoring tick so this
+        # seeded posting actually surfaces as a digest row.
+        scoring.score_viability(pid)
     return cid
 
 
 def test_deliver_builds_payloads_and_pings_discord():
-    storage, digest, *_ , notifier = _wire()
-    cid = _seed_campaign(storage)
+    storage, digest, scoring, *_ , notifier = _wire()
+    cid = _seed_campaign(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     result = digest.deliver(cid, crit)
     assert result["payload"]["rows"], "viable role should be in the digest"
@@ -184,8 +192,8 @@ def test_email_no_footer_when_under_cap():
     # At/under the cap there is no truncation footer and every row renders.
     from applicant.application.services.digest_service import MAX_EMAIL_ROWS
 
-    storage, digest, *_ = _wire()
-    cid = _seed_campaign(storage)
+    storage, digest, scoring, *_ = _wire()
+    cid = _seed_campaign(storage, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
     email = digest.render_email(cid, crit)
     assert email["html"].count("<tr><td>") == 1
@@ -194,7 +202,7 @@ def test_email_no_footer_when_under_cap():
 
 
 def test_decline_round_trips_into_learning_and_criteria():
-    storage, digest, learning, criteria, _pending, _ = _wire()
+    storage, digest, _scoring, learning, criteria, _pending, _ = _wire()
     cid = _seed_campaign(storage, with_posting=False)
     # Seed criteria so the learned adjustment can persist.
     criteria.edit_criteria(cid, changes={"keywords": ["python"]})
@@ -290,14 +298,75 @@ def test_approve_decline_promote_a_posting_to_an_application():
         digest.approve("no-such-id")
 
 
+def test_approve_after_auto_draft_advances_digested_to_approved():
+    """FR-AUTO companion: an auto-drafted DIGESTED application must be advanced
+    to APPROVED when the human approves it later (else _process_approvals skips
+    it forever because it only acts on APPROVED apps).
+
+    Approving by APPLICATION id (the auto-draft path): status advances via the
+    legal §7 transition, and the decision is recorded."""
+    storage, digest, *_rest = _wire()
+    cid = _seed_campaign(storage, with_posting=True)
+    posting = storage.postings.list_for_campaign(cid)[0]
+    # Simulate the auto-draft keystone: an existing DIGESTED application row.
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=posting.id,
+        status=ApplicationState.DIGESTED, job_title=posting.title,
+        work_mode=posting.work_mode, root_url=posting.source_url,
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    dec = digest.approve(app.id)
+    assert dec.application_id == app.id
+    updated = storage.applications.get(app.id)
+    assert updated is not None
+    assert updated.status is ApplicationState.APPROVED
+
+
+def test_decline_after_auto_draft_advances_digested_to_declined():
+    """FR-AUTO companion: declining an auto-drafted DIGESTED application advances
+    it to DECLINED (legal transition) and records the decision."""
+    storage, digest, *_rest = _wire()
+    cid = _seed_campaign(storage, with_posting=True)
+    posting = storage.postings.list_for_campaign(cid)[0]
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=posting.id,
+        status=ApplicationState.DIGESTED, job_title=posting.title,
+        work_mode=posting.work_mode, root_url=posting.source_url,
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    dec = digest.decline(app.id, feedback_text="not remote enough")
+    assert dec.application_id == app.id
+    updated = storage.applications.get(app.id)
+    assert updated is not None
+    assert updated.status is ApplicationState.DECLINED
+
+
 # === #13: deliver builds + scores the digest ONCE per delivery =============
 import pytest  # noqa: E402
 
 
 @pytest.mark.unit
 def test_deliver_scores_each_posting_once_per_delivery():
-    """#13: deliver builds + scores the full set ONCE (it used to build the payload
-    AND have render_email re-build it, scoring every posting twice per delivery)."""
+    """#13 (superseded by the 2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    005c41a57): deliver used to re-score the full set on every call (once in
+    build_digest_payload, again in render_email) -- this test originally pinned
+    "exactly once, not twice". DigestService._build_scored_pairs is now a pure
+    READ over an already-persisted viability_score (the digest GET was timing
+    out re-scoring the unscored backlog inline, starving the scheduler's
+    auto-draft tick) -- scoring happens out-of-band, before delivery, via the
+    background scoring tick (mirrored here by calling ``inner.score_viability``
+    directly). The "never double-scored" invariant now means delivery calls
+    ``score_posting`` ZERO times, not one."""
     storage = InMemoryStorage()
     embedding = LocalEmbedding()
     notifier = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
@@ -325,11 +394,15 @@ def test_deliver_scores_each_posting_once_per_delivery():
         notification_service=notif_svc,
         pending_actions=pending,
     )
-    cid = _seed_campaign(storage)  # one viable posting
+    cid = _seed_campaign(storage)  # one posting
+    posting = storage.postings.list_for_campaign(cid)[0]
+    # Mirrors AgentLoop's background scoring tick, which persists a score BEFORE
+    # any digest is ever built -- via the real (uncounted) scorer, not `counting`.
+    inner.score_viability(posting.id)
 
     digest.deliver(cid)
-    # Exactly one score per posting per delivery (was two before the fix).
-    assert counting.score_posting_calls == 1
+    # Delivery never re-scores in its hot path -- it only reads the persisted score.
+    assert counting.score_posting_calls == 0
 
 
 # === perf lens 03 #32: batch-materialize digest-approval pending actions ===
@@ -341,11 +414,14 @@ def test_deliver_scores_each_posting_once_per_delivery():
 # dedup semantics) and the perf property (query/commit counts).
 
 
-def _seed_many_postings(storage, cid: CampaignId, n: int) -> None:
+def _seed_many_postings(storage, cid: CampaignId, n: int, *, scoring=None) -> None:
+    ids = []
     for i in range(n):
+        pid = JobPostingId(new_id())
+        ids.append(pid)
         storage.postings.add(
             JobPosting(
-                id=JobPostingId(new_id()),
+                id=pid,
                 campaign_id=cid,
                 title="Senior Python Engineer",
                 company=f"Acme{i}",
@@ -356,6 +432,11 @@ def _seed_many_postings(storage, cid: CampaignId, n: int) -> None:
             )
         )
     storage.commit()
+    if scoring is not None:
+        # See _seed_campaign: DigestService._build_scored_pairs only surfaces
+        # postings that already carry a persisted viability_score.
+        for pid in ids:
+            scoring.score_viability(pid)
 
 
 @pytest.mark.unit
@@ -363,9 +444,9 @@ def test_deliver_materializes_one_pending_action_per_viable_row_batched():
     """Behavior parity: batching still produces one digest_approval pending
     action per viable posting, with the same title/payload shape the old
     per-row ``digest_approval`` call produced."""
-    storage, digest, *_, pending, notifier = _wire()
+    storage, digest, scoring, *_, pending, notifier = _wire()
     cid = _seed_campaign(storage, with_posting=False)
-    _seed_many_postings(storage, cid, 5)
+    _seed_many_postings(storage, cid, 5, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
 
     digest.deliver(cid, crit)
@@ -455,9 +536,9 @@ def test_deliver_twice_does_not_duplicate_pending_actions_dedup_preserved():
     before the day rolls) must not create duplicate pending actions — the
     batch path's dedup must match the old per-row dedup exactly (same key,
     same open/unresolved scope)."""
-    storage, digest, *_, pending, notifier = _wire()
+    storage, digest, scoring, *_, pending, notifier = _wire()
     cid = _seed_campaign(storage, with_posting=False)
-    _seed_many_postings(storage, cid, 3)
+    _seed_many_postings(storage, cid, 3, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
 
     digest.deliver(cid, crit)
@@ -478,9 +559,9 @@ def test_deliver_after_resolving_one_row_only_recreates_the_resolved_one():
     """If the user already resolved one row's pending action, a re-delivery
     must recreate ONLY that one — ``find_open_by_dedup``/``list_open`` only
     match OPEN (unresolved) actions, and the batch path must preserve that."""
-    storage, digest, *_, pending, notifier = _wire()
+    storage, digest, scoring, *_, pending, notifier = _wire()
     cid = _seed_campaign(storage, with_posting=False)
-    _seed_many_postings(storage, cid, 3)
+    _seed_many_postings(storage, cid, 3, scoring=scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
 
     digest.deliver(cid, crit)

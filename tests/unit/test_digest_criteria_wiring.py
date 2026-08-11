@@ -22,6 +22,7 @@ from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
 from applicant.ports.driven.llm import LLMResult
 
 
@@ -56,13 +57,26 @@ def _add_posting(storage, cid, **kw) -> JobPostingId:
 def test_digest_self_loads_campaign_criteria_when_caller_omits_it():
     storage = InMemoryStorage()
     cid = _campaign_with_criteria(storage)
-    _add_posting(
+    pid = _add_posting(
         storage, cid, title="Senior Backend Engineer", company="A",
         description="python go kafka",
     )
     criteria = CriteriaService(storage, llm=None)
     scoring = ScoringService(storage, llm=None, embedding=LocalEmbedding(), threshold=0)
     digest = DigestService(storage, None, scoring, criteria=criteria)
+
+    # DigestService's PERF/DRAFT-UNBLOCK fix (2026-08-10, commit 005c41a57) made
+    # the digest row-building path a pure READ over an already-persisted
+    # ``viability_score`` -- it no longer LLM/embedding-scores inline (see
+    # ``DigestService._build_scored_pairs``: an unscored, non-user-added posting
+    # is now skipped rather than scored on the spot, so the digest GET never
+    # again times out the scheduler's auto-draft tick). In production,
+    # AgentLoop's background scoring tick persists the score -- threaded with
+    # the SAME self-loaded campaign criteria this test pins -- before the
+    # digest is ever built. Mirror that here so this test exercises the
+    # digest's actual read-only contract instead of an inline-scoring path
+    # that no longer exists.
+    scoring.score_viability(pid, criteria.get_criteria(cid))
 
     payload = digest.build_digest_payload(cid)  # front-door path: NO criteria threaded
 
@@ -91,11 +105,21 @@ def test_viability_scoring_uses_configured_model_when_available():
     scoring = ScoringService(storage, llm=_FakeLLM(), embedding=LocalEmbedding())
     crit = CriteriaService(storage, llm=None).get_criteria(cid)
     posting = JobPosting(
-        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Backend Engineer",
+        # NOT "Senior Backend Engineer" -- this test pins that a CONFIGURED
+        # model's score reaches the caller (times the round-4 fit-to-profile
+        # ranking multiplier -- EVERY allowlisted title now falls in either
+        # the STRONG or MODERATE fit tier, so there is no "neutral" in-domain
+        # title left to dodge this with; "Delivery Manager" is STRONG fit,
+        # see ranking_factors.fit_to_profile_multiplier). Under
+        # role_domain_fit's ALLOWLIST posture (round 2) the title must
+        # plainly match an in-domain role family or the gate short-circuits
+        # before the model is ever called.
+        id=JobPostingId(new_id()), campaign_id=cid, title="Delivery Manager",
         company="A", source_url="http://x", description="python go",
     )
     result = scoring.score_posting(posting, crit)
-    assert result.score == pytest.approx(0.91)
+    expected = min(1.0, 0.91 * fit_to_profile_multiplier(posting.title).multiplier)
+    assert result.score == pytest.approx(expected)
     assert "great match" in result.rationale
 
 
@@ -120,7 +144,8 @@ def test_score_for_digest_reuses_persisted_until_criteria_change():
 
     scoring = ScoringService(storage, llm=_CountingLLM(), embedding=LocalEmbedding())
     pid = _add_posting(
-        storage, cid, title="Senior Backend Engineer", company="A", description="python go",
+        # NOT "Senior Backend Engineer" -- see the rename note above.
+        storage, cid, title="Senior Delivery Manager", company="A", description="python go",
     )
 
     s1 = scoring.score_for_digest(storage.postings.get(pid), crit)

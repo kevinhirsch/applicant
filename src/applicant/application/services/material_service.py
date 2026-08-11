@@ -63,6 +63,7 @@ from applicant.core.rules.materials import (
     clamp_aggressiveness,
     classify_screening_question,
     normalize_screening_question,
+    positioning_directive,
     should_generate_cover_letter,
 )
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
@@ -1062,6 +1063,29 @@ class MaterialService:
             # Stored in the existing ``fit_scores`` JSON dict (no migration needed).
             fit_scores=({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
         )
+        # Tech-debt fix (Drafting & Materials): a forked variant used to persist ONLY
+        # its metadata — the tailored SOURCE (``report.text``) was generated but never
+        # actually rendered, so ``storage_path`` stayed a placeholder no file ever
+        # existed at (nothing to preview/download/upload; see
+        # ``BaseResumeProvider``'s docstring, which called this out explicitly). Render
+        # it now through the campaign's chosen engine (``tailoring_for`` respects the
+        # Phase 0 LaTeX-vs-docx choice, FR-RESUME-3a — previously computed but never
+        # actually invoked anywhere) so the variant carries a REAL artifact path from
+        # the moment it exists. Best-effort: a render failure degrades to the
+        # placeholder path (counted via ``_note_silent_degradation``) rather than
+        # blocking generation — the redline/review flow does not require a compiled
+        # artifact to already exist.
+        engine = self.tailoring_for(campaign_id)
+        if engine is not None:
+            try:
+                rendered = engine.render_artifact(new_variant.id, report.text)
+            except Exception:
+                self._note_silent_degradation(
+                    "material_service.py:select_or_generate render_artifact"
+                )
+            else:
+                if rendered is not None and rendered.storage_path:
+                    new_variant = replace(new_variant, storage_path=rendered.storage_path)
         # P1-8: compute the deterministic keyword coverage of the GENERATED body vs
         # the JD terms and persist it with the variant, so the coverage the review
         # surface shows is stored (not recomputed ad hoc) and survives restarts.
@@ -1493,7 +1517,9 @@ class MaterialService:
                     essay=essay,
                 )
             )
+            self._storage.commit()
         except Exception:  # pragma: no cover - defensive; never break generation
+            self._storage.rollback()
             self._note_silent_degradation("material_service.py")
 
     def list_screening_answer_library(self, campaign_id: CampaignId) -> list[dict]:
@@ -2353,6 +2379,22 @@ class MaterialService:
                 # every pass (FR-RESUME-5/9). The dial only biases framing.
                 system = _SYSTEM_PROMPT + "\n" + self._voice.as_directive()
                 system += "\n" + aggressiveness_directive(self._aggressiveness)
+                # FR-LEARN-7: learned like/dislike positioning for free-prose
+                # material only (cover letter + essay answers). Reads the learning
+                # model's like:/dislike: feature_stats; advisory-only, never a
+                # license to omit/deny/falsify truthful facts. Wrapped in
+                # try/except so a learning failure can never break generation.
+                if kind in ("cover_letter", "essay_answer") and self._learning is not None and campaign_id is not None:
+                    try:
+                        _positioning_model = self._learning.load_model(campaign_id)
+                        _positioning = positioning_directive(
+                            self._learning.top_likes(_positioning_model),
+                            self._learning.top_dislikes(_positioning_model),
+                        )
+                        if _positioning:
+                            system += "\n" + _positioning
+                    except Exception:  # pragma: no cover - defensive: learning never breaks writing
+                        pass
                 if self._extra_banned:
                     system += "\nAvoid these phrases: " + "; ".join(self._extra_banned)
                 # FR-MIND-1/2/5: append a BOUNDED, advisory-only "what the assistant has
@@ -2515,6 +2557,43 @@ class MaterialService:
         self._storage.documents.add(doc)
         self._storage.commit()
         return doc
+
+    def set_section_content(
+        self, document_id: GeneratedDocumentId, content: str
+    ) -> GeneratedDocument:
+        """Persist a human's inline edit to a section's content, review-gated (RUX-3).
+
+        A literal manual content replacement — the review UI's "Save edit". The human
+        is the author here, not the LLM, so the fabrication guardrail (which guards
+        against AI *invention*) does not gate a hand-written edit; the deterministic
+        em-dash + banned-phrase post-filter still runs so a manual edit reaches storage
+        on the same terms as every generated pass (FR-RESUME-5). The edit is stored
+        UNAPPROVED — an edit is unreviewed and must never be treated as approved — and
+        the durable revision session is opened, since editing IS a review touch (so the
+        later "view-before-approve" gate is satisfied and the edit is resumable). Never
+        submits anything (NFR-TRUTH-1 / review gate).
+        """
+        doc = self._storage.documents.get(document_id)
+        if doc is None:
+            raise NotFound(f"no such document {document_id}")
+        cleaned = self.apply_post_filter(content or "").text
+        updated = GeneratedDocument(
+            id=doc.id,
+            campaign_id=doc.campaign_id,
+            application_id=doc.application_id,
+            type=doc.type,
+            content=cleaned,
+            storage_path=doc.storage_path,
+            # An edit invalidates any prior approval — back to review-gated.
+            approved=False,
+            provenance=doc.provenance,
+        )
+        self._storage.documents.add(updated)
+        self._storage.commit()
+        # Editing a section is itself a review action — ensure the durable session
+        # exists so approve()'s view-before-approve guard can pass afterwards.
+        self.open_revision(document_id)
+        return updated
 
     def _persist_content(self, doc: GeneratedDocument, content: str) -> None:
         updated = GeneratedDocument(

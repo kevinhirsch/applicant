@@ -6,7 +6,7 @@
 # the api mid-run). This daemon runs in a small sidecar that DOES have the Docker
 # socket + the host repo bind-mounted, so it can run the normal one-liner update
 # (scripts/update.sh --apply) against the host Docker on demand — and it survives
-# the rebuild because the update only recreates the api + applicant-ui services,
+# the rebuild because the update only recreates the api + a0 + companion services,
 # not this updater.
 #
 # Control plane: a shared volume (UPDATE_CONTROL_DIR, default /control) mounted in

@@ -17,6 +17,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUpStatus
@@ -118,8 +119,10 @@ class _PostingRepo:
             key=lambda p: str(p.id),
         )
 
-    def list_unscored_for_campaign(self, cid: CampaignId) -> list[JobPosting]:
-        return sorted(
+    def list_unscored_for_campaign(
+        self, cid: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        out = sorted(
             (
                 p
                 for p in self._d.values()
@@ -127,10 +130,19 @@ class _PostingRepo:
             ),
             key=lambda p: str(p.id),
         )
+        return out[:limit] if limit is not None else out
 
     def count_for_campaign(self, cid: CampaignId) -> int:
         """Mirrors ``JobPostingRepo.count_for_campaign`` (perf audit #6)."""
         return sum(1 for p in self._d.values() if p.campaign_id == cid)
+
+    def count_scored_for_campaign(self, cid: CampaignId) -> int:
+        """Mirrors ``JobPostingRepo.count_scored_for_campaign`` (APP-LP-1)."""
+        return sum(
+            1
+            for p in self._d.values()
+            if p.campaign_id == cid and p.viability_score is not None
+        )
 
     def delete_for_campaign(self, cid: CampaignId) -> int:
         stale = [k for k, p in self._d.items() if p.campaign_id == cid]
@@ -195,6 +207,17 @@ class _ApplicationRepo:
                 if a.campaign_id == cid and a.status in wanted
             ),
             key=lambda a: str(a.id),
+        )
+
+    def count_by_status(
+        self, cid: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Mirrors ``ApplicationRepo.count_by_status`` (APP-LP-1)."""
+        if not statuses:
+            return 0
+        wanted = set(statuses)
+        return sum(
+            1 for a in self._d.values() if a.campaign_id == cid and a.status in wanted
         )
 
     def ids_for_campaign(self, cid: CampaignId) -> set[str]:
@@ -392,6 +415,23 @@ class _OutcomeRepo:
             for e in self._l
         )
 
+    def count_distinct_applications_for_campaign(
+        self, cid: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Mirrors ``OutcomeEventRepo.count_distinct_applications_for_campaign``
+        (landing-page funnel's "interview" stage, APP-LP-1)."""
+        if not types:
+            return 0
+        wanted = set(types)
+        matched: set[str] = set()
+        for e in self._l:
+            if e.type not in wanted:
+                continue
+            app = self._applications.get(e.application_id)
+            if app is not None and app.campaign_id == cid:
+                matched.add(str(e.application_id))
+        return len(matched)
+
     def delete_for_applications(self, application_ids: set[str]) -> int:
         before = len(self._l)
         self._l = [
@@ -544,6 +584,31 @@ class _DiscoverySourceRepo:
 
     def delete_for_campaign(self, cid: CampaignId) -> int:
         stale = [k for k, s in self._d.items() if s.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
+
+class _DiscoveryBoardRepo:
+    """Persisted runtime add/remove keyless ATS boards, keyed by source_key."""
+
+    def __init__(self) -> None:
+        self._d: dict[str, AtsBoard] = {}
+
+    def upsert(self, board: AtsBoard) -> None:
+        self._d[board.source_key] = board
+
+    def get(self, source_key: str) -> AtsBoard | None:
+        return self._d.get(source_key)
+
+    def list_all(self) -> list[AtsBoard]:
+        return list(self._d.values())
+
+    def delete(self, source_key: str) -> bool:
+        return self._d.pop(source_key, None) is not None
+
+    def delete_for_campaign(self, cid: str) -> int:
+        stale = [k for k, b in self._d.items() if b.campaign_id == cid]
         for k in stale:
             del self._d[k]
         return len(stale)
@@ -1009,6 +1074,22 @@ class _ActionEventRepo:
             del self._d[k]
         return len(doomed)
 
+    def list_since(self, campaign_id, since, *, action: str | None = None):
+        """Mirrors ``ActionEventRepo.list_since`` (landing-page daily-progress
+        gadget, APP-LP-1)."""
+        from applicant.core.ids import CampaignId as _Cid
+
+        cid = _Cid(str(campaign_id))
+        matches = [
+            e
+            for e in self._d.values()
+            if e.campaign_id == cid
+            and e.occurred_at >= since
+            and (action is None or e.action == action)
+        ]
+        matches.sort(key=lambda e: (e.occurred_at, e.id))
+        return matches
+
 
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
@@ -1034,6 +1115,7 @@ class InMemoryStorage:
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
+        self.discovery_boards = _DiscoveryBoardRepo()
         self.screening_answer_library = _ScreeningAnswerLibraryRepo()
         self.agent_runs = _AgentRunRepo()
         self.detection_events = _DetectionEventRepo(self.applications)
@@ -1063,6 +1145,7 @@ class InMemoryStorage:
         self.pending_actions = _StageProxy(self.pending_actions, s)
         self.field_mappings = _StageProxy(self.field_mappings, s)
         self.discovery_sources = _StageProxy(self.discovery_sources, s)
+        self.discovery_boards = _StageProxy(self.discovery_boards, s)
         self.screening_answer_library = _StageProxy(self.screening_answer_library, s)
         self.agent_runs = _StageProxy(self.agent_runs, s)
         self.detection_events = _StageProxy(self.detection_events, s)
@@ -1122,6 +1205,7 @@ class InMemoryStorage:
             "postings": self.postings.delete_for_campaign(cid),
             "field_mappings": self.field_mappings.delete_for_campaign(cid),
             "discovery_sources": self.discovery_sources.delete_for_campaign(cid),
+            "discovery_boards": self.discovery_boards.delete_for_campaign(cid),
             "screening_answer_library": self.screening_answer_library.delete_for_campaign(cid),
             "agent_runs": self.agent_runs.delete_for_campaign(cid),
             "action_events": self.action_events.delete_for_campaign(cid),

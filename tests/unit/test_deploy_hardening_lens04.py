@@ -272,10 +272,15 @@ def test_chromadb_is_pinned_persists_to_data_and_ui_gates_on_it():
     assert "/data" in targets, f"chromadb volume must mount at /data (got {chromadb.get('volumes')!r})"
 
     # 3) The 1.x image ships no healthcheck and no in-image HTTP client to build one
-    #    with, so the UI gates on service_started; the RAG client retries.
-    ui_depends = spec["services"]["applicant-ui"]["depends_on"]
+    #    with, so the RAG-client service gates on service_started; the RAG client
+    #    retries. commit 931e5b40b (2026-07-18, "AZ0-2: Compose integration -- a0
+    #    service + companion demotion") renamed applicant-ui -> a0 (the new
+    #    lightweight front door) and split the OLD applicant-ui/workspace RAG
+    #    workload -- including this chromadb dependency -- into the new headless
+    #    `companion` service; `a0` itself has no chromadb dependency at all.
+    ui_depends = spec["services"]["companion"]["depends_on"]
     assert ui_depends["chromadb"]["condition"] == "service_started", (
-        "the UI should gate chromadb on service_started (Chroma 1.x has no usable in-container healthcheck)"
+        "companion should gate chromadb on service_started (Chroma 1.x has no usable in-container healthcheck)"
     )
 
 

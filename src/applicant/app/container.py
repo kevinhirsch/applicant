@@ -144,6 +144,9 @@ class Container:
     # daily target/hard cap; monthly projection). Per-request rebuilt against the
     # request session, exactly like campaign_service/data_lifecycle_service above.
     cost_service: Any = None
+    # APP-LP-1: landing-page pipeline-funnel + daily-progress read model.
+    # Per-request rebuilt against the request session, like cost_service above.
+    pipeline_summary_service: Any = None
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
@@ -294,6 +297,36 @@ def ensure_system_campaign(storage: Any) -> bool:
     except Exception:  # pragma: no cover - concurrent first-boot seed race
         storage.rollback()
         return storage.campaigns.get(sid) is not None
+
+
+def ensure_default_campaign(storage: Any) -> bool:
+    """Idempotently seed a default active USER campaign on a fresh install.
+
+    The OOBE onboarding and every active-campaign resolver need at least one
+    non-system campaign: with none, the resolver falls back to the reserved
+    ``__system__`` campaign and onboarding against it fails (fresh-install OOBE
+    was broken, 2026-08). Create one active campaign so first-run works out of the
+    box. No-op on in-memory storage and when any non-system campaign already
+    exists. Returns True iff a row was created.
+    """
+    if getattr(storage, "_session", None) is None:
+        return False
+    from applicant.core.entities.campaign import Campaign
+    from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId, new_id
+
+    try:
+        existing = [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
+    except Exception:
+        return False
+    if existing:
+        return False
+    try:
+        storage.campaigns.add(Campaign(id=CampaignId(new_id()), name="My Job Search", active=True))
+        storage.commit()
+        return True
+    except Exception:  # pragma: no cover - concurrent first-boot seed race
+        storage.rollback()
+        return not [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
 
 
 def _build_remote_view(settings: Settings) -> Any:
@@ -553,6 +586,32 @@ class _LivePresubmitSafetyParams:
         return self._defaults.get(key, default)
 
 
+def _effective_smart_routing(setup_service: Any, settings: Any) -> tuple[bool, bool]:
+    """The effective smart-routing ``(enabled, prefer_local)`` (EPIC MODEL-CONFIG).
+
+    Folds the operator's persisted runtime OVERRIDE
+    (``SetupService.get_smart_routing()``) over the env/``Settings`` default: a stored
+    value WINS; ``None`` means "not overridden, use the env default". Read fresh at each
+    ladder resolve so a runtime toggle via ``SetupService.set_smart_routing`` (which
+    fires the ``llm_config_change`` hook) takes effect WITHOUT an engine restart. Any
+    read failure degrades to the env default, so the boot path is never broken.
+    """
+    stored: dict[str, Any] = {}
+    getter = getattr(setup_service, "get_smart_routing", None)
+    if callable(getter):
+        try:
+            stored = getter() or {}
+        except Exception:  # pragma: no cover - never let a store read break resolution
+            stored = {}
+    enabled = stored.get("enabled")
+    if enabled is None:
+        enabled = getattr(settings, "llm_smart_routing", False)
+    prefer_local = stored.get("prefer_local")
+    if prefer_local is None:
+        prefer_local = getattr(settings, "llm_smart_routing_prefer_local", False)
+    return bool(enabled), bool(prefer_local)
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
@@ -613,6 +672,29 @@ def build_container(settings: Settings | None = None) -> Container:
     # stack bound to the tick's OWN fresh Session — mirroring how storage-bound services
     # are already isolated per tick. ``a_config_store`` and ``a_storage`` MUST share one
     # Session (the caller pairs them so).
+    # P0 durability fix: an OPTIONAL deterministic CLOUD escalation tier for the LLM
+    # ladder (default DeepSeek's OpenAI-compatible endpoint). When the local tier
+    # fails/times out repeatedly, the existing climb-on-failure logic in
+    # OpenAICompatibleLLM escalates to this instead of exhausting the ladder and
+    # leaving scoring_service.py's transient-retry guard as the only backstop.
+    # Built ONCE here from env; empty LLM_FALLBACK_API_KEY (the default) means NO
+    # fallback tier is added anywhere — every ladder stays local-only, byte-
+    # identical to today (opt-in: never egresses to a cloud endpoint unless the
+    # operator drops a real key in). Threaded into SetupService.build_ladder()
+    # (setup_service.py), which appends it BELOW the persisted tiers and runs it
+    # through the SAME local-only-mode filter as any other tier.
+    _llm_fallback_tier = (
+        {
+            "provider": settings.llm_fallback_provider,
+            "base_url": settings.llm_fallback_base_url,
+            "model": settings.llm_fallback_model,
+            "api_key": settings.llm_fallback_api_key,
+            "context_window": settings.llm_fallback_context_window,
+        }
+        if settings.llm_fallback_api_key
+        else None
+    )
+
     def _build_setup_stack(a_storage, a_config_store):
         onboarding_service = OnboardingService(
             storage=a_storage,
@@ -680,6 +762,9 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             onboarding_gate=_onboarding_gate_cached,
             sandbox_backend=settings.sandbox_backend,
+            # P0 durability fix: the optional cloud escalation tier (None unless
+            # LLM_FALLBACK_API_KEY is set) — see its construction above.
+            fallback_tier=_llm_fallback_tier,
             # P2-11: local-only private mode filters the effective ladder AND the
             # LLM gate inside SetupService (single chokepoint for every consumer).
             local_only=settings.llm_local_only,
@@ -750,6 +835,29 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
     )
 
+    # RESILIENT (2026-08-10): auto-register the configured LLM base_url as a model
+    # endpoint on first boot so a FRESH install has a working chat/routing endpoint
+    # out of the box. The tier ladder alone does NOT populate the SmartRouter's
+    # endpoint pool, so on a clean install chat logged "llm_router_no_endpoints" and
+    # the endpoint had to be added by hand before anything could route. Idempotent:
+    # add_endpoint dedupes on base_url, and we only seed when the pool is empty.
+    # Wrapped so a momentarily-unreachable model at boot never fails startup.
+    if settings.llm_configured and settings.llm_base_url:
+        try:
+            if not model_endpoint_service.list_endpoints(refresh=False):
+                model_endpoint_service.add_endpoint(
+                    base_url=settings.llm_base_url,
+                    api_key=settings.llm_api_key or "",
+                    name="Local model (auto-registered)",
+                    probe=True,
+                )
+        except Exception:
+            import structlog
+
+            structlog.get_logger().warning(
+                "model_endpoint_autoregister_failed", exc_info=True
+            )
+
     # FR-MIND-8: bound the context (compress middle turns over a token budget) and
     # apply provider prefix-cache breakpoints where supported. Threshold 0 (default)
     # keeps the manager a no-op, so default behavior is unchanged.
@@ -774,8 +882,15 @@ def build_container(settings: Settings | None = None) -> Container:
     # local model (the adapter dispatches _call_ollama/_call_openai off the active
     # tier's base_url). The existing context-window fallback still walks the rest.
     # OFF: the ladder is built straight from build_ladder(), byte-identical to today.
+    # EPIC MODEL-CONFIG: the master flag honors the operator's persisted RUNTIME
+    # override folded over the env default (see ``_effective_smart_routing``). The
+    # router object is armed when routing is effectively ON at boot (env default OR a
+    # persisted override); ``_resolve_llm_ladder`` then re-reads the effective flag on
+    # every resolve, so a runtime toggle (SetupService.set_smart_routing fires the
+    # llm_config_change hook) turns reordering on/off live without a restart.
+    _sr_enabled_boot, _ = _effective_smart_routing(setup_service, settings)
     smart_router = None
-    if settings.llm_smart_routing:
+    if _sr_enabled_boot:
         from applicant.adapters.llm.smart_router import SmartLlmRouter
 
         smart_router = SmartLlmRouter(model_endpoint_service)
@@ -789,9 +904,14 @@ def build_container(settings: Settings | None = None) -> Container:
         lets a model connected through the OOBE take effect with NO engine restart —
         the boot-time adapter used to freeze the initially-empty ladder. OFF: the
         ladder is built straight from ``build_ladder()``, byte-identical to today.
+
+        Smart routing (and its local-preference cost tier) is decided from the EFFECTIVE
+        flag read fresh here (persisted operator override over the env default), so an
+        operator's runtime change takes effect at the next resolve without a restart.
         """
         ladder = setup_service.build_ladder()
-        if smart_router is not None and ladder is not None:
+        sr_enabled, sr_prefer_local = _effective_smart_routing(setup_service, settings)
+        if sr_enabled and smart_router is not None and ladder is not None:
             from applicant.adapters.llm.smart_router import order_ladder_by_router
             from applicant.ports.driven.llm_router import CostTier, TaskType
 
@@ -800,11 +920,9 @@ def build_container(settings: Settings | None = None) -> Container:
                 smart_router,
                 task=TaskType.CHAT,
                 cost_tier=(
-                    CostTier.LOWEST
-                    if settings.llm_smart_routing_prefer_local
-                    else CostTier.BALANCED
+                    CostTier.LOWEST if sr_prefer_local else CostTier.BALANCED
                 ),
-                prefer_local=settings.llm_smart_routing_prefer_local,
+                prefer_local=sr_prefer_local,
             )
         return ladder
 
@@ -844,6 +962,12 @@ def build_container(settings: Settings | None = None) -> Container:
             cost_usd=cost,
         )
 
+    # P0 durability fix: raise + make configurable the flat 60s httpx timeout that
+    # could false-positive on a cold-start local model call (see openai_compatible.py
+    # / config.py). Split connect (fails fast on a genuinely unreachable host) from
+    # read (gives a slow-but-alive model the time it needs).
+    import httpx as _httpx
+
     llm = OpenAICompatibleLLM(
         # Resolve the ladder lazily through the provider so a runtime model-connect
         # (which re-fires this) is picked up without rebuilding the adapter — the chat,
@@ -856,10 +980,37 @@ def build_container(settings: Settings | None = None) -> Container:
         prefix_cache=settings.prefix_cache,
         rate_limiter=llm_rate_limiter,
         usage_recorder=_record_llm_usage,
+        timeout=_httpx.Timeout(
+            connect=settings.llm_http_connect_timeout,
+            read=settings.llm_http_timeout,
+            write=settings.llm_http_timeout,
+            pool=settings.llm_http_connect_timeout,
+        ),
     )
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).
     setup_service.register_llm_config_change_hook(llm.refresh_ladder)
+    # ADR-0008 (EPIC SELF-HEAL) Slice S1: wrap the shared LLM singleton so EVERY
+    # completion (chat, scoring, drafting, résumé parse-verify, ...) is observed
+    # for a wedged/unreachable primary tier -- the real incident this closes: a
+    # local vLLM whose API stayed up but generation deadlocked, silently
+    # freezing scoring + auto-draft for ~5.5 hours with no alert. Reassigning
+    # ``llm`` HERE (before any consumer below captures a reference) means every
+    # downstream service transparently gets the observed adapter -- the wrapper
+    # is a pure pass-through decorator (see `WedgeDetectingLLM`), so behavior is
+    # unchanged for every existing call site. The detector's alert channel
+    # (`NotificationService`) is built later in this function and late-bound in
+    # below once it exists (see `llm_wedge_detector.set_notifications`).
+    from applicant.application.services.llm_wedge_detector import (
+        LlmWedgeDetector,
+        WedgeDetectingLLM,
+    )
+    from applicant.core.events import event_bus as _event_bus
+
+    llm_wedge_detector = LlmWedgeDetector(
+        bus=_event_bus, threshold=settings.llm_wedge_detection_threshold
+    )
+    llm = WedgeDetectingLLM(llm, llm_wedge_detector)
     # P1-1a: late-bind the ladder into the parse-verify layer (the parser was built
     # before ``llm`` existed). The singleton resolves its ladder lazily, so a model
     # connected at runtime is picked up on the next résumé ingest automatically.
@@ -884,11 +1035,103 @@ def build_container(settings: Settings | None = None) -> Container:
     discovery_rss_feeds = tuple(
         f.strip() for f in settings.discovery_rss_feeds.split(",") if f.strip()
     )
+    # Keyless ATS directory sources (NFR-EXT-1): same operator-supplied
+    # comma-separated shape as feeds/proxies, threaded into the discovery adapter
+    # (which never imports app.config itself).
+    discovery_greenhouse_boards = tuple(
+        t.strip() for t in settings.discovery_greenhouse_boards.split(",") if t.strip()
+    )
+    discovery_lever_companies = tuple(
+        c.strip() for c in settings.discovery_lever_companies.split(",") if c.strip()
+    )
+    # EPIC BREADTH (NFR-EXT-1): same parse shape, widened to Ashby/SmartRecruiters/
+    # Workday (see ``config.py``'s field comments for the per-provider token shape).
+    discovery_ashby_orgs = tuple(
+        o.strip() for o in settings.discovery_ashby_orgs.split(",") if o.strip()
+    )
+    discovery_smartrecruiters_companies = tuple(
+        c.strip()
+        for c in settings.discovery_smartrecruiters_companies.split(",")
+        if c.strip()
+    )
+    discovery_workday_boards = tuple(
+        b.strip() for b in settings.discovery_workday_boards.split(",") if b.strip()
+    )
+    # EPIC STEALTH (ST-2/ST-5): resolve the per-source residential-proxy policy once
+    # and thread it into the aggregator so block-prone python-jobspy boards egress
+    # through the residential forwarder (and escalate to it on block-detect) while
+    # keyless ATS / your own SearXNG / RSS stay direct — never burning residential GB
+    # on easy targets, never leaking the home IP on hard ones. Pure (reads only
+    # settings); when residential is disabled/unconfigured the policy DOWNGRADES to
+    # the free VPS network-layer exit, so discovery stays byte-identical to before
+    # this epic for a config that opts out.
+    # EPIC STEALTH (persisted prefs GOVERN runtime): the effective posture folds the
+    # operator's persisted Settings > Stealth prefs (``automation.prefs`` +
+    # ``stealth.prefs``) OVER the env ``Settings`` — so the panel is no longer
+    # write-only. Read through a LIVE callable (mirrors ``_effective_smart_routing`` /
+    # ``_LivePresubmitSafetyParams``): the container is a boot singleton, so re-reading
+    # the posture at flow time lets a save govern the browser/discovery egress WITHOUT
+    # a restart. SAFETY: this SELECTS app-level egress/proxy/residential posture only;
+    # it never touches the host wg0/VPS route that protects the home IP (out of app).
+    from applicant.adapters.browser.stealth import EgressPolicy
+    from applicant.app.routers.stealth import resolve_effective_posture
+    from applicant.core import stealth_policy
+
+    def _resolve_posture():
+        try:
+            return resolve_effective_posture(settings, setup_service)
+        except Exception:  # pragma: no cover - never break boot/flow; env-only fallback
+            return stealth_policy.resolve_stealth_posture(settings, {}, {})
+
+    def _egress_from_posture(posture) -> EgressPolicy:
+        # FR-STEALTH-4: a configured residential proxy is threaded into the launch;
+        # residential-proxy mode without an attested proxy still refuses to launch.
+        return EgressPolicy.from_settings(
+            mode=posture.egress_mode,
+            proxy_url=posture.egress_proxy_url,
+            residential=posture.egress_residential,
+            suppress_webrtc=posture.suppress_webrtc,
+        )
+
+    posture = _resolve_posture()
+    stealth_config = posture.stealth_config
+    # One sticky DataImpulse session per process boot so a whole discovery flow shares
+    # ONE residential IP for the forwarder's ~30-min hold. When the operator PINNED a
+    # sticky sessid in Settings > Stealth it seeds (and thus pins) the id across boots;
+    # otherwise a restart rotates it.
+    discovery_flow_sessid = stealth_policy.new_sessid(seed=posture.sticky_sessid)
     discovery = build_default_discovery(
         live=settings.discovery_live,
         searxng_url=settings.searxng_url,
         proxies=discovery_proxies,
         rss_feeds=discovery_rss_feeds,
+        greenhouse_boards=discovery_greenhouse_boards,
+        lever_companies=discovery_lever_companies,
+        ashby_orgs=discovery_ashby_orgs,
+        smartrecruiters_companies=discovery_smartrecruiters_companies,
+        workday_boards=discovery_workday_boards,
+        stealth=stealth_config,
+        # Live re-read (gap-close): threaded into every block-prone JobSpySource so
+        # per_source_proxy_policy / residential_enabled / residential_sticky_sessid /
+        # request_rate_per_min / block_detect_threshold / block_detect_statuses all
+        # govern the VERY NEXT fetch/escalation decision -- no restart, no rebuild of
+        # this boot-singleton aggregator (mirrors ``register_llm_config_change_hook`` /
+        # the browser's ``egress_provider`` live re-read).
+        stealth_provider=lambda: _resolve_posture().stealth_config,
+        # An operator-pinned sticky sessid saved AFTER boot governs immediately too;
+        # empty/unpinned falls back to the STATIC per-boot id below (one residential
+        # identity for the process's life when nothing is pinned).
+        sessid_provider=lambda: _resolve_posture().sticky_sessid,
+        flow_sessid=discovery_flow_sessid,
+    )
+    # Runtime add/remove ATS boards: persisted user-added boards are registered
+    # onto the aggregator on every boot (deduped; env-configured boards win).
+    from applicant.adapters.discovery.factory import register_persisted_ats_boards
+
+    register_persisted_ats_boards(
+        discovery,
+        storage.discovery_boards.list_all(),
+        live=settings.discovery_live,
     )
     # P1-9: single-URL posting fetcher for the paste-a-URL/bookmarklet intake.
     # Same live/fake split as the discovery clients above (FR-DISC-4 hermeticity):
@@ -899,24 +1142,41 @@ def build_container(settings: Settings | None = None) -> Container:
         LiveUrlPostingFetcher,
     )
 
+    # EPIC STEALTH (ST-2): a pasted/bookmarklet URL is almost always a block-prone
+    # target (the very boards jobspy scrapes), so the single-URL fetcher gets the
+    # residential escalation pool (sticky-labelled) rather than the shared datacenter
+    # proxy. Falls back to the operator ``discovery_proxies`` when residential use is
+    # disabled/unconfigured (escalation_pool is then empty), preserving prior behavior.
+    intake_proxies = (
+        stealth_config.escalation_pool(
+            stealth_policy.new_sessid("url-intake", seed=posture.sticky_sessid)
+        )
+        or discovery_proxies
+    )
     url_posting_fetcher = (
-        LiveUrlPostingFetcher(proxies=discovery_proxies)
+        LiveUrlPostingFetcher(proxies=intake_proxies)
         if settings.discovery_live
         else FakeUrlPostingFetcher()
     )
     embedding = LocalEmbedding()
     # FR-STEALTH-4: residential egress is enforced up front — a configured proxy is
     # threaded into the real browser launch; residential-proxy mode without a proxy
-    # (or a self-flagged datacenter exit) refuses to launch.
-    from applicant.adapters.browser.stealth import EgressPolicy
-
-    egress = EgressPolicy.from_settings(
-        mode=settings.egress_mode,
-        proxy_url=settings.egress_proxy_url,
-        residential=settings.egress_residential,
-    )
+    # (or a self-flagged datacenter exit) refuses to launch. Built from the RESOLVED
+    # posture (persisted prefs over env), not raw ``settings.*``.
+    egress = _egress_from_posture(posture)
     browser = PatchrightBrowser(
         egress=egress,
+        # Live re-read: re-resolve the effective EgressPolicy at flow time so a saved
+        # egress/residential/WebRTC posture governs the apply-flow browser WITHOUT a
+        # restart (the container/browser are boot singletons). Selects the app-level
+        # proxy only — never the host wg0/VPS route protecting the home IP.
+        egress_provider=lambda: _egress_from_posture(_resolve_posture()),
+        # Live re-read (gap-close): ``engine``/``suppress_dns_leak`` were captured
+        # once at __init__ and never re-read like the egress/WebRTC fields above —
+        # thread matching live providers so a camoufox<->chromium toggle (or a future
+        # DNS-leak-suppression panel field) also governs WITHOUT a restart.
+        engine_provider=lambda: _resolve_posture().browser_engine,
+        suppress_dns_leak_provider=lambda: _resolve_posture().suppress_dns_leak,
         # Drive a real Chrome/Chromium for pre-fill in the deploy (BROWSER_REAL=true);
         # tests/CI leave it off and use the hermetic in-memory FakePageSource. Without
         # this the engine only ever SIMULATES pre-fill (FR-PREFILL-1/2).
@@ -929,8 +1189,13 @@ def build_container(settings: Settings | None = None) -> Container:
         profiles_dir=settings.browser_profiles_dir,
         # The browser engine all outbound automation traffic routes through
         # (FR-STEALTH-1): ``camoufox`` (default) or the patchright/Chrome ``chromium``
-        # path. ``channel`` only matters when the chromium engine is selected.
-        engine=settings.browser_engine,
+        # path — from the resolved posture. ``channel`` only matters for chromium.
+        engine=posture.browser_engine,
+        # ST-3/ST-5: WebRTC/DNS-leak suppression from the resolved posture, threaded
+        # into the launch init script (a browser fingerprint concern, never a host
+        # routing change) so no local-IP leak reveals the real IP behind the proxy.
+        suppress_webrtc=posture.suppress_webrtc,
+        suppress_dns_leak=posture.suppress_dns_leak,
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,
@@ -982,12 +1247,20 @@ def build_container(settings: Settings | None = None) -> Container:
     # Stage 2.5: outbound client for the engine -> workspace callback channel. The
     # shared secret gates it (available() is False when unset) so the default/test
     # lane never tries to reach the workspace.
-    from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+    # ``WORKSPACE_BACKEND=mock`` selects the deterministic mock (no network; pure
+    # fixture data) for testing lane logic without real IMAP/CalDAV credentials.
+    if settings.workspace_backend == "mock":
+        from applicant.adapters.workspace.mock_workspace_client import MockWorkspaceClient
 
-    workspace = HttpWorkspaceClient(
-        base_url=settings.workspace_url,
-        token=settings.applicant_internal_token,
-    )
+        workspace = MockWorkspaceClient()
+    else:
+        from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+
+        workspace = HttpWorkspaceClient(
+            base_url=settings.workspace_url,
+            token=settings.applicant_internal_token,
+            default_owner=settings.applicant_owner,
+        )
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (
@@ -1014,6 +1287,15 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.application.services.cost_service import CostService
 
     cost_service = CostService(storage)
+    # APP-LP-1: landing-page pipeline-funnel + daily-progress read model. Cheap
+    # indexed counts only (see PipelineSummaryService docstring) — safe as a
+    # process-lived singleton default, rebuilt per-request below like its
+    # storage-bound siblings (CONC-REQ-1).
+    from applicant.application.services.pipeline_summary_service import (
+        PipelineSummaryService,
+    )
+
+    pipeline_summary_service = PipelineSummaryService(storage)
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     # #44 (dark-engine audit): ONE process-lived EpisodicLessonLedger for the whole
@@ -1097,6 +1379,9 @@ def build_container(settings: Settings | None = None) -> Container:
     takeover_publisher = make_takeover_publisher()
     agent_run_service = AgentRunService(storage, realtime=agent_publisher)
     notification_service = NotificationService(notification, realtime=notif_publisher)
+    # ADR-0008 Slice S1: late-bind the wedge detector's alert channel now that it
+    # exists (it was built earlier alongside ``llm``, before this service did).
+    llm_wedge_detector.set_notifications(notification_service)
     pending_actions_service = PendingActionsService(storage, realtime=notif_publisher)
     digest_service = DigestService(
         storage,
@@ -1132,6 +1417,7 @@ def build_container(settings: Settings | None = None) -> Container:
         criteria=criteria_service,
         advanced_learning=advanced_learning_service,
         pending_actions=pending_actions_service,
+        llm=llm,
     )
     # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
     # routing integral changes through the shared confirmation gate (FR-FB-3).
@@ -1162,6 +1448,7 @@ def build_container(settings: Settings | None = None) -> Container:
         # assistant proactively gathers the apply essentials in chat and is truthful that
         # it can't begin applying until they're present (FR-CHAT-1 / FR-ONBOARD).
         onboarding=onboarding_service,
+        intake_service=intake_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -1426,7 +1713,13 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     from applicant.application.services.run_history import RunHistoryProvider
 
-    agent_memory = build_agent_memory(settings, workspace)
+    # #286: thread the shared session_factory in so ``MIND_BACKEND=sql`` gets a
+    # real DB-backed, restart-surviving trio (each op opens its own short-lived
+    # session). Keyword-only + None-safe: the in_memory/bridge defaults and the
+    # no-DB fallback lane are byte-identical to before.
+    agent_memory = build_agent_memory(
+        settings, workspace, session_factory=session_factory
+    )
     # FR-MIND-5: give the already-built chatbot the advisory curated-memory + saved-
     # playbook context (the main ChatService is constructed above, before the substrate;
     # wire it additively so reasoning can consult memory without a construction cycle).
@@ -1600,6 +1893,7 @@ def build_container(settings: Settings | None = None) -> Container:
             agent_memory=agent_memory,
         )
         cs = CriteriaService(tick_storage, llm)
+        _tick_onboarding.set_criteria_service(cs)  # CONC-2 fix: per-tick onboarding must see criteria for the apply-readiness gate (mirrors boot 1308)
         # RT Phase 3: the per-tick run recorder fans the live ``agent`` event — this
         # is the path the 24/7 scheduler drives, so it is what surfaces a running
         # agent's progress to the operator's tabs in realtime.
@@ -1803,7 +2097,7 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         rs_feedback = FeedbackService(
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
-            pending_actions=rs_pas,
+            pending_actions=rs_pas, llm=llm,
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         # FR-AGENT-7: per-request, req-storage-bound run reader (read-only ``status``) so
@@ -1857,6 +2151,7 @@ def build_container(settings: Settings | None = None) -> Container:
             chat_tools=(settings.chat_tools or "off").strip().lower(),
             # Apply-readiness gate source for the proactive essentials-gathering in chat.
             onboarding=rs_onboarding,
+            intake_service=rs_intake,
         )
         rs_chat._scheduler = scheduler
         from applicant.application.services.post_submission_service import PostSubmissionService
@@ -1933,10 +2228,17 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         # P1-6: request-scoped cost & pace guardrails read model (CONC-REQ-1).
         rs_cost = CostService(req_storage)
+        # APP-LP-1: request-scoped pipeline-summary read model (CONC-REQ-1).
+        from applicant.application.services.pipeline_summary_service import (
+            PipelineSummaryService as _RsPipelineSummaryService,
+        )
+
+        rs_pipeline_summary = _RsPipelineSummaryService(req_storage)
         return {
             "storage": req_storage,
             "data_lifecycle_service": rs_data_lifecycle,
             "cost_service": rs_cost,
+            "pipeline_summary_service": rs_pipeline_summary,
             "pending_actions_service": rs_pas,
             "digest_service": rs_digest,
             "attribute_cloud_service": rs_attr,
@@ -2182,6 +2484,7 @@ def build_container(settings: Settings | None = None) -> Container:
         campaign_service=campaign_service,
         data_lifecycle_service=data_lifecycle_service,
         cost_service=cost_service,
+        pipeline_summary_service=pipeline_summary_service,
         onboarding_service=onboarding_service,
         font_service=font_service,
         conversion_service=conversion_service,

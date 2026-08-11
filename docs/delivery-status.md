@@ -15,7 +15,7 @@ the operator UI onto the white-labeled workspace app plus a reachability re-audi
 first slice of the **founder-trust track** (road-to-market Phase 1.5: truth policy,
 parse-verify, honest wizard surfacing — see the section below). The engine's hermetic
 lane is green — **3,794 passed** (2026-07-07, the unreachable-`DATABASE_URL` command in
-`CLAUDE.md`) with 30 integration-gated skips on the full lane (count guarded by a
+`CLAUDE.md`) with 35 integration-gated skips on the full lane (count guarded by a
 meta-test; P2-10's ATS-parseability proof harness added 2 new real-render integration
 tests, each carrying a `@pytest.mark.skipif` guard plus an in-body `pytest.skip(...)`
 fallback for "binary present but non-functional").
@@ -63,7 +63,7 @@ for the bug ledger. It also closed the cross-user isolation thread (single-tenan
 The **3704 hermetic engine tests prove the logic** of every requirement against fakes / in-memory
 adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
 conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
-the **30 integration-gated skips** cover those and run only on a live deployment with the
+the **35 integration-gated skips** cover those and run only on a live deployment with the
 matching toolchain/service present (live Postgres/DBOS, a real browser + chromium binary,
 live job boards, real TeX/LibreOffice, a live Neko session, live Discord/SMTP). The
 production code paths for those boundaries exist and are wired — only their live execution is

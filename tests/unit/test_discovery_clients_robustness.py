@@ -6,9 +6,19 @@ and the RSS/Atom parser runs on canned XML. No network.
 
 from __future__ import annotations
 
+import logging
+import sys
+import types
+
 import httpx
 
-from applicant.adapters.discovery.clients import LiveRssClient, LiveSearxngClient
+from applicant.adapters.discovery.clients import (
+    LiveGreenhouseClient,
+    LiveJobSpyClient,
+    LiveLeverClient,
+    LiveRssClient,
+    LiveSearxngClient,
+)
 
 
 def _patch_httpx(monkeypatch, handler):
@@ -127,3 +137,213 @@ def test_rss_uses_link_text(monkeypatch):
     _patch_httpx(monkeypatch, handler)
     rows = LiveRssClient().fetch_items(feed_url="https://feed.test/rss", proxies=None)
     assert rows[0]["url"] == "https://jobs.test/platform"
+
+
+def test_greenhouse_request_is_bounded_by_explicit_timeout(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(
+            200,
+            json={"jobs": []},
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    LiveGreenhouseClient(timeout=7.0).fetch_jobs(token="acme", proxies=None)
+    assert seen["timeout"]["read"] == 7.0
+    assert seen["timeout"]["connect"] is not None
+
+
+def test_greenhouse_falsy_timeout_falls_back_to_default():
+    from applicant.adapters.discovery.clients import _DEFAULT_HTTP_TIMEOUT
+
+    assert LiveGreenhouseClient(timeout=0)._timeout == _DEFAULT_HTTP_TIMEOUT
+    assert LiveGreenhouseClient(timeout=None)._timeout == _DEFAULT_HTTP_TIMEOUT
+
+
+def test_greenhouse_malformed_response_raises(monkeypatch):
+    # A non-JSON / non-dict Greenhouse payload must raise a clear ValueError rather
+    # than silently returning garbage the normalizer cannot handle.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>oops</html>", headers={"content-type": "text/html"})
+
+    _patch_httpx(monkeypatch, handler)
+    try:
+        LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-JSON Greenhouse response")
+
+    def handler2(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"notjobs": "x"}, headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler2)
+    try:
+        LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for Greenhouse response missing jobs list")
+
+
+def test_greenhouse_valid_json_parses_jobs(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"jobs": [{"title": "Role", "absolute_url": "https://gh.test/1"}]},
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    assert LiveGreenhouseClient().fetch_jobs(token="acme", proxies=None) == [
+        {"title": "Role", "absolute_url": "https://gh.test/1"}
+    ]
+
+
+def test_lever_request_is_bounded_by_explicit_timeout(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json=[], headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler)
+    LiveLeverClient(timeout=7.0).fetch_postings(company="acme", proxies=None)
+    assert seen["timeout"]["read"] == 7.0
+    assert seen["timeout"]["connect"] is not None
+
+
+def test_lever_falsy_timeout_falls_back_to_default():
+    from applicant.adapters.discovery.clients import _DEFAULT_HTTP_TIMEOUT
+
+    assert LiveLeverClient(timeout=0)._timeout == _DEFAULT_HTTP_TIMEOUT
+    assert LiveLeverClient(timeout=None)._timeout == _DEFAULT_HTTP_TIMEOUT
+
+
+def test_lever_malformed_response_raises(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json", headers={"content-type": "text/plain"})
+
+    _patch_httpx(monkeypatch, handler)
+    try:
+        LiveLeverClient().fetch_postings(company="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-JSON Lever response")
+
+    def handler2(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"notarray": True}, headers={"content-type": "application/json"})
+
+    _patch_httpx(monkeypatch, handler2)
+    try:
+        LiveLeverClient().fetch_postings(company="acme", proxies=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for non-array Lever response")
+
+
+def test_lever_valid_json_parses_postings(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"text": "Role", "hostedUrl": "https://lever.test/1"}],
+            headers={"content-type": "application/json"},
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    assert LiveLeverClient().fetch_postings(company="acme", proxies=None) == [
+        {"text": "Role", "hostedUrl": "https://lever.test/1"}
+    ]
+
+
+def _install_fake_jobspy(monkeypatch, scrape_jobs):
+    """Monkeypatch a fake ``jobspy`` module in ``sys.modules``.
+
+    ``LiveJobSpyClient.scrape`` does ``from jobspy import scrape_jobs`` lazily
+    inside the method, so swapping the module in ``sys.modules`` before the call
+    routes it to our fake implementation -- no network, no real python-jobspy
+    scrape, exactly like ``_patch_httpx`` does for the httpx-based clients above.
+    """
+    fake = types.ModuleType("jobspy")
+    fake.scrape_jobs = scrape_jobs
+    monkeypatch.setitem(sys.modules, "jobspy", fake)
+
+
+def test_jobspy_403_swallowed_by_board_is_surfaced_as_an_error(monkeypatch):
+    """403-miscount fix (discovery resilience): python-jobspy swallows a hard
+    HTTP 403 block INSIDE its own per-board scraper -- it logs the failure via
+    its own ``JobSpy:{Name}`` logger (``propagate=False``, so it never reaches
+    ours) and returns an EMPTY DataFrame with no exception raised. Left alone,
+    the caller (``JobSpySource.fetch``) would miscount that hard block as
+    SOURCE_EMPTY instead of SOURCE_ERROR, understating it to source-yield
+    learning. ``LiveJobSpyClient`` must recover the swallowed signal and raise."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        logging.getLogger("JobSpy:Glassdoor").error(
+            "Glassdoor: bad response status code: 403"
+        )
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    try:
+        client.scrape(
+            site="glassdoor",
+            search_term="engineer",
+            location="United States",
+            results_wanted=10,
+            proxies=None,
+        )
+    except RuntimeError as exc:
+        assert "403" in str(exc)
+    else:
+        raise AssertionError("expected a RuntimeError surfacing the swallowed 403")
+
+
+def test_jobspy_genuinely_empty_board_still_returns_empty_list(monkeypatch):
+    """A board that legitimately has zero matching postings (nothing logged)
+    must still return [] without raising -- the fix must never misclassify a
+    real SOURCE_EMPTY run as an error."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    rows = client.scrape(
+        site="indeed",
+        search_term="engineer",
+        location="United States",
+        results_wanted=10,
+        proxies=None,
+    )
+    assert rows == []
+
+
+def test_jobspy_403_on_unmapped_site_does_not_raise(monkeypatch):
+    """An unrecognized site key (no known jobspy logger mapping) must never
+    raise spuriously -- it falls back to the pre-fix plain-empty behavior."""
+    import pandas as pd
+
+    def fake_scrape_jobs(**kwargs):
+        return pd.DataFrame()
+
+    _install_fake_jobspy(monkeypatch, fake_scrape_jobs)
+    client = LiveJobSpyClient()
+    assert (
+        client.scrape(
+            site="some_future_board",
+            search_term="engineer",
+            location="United States",
+            results_wanted=10,
+            proxies=None,
+        )
+        == []
+    )

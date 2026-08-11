@@ -1,0 +1,32 @@
+# config/intel_planes.yaml — Two-plane reconciliation CONTRACT (FR-INTEL-7)
+# Ownership is explicit + DISJOINT: no capability appears in both planes.
+# Enforced by tests/unit/test_intel_planes.py.
+
+plane_a:
+  owner: "FR-INTEL suite (shell/agent models)"
+  capabilities:
+    - agent0
+    - coder
+    - explorer
+    - test-engineer
+    - coder-cloud
+    - explorer-cloud
+    - reviewer
+    - security-auditor
+    - debugger
+
+plane_b:
+  owner: "engine tier-ladder (/setup/llm/tiers)"
+  capabilities:
+    - parse_verify
+    - material_tailoring
+    - screening_answers
+    - viability_scoring
+
+local_only:
+  env: "LLM_LOCAL_ONLY"
+  spans_both_planes: true
+  note: "forces both planes local; remote-only scenarios degrade to best local tier with a surfaced caveat"
+
+single_connect:
+  note: "one model-connect act configures both planes (Plane A presets + engine POST /setup/llm) — never two prompts (AZ1-1)"

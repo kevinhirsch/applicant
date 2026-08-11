@@ -1,0 +1,39 @@
+# WireGuard CLIENT config TEMPLATE — Applicant host egress via the VPS (EPIC STEALTH / ST-1)
+#
+# PURPOSE: route this host's OUTBOUND automation traffic out through the VPS
+# WireGuard egress node so Applicant NEVER egresses from the home WAN IP (which
+# burns Kevin's residential-IP reputation). This is the host-level prerequisite
+# the residential-proxy escalation (ST-2/ST-3) sits on top of.
+#
+# THIS IS A TEMPLATE. It is NEVER activated automatically (it needs a private key
+# you generate + a VPS-side [Peer] add that only the VPS operator can do). Copy it,
+# fill the ${...} placeholders, and follow scripts/stealth/README.md.
+#
+#   Placeholders (parameterized — see README for how install.sh/update.sh surface them):
+#     WG_PRIVATE_KEY   this host's WG private key   (you generate; NEVER commit it)
+#     WG_PEER_ADDRESS  this host's address on the WG net, e.g. 10.8.0.11/32
+#     WG_DNS           DNS to use over the tunnel   (optional; default 1.1.1.1)
+#     WG_VPS_PUBKEY    the VPS egress node's PUBLIC key
+#     WG_VPS_ENDPOINT  the VPS host:port, e.g. 173.254.204.32:51820
+#
+# Egress policy note: ST-1's Docker source-policy-routing (container subnets ->
+# table 200 -> wg0; LAN 10.0.1.0/24 + local-model + SSH stay DIRECT) is applied
+# SEPARATELY on the host (see docs/ops + [[VPS Egress Node]]). Set AllowedIPs to
+# match your chosen policy: 0.0.0.0/0 sends everything over the tunnel (simplest,
+# relies on the split-routing rules to keep LAN/SSH direct); narrow it if you route
+# only specific destinations.
+
+[Interface]
+# This host's private key. Generate with:  wg genkey | tee privatekey | wg pubkey
+# then send the PUBLIC key (the second value) to the VPS operator to add as a [Peer].
+PrivateKey = ${WG_PRIVATE_KEY}
+Address    = ${WG_PEER_ADDRESS:-10.8.0.11/32}
+DNS        = ${WG_DNS:-1.1.1.1}
+
+[Peer]
+# The VPS egress node (RackNerd LA, 173.254.204.32 — see [[VPS Egress Node]]).
+PublicKey           = ${WG_VPS_PUBKEY}
+Endpoint            = ${WG_VPS_ENDPOINT:-173.254.204.32:51820}
+AllowedIPs          = ${WG_ALLOWED_IPS:-0.0.0.0/0}
+# Keep the NAT mapping warm so return traffic keeps flowing.
+PersistentKeepalive = 25

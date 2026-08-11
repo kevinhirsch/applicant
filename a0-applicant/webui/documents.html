@@ -1,0 +1,1270 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ docs (#??) Documents — browse, approve/decline, provenance, and snapshot per application. -->
+<style>
+  .adoc{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .adoc h1{font-size:1.5rem;margin:0 0 .25rem}
+  .adoc .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .adoc .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .adoc .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .adoc .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .adoc .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .adoc .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .adoc .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .adoc .btn.success{background:var(--color-success,#28a745);color:#fff;border-color:var(--color-success,#28a745)}
+  .adoc .btn.danger{background:var(--color-danger-text,#9b1c1c);color:#fff;border-color:var(--color-danger-text,#9b1c1c)}
+  .adoc .btn:disabled{opacity:.5;cursor:not-allowed}
+  .adoc .btn.small{padding:4px 10px;font-size:.75rem}
+  .adoc .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .adoc .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:adoc-spin .6s linear infinite}
+  @keyframes adoc-spin{to{transform:rotate(360deg)}}
+  .adoc .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .adoc .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .adoc .section{margin-bottom:1.5rem}
+  .adoc .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .adoc .section h3{font-size:1rem;margin:.75rem 0 .4rem}
+  .adoc .document-list{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+  .adoc .document-item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;overflow:hidden}
+  .adoc .document-item .doc-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+  .adoc .document-item .doc-type{font-weight:600;font-size:.85rem;padding:2px 8px;border-radius:4px;background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6)}
+  .adoc .document-item .doc-status{font-size:.78rem;padding:2px 8px;border-radius:4px}
+  .adoc .document-item .doc-status.approved{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724)}
+  .adoc .document-item .doc-status.declined{background:var(--color-danger-bg,#f8d7da);color:var(--color-danger-text,#721c24)}
+  .adoc .document-item .doc-status.pending{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404)}
+  .adoc .document-item .doc-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:6px;padding:8px 10px;font-size:.78rem;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:8px}
+  .adoc .document-item .doc-warning{background:var(--color-warning-bg,#fff3cd);color:var(--color-warning-text,#856404);border:1px solid var(--color-warning-border,#ffeeba);border-radius:6px;padding:6px 10px;font-size:.78rem;margin-bottom:8px}
+  .adoc .document-item .doc-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .adoc .provenance-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:6px;max-height:300px;overflow-y:auto}
+  .adoc .snapshot-content{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px 12px;font-size:.82rem;margin-top:6px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+  .adoc .expander{cursor:pointer;display:flex;align-items:center;gap:6px;font-size:.85rem;font-weight:600;padding:6px 10px;background:var(--color-panel,#f2f5f7);border-radius:6px;border:1px solid var(--color-border,#d8e0e6);margin-top:8px;user-select:none}
+  .adoc .expander:hover{background:var(--color-hover-bg,#e8ecf0)}
+  /* ── EPIC REVIEW-UX (RUX-1/2/3/5): the decision + refinement surface ─────── */
+  .adoc .rv-card{background:var(--color-background,#fff);color:var(--color-text);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+  .adoc .rv-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
+  .adoc .rv-title{font-weight:600;font-size:1rem}
+  .adoc .rv-company{font-size:.85rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .adoc .rv-source-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .adoc .rv-source-link{color:var(--color-primary,#2d7ff9);font-weight:600;font-size:.85rem;text-decoration:none}
+  .adoc .rv-source-link:hover{text-decoration:underline}
+  .adoc .rv-link-btn{background:none;border:none;color:var(--color-primary,#2d7ff9);font:inherit;font-weight:600;font-size:.85rem;cursor:pointer;padding:0;text-decoration:underline}
+  .adoc .rv-link-btn:disabled{opacity:.55;cursor:not-allowed}
+  .adoc .rv-posted{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+  .adoc .rv-posted.stale{padding:2px 7px;border-radius:10px;background:var(--color-warning-bg,#fef5e6);color:var(--color-warning-text,#8a6d1a);font-weight:600}
+  .adoc .rv-muted{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+  .adoc .rv-decision-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .adoc .rv-ok{background:var(--color-success-bg,#e8f8ef);color:var(--color-success-text,#1a7a3a);border-radius:8px;padding:6px 10px;font-size:.8rem;margin-top:8px}
+  .adoc .rv-status{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:10px;background:var(--color-panel,#e9edf1);color:var(--color-text);margin-left:6px}
+  .adoc .rv-section-label{font-weight:600;font-size:.9rem;display:flex;align-items:center;gap:6px}
+  .adoc .rv-textarea{width:100%;box-sizing:border-box;min-height:100px;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;margin-top:6px;resize:vertical}
+  .adoc .rv-section-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+  .adoc .rv-section-actions input[type=text]{flex:1;min-width:140px;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.8rem}
+  .adoc .rv-reason-input{width:100%;box-sizing:border-box;padding:6px 8px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.8rem}
+  .adoc .rv-change-item{font-size:.78rem;padding:4px 0;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .adoc .rv-change-item .rv-field{font-weight:600}
+</style>
+
+<div class="adoc" x-data="documentsPanel()">
+  <h1>📄 Documents <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=documents')" title="Help for documents">?</button></h1>
+  <p class="sub">Browse, approve, and review documents per application.</p>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <!-- ══ EPIC REVIEW-UX (RUX-1/2/3/5) — decide + refine the app under review ══
+         THIN UX over the engine /api/review surface (proxy plugins/applicant/review).
+         Shown when opened from a Digest row (context handed over on
+         window.__applicantReview) or when an application is selected below. Nothing
+         here auto-submits — every side effect stays review-gated (FR-RESUME). -->
+    <div class="section" x-show="rvActive">
+      <h2>🧭 Review &amp; Refine</h2>
+      <div class="loading" x-show="rvLoading"><div class="spinner"></div><br>Loading review…</div>
+      <div class="err" x-show="rvError" x-text="rvError"></div>
+
+      <div x-show="rvLoaded && !rvLoading">
+        <!-- RUX-1: source posting link + freshness + cached snapshot fallback -->
+        <div class="rv-card">
+          <div class="rv-head">
+            <div>
+              <div class="rv-title" x-text="rvTitle || 'This role'"></div>
+              <div class="rv-company" x-show="rvCompany" x-text="rvCompany"></div>
+            </div>
+            <div class="rv-posted" :class="{ stale: rvPostedStale }" x-show="rvPostedRelative" x-text="(rvPostedLabel || 'Posted') + ' ' + rvPostedRelative"></div>
+          </div>
+          <div class="rv-source-row">
+            <!-- Only render a real http(s) URL as a live link (never a javascript:/data: URL). -->
+            <a class="rv-source-link" x-show="isHttp(rvSourceUrl)" :href="rvSourceUrl" target="_blank" rel="noopener noreferrer">🔗 View source posting ↗</a>
+            <span class="rv-muted" x-show="!isHttp(rvSourceUrl)">Source link unavailable</span>
+            <button class="rv-link-btn" @click="openReviewSnapshot()" :disabled="rvSnapshotBusy" x-show="rvSnapshotAvailable || !isHttp(rvSourceUrl)">📸 Cached snapshot</button>
+            <span class="rv-muted" x-show="rvSnapshotBusy">opening…</span>
+          </div>
+          <div class="err" x-show="rvSnapshotError" x-text="rvSnapshotError"></div>
+        </div>
+
+        <!-- RUX-2: three-way decision (Discard opens a reason prompt) -->
+        <div class="rv-card">
+          <div class="rv-section-label">Decision</div>
+          <div class="rv-decision-row">
+            <button class="btn primary small" @click="rvDecide('continue')" :disabled="rvBusy">Continue</button>
+            <button class="btn small" @click="rvDecide('save')" :disabled="rvBusy">Save for later</button>
+            <button class="btn danger small" @click="rvStartDiscard()" :disabled="rvBusy">Discard…</button>
+          </div>
+          <div x-show="rvShowDiscardReason" style="margin-top:8px">
+            <input type="text" class="rv-reason-input" x-model="rvDiscardReason" placeholder="Why are you discarding this role? (teaches your profile)" @keyup.enter="rvConfirmDiscard()">
+            <div class="rv-section-actions">
+              <button class="btn danger small" @click="rvConfirmDiscard()" :disabled="rvBusy || !rvDiscardReason.trim()">Confirm discard</button>
+              <button class="btn small" @click="rvShowDiscardReason=false; rvDiscardReason=''">Cancel</button>
+            </div>
+            <div class="rv-muted" style="margin-top:4px">Discard archives the app (reversible) and feeds a negative learning signal.</div>
+          </div>
+          <div class="rv-ok" x-show="rvDecisionMessage" x-text="rvDecisionMessage"></div>
+
+          <!-- RUX-4: prefill / assisted-apply handoff. Only after Continue (which
+               approved the materials through the review gate). This HANDS OFF to the
+               human-gated easy-apply assisted flow — it never fills a field or submits;
+               the user opens the posting and applies themselves. -->
+          <div x-show="rvContinued" style="margin-top:8px">
+            <div class="rv-section-actions">
+              <button class="btn primary small" @click="rvPrefillHandoff()" :disabled="rvPrefillBusy">🤝 Prefill / Assisted apply</button>
+              <span class="rv-muted" x-show="rvPrefillBusy">opening…</span>
+            </div>
+            <div class="rv-muted" style="margin-top:4px">This opens an assisted-apply checklist and a link to the posting. Applicant never fills or submits anything for you — you do that yourself.</div>
+            <div class="err" x-show="rvPrefillError" x-text="rvPrefillError"></div>
+            <div class="rv-ok" x-show="rvPrefillBrief" style="margin-top:6px">
+              <div style="font-weight:600" x-show="rvPrefillBrief && rvPrefillBrief.title" x-text="'Assisted apply — ' + ((rvPrefillBrief && rvPrefillBrief.title) || '')"></div>
+              <a class="rv-source-link" x-show="rvPrefillBrief && isHttp(rvPrefillBrief.deep_link)" :href="rvPrefillBrief && rvPrefillBrief.deep_link" target="_blank" rel="noopener noreferrer">🔗 Open the posting to apply ↗</a>
+              <ol style="margin:6px 0 0 1.1rem;padding:0">
+                <template x-for="(step, i) in ((rvPrefillBrief && rvPrefillBrief.checklist) || [])" :key="i">
+                  <li style="font-size:.8rem;margin-bottom:2px" x-text="step"></li>
+                </template>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <!-- RUX-3: per-section inline edit + regenerate; apply-across + regenerate-all.
+             P1 fix: the app's linked résumé VARIANT is now included in rvSections
+             (kind: "resume") so it renders here too, alongside the cover letter /
+             screening answers -- Continue already silently approves it. A variant is
+             file-rendered (no plain-text content to inline-edit -- it's selected/
+             forked, not free-text revised), so its "Save edit" is hidden; Regenerate
+             still works (the engine routes a résumé section_id to select_or_generate). -->
+        <div class="rv-section-label" style="margin:10px 0 4px">Generated answers</div>
+        <div class="empty" x-show="rvSections.length === 0" style="padding:14px">Nothing drafted for this role yet.</div>
+        <template x-for="section in rvSections" :key="section.section_id">
+          <div class="rv-card">
+            <div class="rv-section-label">
+              <span x-text="section.label || section.kind || 'Section'"></span>
+              <span class="rv-status" x-show="section.status" x-text="section.status"></span>
+            </div>
+            <textarea class="rv-textarea" x-model="section.content" :disabled="rvSectionBusy[section.section_id] || section.kind === 'resume'"></textarea>
+            <div class="rv-section-actions">
+              <button class="btn small" x-show="section.kind !== 'resume'" @click="rvSaveSection(section)" :disabled="rvSectionBusy[section.section_id]">💾 Save edit</button>
+              <input type="text" x-model="rvSectionFeedback[section.section_id]" placeholder="Feedback for this section…" :disabled="rvSectionBusy[section.section_id]">
+              <button class="btn small" @click="rvRegenerateSection(section)" :disabled="rvSectionBusy[section.section_id]">♻️ Regenerate this section</button>
+            </div>
+            <div class="err" x-show="rvSectionError[section.section_id]" x-text="rvSectionError[section.section_id]"></div>
+          </div>
+        </template>
+
+        <div class="rv-card">
+          <div class="rv-section-label">Refine across the whole app</div>
+          <textarea class="rv-textarea" x-model="rvCrossFeedback" placeholder="One instruction to apply across sections (e.g. 'lead with my platform-migration results')…" :disabled="rvBusy"></textarea>
+          <div class="rv-section-actions">
+            <button class="btn small" @click="rvApplyAcross()" :disabled="rvBusy || !rvCrossFeedback.trim()">Apply feedback across sections</button>
+            <button class="btn small" @click="rvRegenerateAll()" :disabled="rvBusy">🔁 Regenerate whole app</button>
+          </div>
+          <div class="rv-ok" x-show="rvCrossMessage" x-text="rvCrossMessage"></div>
+          <div class="err" x-show="rvCrossError" x-text="rvCrossError"></div>
+        </div>
+
+        <!-- RUX-5: freeform profile feedback → global, transparent, reversible -->
+        <div class="rv-section-label" style="margin:10px 0 4px">Teach my profile</div>
+        <div class="rv-card">
+          <div class="rv-muted">Freeform feedback here updates your whole profile/criteria — it changes ALL future scoring and suggestions, and you can revert it.</div>
+          <textarea class="rv-textarea" x-model="rvProfileFeedback" placeholder="e.g. 'I only want fully-remote roles' or 'weight leadership scope higher'…" :disabled="rvProfileBusy"></textarea>
+          <div class="rv-section-actions">
+            <button class="btn primary small" @click="rvSubmitProfileFeedback()" :disabled="rvProfileBusy || !rvProfileFeedback.trim()">Update my profile</button>
+            <span class="rv-muted" x-show="rvProfileBusy">applying…</span>
+          </div>
+          <div class="err" x-show="rvProfileError" x-text="rvProfileError"></div>
+          <div x-show="rvProfileChanges.length > 0" style="margin-top:8px">
+            <div class="rv-muted" x-show="rvProfileSummary" x-text="rvProfileSummary"></div>
+            <div style="font-weight:600;font-size:.82rem;margin:6px 0 2px">What changed</div>
+            <template x-for="c in rvProfileChanges" :key="c.field">
+              <div class="rv-change-item"><span class="rv-field" x-text="c.field"></span>: <span class="rv-muted" x-text="(c.before ?? '∅')"></span> → <span x-text="(c.after ?? '∅')"></span></div>
+            </template>
+            <div class="rv-section-actions">
+              <button class="btn small" @click="rvRevertProfileFeedback()" :disabled="rvProfileBusy || !rvLastAdjustmentId">↩️ Revert this change</button>
+              <span class="rv-ok" x-show="rvProfileReverted" style="padding:2px 8px">Reverted.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tailoring aggressiveness dial (FR-RESUME-9; live since #187, previously no UI control) -->
+    <div class="section">
+      <h2>🎚️ Tailoring aggressiveness</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="range" min="0" max="100" x-model.number="aggressiveness" style="width:200px">
+        <span x-text="aggressiveness"></span>
+        <button class="btn small" @click="saveAggressiveness()" :disabled="aggressivenessSaving">Save</button>
+        <span x-show="aggressivenessSaved" style="color:var(--color-success,#28a745);font-size:.8rem">Saved.</span>
+      </div>
+      <div class="err" x-show="aggressivenessError" x-text="aggressivenessError"></div>
+    </div>
+
+    <!-- Campaign picker -->
+    <div class="picker">
+      <label>Campaign</label>
+      <select x-model="selectedCampaignId" @change="onCampaignSelect()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0 && !loading">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <!-- Application picker -->
+      <div class="picker" x-show="applications.length > 0">
+        <label>Application</label>
+        <select x-model="selectedApplicationId" @change="onApplicationSelect()">
+          <option value="">Select an application…</option>
+          <template x-for="app in applications" :key="app.id || app.application_id">
+            <option x-bind:value="app.id || app.application_id" x-text="(app.id || app.application_id) + ' — ' + (app.full_name || app.name || app.label || '')"></option>
+          </template>
+        </select>
+      </div>
+
+      <div class="empty" x-show="applications.length === 0 && selectedCampaignId">
+        <h2>No applications</h2>
+        <p>No applications found for this campaign.</p>
+      </div>
+
+      <!-- Résumé variant library (FR-RESUME-1/6/8): approve/promote generated variants. -->
+      <div class="section">
+        <h2>🗂️ Résumé Variant Library</h2>
+
+        <div x-show="variantsLoading"><div class="spinner"></div> Loading variants…</div>
+        <div class="err" x-show="variantsError" x-text="variantsError"></div>
+
+        <div class="empty" x-show="!variantsLoading && variants.length === 0 && !variantsError">
+          <h2>No variants yet</h2>
+          <p>Tailored résumé variants will appear here once generated.</p>
+        </div>
+
+        <div class="document-list" x-show="variants.length > 0">
+          <template x-for="v in variants" :key="v.variant_id || v.id">
+            <div class="document-item">
+              <div class="doc-header">
+                <span class="doc-type" x-text="'Variant ' + String(v.variant_id || v.id || '').slice(0, 8)"></span>
+                <span class="doc-status" :class="v.approved ? 'approved' : 'pending'" x-text="v.approved ? 'Approved' : 'Pending'"></span>
+                <span class="doc-status pending" x-show="v.degraded">⚠️ Degraded</span>
+              </div>
+              <div style="font-size:.8rem;color:var(--color-text-secondary,#6b7683);margin-bottom:6px">
+                <span x-show="v.targeted_jd_signature">Targets: <span x-text="v.targeted_jd_signature"></span></span>
+                <span x-show="v.fit_scores && v.fit_scores.coverage !== undefined"> · Coverage: <span x-text="Math.round((v.fit_scores.coverage || 0) * 100) + '%'"></span></span>
+              </div>
+              <div style="font-size:.78rem;color:var(--color-text-secondary,#6b7683);margin-bottom:8px" x-show="v.lineage && v.lineage.length > 1">
+                Lineage:
+                <template x-for="(anc, i) in (v.lineage || [])" :key="anc.variant_id">
+                  <span><span x-text="String(anc.variant_id).slice(0,8)"></span><span x-show="i < v.lineage.length - 1"> → </span></span>
+                </template>
+              </div>
+              <div class="doc-actions">
+                <button class="btn success small" @click="approveVariant(v.variant_id || v.id)" :disabled="v.approved === true">✓ Approve</button>
+                <button class="btn small" @click="promoteVariant(v.variant_id || v.id)">⭱ Promote to base résumé</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Documents list -->
+      <div x-show="selectedApplicationId">
+        <div class="section">
+          <h2>📋 Documents</h2>
+
+          <!-- On-demand cover-letter generation (FR-RESUME-10) -->
+          <div class="toolbar">
+            <button class="btn" @click="generateCoverLetter()" :disabled="coverLetterLoading">✉️ Generate Cover Letter</button>
+            <span x-show="coverLetterLoading"><div class="spinner"></div></span>
+          </div>
+          <div class="err" x-show="coverLetterError" x-text="coverLetterError"></div>
+          <div class="empty" x-show="coverLetterResult && coverLetterResult.generated === false">
+            <p x-text="coverLetterResult?.reason || 'This role does not warrant a cover letter.'"></p>
+          </div>
+
+          <div class="empty" x-show="documents.length === 0 && !documentsLoading">
+            <h2>No documents</h2>
+            <p>No documents for this application.</p>
+          </div>
+
+          <div class="document-list" x-show="documents.length > 0">
+            <template x-for="doc in documents" :key="doc.id || doc.document_id">
+              <div class="document-item">
+                <div class="doc-header">
+                  <span class="doc-type" x-text="doc.type || doc.document_type || 'Document'"></span>
+                  <span class="doc-status" :class="doc.approved === true ? 'approved' : (doc.approved === false ? 'declined' : 'pending')" x-text="doc.approved === true ? 'Approved' : (doc.approved === false ? 'Declined' : 'Pending')"></span>
+                </div>
+
+                <div class="doc-warning" x-show="doc.degraded">
+                  ⚠️ Degraded: <span x-text="doc.degraded_reason || 'Unknown reason'"></span>
+                </div>
+
+                <div class="doc-content" x-text="doc.content || '(no content)'"></div>
+
+                <div class="doc-actions">
+                  <button class="btn success small" @click="approveDocument(doc.id || doc.document_id)" :disabled="doc.approved === true">✓ Approve</button>
+                  <button class="btn danger small" @click="declineDocument(doc.id || doc.document_id)" :disabled="doc.approved === false">✗ Decline</button>
+                </div>
+
+                <!-- Provenance expander -->
+                <div class="expander" @click="toggleProvenance(doc.id || doc.document_id)">
+                  <span x-text="provenanceOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  Provenance (what I drew on)
+                </div>
+                <div class="provenance-content" x-show="provenanceOpen === (doc.id || doc.document_id)" x-text="provenanceData || 'Loading…'"></div>
+
+                <!-- Flagged-facts expander (P1-13 truth policy: invented facts surfaced, never silently blocked) -->
+                <div class="expander" @click="toggleFlaggedFacts(doc.id || doc.document_id)">
+                  <span x-text="flaggedFactsOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  🚩 Flagged facts
+                </div>
+                <div class="provenance-content" x-show="flaggedFactsOpen === (doc.id || doc.document_id)">
+                  <div x-show="!flaggedFactsData || !flaggedFactsData.flagged || flaggedFactsData.flagged.length === 0">No unsupported facts flagged.</div>
+                  <template x-for="f in (flaggedFactsData && flaggedFactsData.flagged) || []" :key="f.token || f">
+                    <div class="doc-warning" style="margin-bottom:6px">
+                      ⚠️ <span x-text="f.token || f"></span>
+                      <span x-show="f.kind"> (<span x-text="f.kind"></span>)</span>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Redline expander -->
+                <div class="expander" @click="redlineOpen = (redlineOpen === (doc.id || doc.document_id)) ? null : (doc.id || doc.document_id)">
+                  <span x-text="redlineOpen === (doc.id || doc.document_id) ? '▼' : '▶'"></span>
+                  ✏️ Propose a redline
+                </div>
+                <div x-show="redlineOpen === (doc.id || doc.document_id)" style="margin-top:8px">
+                  <textarea x-model="redlineNewSource[doc.id || doc.document_id]" placeholder="Paste proposed replacement text here…" style="width:100%;min-height:100px;padding:8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);font-family:inherit;font-size:.78rem;box-sizing:border-box"></textarea>
+                  <div style="display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap">
+                    <label style="font-size:.78rem">Base source:
+                      <input type="text" x-model="redlineBaseSource[doc.id || doc.document_id]" placeholder="Defaults to current content" style="padding:4px 8px;border-radius:4px;border:1px solid var(--color-border,#d8e0e6);font-size:.78rem">
+                    </label>
+                    <label style="font-size:.78rem">Aggressiveness:
+                      <input type="range" min="0" max="100" x-model="redlineAggressiveness[doc.id || doc.document_id]" style="width:120px">
+                      <span x-text="redlineAggressiveness[doc.id || doc.document_id] || 20"></span>
+                    </label>
+                    <button class="btn small" @click="submitRedline(doc.id || doc.document_id, doc)" :disabled="redlineLoading === (doc.id || doc.document_id)">Compute Redline</button>
+                  </div>
+                  <div class="loading" x-show="redlineLoading === (doc.id || doc.document_id)"><div class="spinner"></div><br>Computing redline…</div>
+                  <div class="err" x-show="redlineError[doc.id || doc.document_id]" x-text="redlineError[doc.id || doc.document_id]"></div>
+
+                  <!-- Redline result -->
+                  <div x-show="redlineResults[doc.id || doc.document_id]" style="margin-top:8px">
+                    <div class="provenance-content" x-html="redlineResults[doc.id || doc.document_id].rendered_html || ''"></div>
+                    <div x-show="!redlineResults[doc.id || doc.document_id].rendered_html">
+                      <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Additions:</div>
+                      <div class="doc-content" style="margin-bottom:4px"><template x-for="a in redlineResults[doc.id || doc.document_id].additions" :key="a"><div style="color:#155724">+ <span x-text="a"></span></div></template></div>
+                      <div style="font-weight:600;font-size:.82rem;margin-bottom:4px">Subtractions:</div>
+                      <div class="doc-content"><template x-for="s in redlineResults[doc.id || doc.document_id].subtractions" :key="s"><div style="color:#721c24">− <span x-text="s"></span></div></template></div>
+                    </div>
+                    <div class="doc-actions" style="margin-top:8px">
+                      <button class="btn success small" @click="approveRedlineViaDoc(doc.id || doc.document_id)">✓ Apply Redline</button>
+                      <button class="btn danger small" @click="dismissRedline(doc.id || doc.document_id)">✗ Dismiss</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- JD match explainer (product-gaps #23) -->
+        <div class="section">
+          <h2>🎯 JD Match</h2>
+
+          <div x-show="jdMatchLoading"><div class="spinner"></div> Loading match…</div>
+          <div class="err" x-show="jdMatchError && !jdMatchLoading" x-text="jdMatchError"></div>
+
+          <div x-show="jdMatchData && !jdMatchLoading">
+            <div style="font-size:.85rem;margin-bottom:6px">
+              Coverage: <strong x-text="Math.round((jdMatchData?.coverage || 0) * 100) + '%'"></strong>
+            </div>
+            <div style="font-size:.8rem;margin-bottom:4px" x-show="jdMatchData?.matched && jdMatchData?.matched.length">
+              <div style="font-weight:600;margin-bottom:2px">Matched:</div>
+              <div class="doc-content"><template x-for="t in jdMatchData?.matched" :key="t"><span style="color:#155724;margin-right:8px" x-text="t"></span></template></div>
+            </div>
+            <div style="font-size:.8rem" x-show="jdMatchData?.missing && jdMatchData?.missing.length">
+              <div style="font-weight:600;margin-bottom:2px">Missing:</div>
+              <div class="doc-content"><template x-for="t in jdMatchData?.missing" :key="t"><span style="color:#721c24;margin-right:8px" x-text="t"></span></template></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Screening-answer library reuse (product-gaps #20) -->
+        <div class="section">
+          <h2>💬 Screening Answer Library</h2>
+
+          <div x-show="screeningLibraryLoading"><div class="spinner"></div> Loading library…</div>
+          <div class="empty" x-show="!screeningLibraryLoading && screeningLibrary.length === 0">
+            <p>No saved screening answers yet for this campaign.</p>
+          </div>
+          <div class="document-list" x-show="screeningLibrary.length > 0">
+            <template x-for="item in screeningLibrary" :key="item.question">
+              <div class="document-item">
+                <div style="font-weight:600;font-size:.85rem;margin-bottom:6px" x-text="item.question"></div>
+                <div class="doc-content" x-text="item.answer || item.content || '(no content)'"></div>
+                <div class="doc-actions">
+                  <button class="btn small" @click="reuseScreeningAnswer(item.question)" :disabled="screeningReuseLoading === item.question">↻ Reuse for this application</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="err" x-show="screeningReuseError" x-text="screeningReuseError"></div>
+          <div class="doc-content" x-show="screeningReuseResult" x-text="screeningReuseResult"></div>
+        </div>
+
+        <!-- Submission snapshot -->
+        <div class="section">
+          <h2>📸 Submission Snapshot</h2>
+
+          <div x-show="snapshotLoading"><div class="spinner"></div> Loading snapshot…</div>
+
+          <div class="snapshot-content" x-show="snapshotData && !snapshotLoading">
+            <div x-text="snapshotData"></div>
+            <div class="snapshot-raw" x-show="snapshotRaw" x-text="snapshotRaw"></div>
+          </div>
+
+          <div class="empty" x-show="snapshotNotFound && !snapshotLoading">
+            <h2>No snapshot yet</h2>
+            <p>No submission snapshot available for this application.</p>
+          </div>
+
+          <div class="err" x-show="snapshotError && !snapshotLoading" x-text="snapshotError"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+  (() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+
+  // B-review-deep-link: pull application_id/campaign_id off a component path's
+  // own query string. Pure + module-scoped (not an Alpine method) so it is
+  // testable in isolation -- mirrors the friendlyTitleFromPath() pattern used
+  // for the modal-title fix (B12, agent-zero/webui/js/modals.js).
+  function parseReviewDeepLink(path) {
+    const raw = String(path || "");
+    const qIndex = raw.indexOf("?");
+    if (qIndex < 0) return { application_id: "", campaign_id: "" };
+    let qs = raw.slice(qIndex + 1);
+    const hIndex = qs.indexOf("#");
+    if (hIndex >= 0) qs = qs.slice(0, hIndex);
+    const params = new URLSearchParams(qs);
+    return {
+      application_id: (params.get("application_id") || "").trim(),
+      campaign_id: (params.get("campaign_id") || "").trim(),
+    };
+  }
+
+  window.Alpine.data("documentsPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    selectedApplicationId: "",
+    applications: [],
+    documents: [],
+    fatalError: "",
+    loading: true,
+    documentsLoading: false,
+    provenanceOpen: null,
+    provenanceData: "",
+    snapshotData: null,
+    snapshotRaw: null,
+    snapshotLoading: false,
+    snapshotNotFound: false,
+    snapshotError: "",
+
+    // Redline state
+    redlineOpen: null,
+    redlineNewSource: {},
+    redlineBaseSource: {},
+    redlineAggressiveness: {},
+    redlineLoading: null,
+    redlineError: {},
+    redlineResults: {},
+
+    // Résumé variant library (FR-RESUME-1/6/8)
+    variants: [],
+    variantsLoading: false,
+    variantsError: "",
+
+    // Tailoring aggressiveness dial (FR-RESUME-9)
+    aggressiveness: 20,
+    aggressivenessSaving: false,
+    aggressivenessSaved: false,
+    aggressivenessError: "",
+
+    // Cover letter on demand (FR-RESUME-10)
+    coverLetterLoading: false,
+    coverLetterResult: null,
+    coverLetterError: "",
+
+    // Flagged facts (P1-13 truth policy)
+    flaggedFactsOpen: null,
+    flaggedFactsData: null,
+
+    // JD match explainer (product-gaps #23)
+    jdMatchData: null,
+    jdMatchLoading: false,
+    jdMatchError: "",
+
+    // Screening-answer library reuse (product-gaps #20)
+    screeningLibrary: [],
+    screeningLibraryLoading: false,
+    screeningReuseLoading: null,
+    screeningReuseResult: "",
+    screeningReuseError: "",
+
+    // ── EPIC REVIEW-UX (RUX-1/2/3/5) state — the decision + refinement surface ──
+    rvApplicationId: "",
+    rvPostingId: "",
+    rvCampaignId: "__system__",
+    rvLoading: false,
+    rvLoaded: false,
+    rvError: "",
+    rvBusy: false,
+    rvTitle: "",
+    rvCompany: "",
+    rvSourceUrl: "",
+    rvSnapshotAvailable: false,
+    rvSnapshotBusy: false,
+    rvSnapshotError: "",
+    rvPostedLabel: "",
+    rvPostedRelative: "",
+    rvPostedStale: false,
+    rvShowDiscardReason: false,
+    rvDiscardReason: "",
+    rvDecisionMessage: "",
+    rvContinued: false,
+    rvPrefillBusy: false,
+    rvPrefillError: "",
+    rvPrefillBrief: null,
+    rvSections: [],
+    rvSectionBusy: {},
+    rvSectionError: {},
+    rvSectionFeedback: {},
+    rvCrossFeedback: "",
+    rvCrossMessage: "",
+    rvCrossError: "",
+    rvProfileFeedback: "",
+    rvProfileBusy: false,
+    rvProfileError: "",
+    rvProfileSummary: "",
+    rvProfileChanges: [],
+    rvLastAdjustmentId: "",
+    rvProfileReverted: false,
+
+    get rvActive() {
+      return this.rvLoading || this.rvLoaded || !!this.rvError;
+    },
+
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      // RUX: the Digest "Review" button hands the posting context over on a global
+      // right before openModal (modal panels can't read the modal path's query string).
+      this._rvReadContext();
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        // Prefer the handed campaign when it exists; else the first campaign.
+        const handed = items.find((c) => (c.id || c.name) === this.rvCampaignId);
+        if (handed) {
+          this.selectedCampaignId = handed.id || handed.name || "";
+        } else if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "";
+        }
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
+      }
+      // B-review-deep-link: a handed-over application (window.__applicantReview OR
+      // a ?application_id= deep link) must land the user directly on THAT
+      // application -- auto-select it in the picker (it otherwise stayed on
+      // "Select an application…") and load its documents/snapshot/JD-match, same
+      // as picking it by hand would (onApplicationSelect()). Guarded on actual
+      // membership so a mismatched/nonexistent id never fires loads for a
+      // pairing that doesn't exist.
+      if (this.rvApplicationId && this.applications.some((a) => String(a.id || a.application_id) === String(this.rvApplicationId))) {
+        this.selectedApplicationId = this.rvApplicationId;
+        await Promise.all([this.loadDocuments(), this.loadSnapshot(), this.loadJdMatch()]);
+      }
+      // RUX-1/2/3/5: if we were opened for a specific posting/app, load its review.
+      if (this.rvApplicationId || this.rvPostingId) {
+        await this.loadReview();
+      }
+    },
+
+    async onCampaignSelect() {
+      this.fatalError = "";
+      this.selectedApplicationId = "";
+      this.documents = [];
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      this.variants = [];
+      this.screeningLibrary = [];
+      if (this.selectedCampaignId) {
+        await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
+      } else {
+        this.applications = [];
+      }
+    },
+
+    async loadVariants() {
+      this.variantsLoading = true;
+      this.variantsError = "";
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.variants = []; this.variantsLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "variants", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Couldn't load the résumé variant library.";
+        this.variants = [];
+      } else {
+        const data = r.data || {};
+        const items = data.variants || [];
+        this.variants = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.variantsLoading = false;
+    },
+
+    async approveVariant(variantId) {
+      if (!variantId) return;
+      this.variantsError = "";
+      const r = await callJsonApi("documents", { action: "approve_variant", variant_id: variantId });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Failed to approve variant.";
+      } else {
+        await this.loadVariants();
+      }
+    },
+
+    async promoteVariant(variantId) {
+      if (!variantId) return;
+      this.variantsError = "";
+      const r = await callJsonApi("documents", { action: "promote_variant", variant_id: variantId });
+      if (!r || !r.ok) {
+        this.variantsError = (r && r.error) || "Failed to promote variant.";
+      } else {
+        await this.loadVariants();
+      }
+    },
+
+    async saveAggressiveness() {
+      this.aggressivenessSaving = true;
+      this.aggressivenessSaved = false;
+      this.aggressivenessError = "";
+      const r = await callJsonApi("documents", { action: "set_aggressiveness", aggressiveness: this.aggressiveness });
+      if (!r || !r.ok) {
+        this.aggressivenessError = (r && r.error) || "Failed to save aggressiveness.";
+      } else {
+        const data = r.data || {};
+        if (typeof data.aggressiveness === "number") this.aggressiveness = data.aggressiveness;
+        this.aggressivenessSaved = true;
+        setTimeout(() => { this.aggressivenessSaved = false; }, 2000);
+      }
+      this.aggressivenessSaving = false;
+    },
+
+    async generateCoverLetter() {
+      if (!this.selectedCampaignId || !this.selectedApplicationId) return;
+      this.coverLetterLoading = true;
+      this.coverLetterError = "";
+      this.coverLetterResult = null;
+      const r = await callJsonApi("documents", {
+        action: "cover_letter",
+        campaign_id: this.selectedCampaignId,
+        application_id: this.selectedApplicationId,
+      });
+      if (!r || !r.ok) {
+        this.coverLetterError = (r && r.error) || "Failed to generate cover letter.";
+      } else {
+        this.coverLetterResult = r.data || {};
+        if (this.coverLetterResult.generated !== false) {
+          await this.loadDocuments();
+        }
+      }
+      this.coverLetterLoading = false;
+    },
+
+    async toggleFlaggedFacts(docId) {
+      if (!docId) return;
+      if (this.flaggedFactsOpen === docId) {
+        this.flaggedFactsOpen = null;
+        this.flaggedFactsData = null;
+        return;
+      }
+      this.flaggedFactsOpen = docId;
+      this.flaggedFactsData = null;
+      const r = await callJsonApi("documents", { action: "flagged_facts", document_id: docId });
+      this.flaggedFactsData = (r && r.ok) ? (r.data || {}) : { flagged: [] };
+    },
+
+    async loadJdMatch() {
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.jdMatchData = null; return; }
+      this.jdMatchLoading = true;
+      this.jdMatchError = "";
+      this.jdMatchData = null;
+      const r = await callJsonApi("documents", { action: "jd_match", application_id: appId });
+      if (!r || !r.ok) {
+        this.jdMatchError = (r && r.error) || "Failed to load JD match.";
+      } else {
+        this.jdMatchData = r.data || {};
+      }
+      this.jdMatchLoading = false;
+    },
+
+    async loadScreeningLibrary() {
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.screeningLibrary = []; return; }
+      this.screeningLibraryLoading = true;
+      const r = await callJsonApi("documents", { action: "screening_library", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.screeningLibrary = [];
+      } else {
+        const data = r.data || {};
+        const items = data.items || [];
+        this.screeningLibrary = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.screeningLibraryLoading = false;
+    },
+
+    async reuseScreeningAnswer(question) {
+      if (!question || !this.selectedCampaignId || !this.selectedApplicationId) return;
+      this.screeningReuseLoading = question;
+      this.screeningReuseError = "";
+      this.screeningReuseResult = "";
+      const r = await callJsonApi("documents", {
+        action: "screening_reuse",
+        campaign_id: this.selectedCampaignId,
+        application_id: this.selectedApplicationId,
+        question,
+      });
+      if (!r || !r.ok) {
+        this.screeningReuseError = (r && r.error) || "Failed to reuse screening answer.";
+      } else {
+        const data = r.data || {};
+        if (data.found === false) {
+          this.screeningReuseResult = "No matching library entry found.";
+        } else {
+          this.screeningReuseResult = "Reused: " + (data.content || "(generated)");
+          await this.loadDocuments();
+        }
+      }
+      this.screeningReuseLoading = null;
+    },
+
+    async loadApplications() {
+      this.fatalError = "";
+      const cid = this.selectedCampaignId;
+      if (!cid) { this.applications = []; return; }
+
+      // Bug fix: this used to call the "tracker"/"board" action, which proxies the
+      // post-submission tracker board (only applications already submitted or
+      // later). Auto-drafted applications sit at DIGESTED -- review-gated, never
+      // auto-submitted -- so they never showed up here even with a full digest
+      // queue ("No applications" despite dozens of digested drafts). The
+      // "documents"/"list_applications" action lists every application the
+      // Documents panel is actually meant to browse.
+      const r = await callJsonApi("documents", { action: "list_applications", campaign_id: cid });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't load applications.";
+        this.applications = [];
+      } else {
+        const data = r.data || {};
+        const items = data.applications || data.items || data.board || [];
+        this.applications = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+    },
+
+    async onApplicationSelect() {
+      this.fatalError = "";
+      this.documents = [];
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      this.provenanceOpen = null;
+      this.provenanceData = "";
+      this.flaggedFactsOpen = null;
+      this.flaggedFactsData = null;
+      this.coverLetterResult = null;
+      this.coverLetterError = "";
+      this.jdMatchData = null;
+      this.screeningReuseResult = "";
+      this.screeningReuseError = "";
+      if (this.selectedApplicationId) {
+        // RUX: drive the Review & Refine surface off the picked application too.
+        this.rvApplicationId = this.selectedApplicationId;
+        this.rvPostingId = "";
+        await Promise.all([
+          this.loadDocuments(),
+          this.loadSnapshot(),
+          this.loadJdMatch(),
+          this.loadReview()
+        ]);
+      }
+    },
+
+    async loadDocuments() {
+      this.documentsLoading = true;
+      this.fatalError = "";
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.documents = []; this.documentsLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "list", application_id: appId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't load documents.";
+        this.documents = [];
+      } else {
+        const data = r.data || {};
+        const items = data.documents || data.items || [];
+        this.documents = Array.isArray(items) ? items : (items ? [items] : []);
+      }
+      this.documentsLoading = false;
+    },
+
+    async approveDocument(docId) {
+      if (!docId) return;
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "approve", document_id: docId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to approve document.";
+      } else {
+        await this.loadDocuments();
+      }
+    },
+
+    async declineDocument(docId) {
+      if (!docId) return;
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "decline", document_id: docId });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to decline document.";
+      } else {
+        await this.loadDocuments();
+      }
+    },
+
+    async toggleProvenance(docId) {
+      if (!docId) return;
+      if (this.provenanceOpen === docId) {
+        this.provenanceOpen = null;
+        this.provenanceData = "";
+        return;
+      }
+      this.provenanceOpen = docId;
+      this.provenanceData = "";
+      this.fatalError = "";
+      const r = await callJsonApi("documents", { action: "provenance", document_id: docId });
+      if (!r || !r.ok) {
+        this.provenanceData = "Failed to load provenance.";
+      } else {
+        const data = r.data || {};
+        // Render H4 provenance — assume data is HTML or structured
+        const prov = data.provenance || data.html || data.text || JSON.stringify(data, null, 2);
+        this.provenanceData = typeof prov === "string" ? prov : JSON.stringify(prov, null, 2);
+      }
+    },
+
+    async submitRedline(docId, doc) {
+      const newSource = this.redlineNewSource[docId];
+      if (!newSource || !newSource.trim()) {
+        this.redlineError[docId] = "New source text is required.";
+        return;
+      }
+      this.redlineLoading = docId;
+      this.redlineError[docId] = "";
+      const baseSource = this.redlineBaseSource[docId] || (doc && doc.content) || '';
+      const aggressiveness = this.redlineAggressiveness[docId] || 20;
+      
+      const r = await callJsonApi("documents", {
+        action: "redline",
+        variant_id: (doc && (doc.variant_id || doc.id)) || docId,
+        base_source: baseSource,
+        new_source: newSource,
+        aggressiveness: aggressiveness
+      });
+      
+      if (!r || !r.ok) {
+        this.redlineError[docId] = (r && r.error) || "Failed to compute redline.";
+      } else {
+        this.redlineResults[docId] = r.data || {};
+      }
+      this.redlineLoading = null;
+    },
+
+    dismissRedline(docId) {
+      this.redlineResults[docId] = null;
+      this.redlineNewSource[docId] = "";
+      this.redlineBaseSource[docId] = "";
+      this.redlineAggressiveness[docId] = 20;
+      this.redlineError[docId] = "";
+    },
+
+    async approveRedlineViaDoc(docId) {
+      this.dismissRedline(docId);
+      await this.approveDocument(docId);
+    },
+
+    async loadSnapshot() {
+      this.snapshotLoading = true;
+      this.snapshotData = null;
+      this.snapshotNotFound = false;
+      this.snapshotError = "";
+      const appId = this.selectedApplicationId;
+      if (!appId) { this.snapshotLoading = false; return; }
+
+      const r = await callJsonApi("documents", { action: "snapshot", application_id: appId });
+      if (!r || !r.ok) {
+        if (r && (r.status === 404 || r.status_code === 404)) {
+          this.snapshotNotFound = true;
+        } else {
+          this.snapshotError = (r && r.error) || "Failed to load snapshot.";
+        }
+      } else {
+        const data = r.data || {};
+        const snap = data.snapshot || data.html || data.content || data.text || JSON.stringify(data, null, 2);
+        this.snapshotData = typeof snap === "string" ? snap : JSON.stringify(snap, null, 2);
+      }
+      this.snapshotLoading = false;
+    },
+
+    // ══ EPIC REVIEW-UX (RUX-1/2/3/5) methods ═════════════════════════════════
+
+    // RUX-1: only ever render a real http(s) URL as a live link (defense in depth —
+    // the engine already sanitizes source_url, but never trust it into an href blind).
+    isHttp(url) {
+      url = (url || "").trim();
+      return url.startsWith("http://") || url.startsWith("https://");
+    },
+
+    // B-review-deep-link: window.__applicantReview only carries context when a
+    // caller sets it right before window.openModal() (digest.html's flow). Other
+    // entry points -- e.g. the Pending-Reviews "Review" button on the landing
+    // page (a0-webui/components/welcome/welcome-screen.html review()) -- instead
+    // deep-link with a real ?application_id=&campaign_id= query string on the
+    // panel's OWN path. That isn't window.location (the panel is fetched into a
+    // modal body, never navigated to), so read it off the modal element itself
+    // via _rvModalPath() and fall back to it whenever window.__applicantReview
+    // didn't hand over an id.
+    _rvReadContext() {
+      const ctx = (window.__applicantReview && typeof window.__applicantReview === "object") ? window.__applicantReview : {};
+      const deep = parseReviewDeepLink(this._rvModalPath());
+      this.rvPostingId = ctx.posting_id || "";
+      // Bug fix (P1, 404 "no such application"): this used to fall back to
+      // ctx.posting_id when application_id was absent, silently handing a posting id
+      // off as an application id (documents.html/digest.html's Review buttons now
+      // always draft a real application first, so a genuine ctx.application_id is
+      // always present here — this fallback only ever masked that upstream bug).
+      this.rvApplicationId = ctx.application_id || deep.application_id || "";
+      this.rvCampaignId = ctx.campaign_id || deep.campaign_id || "__system__";
+      this.rvTitle = ctx.title || "";
+      this.rvCompany = ctx.company || "";
+      this.rvSourceUrl = (ctx.source_url || "").trim();  // decent first paint before get() lands
+    },
+
+    // modals.js stores the path it opened as a plain JS property (`.path`) on
+    // the ".modal" ancestor it creates (see openModal/createModalElement in
+    // agent-zero/webui/js/modals.js) -- not an HTML attribute, so it can only be
+    // read off the live element via the DOM, not from this fragment's own
+    // markup. Falls back to window.location.search for a hypothetical
+    // non-modal/full-page open of this panel.
+    _rvModalPath() {
+      try {
+        const modalEl = this.$el && this.$el.closest ? this.$el.closest(".modal") : null;
+        if (modalEl && modalEl.path) return modalEl.path;
+      } catch { /* not mounted in a modal (or $el unavailable) -- fall through */ }
+      return (window.location && window.location.search) || "";
+    },
+
+    async loadReview() {
+      this.rvLoading = true;
+      this.rvError = "";
+      // A fresh review load is a fresh decision — clear any prior Continue/handoff
+      // state so the assisted-apply handoff never lingers onto a different app.
+      this.rvContinued = false;
+      this.rvPrefillBrief = null;
+      this.rvPrefillError = "";
+      this.rvDecisionMessage = "";
+      const r = await callJsonApi("review", {
+        action: "get",
+        application_id: this.rvApplicationId,
+        posting_id: this.rvPostingId,
+        campaign_id: this.rvCampaignId || this.selectedCampaignId,
+      });
+      if (!r || !r.ok) {
+        this.rvError = (r && r.error) || "Couldn't load this application for review.";
+        this.rvLoading = false;
+        return;
+      }
+      const d = r.data || {};
+      if (d.application_id) this.rvApplicationId = d.application_id;
+      if (d.posting_id) this.rvPostingId = d.posting_id;
+      if (d.campaign_id) this.rvCampaignId = d.campaign_id;
+      if (d.title) this.rvTitle = d.title;
+      if (d.company) this.rvCompany = d.company;
+      this.rvSourceUrl = (d.source_url || this.rvSourceUrl || "").trim();
+      this.rvSnapshotAvailable = !!d.snapshot_available;
+      this.rvPostedLabel = d.posted_label || "";
+      this.rvPostedRelative = d.posted_relative || "";
+      this.rvPostedStale = !!d.posted_stale;
+      this.rvSections = Array.isArray(d.sections) ? d.sections : [];
+      this.rvLoaded = true;
+      this.rvLoading = false;
+    },
+
+    // RUX-1: cached-snapshot fallback for a pulled/unreachable listing.
+    async openReviewSnapshot() {
+      this.rvSnapshotBusy = true;
+      this.rvSnapshotError = "";
+      const r = await callJsonApi("review", {
+        action: "snapshot",
+        posting_id: this.rvPostingId,
+        application_id: this.rvApplicationId,
+      });
+      this.rvSnapshotBusy = false;
+      if (r && r.ok && r.data && r.data.html) {
+        const blob = new Blob([r.data.html], { type: "text/html" });
+        window.open(URL.createObjectURL(blob), "_blank", "noopener");
+      } else {
+        this.rvSnapshotError = (r && r.error) || "No cached snapshot is available for this role.";
+      }
+    },
+
+    // RUX-2: three-way decision — Continue / Save for later / Discard-with-reason.
+    rvStartDiscard() {
+      this.rvShowDiscardReason = true;
+      this.rvDecisionMessage = "";
+    },
+
+    async rvDecide(decision, reason) {
+      this.rvBusy = true;
+      this.rvDecisionMessage = "";
+      const r = await callJsonApi("review", {
+        action: "decide",
+        application_id: this.rvApplicationId,
+        posting_id: this.rvPostingId,
+        campaign_id: this.rvCampaignId,
+        decision: decision,
+        reason: reason || "",
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvError = (r && r.error) || "Couldn't record that decision.";
+        return false;
+      }
+      const d = r.data || {};
+      if (decision === "continue") {
+        // Continue approved the materials through the review gate. Reveal the
+        // assisted-apply handoff — nothing is filled or submitted automatically.
+        this.rvContinued = true;
+        this.rvPrefillError = "";
+        this.rvPrefillBrief = null;
+        this.rvDecisionMessage = "Materials approved through the review gate. Refine below if needed, then use Prefill / Assisted apply to hand off — you fill and submit on the job board yourself.";
+      }
+      else if (decision === "save") this.rvDecisionMessage = "Saved for later" + (d.bucket ? (" (" + d.bucket + ")") : "") + " — it's out of your active queue with a reminder nudge.";
+      else if (decision === "discard") this.rvDecisionMessage = "Discarded (archived, reversible). Similar roles will rank lower.";
+      return true;
+    },
+
+    // RUX-4: hand off to the human-gated easy-apply assisted flow. Fetches the deep
+    // link + checklist for this posting; it NEVER fills a field or submits anything.
+    async rvPrefillHandoff() {
+      if (!this.rvPostingId) {
+        this.rvPrefillError = "This role has no linked posting to hand off to.";
+        return;
+      }
+      this.rvPrefillBusy = true;
+      this.rvPrefillError = "";
+      this.rvPrefillBrief = null;
+      const r = await callJsonApi("review", {
+        action: "prefill",
+        campaign_id: this.rvCampaignId,
+        posting_id: this.rvPostingId,
+      });
+      this.rvPrefillBusy = false;
+      if (!r || !r.ok) {
+        if (r && (r.status === 409 || r.status_code === 409)) {
+          this.rvPrefillError = "Accept the Easy Apply assisted-mode consent screen in Settings first. Applicant never fills or submits for you.";
+        } else if (r && (r.status === 404 || r.status_code === 404)) {
+          this.rvPrefillError = "This role isn't an Easy Apply posting — open the source posting above and apply yourself.";
+        } else {
+          this.rvPrefillError = (r && r.error) || "Couldn't open the assisted-apply handoff.";
+        }
+        return;
+      }
+      this.rvPrefillBrief = r.data || {};
+    },
+
+    async rvConfirmDiscard() {
+      const reason = (this.rvDiscardReason || "").trim();
+      if (!reason) return;
+      const ok = await this.rvDecide("discard", reason);
+      if (ok) {
+        this.rvShowDiscardReason = false;
+        this.rvDiscardReason = "";
+      }
+    },
+
+    // RUX-3: per-section review — inline edit, regenerate one, apply-across, regen-all.
+    _rvApplySection(updated) {
+      if (!updated || !updated.section_id) return;
+      const i = this.rvSections.findIndex((s) => s.section_id === updated.section_id);
+      if (i >= 0) this.rvSections[i] = { ...this.rvSections[i], ...updated };
+    },
+
+    async rvSaveSection(section) {
+      const id = section.section_id;
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: true };
+      this.rvSectionError[id] = "";
+      const r = await callJsonApi("review", {
+        action: "edit_section",
+        application_id: this.rvApplicationId,
+        section_id: id,
+        content: section.content || "",
+      });
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: false };
+      if (!r || !r.ok) {
+        this.rvSectionError[id] = (r && r.error) || "Couldn't save that edit.";
+        return;
+      }
+      if (r.data && r.data.section) this._rvApplySection(r.data.section);
+    },
+
+    async rvRegenerateSection(section) {
+      const id = section.section_id;
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: true };
+      this.rvSectionError[id] = "";
+      const r = await callJsonApi("review", {
+        action: "regenerate_section",
+        application_id: this.rvApplicationId,
+        section_id: id,
+        feedback: (this.rvSectionFeedback[id] || "").trim(),
+      });
+      this.rvSectionBusy = { ...this.rvSectionBusy, [id]: false };
+      if (!r || !r.ok) {
+        this.rvSectionError[id] = (r && r.error) || "Couldn't regenerate that section.";
+        return;
+      }
+      if (r.data && r.data.section) this._rvApplySection(r.data.section);
+      this.rvSectionFeedback[id] = "";
+    },
+
+    async rvApplyAcross() {
+      const feedback = (this.rvCrossFeedback || "").trim();
+      if (!feedback) return;
+      this.rvBusy = true;
+      this.rvCrossMessage = "";
+      this.rvCrossError = "";
+      const r = await callJsonApi("review", {
+        action: "apply_feedback",
+        application_id: this.rvApplicationId,
+        feedback: feedback,
+        // omitting section_ids means "all sections"
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvCrossError = (r && r.error) || "Couldn't apply that feedback.";
+        return;
+      }
+      if (r.data && Array.isArray(r.data.sections)) this.rvSections = r.data.sections;
+      this.rvCrossMessage = "Applied across sections. Review the updated drafts above.";
+      this.rvCrossFeedback = "";
+    },
+
+    async rvRegenerateAll() {
+      this.rvBusy = true;
+      this.rvCrossMessage = "";
+      this.rvCrossError = "";
+      const r = await callJsonApi("review", {
+        action: "regenerate_all",
+        application_id: this.rvApplicationId,
+        feedback: (this.rvCrossFeedback || "").trim(),
+      });
+      this.rvBusy = false;
+      if (!r || !r.ok) {
+        this.rvCrossError = (r && r.error) || "Couldn't regenerate the application.";
+        return;
+      }
+      if (r.data && Array.isArray(r.data.sections)) this.rvSections = r.data.sections;
+      this.rvCrossMessage = "Regenerated the whole application. Everything stays review-gated until you approve.";
+    },
+
+    // RUX-5: freeform profile feedback → global, transparent, reversible.
+    async rvSubmitProfileFeedback() {
+      const feedback = (this.rvProfileFeedback || "").trim();
+      if (!feedback) return;
+      this.rvProfileBusy = true;
+      this.rvProfileError = "";
+      this.rvProfileReverted = false;
+      const r = await callJsonApi("review", {
+        action: "profile_feedback",
+        application_id: this.rvApplicationId,
+        campaign_id: this.rvCampaignId,
+        feedback: feedback,
+      });
+      this.rvProfileBusy = false;
+      if (!r || !r.ok) {
+        this.rvProfileError = (r && r.error) || "Couldn't update your profile.";
+        return;
+      }
+      const d = r.data || {};
+      this.rvProfileSummary = d.summary || "Your profile was updated. Future scoring will reflect this.";
+      this.rvProfileChanges = Array.isArray(d.changes) ? d.changes : [];
+      this.rvLastAdjustmentId = d.adjustment_id || "";
+      this.rvProfileFeedback = "";
+    },
+
+    async rvRevertProfileFeedback() {
+      if (!this.rvLastAdjustmentId) return;
+      this.rvProfileBusy = true;
+      this.rvProfileError = "";
+      const r = await callJsonApi("review", {
+        action: "revert_feedback",
+        campaign_id: this.rvCampaignId,
+        adjustment_id: this.rvLastAdjustmentId,
+      });
+      this.rvProfileBusy = false;
+      if (!r || !r.ok) {
+        this.rvProfileError = (r && r.error) || "Couldn't revert that change.";
+        return;
+      }
+      this.rvProfileReverted = true;
+      this.rvProfileChanges = [];
+      this.rvProfileSummary = "";
+      this.rvLastAdjustmentId = "";
+    }
+  }));
+  })();
+  })();
+</script>

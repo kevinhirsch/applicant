@@ -2,7 +2,7 @@ Feature: Viability scoring and decline-with-feedback round-trip
   # master spec §10 — FR-AGENT-3, FR-DIG-5, FR-FB-1, FR-FB-3 (confirmation gate)
 
   Scenario: Viability scoring applies a configurable threshold
-    Given the viability threshold defaults to seventy
+    Given the viability threshold defaults to sixty
     When a posting is scored against matching criteria
     Then the score is reported on a zero-to-one scale with a rationale
 

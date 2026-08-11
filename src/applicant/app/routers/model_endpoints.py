@@ -6,23 +6,30 @@ the server lists the models available at that address. The contract matches what
 ported settings JS expects:
 
   * GET    /api/model-endpoints                 -> list (UI records, no keys)
-  * POST   /api/model-endpoints                 -> add + live-list models (form data)
-  * POST   /api/model-endpoints/test            -> probe without saving (form data)
+  * POST   /api/model-endpoints                 -> add + live-list models (form data or JSON)
+  * POST   /api/model-endpoints/test            -> probe without saving (form data or JSON)
   * PATCH  /api/model-endpoints/{id}            -> enable/disable toggle
   * DELETE /api/model-endpoints/{id}            -> remove
   * GET    /api/model-endpoints/{id}/models     -> live model list for one endpoint
 
 The route is ungated (it is part of opening the setup gate). The server performs the
 live model fetch so the browser never holds the raw provider key.
+
+``add_endpoint``/``test_endpoint`` accept EITHER classic urlencoded form data OR a JSON
+body: Starlette parses an unrecognized ``Content-Type`` (e.g. ``application/json``) as an
+*empty* form, so the a0-applicant proxy's JSON POSTs used to silently resolve every Form
+field to its default ("") and fail with "Enter a base URL" -- the request never actually
+reached the engine's field values. When the body is JSON we read the real fields from it
+before validating through ``EndpointConfig``.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from applicant.app.deps import get_container
 from applicant.core.errors import InvalidInput
@@ -60,7 +67,8 @@ def list_endpoints(refresh: bool = False, container=Depends(get_container)) -> J
 
 
 @router.post("")
-def add_endpoint(
+async def add_endpoint(
+    request: Request,
     base_url: str = Form(""),
     api_key: str = Form(""),
     name: str = Form(""),
@@ -68,15 +76,38 @@ def add_endpoint(
     skip_probe: str = Form("false"),
     container=Depends(get_container),
 ) -> JSONResponse:
-    """Add an endpoint and live-list its models on save (the form's "Add")."""
+    """Add an endpoint and live-list its models on save (the form's "Add").
+
+    Accepts a JSON body too (see module docstring) -- the a0-applicant proxy sends
+    JSON, so a JSON ``Content-Type`` overrides the (otherwise-empty) Form defaults
+    above with the real posted fields.
+    """
+    if "application/json" in request.headers.get("content-type", ""):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            base_url = payload.get("base_url", base_url)
+            api_key = payload.get("api_key", api_key)
+            name = payload.get("name", name)
+            model_type = payload.get("model_type", model_type)
+            skip_probe = payload.get("skip_probe", skip_probe)
     # Build the typed model for validation
-    config = EndpointConfig(
-        base_url=base_url,
-        api_key=api_key,
-        name=name,
-        model_type=model_type,
-        skip_probe=str(skip_probe).lower() in ("true", "1", "yes"),
-    )
+    try:
+        config = EndpointConfig(
+            base_url=base_url,
+            api_key=api_key,
+            name=name,
+            model_type=model_type,
+            skip_probe=(
+                skip_probe
+                if isinstance(skip_probe, bool)
+                else str(skip_probe).lower() in ("true", "1", "yes")
+            ),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     try:
         result = _service(container).add_endpoint(
             base_url=config.base_url,
@@ -100,12 +131,24 @@ add_endpoint.__annotations__["model_type"] = ModelType
 
 
 @router.post("/test")
-def test_endpoint(
+async def test_endpoint(
+    request: Request,
     base_url: str = Form(""),
     api_key: str = Form(""),
     container=Depends(get_container),
 ) -> JSONResponse:
-    """Probe an endpoint without saving it (the form's "Test")."""
+    """Probe an endpoint without saving it (the form's "Test").
+
+    Accepts a JSON body too -- see ``add_endpoint`` / module docstring.
+    """
+    if "application/json" in request.headers.get("content-type", ""):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            base_url = payload.get("base_url", base_url)
+            api_key = payload.get("api_key", api_key)
     try:
         result = _service(container).test_endpoint(base_url=base_url, api_key=api_key)
     except InvalidInput as exc:

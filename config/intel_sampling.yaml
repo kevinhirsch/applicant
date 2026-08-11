@@ -1,0 +1,54 @@
+# intel_sampling.yaml — Per-tier Sampling & Decoding Contracts
+# This is the shipped per-tier sampling CONTRACT enforced by test_intel_sampling.py.
+# Drift in any value fails the test.
+#
+# Built on FR-INTEL-1 (#866) tier topology from config/intel_tiers.yaml.
+
+tiers:
+  local_chat:
+    temperature: 0.25
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 0.3
+    chat_template_kwargs:
+      enable_thinking: false
+    response_format:
+      type: json_schema
+      json_schema:
+        name: a0_tool_call
+        schema:
+          type: object
+          properties:
+            thoughts:
+              type: array
+              items:
+                type: string
+            headline:
+              type: string
+            tool_name:
+              type: string
+            tool_args:
+              type: object
+          required:
+            - thoughts
+            - tool_name
+            - tool_args
+          additionalProperties: false
+    extra_body:
+      guided_decoding_backend: guidance
+
+  local_utility:
+    temperature: 0.3
+    presence_penalty: 1.0
+    top_p: 0.8
+    top_k: 20
+    chat_template_kwargs:
+      enable_thinking: false
+
+  cloud_chat:
+    temperature: 0.6
+    top_p: 0.95
+    stream_options:
+      include_usage: true
+    a0_retry_attempts: 5
+    a0_retry_delay_seconds: 3

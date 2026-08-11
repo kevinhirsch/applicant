@@ -33,6 +33,11 @@ KIND_ERROR = "error"
 #: A held integral attribute change inferred from a PASSIVE input (guided survey /
 #: résumé-parse) awaiting the user's explicit confirm-or-reject (FR-FB-3, FR-LEARN-4).
 KIND_INTEGRAL_CHANGE = "integral_change"
+#: An application the user chose to keep for later from the review three-way decision
+#: (RUX-2). It lives in a distinct "Saved / To submit" bucket OUT of the active
+#: queue: the item is materialized then SNOOZED (the snooze wake-time IS the reminder
+#: nudge), so it drops off the home base until it comes due, then re-surfaces.
+KIND_SAVED_FOR_LATER = "saved_for_later"
 
 #: Stable :meth:`PendingActionsService.resolve` outcomes (lens 04 #27) -- a caller
 #: (double-resolve, a retried request, a stale client) can switch on these to tell
@@ -412,3 +417,56 @@ class PendingActionsService:
         query, not an O(open) scan per digest row.
         """
         return self._storage.pending_actions.find_open_by_dedup(campaign_id, dedup_key)
+
+    # --- Save-for-later bucket (RUX-2) ------------------------------------
+    def save_for_later(
+        self,
+        campaign_id: CampaignId,
+        *,
+        title: str,
+        application_id: ApplicationId | None = None,
+        posting_id: str | None = None,
+        remind_in_hours: float = 24.0,
+        remind_at: datetime | None = None,
+        payload: dict | None = None,
+    ) -> PendingAction:
+        """Move a reviewed item into the "Saved / To submit" bucket with a nudge (RUX-2).
+
+        A distinct bucket OUT of the active queue: the item is materialized as a
+        :data:`KIND_SAVED_FOR_LATER` action and then SNOOZED (reusing :meth:`snooze`)
+        so it drops off the active pending list until the reminder wake-time, when it
+        re-appears as the nudge — the reminder nudge simply REUSES the snooze
+        wake-time, no separate scheduler. Deduped per application (else posting/title)
+        so re-saving the same item refreshes the reminder rather than piling up.
+        Reversible + non-destructive: the item is archived-as-saved, never deleted.
+        """
+        body = dict(payload or {})
+        if posting_id is not None:
+            body["posting_id"] = str(posting_id)
+        dedup_key = f"saved_for_later:{application_id or posting_id or title}"
+        action = self.materialize(
+            campaign_id,
+            KIND_SAVED_FOR_LATER,
+            title,
+            application_id=application_id,
+            payload=body,
+            dedup_key=dedup_key,
+        )
+        # The reminder nudge IS the snooze wake-time (#295 snooze): snoozing removes
+        # it from the active queue until it comes due, then it re-surfaces to nudge.
+        snoozed = self.snooze(action.id, until=remind_at, hours=remind_in_hours)
+        return snoozed or action
+
+    def list_saved(self, campaign_id: CampaignId) -> list[PendingAction]:
+        """The distinct "Saved / To submit" bucket for a campaign (RUX-2).
+
+        Returns EVERY open saved-for-later item — including the snoozed ones (they
+        are snoozed by design, to stay out of the ACTIVE queue), so the bucket keeps
+        showing them until the user acts. Uses the same indexed ``list_open`` query
+        the portal already runs, filtered to :data:`KIND_SAVED_FOR_LATER`.
+        """
+        return [
+            a
+            for a in self._storage.pending_actions.list_open(campaign_id)
+            if a.kind == KIND_SAVED_FOR_LATER
+        ]

@@ -153,15 +153,22 @@ def application_screenshot_image(
 
 
 @router.get("/logs")
-def logs(limit: int = 100, admin_query=Depends(get_admin_query_service)) -> dict:
+def logs(
+    limit: int = 100,
+    since_seq: int | None = None,
+    admin_query=Depends(get_admin_query_service),
+) -> dict:
     """Recent structured logs for the debug surface (FR-LOG-3 / FR-OBS-2).
 
     Tails the structlog ring buffer; entries are already secret-redacted (NFR-PRIV-1).
+    ``since_seq`` is the caller's last-seen seq cursor: only strictly newer entries
+    are returned, and ``latest_seq`` echoes the cursor so a poller can always advance.
     """
     # #13: clamp the caller-supplied limit on both ends — ``max(0, ...)`` floors a
     # negative ``?limit=`` and ``min(..., 1000)`` caps the tail size.
-    entries = admin_query.logs(max(0, min(limit, 1000)))
-    return {"entries": entries, "status": "live"}
+    entries = admin_query.logs(max(0, min(limit, 1000)), since_seq)
+    latest_seq = entries[-1]["seq"] if entries else since_seq
+    return {"entries": entries, "latest_seq": latest_seq, "status": "live"}
 
 
 @router.get("/variants/{campaign_id}")

@@ -11,7 +11,9 @@ model sees only the real posting content.
 This is the **content-injection** guard; it complements the network SSRF
 guard (``url_safety.py``) and the identity-text scanner in
 ``chat_service.py`` (which guards the user's *own* voice, not scraped
-text).
+text).  The guard now also covers agent-visible untrusted input surfaces:
+browsed/scraped web page content, tool/MCP outputs the agent ingests, and
+posting text.
 """
 
 from __future__ import annotations
@@ -52,6 +54,42 @@ _UNTRUSTED_NEUTRALIZERS: list[tuple[str, str]] = [
     (r"you\s+must\s+(?:always|never)\s+respond\s+with", "[filtered]"),
     (r"override\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|safety)", "[filtered]"),
     (r"bypass\s+(?:your\s+)?(?:instructions?|safety|content\s+filter)", "[filtered]"),
+    # ── agent-visible untrusted input surfaces (browsed pages, tool/MCP
+    #    outputs, posting text) ────────────────────────────────────────────
+    (
+        r"from\s+now\s+on[^\n]*?(?:you\s+|your\s+)?(?:must|should|will|are)",
+        "[filtered]",
+    ),
+    (
+        r"(?:forget|ignore|disregard)\s+(?:all|any)\s+(?:previous|prior|earlier)\s+(?:instructions?|messages?|conversation|context)",
+        "[filtered]",
+    ),
+    (
+        r"(?:treat|consider)\s+(?:the\s+)?(?:above|following|this)\s+(?:text|content|message|input)\s+as\s+(?:an?\s+|your\s+)?instructions?",
+        "[filtered]",
+    ),
+    (
+        r"(?:this\s+is|you\s+now\s+have)\s+(?:an?\s+|the\s+)?(?:new|updated)?\s*instructions?",
+        "[filtered]",
+    ),
+    (r"system\s+message", "[filtered]"),
+    (
+        r"do\s+not\s+(?:tell|inform|reveal|mention)\s+(?:the\s+user|anyone)\s+(?:about|that)",
+        "[filtered]",
+    ),
+    (r"(?:start|begin)\s+(?:all|every|each)\s+responses?\s+with", "[filtered]"),
+    (
+        r"output\s+(?:the\s+)?following\s+(?:text|content|message)",
+        "[filtered]",
+    ),
+    (
+        r"(?:repeat|echo|copy)\s+(?:the\s+)?(?:above|following)\s+(?:instructions?|text|message)",
+        "[filtered]",
+    ),
+    (
+        r"important\s*:\s*you\s+(?:must|need\s+to|should)",
+        "[filtered]",
+    ),
 ]
 
 # Compiled alternation for efficient single-pass scan (used by ``is_clean``).

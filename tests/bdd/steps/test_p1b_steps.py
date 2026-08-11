@@ -242,12 +242,12 @@ def _wire_digest():
         notification_service=notif_svc,
         pending_actions=pending,
     )
-    return storage, digest, learning, criteria, pending
+    return storage, digest, learning, criteria, pending, scoring
 
 
 @given("a campaign with seeded criteria and a surfaced application")
 def seeded_campaign(p1bctx):
-    storage, digest, learning, criteria, pending = _wire_digest()
+    storage, digest, learning, criteria, pending, _scoring = _wire_digest()
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
     storage.commit()
@@ -288,12 +288,13 @@ def criteria_reflect_delta(p1bctx):
 
 @given("a campaign with a viable discovered posting")
 def campaign_with_posting(p1bctx):
-    storage, digest, learning, criteria, pending = _wire_digest()
+    storage, digest, learning, criteria, pending, scoring = _wire_digest()
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
+    pid = JobPostingId(new_id())
     storage.postings.add(
         JobPosting(
-            id=JobPostingId(new_id()),
+            id=pid,
             campaign_id=cid,
             title="Senior Python Engineer",
             company="Acme",
@@ -304,6 +305,12 @@ def campaign_with_posting(p1bctx):
         )
     )
     storage.commit()
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline -- "a viable discovered posting" must already carry a persisted
+    # score, mirroring AgentLoop's background scoring tick, before deliver() will
+    # surface it as a row at all.
+    scoring.score_viability(pid)
     p1bctx.update(storage=storage, digest=digest, pending=pending, campaign_id=cid)
     p1bctx["criteria_obj"] = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
 

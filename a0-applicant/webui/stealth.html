@@ -1,0 +1,226 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- EPIC STEALTH — the dedicated Stealth settings surface (FR-STEALTH-1/-4).
+     Reads + writes the anti-detect / egress / residential-reputation posture through
+     the stealth proxy (action=get|set -> engine /api/setup/stealth). The engine is
+     the single source of truth: egress route/proxy + camoufox on/off reuse the
+     Settings > Automation fields; the new stealth-only knobs (per-source policy,
+     residential enable + sticky sessid, WebRTC suppression, pacing/rate-limit,
+     block-detect thresholds) persist to the stealth.prefs record. Every value is a
+     preset DEFAULT that is changeable here (fresh install works with zero config). -->
+<style>
+  .astl{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .astl h1{font-size:1.5rem;margin:0 0 .25rem}
+  .astl .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .astl .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .astl .success{background:var(--color-success-bg,#e6f7e6);color:var(--color-success-text,#1a7d1a);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-top:.5rem}
+  .astl .warn{background:var(--color-warning-bg,#fff6e0);color:var(--color-warning-text,#8a5a00);border:1px solid var(--color-warning-border,#f0d9a0);border-radius:8px;padding:8px 12px;font-size:.82rem;margin-bottom:.5rem}
+  .astl .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .astl .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:astl-spin .6s linear infinite}
+  @keyframes astl-spin{to{transform:rotate(360deg)}}
+  .astl .section{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--color-border,#d8e0e6)}
+  .astl .section h2{font-size:1.15rem;margin:0 0 .4rem;color:var(--color-text)}
+  .astl .section .hint{color:var(--color-text-secondary,#6b7683);font-size:.8rem;margin:0 0 .75rem}
+  .astl .field-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .astl .field-row label{font-size:.85rem;font-weight:600;min-width:250px;color:var(--color-text)}
+  .astl .field-row input[type="text"],.astl .field-row input[type="number"],.astl .field-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-input-bg,#fff);color:var(--color-text);font:inherit;flex:1;min-width:160px}
+  .astl .field-row input[type="checkbox"]{width:18px;height:18px;cursor:pointer}
+  .astl .field-row select{cursor:pointer}
+  .astl .fhint{flex-basis:100%;font-size:.74rem;color:var(--color-text-secondary,#6b7683);margin:-4px 0 0 250px}
+  .astl .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap;position:sticky;top:0;background:var(--color-background,#fff);padding:6px 0;z-index:2}
+  .astl .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .astl .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .astl .btn:disabled{opacity:.5;cursor:not-allowed}
+  .astl .echo{font-size:.74rem;color:var(--color-text-secondary,#6b7683)}
+  .astl .badge{font-size:.7rem;padding:2px 7px;border-radius:10px;background:var(--color-panel,#e9edf1);display:inline-block;margin-left:6px}
+</style>
+
+<div class="astl" x-data="stealthPanel()">
+  <h1>Stealth <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=stealth')" title="Help for stealth">?</button></h1>
+  <p class="sub">Never get blocked, never leak the home IP. Every value is a preset default you can change; the engine enforces it on every outbound automation request.</p>
+
+  <div x-show="loading" class="loading"><span class="spinner"></span> Loading stealth settings...</div>
+  <div x-show="fatalError" class="err" x-text="fatalError"></div>
+
+  <template x-if="!loading && !fatalError">
+    <div>
+      <div class="toolbar">
+        <button class="btn primary" @click="save()" :disabled="busy">Save stealth settings</button>
+        <button class="btn" @click="load()" :disabled="busy">Reload</button>
+        <span class="echo" x-show="busy">Saving…</span>
+      </div>
+
+      <div x-show="successMsg" class="success" x-text="successMsg"></div>
+      <div x-show="errorMsg" class="err" x-text="errorMsg"></div>
+      <template x-for="w in (view.warnings || [])" :key="w">
+        <div class="warn" x-text="w"></div>
+      </template>
+
+      <!-- Egress -->
+      <div class="section">
+        <h2>Egress</h2>
+        <p class="hint">Where automation traffic exits. Home/VPS both egress via the host network route (the WireGuard VPS tunnel when configured); Residential threads the attested residential proxy into the browser.</p>
+        <div class="field-row">
+          <label for="stl-route">Egress route</label>
+          <select id="stl-route" x-model="fields.egress_route">
+            <template x-for="opt in (view.choices?.egress_route || [])" :key="opt">
+              <option :value="opt" x-text="opt"></option>
+            </template>
+          </select>
+          <span class="echo">engine mode: <span class="badge" x-text="view.egress_mode"></span></span>
+        </div>
+        <div class="field-row">
+          <label for="stl-proxy">Residential proxy URL</label>
+          <input id="stl-proxy" type="text" x-model="fields.egress_proxy_url" placeholder="http://user:pass@host:port (leave empty for none)">
+          <div class="fhint">Used only for the Residential route. May embed credentials; validated on save (no cloud-metadata / non-http targets).</div>
+        </div>
+        <div class="field-row">
+          <label for="stl-attest">Proxy attested residential</label>
+          <input id="stl-attest" type="checkbox" x-model="fields.egress_residential">
+          <div class="fhint">Confirm the proxy is a genuine residential exit. A datacenter exit is refused when Residential is selected.</div>
+        </div>
+      </div>
+
+      <!-- Residential reputation conservation -->
+      <div class="section">
+        <h2>Residential reputation</h2>
+        <p class="hint">Conserve the residential IP score: escalate selectively, keep one identity per apply-flow, never burn GB on easy targets.</p>
+        <div class="field-row">
+          <label for="stl-resen">Allow residential escalation</label>
+          <input id="stl-resen" type="checkbox" x-model="fields.residential_enabled">
+          <div class="fhint">Master switch. When off, hard targets never fall back to the residential proxy.</div>
+        </div>
+        <div class="field-row">
+          <label for="stl-policy">Per-source proxy policy</label>
+          <select id="stl-policy" x-model="fields.per_source_proxy_policy">
+            <template x-for="opt in (view.choices?.per_source_proxy_policy || [])" :key="opt">
+              <option :value="opt" x-text="opt"></option>
+            </template>
+          </select>
+          <div class="fhint">selective = only after a block (recommended); always = every hard source; never = direct only.</div>
+        </div>
+        <div class="field-row">
+          <label for="stl-sessid">Sticky session id</label>
+          <input id="stl-sessid" type="text" x-model="fields.residential_sticky_sessid" placeholder="(empty = auto per flow)">
+          <div class="fhint">Pins one residential identity across a browse→apply flow. Letters, digits, '-' and '_' only.</div>
+        </div>
+      </div>
+
+      <!-- Browser fingerprint + leak suppression -->
+      <div class="section">
+        <h2>Browser fingerprint</h2>
+        <p class="hint">The anti-detect browser + leak suppression that keep the fingerprint coherent and non-leaking.</p>
+        <div class="field-row">
+          <label for="stl-camo">Camoufox anti-detect browser</label>
+          <input id="stl-camo" type="checkbox" x-model="fields.camoufox_enabled">
+          <div class="fhint">On = Camoufox (Firefox-based, injects a coherent fingerprint). Off = the patchright/Chromium path.</div>
+        </div>
+        <div class="field-row">
+          <label for="stl-webrtc">WebRTC leak suppression</label>
+          <input id="stl-webrtc" type="checkbox" x-model="fields.webrtc_suppression">
+          <div class="fhint">Prevents the real local IP leaking past the proxy via WebRTC.</div>
+        </div>
+      </div>
+
+      <!-- Pacing + rate limits -->
+      <div class="section">
+        <h2>Pacing &amp; rate limits</h2>
+        <p class="hint">Human-like pacing keeps traffic under anti-bot radar and protects the IP reputation.</p>
+        <div class="field-row">
+          <label for="stl-pace">Min delay between requests (ms)</label>
+          <input id="stl-pace" type="number" min="0" max="60000" x-model.number="fields.request_pacing_ms">
+        </div>
+        <div class="field-row">
+          <label for="stl-rate">Max requests per minute</label>
+          <input id="stl-rate" type="number" min="0" max="6000" x-model.number="fields.request_rate_per_min">
+          <div class="fhint">0 disables the ceiling.</div>
+        </div>
+      </div>
+
+      <!-- Block detection -->
+      <div class="section">
+        <h2>Block detection</h2>
+        <p class="hint">How the engine recognizes a block and decides when to escalate a source.</p>
+        <div class="field-row">
+          <label for="stl-thr">Consecutive blocks before escalation</label>
+          <input id="stl-thr" type="number" min="1" max="100" x-model.number="fields.block_detect_threshold">
+        </div>
+        <div class="field-row">
+          <label for="stl-stat">Block HTTP statuses</label>
+          <input id="stl-stat" type="text" x-model="fields.block_detect_statuses" placeholder="403,429,503">
+          <div class="fhint">Comma-separated HTTP status codes treated as a block.</div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script>
+  (() => {
+    const _apiP = import("/js/api.js");
+    const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+
+    window.Alpine.data("stealthPanel", () => ({
+      loading: true,
+      busy: false,
+      fatalError: "",
+      errorMsg: "",
+      successMsg: "",
+      view: {},
+      fields: {},
+
+      async init() {
+        await this.load();
+      },
+
+      // Only the WRITABLE fields (engine echoes egress_mode/browser_engine/warnings).
+      _pick() {
+        const f = this.view;
+        return {
+          egress_route: f.egress_route,
+          egress_proxy_url: f.egress_proxy_url || "",
+          egress_residential: !!f.egress_residential,
+          residential_enabled: !!f.residential_enabled,
+          residential_sticky_sessid: f.residential_sticky_sessid || "",
+          per_source_proxy_policy: f.per_source_proxy_policy,
+          camoufox_enabled: !!f.camoufox_enabled,
+          webrtc_suppression: !!f.webrtc_suppression,
+          request_pacing_ms: f.request_pacing_ms,
+          request_rate_per_min: f.request_rate_per_min,
+          block_detect_threshold: f.block_detect_threshold,
+          block_detect_statuses: f.block_detect_statuses || "",
+        };
+      },
+
+      async load() {
+        this.loading = true;
+        this.fatalError = "";
+        this.errorMsg = "";
+        this.successMsg = "";
+        const r = await callJsonApi("stealth", { action: "get" });
+        if (!r || !r.ok) {
+          this.fatalError = (r && r.error) || "Couldn't reach the stealth engine.";
+          this.loading = false;
+          return;
+        }
+        this.view = r.data || {};
+        this.fields = this._pick();
+        this.loading = false;
+      },
+
+      async save() {
+        this.busy = true;
+        this.errorMsg = "";
+        this.successMsg = "";
+        const r = await callJsonApi("stealth", { action: "set", ...this.fields });
+        if (!r || !r.ok) {
+          this.errorMsg = (r && r.error) || "Failed to save stealth settings.";
+          this.busy = false;
+          return;
+        }
+        this.successMsg = "Stealth settings saved.";
+        await this.load();
+        this.busy = false;
+      },
+    }));
+  })();
+</script>

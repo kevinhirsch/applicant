@@ -1,0 +1,1968 @@
+<html>
+
+<head>
+    <script type="module">
+        import { store } from "/components/welcome/welcome-store.js";
+    </script>
+    <!-- APP-LP-1: theme tokens (colors/spacing/typography scale) shared with every
+         other Applicant panel — reused here for the landing-page gadgets so the
+         whole app speaks one visual language, light + dark. -->
+    <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+</head>
+
+<body>
+    <div x-data>
+        <template x-if="$store.welcomeStore">
+            <div x-init="$store.welcomeStore.init(); if ($store.welcomeStore.isVisible) { $store.welcomeStore.onCreate(); } $watch('$store.welcomeStore.isVisible', (visible) => { if (visible) { $store.welcomeStore.onCreate(); window.dispatchEvent(new CustomEvent('applicant:refresh-today')); } });"
+                 class="welcome-container">
+                <x-extension id="welcome-screen-start"></x-extension>
+
+                <main class="welcome-shell">
+                    <!-- RUX-6: the "Ask anything to start a new chat" box is wired to the
+                         CAMPAIGN agent (Applicant's ChatService via /api/chat), not the
+                         generic a0 agent chat. It answers campaign questions and can take
+                         gated, transparent, reversible actions (edit criteria, re-score,
+                         draft, discard) — every side-effect routes through the engine's
+                         existing review gates and it NEVER auto-submits an application. -->
+                    <section class="welcome-composer" aria-label="Start a new chat"
+                             x-data="lpCampaignChat()">
+                        <div class="lp-chat-thread" x-show="turns.length > 0" x-ref="thread" role="log" aria-live="polite">
+                            <template x-for="(t, i) in turns" :key="i">
+                                <div class="lp-chat-turn" :class="t.role === 'user' ? 'lp-chat-user' : 'lp-chat-agent'">
+                                    <span class="lp-chat-role" x-text="t.role === 'user' ? 'You' : 'Applicant'"></span>
+                                    <div class="lp-chat-bubble" x-text="t.text"></div>
+                                </div>
+                            </template>
+
+                            <!-- Gated actions surface here for the user's explicit approval
+                                 (transparent + reversible; nothing was committed yet). -->
+                            <template x-for="p in pending" :key="p.key">
+                                <div class="lp-chat-confirm">
+                                    <div class="lp-chat-confirm-text">
+                                        <span class="material-symbols-outlined" aria-hidden="true">shield</span>
+                                        <span x-text="p.label"></span>
+                                    </div>
+                                    <div class="lp-chat-confirm-actions">
+                                        <button type="button" class="lp-chat-btn lp-chat-btn-primary"
+                                                @click="confirm(p)" :disabled="p.busy">Confirm</button>
+                                        <button type="button" class="lp-chat-btn"
+                                                @click="discard(p)" :disabled="p.busy">Not now</button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="lp-chat-typing" x-show="sending" aria-hidden="true">
+                                <span></span><span></span><span></span>
+                            </div>
+                        </div>
+
+                        <div class="lp-chat-error" x-show="error" x-text="error"></div>
+
+                        <form class="lp-chat-input-row" @submit.prevent="send()">
+                            <textarea class="lp-chat-input"
+                                      x-model="input"
+                                      rows="1"
+                                      placeholder="Ask anything to start a new chat"
+                                      aria-label="Ask anything to start a new chat"
+                                      @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"
+                                      :disabled="sending"></textarea>
+                            <button type="submit" class="lp-chat-send"
+                                    :disabled="sending || !input.trim()"
+                                    aria-label="Send message">
+                                <span class="material-symbols-outlined" x-text="sending ? 'hourglass_top' : 'arrow_upward'"></span>
+                            </button>
+                        </form>
+
+                        <p class="lp-chat-hint" x-show="turns.length === 0">
+                            Ask about your search, tune your criteria, re-score your matches, or
+                            draft and discard roles. I never submit an application without you.
+                        </p>
+                    </section>
+
+                    <section class="welcome-alerts"
+                             x-show="$store.welcomeStore.sortedBanners.length > 0 || $store.welcomeStore.hasDismissedBanners">
+                        <div class="welcome-banners" x-show="$store.welcomeStore.sortedBanners.length > 0">
+                            <x-extension id="welcome-banners-start"></x-extension>
+                            <template x-for="banner in $store.welcomeStore.sortedBanners" :key="banner.id">
+                                <article class="welcome-banner" :class="$store.welcomeStore.getBannerClass(banner.type)">
+                                    <div class="welcome-banner-icon">
+                                        <span class="material-symbols-outlined" x-text="$store.welcomeStore.getBannerIcon(banner.type)"></span>
+                                    </div>
+                                    <div class="welcome-banner-content">
+                                        <div class="welcome-banner-title" x-text="banner.title"></div>
+                                        <div class="welcome-banner-html"
+                                             x-html="banner.html"
+                                             @click="$store.welcomeStore.handleBannerHtmlClick($event)"></div>
+                                    </div>
+                                    <button class="welcome-banner-cta"
+                                            type="button"
+                                            x-show="banner.cta_text && banner.cta_action"
+                                            @click.stop="$store.welcomeStore.executeBannerAction(banner.cta_action)"
+                                            :aria-label="banner.cta_text">
+                                        <span x-text="banner.cta_text"></span>
+                                        <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+                                    </button>
+                                    <button class="welcome-banner-dismiss"
+                                            type="button"
+                                            x-show="banner.dismissible !== false"
+                                            @click.stop="$store.welcomeStore.dismissBanner(banner.id)"
+                                            title="Dismiss"
+                                            aria-label="Dismiss">
+                                        <span class="material-symbols-outlined">close</span>
+                                    </button>
+                                </article>
+                            </template>
+                            <x-extension id="welcome-banners-end"></x-extension>
+                        </div>
+
+                        <button type="button"
+                                class="welcome-undismiss-button"
+                                x-show="$store.welcomeStore.hasDismissedBanners"
+                                :disabled="$store.welcomeStore.bannersLoading"
+                                @click="$store.welcomeStore.undismissBanners()">
+                            <span class="material-symbols-outlined">undo</span>
+                            <span>Show dismissed notices</span>
+                        </button>
+                    </section>
+
+                    <!-- APP-LP-1: slim utility header — active campaign + the
+                         notifications-connect affordance (kept per the story; the
+                         upstream AI-accounts/Connect-Channels marketing cards below
+                         are cut by simply never rendering welcome-actions-end here). -->
+                    <header class="lp-topbar" x-data="lpHeader()" x-init="init()">
+                        <div class="lp-topbar-info">
+                            <span class="lp-topbar-eyebrow">Command center</span>
+                            <h1 class="lp-topbar-campaign" x-text="campaignName"></h1>
+                        </div>
+                        <button type="button"
+                                class="lp-notif-pill"
+                                :class="{ 'is-connected': connected }"
+                                @click="openChannels()"
+                                :aria-label="connected ? 'Notification channels connected — manage' : 'Connect notifications so alerts reach you'"
+                                :title="connected ? 'Notification channels connected — manage' : 'Connect notifications so alerts reach you'">
+                            <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
+                            <span x-text="connected ? 'Notifications on' : 'Connect notifications'"></span>
+                        </button>
+                    </header>
+
+                    <!-- ① Pending Reviews — the hero of the page. -->
+                    <section class="lp-gadget lp-pending-reviews" aria-label="Pending Reviews"
+                              x-data="lpPendingReviews()" x-init="init(); window.addEventListener('applicant:refresh-today', () => load())">
+                        <header class="welcome-panel-header">
+                            <h2>Pending Reviews
+                                <span class="lp-count-badge" x-show="!loading && !fatalError && count > 0" x-text="count"></span>
+                            </h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        @click="load()"
+                                        :disabled="loading"
+                                        title="Refresh"
+                                        aria-label="Refresh Pending Reviews">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                            </div>
+                        </header>
+
+                        <div class="lp-skeleton" x-show="loading">
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                        </div>
+
+                        <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                        <div class="lp-empty" x-show="!loading && !fatalError && groups.length === 0">
+                            <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+                            <p>You're all caught up — nothing waiting on review.</p>
+                        </div>
+
+                        <ul class="lp-review-list" x-show="!loading && !fatalError && groups.length > 0">
+                            <template x-for="g in groups" :key="g.applicationId">
+                                <li class="lp-review-row">
+                                    <div class="lp-review-info">
+                                        <div class="lp-review-title-row">
+                                            <span class="lp-score" :class="scoreClass(g.score)" x-show="g.score !== null" x-text="g.score"></span>
+                                            <div class="lp-review-role" :title="g.roleLabel" x-text="g.roleLabel"></div>
+                                        </div>
+                                        <div class="lp-posted"
+                                             :class="{ 'lp-stale': g.postedStale }"
+                                             x-show="g.postedRelative"
+                                             x-text="(g.postedLabel || 'Posted') + ' ' + g.postedRelative"></div>
+                                        <div class="lp-review-chips">
+                                            <template x-for="item in g.items" :key="item.id">
+                                                <span class="badge" x-text="item.kindLabel"></span>
+                                            </template>
+                                        </div>
+                                        <div class="lp-error" x-show="g.error" x-text="g.error" style="padding:0.35rem 0.6rem;font-size:0.78rem"></div>
+                                    </div>
+                                    <div class="lp-review-actions">
+                                        <button class="btn" type="button" @click="review(g)">Review</button>
+                                        <button class="btn primary" type="button" @click="approve(g)" :disabled="g.busy">Approve</button>
+                                        <button class="btn" type="button" @click="snooze(g)" :disabled="g.busy">Snooze</button>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+
+                        <a class="lp-view-all" href="javascript:void(0)" x-show="!loading && overflowCount > 0" @click="viewAll()">
+                            View all <span x-text="count"></span> in Today →
+                        </a>
+                    </section>
+
+                    <!-- ② Top New Matches. -->
+                    <section class="lp-gadget lp-top-matches" aria-label="Top New Matches" x-data="lpTopMatches()" x-init="init()">
+                        <header class="welcome-panel-header">
+                            <h2>Top New Matches</h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        @click="load()"
+                                        :disabled="loading"
+                                        title="Refresh"
+                                        aria-label="Refresh Top New Matches">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                            </div>
+                        </header>
+
+                        <div class="lp-skeleton" x-show="loading">
+                            <div class="lp-skeleton-row"></div>
+                            <div class="lp-skeleton-row"></div>
+                        </div>
+
+                        <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                        <div class="lp-empty" x-show="!loading && !fatalError && rows.length === 0">
+                            <span class="material-symbols-outlined" aria-hidden="true">search</span>
+                            <p x-text="emptyNote || 'No new matches right now — check back after the next discovery run.'"></p>
+                        </div>
+
+                        <ul class="lp-match-list" x-show="!loading && !fatalError && rows.length > 0">
+                            <template x-for="row in rows" :key="row.posting_id">
+                                <li class="lp-match-row">
+                                    <div class="lp-match-info">
+                                        <div class="lp-match-title-row">
+                                            <span class="lp-score" :class="scoreClass(row.viability_score)" x-text="Math.round(row.viability_score || 0)"></span>
+                                            <span class="lp-match-title" x-text="row.title + (row.company ? ' · ' + row.company : '')"></span>
+                                        </div>
+                                        <div class="lp-posted"
+                                             :class="{ 'lp-stale': row.posted_stale }"
+                                             x-show="row.posted_relative"
+                                             x-text="(row.posted_label || 'Posted') + ' ' + row.posted_relative"></div>
+                                        <div class="lp-match-why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
+                                        <div class="lp-error" x-show="rowError[row.posting_id]" x-text="rowError[row.posting_id]"></div>
+                                    </div>
+                                    <div class="lp-match-actions">
+                                        <div class="lp-row-buttons">
+                                            <button class="btn" type="button" @click="skip(row)" :disabled="busy[row.posting_id]">Skip</button>
+                                            <button class="btn primary" type="button" @click="draftThis(row)" :disabled="busy[row.posting_id]">Draft this</button>
+                                        </div>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </section>
+
+                    <!-- ③ Pipeline Funnel + ④ Daily Progress share one cheap read
+                         (campaigns.pipeline_summary) but render as two distinct cards. -->
+                    <template x-if="true">
+                        <div x-data="lpPipelineProgress()" x-init="init()" style="display: contents;">
+                            <section class="lp-gadget lp-pipeline-funnel" aria-label="Pipeline Funnel">
+                                <header class="welcome-panel-header">
+                                    <h2>Pipeline Funnel</h2>
+                                    <div class="welcome-panel-actions">
+                                        <button class="welcome-panel-icon-button"
+                                                type="button"
+                                                @click="load()"
+                                                :disabled="loading"
+                                                title="Refresh"
+                                                aria-label="Refresh Pipeline Funnel">
+                                            <span class="material-symbols-outlined">refresh</span>
+                                        </button>
+                                    </div>
+                                </header>
+
+                                <div class="lp-skeleton" x-show="loading">
+                                    <div class="lp-skeleton-row"></div>
+                                </div>
+
+                                <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                                <div class="lp-funnel" x-show="!loading && !fatalError">
+                                    <template x-for="stage in stages" :key="stage.key">
+                                        <div class="lp-funnel-stage">
+                                            <div class="lp-funnel-value" x-text="stage.value"></div>
+                                            <div class="lp-funnel-label" x-text="stage.label"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </section>
+
+                            <!-- ④ Daily Progress. -->
+                            <section class="lp-gadget lp-daily-progress" aria-label="Daily Progress">
+                                <header class="welcome-panel-header">
+                                    <h2>Daily Progress</h2>
+                                </header>
+
+                                <div class="lp-skeleton" x-show="loading">
+                                    <div class="lp-skeleton-row"></div>
+                                </div>
+
+                                <div class="lp-error" x-show="!loading && fatalError" x-text="fatalError"></div>
+
+                                <template x-if="!loading && !fatalError">
+                                    <div>
+                                        <div class="lp-progress-grid">
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value" x-text="drafted"></div>
+                                                <div class="lp-progress-label">Drafted today</div>
+                                            </div>
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value" x-text="submitted"></div>
+                                                <div class="lp-progress-label">Submitted today</div>
+                                            </div>
+                                            <div class="lp-progress-stat">
+                                                <div class="lp-progress-value">
+                                                    <span x-text="streak"></span>
+                                                    <span class="material-symbols-outlined" style="font-size: 1.1rem; vertical-align: -0.1rem;" x-show="streak > 0" aria-hidden="true">local_fire_department</span>
+                                                </div>
+                                                <div class="lp-progress-label">Day streak</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="lp-progress-target" x-show="target > 0">
+                                            <div class="lp-target-row">
+                                                <span>Today's target</span>
+                                                <span x-text="appsToday + ' of ' + target"></span>
+                                            </div>
+                                            <div class="lp-target-track">
+                                                <span class="lp-target-fill" :style="`width: ${attainmentPct}%`"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </section>
+                        </div>
+                    </template>
+
+                    <article class="welcome-system-card"
+                             x-show="$store.welcomeStore.systemResourceBanner"
+                             x-transition.opacity>
+                        <header class="welcome-panel-header">
+                            <h2 x-text="$store.welcomeStore.systemResourceBanner?.title || 'System Resources'"></h2>
+                            <div class="welcome-panel-actions">
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        :disabled="$store.welcomeStore.bannersLoading"
+                                        @click.stop="$store.welcomeStore.refreshBanners(true)"
+                                        title="Refresh"
+                                        aria-label="Refresh System Resources">
+                                    <span class="material-symbols-outlined">refresh</span>
+                                </button>
+                                <button class="welcome-panel-icon-button"
+                                        type="button"
+                                        x-show="$store.welcomeStore.systemResourceBanner?.dismissible !== false"
+                                        @click.stop="$store.welcomeStore.dismissBanner($store.welcomeStore.systemResourceBanner?.id || 'system-resources')"
+                                        title="Dismiss"
+                                        aria-label="Dismiss System Resources">
+                                    <span class="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+                        </header>
+                        <div class="welcome-system-body"
+                             x-html="$store.welcomeStore.systemResourceBanner?.html || ''"></div>
+                    </article>
+                </main>
+
+                <x-extension id="welcome-screen-end"></x-extension>
+            </div>
+        </template>
+    </div>
+
+    <style>
+        .welcome-today { width: 100%; }
+        .welcome-container {
+            position: relative;
+            min-height: 100vh;
+            overflow: hidden;
+            padding: clamp(4.8rem, 8vh, 6.4rem) clamp(1.25rem, 5.4vw, 6.5rem) 3.5rem;
+            background: var(--color-background);
+            color: var(--color-text);
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+        }
+
+        .welcome-container > x-extension,
+        .welcome-actions > x-extension,
+        .welcome-banners > x-extension,
+        .welcome-lower-grid > x-extension,
+        .welcome-lower-grid > x-extension > x-component,
+        .welcome-lower-grid > x-extension > x-component > div[x-data] {
+            display: contents;
+        }
+
+        .welcome-container::before {
+            content: "";
+            position: absolute;
+            inset: -6% -8% -10% 10%;
+            background-image: url("./public/darkSymbol.svg");
+            background-repeat: no-repeat;
+            background-position: center top;
+            background-size: min(78vw, 980px) auto;
+            opacity: 0.105;
+            pointer-events: none;
+        }
+
+        .light-mode .welcome-container::before {
+            filter: invert(0.55);
+            opacity: 0.055;
+        }
+
+        .welcome-shell {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.55rem;
+            width: min(100%, 840px);
+            margin: 0 auto;
+            padding-top: 4rem;
+        }
+
+        .welcome-composer {
+            width: 100%;
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        /* RUX-6 campaign-chat composer (wired to the campaign agent). */
+        .lp-chat-thread {
+            display: grid;
+            gap: 0.75rem;
+            max-height: 42vh;
+            overflow-y: auto;
+            padding: 0.9rem 1rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--color-panel) 74%, var(--color-background) 26%);
+            backdrop-filter: blur(18px);
+        }
+
+        .lp-chat-turn {
+            display: grid;
+            gap: 0.2rem;
+            max-width: 88%;
+        }
+
+        .lp-chat-user {
+            justify-self: end;
+            text-align: right;
+        }
+
+        .lp-chat-agent {
+            justify-self: start;
+        }
+
+        .lp-chat-role {
+            font-size: 0.72rem;
+            font-weight: 620;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: color-mix(in srgb, var(--color-text) 55%, transparent);
+        }
+
+        .lp-chat-bubble {
+            padding: 0.6rem 0.8rem;
+            border-radius: 10px;
+            font-size: 0.98rem;
+            line-height: 1.42;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: var(--color-text);
+            background: color-mix(in srgb, var(--color-border) 42%, transparent);
+        }
+
+        .lp-chat-user .lp-chat-bubble {
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 18%, transparent);
+        }
+
+        .lp-chat-confirm {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.7rem;
+            padding: 0.7rem 0.85rem;
+            border: 1px solid color-mix(in srgb, var(--color-primary, #2f6bff) 45%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 8%, transparent);
+        }
+
+        .lp-chat-confirm-text {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.9rem;
+            color: var(--color-text);
+        }
+
+        .lp-chat-confirm-text .material-symbols-outlined {
+            font-size: 1.15rem;
+            color: var(--color-primary, #2f6bff);
+        }
+
+        .lp-chat-confirm-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .lp-chat-btn {
+            padding: 0.4rem 0.85rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--color-text);
+            font: inherit;
+            font-size: 0.85rem;
+            font-weight: 560;
+            cursor: pointer;
+        }
+
+        .lp-chat-btn:hover:not(:disabled),
+        .lp-chat-btn:focus-visible {
+            background: color-mix(in srgb, var(--color-text) 8%, transparent);
+        }
+
+        .lp-chat-btn-primary {
+            border-color: transparent;
+            background: var(--color-primary, #2f6bff);
+            color: #fff;
+        }
+
+        .lp-chat-btn:disabled {
+            opacity: 0.55;
+            cursor: default;
+        }
+
+        .lp-chat-typing {
+            display: inline-flex;
+            gap: 0.3rem;
+            align-items: center;
+            padding: 0.35rem 0.2rem;
+        }
+
+        .lp-chat-typing span {
+            width: 0.42rem;
+            height: 0.42rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-text) 45%, transparent);
+            animation: lp-chat-blink 1.1s infinite ease-in-out;
+        }
+
+        .lp-chat-typing span:nth-child(2) { animation-delay: 0.18s; }
+        .lp-chat-typing span:nth-child(3) { animation-delay: 0.36s; }
+
+        @keyframes lp-chat-blink {
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
+        }
+
+        .lp-chat-error {
+            padding: 0.5rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            color: var(--color-warning-text, #8a6d1a);
+            background: var(--color-warning-bg, #fef5e6);
+        }
+
+        .lp-chat-input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.5rem;
+            min-height: 4.9rem;
+            padding: 0.58rem 0.7rem 0.58rem 0.86rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--color-panel) 64%, var(--color-background) 36%);
+        }
+
+        .lp-chat-input {
+            flex: 1 1 auto;
+            min-height: 3.2rem;
+            max-height: 12rem;
+            resize: none;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: var(--color-text);
+            font: inherit;
+            font-size: 1.03rem;
+            line-height: 1.42;
+        }
+
+        .lp-chat-input::placeholder {
+            color: color-mix(in srgb, var(--color-text) 48%, transparent);
+        }
+
+        .lp-chat-send {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.5rem;
+            height: 2.5rem;
+            border: none;
+            border-radius: 999px;
+            background: var(--color-primary, #2f6bff);
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .lp-chat-send:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .lp-chat-hint {
+            margin: 0;
+            padding-inline: 0.2rem;
+            font-size: 0.85rem;
+            color: color-mix(in srgb, var(--color-text) 62%, transparent);
+        }
+
+        .welcome-alerts {
+            display: grid;
+            gap: 0.7rem;
+        }
+
+        .welcome-banners {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .welcome-banner,
+        .welcome-panel-card,
+        .welcome-system-card,
+        .lp-gadget {
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            background: color-mix(in srgb, var(--color-panel) 78%, var(--color-background) 22%);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.026);
+            backdrop-filter: blur(18px);
+        }
+
+        .welcome-banner {
+            --welcome-banner-accent: #2f6bff;
+            position: relative;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto auto;
+            align-items: start;
+            gap: 1rem;
+            min-height: 5.45rem;
+            padding: 1rem 1.1rem;
+            border-radius: 8px;
+            text-align: left;
+        }
+
+        .welcome-banner.banner-info {
+            --welcome-banner-accent: #2f6bff;
+        }
+
+        .welcome-banner.banner-warning {
+            --welcome-banner-accent: #f59e0b;
+        }
+
+        .welcome-banner.banner-error {
+            --welcome-banner-accent: #ef4444;
+        }
+
+        .welcome-banner-icon {
+            display: inline-flex;
+            width: 2.25rem;
+            height: 2.25rem;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            color: var(--welcome-banner-accent);
+            background: color-mix(in srgb, var(--welcome-banner-accent) 9%, transparent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--welcome-banner-accent) 12%, transparent);
+        }
+
+        .welcome-banner-icon .material-symbols-outlined {
+            font-size: 1.28rem;
+        }
+
+        .welcome-banner-content {
+            flex: 1;
+            min-width: 0;
+            padding-top: 0.05rem;
+        }
+
+        .welcome-banner-title {
+            margin-bottom: 0.28rem;
+            color: var(--color-text);
+            font-size: 1rem;
+            font-weight: 560;
+            line-height: 1.25;
+        }
+
+        .welcome-banner-html {
+            max-width: 72ch;
+            color: color-mix(in srgb, var(--color-text) 72%, transparent);
+            font-size: 0.92rem;
+            line-height: 1.45;
+        }
+
+        .welcome-banner-html a {
+            color: #5f83ff;
+            text-decoration: none;
+        }
+
+        .welcome-banner-html a:hover {
+            text-decoration: underline;
+        }
+
+        .welcome-banner-cta,
+        .welcome-banner-html .btn,
+        .welcome-banner-html button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.35rem;
+            border: 0;
+            border-radius: 8px;
+            padding: 0.55rem 0.9rem;
+            background-color: #4248f1;
+            color: #fff;
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+            font-size: 0.88rem;
+            font-weight: 460;
+            line-height: 1.2;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            transition: background-color 0.18s ease;
+        }
+
+        .welcome-banner-cta {
+            align-self: center;
+            justify-self: end;
+            gap: 0.36rem;
+            white-space: nowrap;
+        }
+
+        .welcome-banner-cta .material-symbols-outlined {
+            font-size: 1.05rem;
+        }
+
+        .welcome-banner-cta:hover,
+        .welcome-banner-cta:focus-visible,
+        .welcome-banner-html .btn:hover,
+        .welcome-banner-html .btn:focus-visible,
+        .welcome-banner-html button:hover,
+        .welcome-banner-html button:focus-visible {
+            background-color: #353bc5;
+            outline: none;
+        }
+
+        .welcome-banner-dismiss,
+        .welcome-undismiss-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            border: 0;
+            background: transparent;
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            cursor: pointer;
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+        }
+
+        .welcome-banner-dismiss {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 8px;
+            margin: -0.2rem -0.2rem 0 0;
+        }
+
+        .welcome-banner-dismiss:hover,
+        .welcome-undismiss-button:hover {
+            color: var(--color-text);
+            background: color-mix(in srgb, var(--color-border) 45%, transparent);
+        }
+
+        .welcome-undismiss-button {
+            justify-self: start;
+            border-radius: 9px;
+            padding: 0.45rem 0.55rem;
+            font-size: 0.82rem;
+        }
+
+        .welcome-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .welcome-panel-header h2 {
+            margin: 0;
+            color: var(--color-text);
+            font-size: 1.05rem;
+            font-weight: 520;
+            line-height: 1.2;
+        }
+
+        .welcome-panel-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            flex: 0 0 auto;
+        }
+
+        .welcome-panel-icon-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            cursor: pointer;
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+        }
+
+        .welcome-panel-icon-button:hover,
+        .welcome-panel-icon-button:focus-visible {
+            color: var(--color-text);
+            background: color-mix(in srgb, var(--color-border) 45%, transparent);
+            outline: none;
+        }
+
+        .welcome-panel-icon-button:disabled {
+            cursor: default;
+            opacity: 0.45;
+        }
+
+        .welcome-panel-icon-button .material-symbols-outlined {
+            font-size: 1.18rem;
+        }
+
+        .welcome-system-card {
+            min-width: 0;
+            border-radius: 8px;
+            padding: 1.6rem 1.7rem;
+            text-align: left;
+        }
+
+        .system-resource-body {
+            display: grid;
+            gap: 1.22rem;
+        }
+
+        .system-resource-meter {
+            display: grid;
+            grid-template-columns: 8.2rem minmax(0, 1fr);
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .system-resource-label {
+            display: grid;
+            gap: 0.38rem;
+            min-width: 0;
+        }
+
+        .system-resource-name,
+        .system-resource-detail-title {
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            font-size: 0.82rem;
+            font-weight: 430;
+            letter-spacing: 0.02em;
+        }
+
+        .system-resource-value,
+        .system-resource-detail-value {
+            color: color-mix(in srgb, var(--color-text) 76%, transparent);
+            font-size: 0.96rem;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+
+        .system-resource-track {
+            height: 0.64rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-border) 70%, transparent);
+        }
+
+        .system-resource-fill {
+            display: block;
+            width: var(--resource-value, 0%);
+            height: 100%;
+            border-radius: inherit;
+            background: var(--resource-color, #22c55e);
+            transition: width 0.22s ease;
+        }
+
+        .system-resource-footer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem 1.5rem;
+            margin-top: 0.15rem;
+            padding-top: 1.02rem;
+            border-top: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+        }
+
+        .system-resource-detail-value {
+            margin-top: 0.48rem;
+            font-family: var(--font-family-code, "Roboto Mono", monospace);
+            font-size: 0.88rem;
+        }
+
+        /* ── APP-LP-1: landing-page command-center gadgets ── */
+
+        .lp-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .lp-topbar-info {
+            min-width: 0;
+        }
+
+        .lp-topbar-eyebrow {
+            display: block;
+            margin-bottom: 0.2rem;
+            color: color-mix(in srgb, var(--color-text) 78%, transparent);
+            font-size: 0.76rem;
+            font-weight: 560;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .lp-topbar-campaign {
+            margin: 0;
+            color: var(--color-text);
+            font-size: 1.3rem;
+            font-weight: 560;
+            line-height: 1.25;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 46ch;
+        }
+
+        .lp-notif-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex: 0 0 auto;
+            height: 2.35rem;
+            padding: 0 0.95rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-panel) 78%, var(--color-background) 22%);
+            color: color-mix(in srgb, var(--color-text) 76%, transparent);
+            font-family: var(--font-family-main, "Rubik", Arial, Helvetica, sans-serif);
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+        }
+
+        .lp-notif-pill .material-symbols-outlined {
+            font-size: 1.1rem;
+        }
+
+        .lp-notif-pill:hover,
+        .lp-notif-pill:focus-visible {
+            border-color: color-mix(in srgb, var(--color-border) 88%, var(--color-text) 12%);
+            color: var(--color-text);
+            outline: none;
+        }
+
+        .lp-notif-pill.is-connected {
+            border-color: color-mix(in srgb, #22c55e 45%, var(--color-border) 55%);
+            color: color-mix(in srgb, var(--color-text) 86%, transparent);
+        }
+
+        .lp-notif-pill.is-connected .material-symbols-outlined {
+            color: #22c55e;
+        }
+
+        .lp-gadget {
+            padding: 1.6rem 1.7rem;
+            border-radius: 8px;
+            text-align: left;
+        }
+
+        .lp-count-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.5rem;
+            height: 1.5rem;
+            margin-left: 0.5rem;
+            padding: 0 0.42rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-primary, #2f6bff) 16%, transparent);
+            color: var(--color-primary, #2f6bff);
+            font-size: 0.8rem;
+            font-weight: 620;
+            vertical-align: middle;
+        }
+
+        .lp-empty {
+            display: grid;
+            justify-items: center;
+            gap: 0.55rem;
+            padding: 1.5rem 0.5rem 0.4rem;
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            text-align: center;
+        }
+
+        .lp-empty .material-symbols-outlined {
+            font-size: 1.8rem;
+            opacity: 0.6;
+        }
+
+        .lp-empty p {
+            margin: 0;
+            font-size: 0.9rem;
+            max-width: 42ch;
+        }
+
+        .lp-error {
+            /* Reuse the app-wide error-box pair (applicant-theme.css's .err /
+               every other panel's inline error style) instead of a translucent
+               red tint: that pattern measured ~1.5:1 contrast in light mode
+               (light-pink-on-light-pink) — a fixed dark-text-on-light-bg pair
+               is legible regardless of theme, exactly like .err everywhere else. */
+            padding: 0.7rem 0.9rem;
+            border-radius: 8px;
+            background: var(--color-danger-bg, #fdecea);
+            color: var(--color-danger-text, #9b1c1c);
+            border: 1px solid var(--color-danger-border, #e8a0a0);
+            font-size: 0.83rem;
+            line-height: 1.4;
+        }
+
+        .lp-skeleton {
+            display: grid;
+            gap: 0.6rem;
+        }
+
+        .lp-skeleton-row {
+            height: 3.4rem;
+            border-radius: 8px;
+            background: linear-gradient(90deg,
+                color-mix(in srgb, var(--color-panel) 55%, transparent) 25%,
+                color-mix(in srgb, var(--color-panel) 85%, transparent) 37%,
+                color-mix(in srgb, var(--color-panel) 55%, transparent) 63%);
+            background-size: 400% 100%;
+            animation: lp-shimmer 1.4s ease infinite;
+        }
+
+        @keyframes lp-shimmer {
+            0% { background-position: 100% 0; }
+            100% { background-position: 0 0; }
+        }
+
+        .lp-review-list,
+        .lp-match-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 0.65rem;
+        }
+
+        .lp-review-row,
+        .lp-match-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.1rem;
+            padding: 0.9rem 1.05rem;
+            border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--color-background) 42%, transparent);
+        }
+
+        .lp-match-row {
+            align-items: flex-start;
+        }
+
+        .lp-review-info,
+        .lp-match-info {
+            min-width: 0;
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        .lp-review-role,
+        .lp-match-title {
+            min-width: 0;
+            color: var(--color-text);
+            font-size: 0.94rem;
+            font-weight: 560;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .lp-review-title-row,
+        .lp-match-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            min-width: 0;
+        }
+
+        .lp-review-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .lp-review-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex: 0 0 auto;
+        }
+
+        .lp-view-all {
+            display: inline-block;
+            margin-top: 1rem;
+            color: color-mix(in srgb, var(--color-text) 72%, transparent);
+            font-size: 0.85rem;
+            font-weight: 520;
+            text-decoration: none;
+        }
+
+        .lp-view-all:hover,
+        .lp-view-all:focus-visible {
+            color: var(--color-primary, #2f6bff);
+            outline: none;
+        }
+
+        .lp-match-why {
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            font-size: 0.84rem;
+            line-height: 1.42;
+        }
+
+        /* Freshness cue (product ask: the posting date says whether a fit
+           score is actually worth chasing). Fresh postings render as quiet
+           muted text — derived from --color-text so it stays legible in both
+           themes automatically. Stale postings (>21 days, core.rules.freshness
+           STALE_AFTER_DAYS) get the SAME fixed light-bg/dark-text warning pair
+           .lp-score-ok already uses, deliberately NOT theme-derived, so the
+           flag reads clearly regardless of light/dark mode (never white-on-
+           white / invisible-on-dark). */
+        .lp-posted {
+            width: fit-content;
+            color: color-mix(in srgb, var(--color-text) 68%, transparent);
+            font-size: 0.8rem;
+        }
+
+        .lp-posted.lp-stale {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.05rem 0.5rem;
+            border-radius: 999px;
+            background: var(--color-warning-bg, #fef5e6);
+            color: var(--color-warning-text, #8a6d1a);
+            font-weight: 560;
+        }
+
+        .lp-match-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.4rem;
+            flex: 0 0 auto;
+        }
+
+        .lp-row-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .lp-score {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            min-width: 2.4rem;
+            height: 1.5rem;
+            padding: 0 0.5rem;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-border) 60%, transparent);
+            color: color-mix(in srgb, var(--color-text) 78%, transparent);
+            font-size: 0.78rem;
+            font-weight: 640;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .lp-score-good {
+            /* Same fixed light-bg/dark-text success pair applicant-theme.css's
+               .badge.success uses — a translucent brand-color tint measured
+               ~1.8:1 contrast in light mode (green-on-light-green). */
+            background: var(--color-success-bg, #e8f8ef);
+            color: var(--color-success-text, #1a7a3a);
+        }
+
+        .lp-score-ok {
+            background: var(--color-warning-bg, #fef5e6);
+            color: var(--color-warning-text, #8a6d1a);
+        }
+
+        .lp-funnel {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0;
+        }
+
+        .lp-funnel-stage {
+            position: relative;
+            display: grid;
+            justify-items: center;
+            gap: 0.35rem;
+            padding: 0.3rem 0.5rem;
+            text-align: center;
+        }
+
+        .lp-funnel-stage::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.4rem;
+            width: 1px;
+            height: 1.7rem;
+            background: color-mix(in srgb, var(--color-border) 60%, transparent);
+        }
+
+        .lp-funnel-stage:first-child::before {
+            display: none;
+        }
+
+        .lp-funnel-value {
+            color: var(--color-text);
+            font-size: 1.55rem;
+            font-weight: 620;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.15;
+        }
+
+        .lp-funnel-label {
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            font-size: 0.78rem;
+            font-weight: 520;
+        }
+
+        .lp-progress-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1.1rem;
+        }
+
+        .lp-progress-stat {
+            display: grid;
+            gap: 0.35rem;
+        }
+
+        .lp-progress-value {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            color: var(--color-text);
+            font-size: 1.55rem;
+            font-weight: 620;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.15;
+        }
+
+        .lp-progress-value .material-symbols-outlined {
+            color: #f59e0b;
+        }
+
+        .lp-progress-label {
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            font-size: 0.78rem;
+            font-weight: 520;
+        }
+
+        .lp-progress-target {
+            margin-top: 1.2rem;
+            padding-top: 1.1rem;
+            border-top: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+        }
+
+        .lp-target-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.55rem;
+            color: color-mix(in srgb, var(--color-text) 74%, transparent);
+            font-size: 0.85rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .lp-target-track {
+            height: 0.6rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--color-border) 70%, transparent);
+        }
+
+        .lp-target-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--color-primary, #2f6bff);
+            transition: width 0.25s ease;
+        }
+
+        @media (max-width: 1180px) {
+            .welcome-container {
+                padding-inline: clamp(1.25rem, 4vw, 3rem);
+            }
+
+            .welcome-shell {
+                padding-top: 4rem;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .welcome-container {
+                min-height: 100%;
+                padding: 4.5rem 1rem 2rem;
+            }
+
+            .welcome-shell {
+                gap: 1.2rem;
+                padding-top: 4rem;
+            }
+
+            .lp-gadget {
+                padding: 1.25rem 1.1rem;
+            }
+
+            .lp-funnel {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                row-gap: 1.1rem;
+            }
+
+            .lp-funnel-stage::before {
+                display: none;
+            }
+
+            .lp-progress-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.7rem;
+            }
+
+            .lp-review-row,
+            .lp-match-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .lp-review-actions {
+                justify-content: flex-start;
+            }
+
+            .lp-match-actions {
+                align-items: stretch;
+            }
+
+            .lp-row-buttons {
+                justify-content: flex-end;
+            }
+
+            .welcome-composer .input-row {
+                align-items: center;
+                flex-wrap: wrap;
+                min-height: 4.35rem;
+                row-gap: 0.55rem;
+                white-space: normal;
+            }
+
+            .welcome-composer #chat-input-container {
+                flex: 1 1 11.5rem;
+                width: auto;
+                min-width: min(11.5rem, calc(100% - 3rem));
+            }
+
+            .welcome-composer #chat-input {
+                min-height: 4.5rem;
+                padding-right: 0.35rem;
+                align-content: center;
+            }
+
+            .welcome-composer #chat-input.is-empty {
+                overflow-y: hidden;
+                scrollbar-width: none;
+            }
+
+            .welcome-composer #chat-input.is-empty::-webkit-scrollbar {
+                display: none;
+            }
+
+            .welcome-composer #chat-buttons-wrapper {
+                margin-left: auto;
+            }
+
+            .welcome-banner {
+                grid-template-columns: auto minmax(0, 1fr);
+                gap: 0.82rem;
+                padding: 0.95rem;
+            }
+
+            .welcome-banner-dismiss {
+                position: absolute;
+                top: 0.7rem;
+                right: 0.7rem;
+                margin: 0;
+            }
+
+            .welcome-banner-content {
+                padding-right: 1.9rem;
+            }
+
+            .welcome-banner-html {
+                max-width: none;
+            }
+
+            .welcome-banner-cta {
+                grid-column: 2;
+                justify-self: start;
+                margin-top: 0.25rem;
+            }
+
+            .welcome-system-card {
+                padding: 1.25rem 1.1rem;
+            }
+
+            .system-resource-meter {
+                grid-template-columns: 1fr;
+                gap: 0.55rem;
+            }
+
+            .system-resource-footer {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .welcome-composer #chat-input.is-empty {
+                min-height: 5rem;
+                padding-top: 0.52rem;
+                padding-bottom: 0.52rem;
+                font-size: 0.96rem;
+                line-height: 1.34;
+            }
+        }
+    </style>
+
+    <script>
+    (() => {
+        const _apiP = import("/js/api.js");
+        const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi(
+            (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a
+        );
+
+        // Shared between lpPendingReviews and lpTopMatches (same module scope,
+        // no store plumbing needed): postings already in the review queue —
+        // i.e. already drafted — so Top New Matches can exclude them instead
+        // of showing "draft this" for a role that's already drafted. Both
+        // gadgets still fetch their OWN primary data independently (one
+        // gadget failing/slow never blocks the other); this is a best-effort
+        // cross-filter only, populated whenever Pending Reviews loads.
+        const reviewedPostingIds = new Set();
+
+        // ── RUX-6: "Ask anything to start a new chat" → the campaign agent ──
+        // Wires the composer to Applicant's ChatService via the plugin chat proxy
+        // (plugins/applicant/chat → engine /api/chat). The agent answers campaign
+        // questions and can take GATED actions (edit criteria, re-score, draft,
+        // discard) server-side; any change that shifts campaign scope comes back as a
+        // pending confirmation the user must approve here (transparent + reversible).
+        // It NEVER submits an application.
+        window.Alpine.data("lpCampaignChat", () => ({
+            input: "",
+            sending: false,
+            error: "",
+            turns: [],       // { role: 'user'|'assistant', text }
+            pending: [],     // gated confirmations awaiting the user's explicit approval
+
+            async send() {
+                const message = (this.input || "").trim();
+                if (!message || this.sending) return;
+                this.error = "";
+                this.turns.push({ role: "user", text: message });
+                this.input = "";
+                this.sending = true;
+                this.scrollThread();
+                let r;
+                try {
+                    // campaign_id is resolved to the active campaign server-side
+                    // (the proxy maps a missing/__system__ id), so we don't send it.
+                    r = await callJsonApi("chat", { action: "send", message });
+                } catch (e) {
+                    r = null;
+                }
+                this.sending = false;
+                if (!r || !r.ok) {
+                    this.error = (r && r.error) || "I couldn't reach the agent just now — try again in a moment.";
+                    this.scrollThread();
+                    return;
+                }
+                const d = r.data || {};
+                const text = d.message || d.answer || "";
+                if (text) this.turns.push({ role: "assistant", text });
+                this.collectPending(d);
+                this.scrollThread();
+            },
+
+            // Turn the engine's proposed integral changes into explicit, user-approved
+            // confirmations. Non-integral changes are already applied by the engine and
+            // narrated in the reply; only gated ones need a button here.
+            collectPending(d) {
+                const changes = Array.isArray(d.proposed_changes) ? d.proposed_changes : [];
+                for (const c of changes) {
+                    if (c && c.requires_confirmation && !c.applied) {
+                        this.pending.push({
+                            key: `attr:${c.name}:${Math.random().toString(36).slice(2)}`,
+                            type: "attr",
+                            name: c.name,
+                            value: c.value,
+                            label: `Confirm: set ${c.name} to “${c.value}”`,
+                            busy: false,
+                        });
+                    }
+                }
+                const controls = Array.isArray(d.control_actions) ? d.control_actions : [];
+                for (const a of controls) {
+                    if (a && a.requires_confirmation && a.kind === "criteria" && a.detail) {
+                        this.pending.push({
+                            key: `crit:${Math.random().toString(36).slice(2)}`,
+                            type: "criteria",
+                            changes: a.detail,
+                            label: `Confirm search change: ${this.describeDetail(a.detail)}`,
+                            busy: false,
+                        });
+                    }
+                }
+            },
+
+            describeDetail(detail) {
+                try {
+                    return Object.entries(detail)
+                        .map(([k, v]) => `${k.replace(/_/g, " ")} → ${Array.isArray(v) ? v.join(", ") : v}`)
+                        .join("; ");
+                } catch (e) {
+                    return "this change";
+                }
+            },
+
+            async confirm(p) {
+                p.busy = true;
+                this.error = "";
+                let r;
+                try {
+                    if (p.type === "attr") {
+                        r = await callJsonApi("chat", { action: "confirm", name: p.name, value: p.value });
+                    } else {
+                        r = await callJsonApi("chat", { action: "confirm_criteria", changes: p.changes });
+                    }
+                } catch (e) {
+                    r = null;
+                }
+                p.busy = false;
+                if (!r || !r.ok) {
+                    this.error = (r && r.error) || "I couldn't apply that change — try again.";
+                    return;
+                }
+                this.pending = this.pending.filter((x) => x.key !== p.key);
+                this.turns.push({
+                    role: "assistant",
+                    text: "Done — I've applied that. It affects future scoring, and it's reversible; just tell me to change it back.",
+                });
+                // A confirmed criteria change re-ranks matches — let the rest of the
+                // page pick it up without a manual refresh.
+                window.dispatchEvent(new CustomEvent("applicant:refresh-today"));
+                this.scrollThread();
+            },
+
+            discard(p) {
+                this.pending = this.pending.filter((x) => x.key !== p.key);
+                this.turns.push({ role: "assistant", text: "Okay, I've left that as it was." });
+                this.scrollThread();
+            },
+
+            scrollThread() {
+                this.$nextTick(() => {
+                    const el = this.$refs.thread;
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
+            },
+        }));
+
+        // ── Header: active campaign name + notifications-connect affordance ──
+        window.Alpine.data("lpHeader", () => ({
+            campaignName: "Command center",
+            connected: false,
+
+            async init() {
+                this.loadCampaign();
+                this.loadChannels();
+            },
+
+            async loadCampaign() {
+                try {
+                    const r = await callJsonApi("campaigns", { action: "list" });
+                    const list = (r && r.ok && r.data && r.data.campaigns) || [];
+                    const active = list.find((c) => c.active) || list[0];
+                    if (active && active.name) this.campaignName = active.name;
+                } catch (e) {
+                    // keep default label — never block the header on this
+                }
+            },
+
+            async loadChannels() {
+                try {
+                    const r = await callJsonApi("channels", { action: "get" });
+                    const d = (r && r.ok && r.data) || {};
+                    // GET /api/setup/channels deliberately never echoes back a saved
+                    // webhook/URL (it would leak a live secret to the client) — it
+                    // reports configured-or-not booleans instead.
+                    this.connected = !!(
+                        d.channels_configured ||
+                        d.discord_configured ||
+                        d.email_configured ||
+                        d.ntfy_configured
+                    );
+                } catch (e) {
+                    this.connected = false;
+                }
+            },
+
+            openChannels() {
+                window.openModal("/plugins/applicant/webui/channels.html");
+            },
+        }));
+
+        // ── ① Pending Reviews ──
+        const KIND_AFFORDANCE = {
+            digest_approval: "digest.html",
+            material_review: "documents.html",
+            final_approval: "documents.html",
+            missing_attr: "attributes.html",
+            integral_change: "compare.html",
+        };
+
+        window.Alpine.data("lpPendingReviews", () => ({
+            loading: true,
+            fatalError: "",
+            count: 0,
+            groups: [],
+            overflowCount: 0,
+            GROUP_CAP: 5,
+
+            async init() {
+                await this.load();
+            },
+
+            async load() {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("pending", { action: "list", campaign_id: "__system__" });
+                if (!r || !r.ok) {
+                    this.fatalError = "Couldn't reach the review queue — check back in a moment.";
+                    this.groups = [];
+                    this.count = 0;
+                    this.loading = false;
+                    return;
+                }
+                const items = (r.data && r.data.items) || [];
+                this.count = (r.data && r.data.count) ?? items.length;
+
+                const byApp = new Map();
+                for (const item of items) {
+                    const key = item.application_id || item.id;
+                    if (!byApp.has(key)) {
+                        const brief = item.application_brief || {};
+                        let roleLabel = item.title;
+                        if (brief.job_title && brief.company) roleLabel = `${brief.job_title} · ${brief.company}`;
+                        else if (brief.job_title) roleLabel = brief.job_title;
+                        byApp.set(key, {
+                            applicationId: item.application_id,
+                            roleLabel: roleLabel || "Untitled role",
+                            // Same posting.viability_score the Digest/Top New
+                            // Matches surface reads — one score, one source.
+                            score: typeof brief.viability_score === "number" ? brief.viability_score : null,
+                            // Posting freshness (core.rules.freshness, via the
+                            // engine's application_brief): "Posted" for a real
+                            // board date, "First seen" when only discovery's own
+                            // timestamp is known — never fabricated. Absent
+                            // (null) when the posting has neither, so the row
+                            // just omits the cue rather than showing garbage.
+                            postedLabel: brief.posted_label || null,
+                            postedRelative: brief.posted_relative || null,
+                            postedStale: !!brief.posted_stale,
+                            items: [],
+                            busy: false,
+                            error: "",
+                        });
+                        // Already drafted (has material_review items) -> Top
+                        // New Matches should not also offer to "draft this".
+                        if (brief.posting_id) reviewedPostingIds.add(brief.posting_id);
+                    }
+                    byApp.get(key).items.push({
+                        id: item.id,
+                        kind: item.kind,
+                        kindLabel: this.materialLabel(item),
+                    });
+                }
+
+                // Best-fit-first: highest-scored roles reviewed first (same
+                // ordering intent as the digest's rank-stacking sort). Roles
+                // without a score (older demo data / not yet scored) sink to
+                // the bottom rather than being dropped.
+                const groups = Array.from(byApp.values()).sort(
+                    (a, b) => (b.score ?? -1) - (a.score ?? -1)
+                );
+                this.overflowCount = Math.max(0, groups.length - this.GROUP_CAP);
+                this.groups = groups.slice(0, this.GROUP_CAP);
+                this.loading = false;
+            },
+
+            scoreClass(score) {
+                if (score === null || score === undefined) return "";
+                if (score >= 75) return "lp-score-good";
+                if (score >= 55) return "lp-score-ok";
+                return "";
+            },
+
+            materialLabel(item) {
+                const cleaned = String(item.title || "").replace(/\s*ready for review\.?$/i, "").trim();
+                return cleaned || item.kind;
+            },
+
+            review(g) {
+                const first = g.items[0] || {};
+                const panel = KIND_AFFORDANCE[first.kind] || "documents.html";
+                const qs = g.applicationId ? `?application_id=${encodeURIComponent(g.applicationId)}` : "";
+                window.openModal(`/plugins/applicant/webui/${panel}${qs}`);
+            },
+
+            async approve(g) {
+                g.busy = true;
+                g.error = "";
+                // Bug fix (P1): this used to ONLY resolve the pending-review card
+                // (pending_actions.resolved = true) -- it never touched the
+                // application's materials, so this "Approve" looked identical to
+                // dismissing the card while nothing was actually approved. Route
+                // through the SAME review-gate decision the Review & Refine modal's
+                // "Continue" button uses -- approving the application's generated
+                // materials (MaterialService.approve, via open_revision first) --
+                // BEFORE dismissing the card, so both "Approve" affordances have the
+                // same real effect. A materials-approval failure leaves the card in
+                // the queue rather than silently dismissing a failed approval.
+                if (g.applicationId) {
+                    const r = await callJsonApi("review", {
+                        action: "decide",
+                        application_id: g.applicationId,
+                        campaign_id: "__system__",
+                        decision: "continue",
+                    });
+                    if (!r || !r.ok) {
+                        g.busy = false;
+                        g.error = (r && r.error) || "Couldn't approve this role's materials.";
+                        return;
+                    }
+                }
+                await callJsonApi("pending", {
+                    action: "resolve_bulk",
+                    campaign_id: "__system__",
+                    action_ids: g.items.map((i) => i.id),
+                });
+                g.busy = false;
+                await this.load();
+            },
+
+            async snooze(g) {
+                g.busy = true;
+                for (const item of g.items) {
+                    await callJsonApi("pending", { action: "snooze", action_id: item.id, hours: 24 });
+                }
+                g.busy = false;
+                await this.load();
+            },
+
+            viewAll() {
+                window.openModal("/plugins/applicant/webui/today.html");
+            },
+        }));
+
+        // ── ② Top New Matches ──
+        window.Alpine.data("lpTopMatches", () => ({
+            loading: true,
+            fatalError: "",
+            rows: [],
+            emptyNote: "",
+            busy: {},
+            rowError: {},
+            dismissed: new Set(),
+            CAP: 5,
+
+            async init() {
+                await this.load();
+            },
+
+            async load(_isRetry = false) {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("digest", { action: "get" });
+                if (!r || !r.ok) {
+                    // The digest read is the slowest gadget call on this page (a
+                    // per-posting warnings pass the engine deliberately never
+                    // caches — see DigestCache's docstring). One transparent
+                    // retry absorbs an occasional slow/timed-out first attempt
+                    // (cold cache, a network blip) before showing an error —
+                    // still bounded, still never hangs the page.
+                    if (!_isRetry) {
+                        return this.load(true);
+                    }
+                    this.fatalError = "Matches are taking longer than usual to load — check back in a moment.";
+                    this.rows = [];
+                    this.loading = false;
+                    return;
+                }
+                const allRows = (r.data && r.data.rows) || [];
+                this.emptyNote = (r.data && r.data.note) || "";
+                // Viable postings without a draft yet: one digest read, minus
+                // whatever Pending Reviews has already reported as drafted
+                // (reviewedPostingIds — see its declaration above) — two
+                // filtered views over the same underlying scored data, not a
+                // second scoring pipeline.
+                this.rows = allRows
+                    .filter((row) => !this.dismissed.has(row.posting_id))
+                    .filter((row) => !reviewedPostingIds.has(row.posting_id))
+                    .slice(0, this.CAP);
+                this.loading = false;
+            },
+
+            scoreClass(score) {
+                const n = Number(score) || 0;
+                if (n >= 75) return "lp-score-good";
+                if (n >= 55) return "lp-score-ok";
+                return "";
+            },
+
+            async draftThis(row) {
+                this.busy = { ...this.busy, [row.posting_id]: true };
+                this.rowError = { ...this.rowError, [row.posting_id]: "" };
+                const r = await callJsonApi("digest", { action: "approve", application_id: row.posting_id });
+                this.busy = { ...this.busy, [row.posting_id]: false };
+                if (!r || !r.ok) {
+                    this.rowError = { ...this.rowError, [row.posting_id]: (r && r.error) || "Couldn't draft this one — try again." };
+                    return;
+                }
+                this.dismissed.add(row.posting_id);
+                this.rows = this.rows.filter((r2) => r2.posting_id !== row.posting_id);
+            },
+
+            async skip(row) {
+                this.busy = { ...this.busy, [row.posting_id]: true };
+                this.rowError = { ...this.rowError, [row.posting_id]: "" };
+                const r = await callJsonApi("digest", {
+                    action: "decline",
+                    application_id: row.posting_id,
+                    reason: "Skipped from the landing page",
+                });
+                this.busy = { ...this.busy, [row.posting_id]: false };
+                if (!r || !r.ok) {
+                    this.rowError = { ...this.rowError, [row.posting_id]: (r && r.error) || "Couldn't skip this one — try again." };
+                    return;
+                }
+                this.dismissed.add(row.posting_id);
+                this.rows = this.rows.filter((r2) => r2.posting_id !== row.posting_id);
+            },
+        }));
+
+        // ── ③ Pipeline Funnel + ④ Daily Progress (one shared cheap read) ──
+        window.Alpine.data("lpPipelineProgress", () => ({
+            loading: true,
+            fatalError: "",
+            stages: [],
+            drafted: 0,
+            submitted: 0,
+            streak: 0,
+            target: 0,
+            appsToday: 0,
+
+            async init() {
+                await this.load();
+            },
+
+            async load() {
+                this.loading = true;
+                this.fatalError = "";
+                const r = await callJsonApi("campaigns", { action: "pipeline_summary" });
+                if (!r || !r.ok) {
+                    this.fatalError = "Couldn't reach the pipeline engine — check back in a moment.";
+                    this.stages = [];
+                    this.loading = false;
+                    return;
+                }
+                const data = r.data || {};
+                const f = data.funnel || {};
+                this.stages = [
+                    { key: "discovered", label: "Discovered", value: f.discovered || 0 },
+                    { key: "scored", label: "Scored", value: f.scored || 0 },
+                    { key: "drafted", label: "Drafted", value: f.drafted || 0 },
+                    { key: "submitted", label: "Submitted", value: f.submitted || 0 },
+                    { key: "interview", label: "Interview", value: f.interview || 0 },
+                ];
+                this.drafted = (data.today && data.today.drafted) || 0;
+                this.submitted = (data.today && data.today.submitted) || 0;
+                this.streak = data.streak_days || 0;
+                this.loading = false;
+
+                // Best-effort: today's applications-vs-target needs the resolved
+                // campaign id (pipeline_summary just resolved one server-side).
+                // Never blocks the two cards above, which already rendered.
+                if (data.campaign_id) {
+                    try {
+                        const g = await callJsonApi("campaigns", {
+                            action: "guardrails",
+                            campaign_id: data.campaign_id,
+                        });
+                        if (g && g.ok && g.data && g.data.today) {
+                            this.appsToday = g.data.today.applications_today || 0;
+                            this.target = g.data.today.daily_target || 0;
+                        }
+                    } catch (e) {
+                        // target stays 0 -> the target row just hides itself
+                    }
+                }
+            },
+
+            get attainmentPct() {
+                if (!this.target) return 0;
+                return Math.max(0, Math.min(100, Math.round((this.appsToday / this.target) * 100)));
+            },
+        }));
+    })();
+    </script>
+</body>
+
+</html>

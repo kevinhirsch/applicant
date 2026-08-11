@@ -1,0 +1,225 @@
+<div id="applicant-hello-world-nav" data-extension-id="applicant-hello-world">
+    <div class="sidebar-group-label">Applicant</div>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/main.html')">
+        <span class="material-symbols-outlined">work</span>
+        <span class="label">Setup</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/today.html')">
+        <span class="material-symbols-outlined">checklist</span>
+        <span class="label">Today</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/update.html')">
+        <span class="material-symbols-outlined">system_update_alt</span>
+        <span class="label">Update</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/campaigns.html')">
+        <span class="material-symbols-outlined">campaign</span>
+        <span class="label">Campaigns</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/activity.html')">
+        <span class="material-symbols-outlined">monitoring</span>
+        <span class="label">Activity</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/automation.html')">
+        <span class="material-symbols-outlined">settings</span>
+        <span class="label">Automation</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/stealth.html')">
+        <span class="material-symbols-outlined">shield_lock</span>
+        <span class="label">Stealth</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/attributes.html')">
+        <span class="material-symbols-outlined">badge</span>
+        <span class="label">Profile</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/notifications.html')">
+        <span class="material-symbols-outlined">notifications</span>
+        <span class="label">Notifications</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/digest.html')">
+        <span class="material-symbols-outlined">today</span>
+        <span class="label">Digest</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/health.html')">
+        <span class="material-symbols-outlined">monitor_heart</span>
+        <span class="label">Health</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/mind.html')">
+        <span class="material-symbols-outlined">psychology</span>
+        <span class="label">Mind</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/gallery.html')">
+        <span class="material-symbols-outlined">photo_library</span>
+        <span class="label">Gallery</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/criteria.html')">
+        <span class="material-symbols-outlined">fact_check</span>
+        <span class="label">Criteria</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/compare.html')">
+        <span class="material-symbols-outlined">compare_arrows</span>
+        <span class="label">Compare</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/fonts.html')">
+        <span class="material-symbols-outlined">font_download</span>
+        <span class="label">Fonts</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/privacy.html')">
+        <span class="material-symbols-outlined">privacy_tip</span>
+        <span class="label">Privacy</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/discovery.html')">
+        <span class="material-symbols-outlined">travel_explore</span>
+        <span class="label">Discovery</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/tracker.html')">
+        <span class="material-symbols-outlined">track_changes</span>
+        <span class="label">Tracker</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/research.html')">
+        <span class="material-symbols-outlined">biotech</span>
+        <span class="label">Research</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/feedback.html')">
+        <span class="material-symbols-outlined">feedback</span>
+        <span class="label">Feedback</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/chat.html')">
+        <span class="material-symbols-outlined">chat</span>
+        <span class="label">Chat</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/documents.html')">
+        <span class="material-symbols-outlined">description</span>
+        <span class="label">Documents</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/takeover.html')">
+        <span class="material-symbols-outlined">visibility</span>
+        <span class="label">Live session</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/ops.html')">
+        <span class="material-symbols-outlined">build</span>
+        <span class="label">Ops</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/debug.html')">
+        <span class="material-symbols-outlined">bug_report</span>
+        <span class="label">Debug</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/screening.html')">
+        <span class="material-symbols-outlined">quiz</span>
+        <span class="label">Screening</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/audit.html')">
+        <span class="material-symbols-outlined">receipt_long</span>
+        <span class="label">Audit log</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/conversion.html')">
+        <span class="material-symbols-outlined">trending_up</span>
+        <span class="label">Conversion</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/easy_apply.html')">
+        <span class="material-symbols-outlined">bolt</span>
+        <span class="label">Easy Apply</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/model_endpoints.html')">
+        <span class="material-symbols-outlined">dns</span>
+        <span class="label">Model Endpoints</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/model_config.html')">
+        <span class="material-symbols-outlined">tune</span>
+        <span class="label">Model Config</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/vault.html')">
+        <span class="material-symbols-outlined">lock</span>
+        <span class="label">Vault</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/dormant.html')">
+        <span class="material-symbols-outlined">motion_photos_paused</span>
+        <span class="label">Dormant</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/tiers.html')">
+        <span class="material-symbols-outlined">layers</span>
+        <span class="label">Tiers</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/channels.html')">
+        <span class="material-symbols-outlined">notifications_active</span>
+        <span class="label">Channels</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/connections.html')">
+        <span class="material-symbols-outlined">link</span>
+        <span class="label">Connections</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/savejob.html')">
+        <span class="material-symbols-outlined">save</span>
+        <span class="label">Save a Job</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/interview_prep.html')">
+        <span class="material-symbols-outlined">record_voice_over</span>
+        <span class="label">Interview Prep</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/shortcuts.html')">
+        <span class="material-symbols-outlined">keyboard</span>
+        <span class="label">Shortcuts</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/demo.html')">
+        <span class="material-symbols-outlined">science</span>
+        <span class="label">Demo Data</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/config.html')">
+        <span class="material-symbols-outlined">settings</span>
+        <span class="label">Settings</span>
+    </button>
+    <button class="sidebar-action" @click="window.openModal('/plugins/applicant/webui/help.html')">
+        <span class="material-symbols-outlined">help</span>
+        <span class="label">Help</span>
+    </button>
+<style>
+  /* Applicant nav: span full sidebar width, stack vertically, own scroll. */
+  #applicant-hello-world-nav {
+    display: flex;
+    flex-direction: column;
+    grid-column: 1 / -1;      /* was crammed into 1 of 5 grid columns */
+    gap: 2px;
+    max-height: 45vh;         /* bug 3: bound height so it can't be clipped */
+    overflow-y: auto;         /* ...and expose its own scrollbar instead */
+  }
+  /* Unified item-row style — shared with the Chats/Tasks list rows
+     (see left-sidebar.html / chats-list.html / tasks-list.html) so the
+     whole sidebar reads as one design system. */
+  #applicant-hello-world-nav .sidebar-action {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 7px 16px;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--color-text); font-family: var(--font-family-main);
+    font-size: 13px; font-weight: 400; text-align: left; opacity: .85;
+    cursor: pointer; transition: background-color .15s ease; white-space: nowrap;
+  }
+  #applicant-hello-world-nav .sidebar-action:hover {
+    background-color: var(--color-background-hover); opacity: 1;
+  }
+  #applicant-hello-world-nav .sidebar-action .material-symbols-outlined {
+    font-size: 19px; color: inherit;
+  }
+  /* The brand wordmark above already identifies this section, so this
+     duplicate "Applicant" group label is hidden. Kept in the DOM (not
+     deleted) so the pinned nav test's element contract is untouched. */
+  #applicant-hello-world-nav .sidebar-group-label {
+    display: none;
+  }
+</style>
+</div>
+
+<style>
+/* Unified sidebar visual system (Applicant) — one style for headers, rows, placeholder.
+   FIX (APP-LP-1 contrast pass): the row/icon colors below were hardcoded to
+   near-white rgba(255,255,255,*) — readable only against the base app's
+   permanently-dark chrome assumption. This sidebar's OWN background
+   (#left-panel) already adapts via --color-panel/.light-mode (see
+   left-sidebar.html), so a hardcoded white foreground went invisible
+   (white-on-near-white) the moment a user picked light mode. Swapped for the
+   same adaptive --color-text token the row rule just above this block
+   already uses correctly, so light and dark both stay legible. */
+#left-panel .section-header, #left-panel h3 { text-transform:uppercase!important; font-size:11px!important; font-weight:600!important; letter-spacing:.5px!important; color:var(--color-text-secondary,#737a81)!important; padding:14px 16px 6px!important; margin:0!important; text-align:left!important; font-style:normal!important; }
+#left-panel .sidebar-action, #left-panel .chat-container, #left-panel .task-container { display:flex!important; align-items:center!important; gap:10px!important; padding:6px 16px!important; font-size:13px!important; font-weight:400!important; color:var(--color-text)!important; text-align:left!important; }
+#left-panel .sidebar-action .material-symbols-outlined, #left-panel .chat-container .material-symbols-outlined, #left-panel .task-container .material-symbols-outlined { font-size:19px!important; color:color-mix(in srgb, var(--color-text) 72%, transparent)!important; }
+.empty-list-message, [class*="empty-list"] { text-align:left!important; font-style:normal!important; font-size:12px!important; color:var(--color-text-secondary,#737a81)!important; padding:8px 16px!important; justify-content:flex-start!important; }
+</style>

@@ -33,9 +33,16 @@ log = logging.getLogger(__name__)
 
 #: Core needs a campaign must cover before it can apply confidently (FR-CHAT-1 gaps).
 #: Each is (display label, accepted attribute keys). Onboarding stores CANONICAL keys
-#: (``full_name`` / ``email`` / ``title`` / ``phone``) while the chat historically
-#: used spaced display labels; a need is a gap only when NONE of its synonyms is
-#: present, so a fully-onboarded profile is never falsely reported as "still missing".
+#: (``full_name`` / ``email`` / ``phone``) while the chat historically used spaced
+#: display labels; a need is a gap only when NONE of its synonyms is present, so a
+#: fully-onboarded profile is never falsely reported as "still missing".
+#:
+#: "current job title" was DELIBERATELY removed (dark-engine audit): no onboarding
+#: section ever writes that key, so this list previously reported it missing on EVERY
+#: campaign forever, contradicting ``apply_ready=true`` from the apply-readiness gate
+#: (``core/rules/apply_readiness.py``), which never required a job title in the first
+#: place. Dropped here to align with that gate rather than adding a phantom field
+#: nothing in onboarding populates.
 _CORE_NEEDS: tuple[tuple[str, frozenset[str]], ...] = (
     ("first name", frozenset(
         {"first name", "name", "full name", "full_name", "legal name",
@@ -44,8 +51,6 @@ _CORE_NEEDS: tuple[tuple[str, frozenset[str]], ...] = (
         {"last name", "name", "full name", "full_name", "legal name", "full_legal_name"})),
     ("email address", frozenset({"email address", "email"})),
     ("phone", frozenset({"phone", "phone number", "phone_number"})),
-    ("current job title", frozenset(
-        {"current job title", "title", "titles", "job title", "job_title", "current_title"})),
 )
 #: Back-compat: the bare display labels (used for the user-facing gap list + parsing).
 CORE_ATTRIBUTES: tuple[str, ...] = tuple(label for label, _ in _CORE_NEEDS)
@@ -260,6 +265,7 @@ class ChatTurnResult:
     gaps: list[str] = field(default_factory=list)
     proposed_changes: list[ProposedChange] = field(default_factory=list)
     control_actions: list[ControlAction] = field(default_factory=list)
+    actions: list[dict] = field(default_factory=list)  # inline job-action chips: [{label, action, args}]
 
 
 class ChatService:
@@ -288,6 +294,7 @@ class ChatService:
         desktop_operable=False,
         chat_tools="off",
         onboarding=None,
+        intake_service=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -354,6 +361,7 @@ class ChatService:
         # stages memory/skill writes; ``computer_use``/``desktop_operable`` gate the
         # bounded desktop tool (offered only when a driver is operable).
         self._curation_service = curation_service
+        self._intake_service = intake_service
         self._tool_registry = tool_registry
         self._computer_use = computer_use
         self._desktop_operable = bool(desktop_operable)
@@ -562,12 +570,14 @@ class ChatService:
             if toolbox is not None:
                 tooled = self._reply_with_tools(system, prompt, toolbox)
                 if tooled is not None:
+                    tooled = self._strip_unauthorized_status(campaign_id, tooled)
                     return tooled.strip() or deterministic
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
                 max_tokens=_CHAT_MAX_TOKENS,
             )
             text = (result.text or "").strip()
+            text = self._strip_unauthorized_status(campaign_id, text)
             return text or deterministic
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
@@ -600,9 +610,18 @@ class ChatService:
             campaign_id=campaign_id,
             agent_memory=self._agent_memory,
             curation_service=self._curation_service,
+            intake_service=self._intake_service,
             tool_registry=self._tool_registry,
             computer_use=self._computer_use,
             desktop_operable=self._desktop_operable,
+            # RUX-6 campaign-chat action tools: pass through the criteria + digest
+            # services this ChatService already holds so the tool-capable agent is
+            # actually OFFERED edit_criteria / rescore / draft_application /
+            # discard_job. Each tool is still capability-gated inside ChatToolbox
+            # (offered only when its backing service is wired AND the "chat" FR-UI-4
+            # toggle is on) and integral criteria changes remain confirmation-gated.
+            criteria_service=self._criteria,
+            digest_service=self._digest,
         )
         return toolbox if toolbox.has_tools() else None
 
@@ -750,6 +769,42 @@ class ChatService:
         if len(extra) > 800:
             extra = extra[:800]
         return base + "\n\nTone preferences from the user: " + extra
+
+    def _strip_unauthorized_status(self, campaign_id: CampaignId, reply: str) -> str:
+        """D4: Strip any status claims from `reply` that are not backed by the
+        bounded _status_context / _essentials_context sources.
+
+        When both context sources are empty, any line containing a status keyword
+        AND a number is stripped to prevent the LLM from fabricating values.
+        Returns the filtered reply (never None — always at minimum '').
+        """
+        status_ctx = self._status_context(campaign_id)
+        essentials_ctx = self._essentials_context(campaign_id)
+        has_context = bool(status_ctx.strip() or essentials_ctx.strip())
+        if has_context:
+            return reply
+
+        import re
+        status_keywords = {
+            'applied', 'submitted', 'interview', 'offer', 'resume', 'cover letter',
+            'status', 'rejected', 'approved', 'pending', 'running', 'paused',
+            'application', 'applications', 'progress', 'completed', 'finished',
+            'started', 'sent', 'reviewing', 'checking', 'received', 'working on',
+            'accepted', 'declined', 'waiting', 'number of', 'count of',
+        }
+        lines = reply.split('\n')
+        filtered: list[str] = []
+        for line in lines:
+            lower = line.strip().lower()
+            if not lower:
+                filtered.append(line)
+                continue
+            has_status = any(kw in lower for kw in status_keywords)
+            has_number = bool(re.search(r'\b\d+\b', lower))
+            if has_status and has_number:
+                continue
+            filtered.append(line)
+        return '\n'.join(filtered)
 
     # --- current-status context (FR-AGENT-7 / FR-OBS-2; truthful) ---------
     def _status_context(self, campaign_id: CampaignId) -> str:

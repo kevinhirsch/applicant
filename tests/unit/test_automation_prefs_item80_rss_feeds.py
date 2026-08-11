@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from applicant.adapters.storage.app_config_store import InMemoryAppConfigStore
+from applicant.app.config import get_settings
 from applicant.app.main import create_app
 from applicant.application.services.setup_service import SetupService
 
@@ -97,7 +98,18 @@ def test_partial_save_leaves_discovery_rss_feeds_untouched():
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # Isolate from whatever this checkout's real .env has configured for
+    # DISCOVERY_RSS_FEEDS -- since the 2026-08-11 EPIC BREADTH widening it
+    # deliberately seeds two real We Work Remotely feeds (see
+    # docs/discovery-source-reliability.md), which is correct live config for
+    # THIS deployment, not a stale/broken default; it must not leak into this
+    # fixture's "no operator config yet" baseline (mirrors
+    # ``test_discovery_greenhouse_lever.py``'s
+    # ``test_settings_default_ats_sources_are_empty_strings``, which hit the
+    # exact same issue when the ATS board seeds landed).
+    monkeypatch.setenv("DISCOVERY_RSS_FEEDS", "")
+    get_settings.cache_clear()
     with TestClient(create_app()) as c:
         r = c.post(
             "/api/setup/llm",
@@ -105,6 +117,7 @@ def client():
         )
         assert r.status_code == 204
         yield c
+    get_settings.cache_clear()
 
 
 def test_get_defaults_to_settings_value_when_nothing_persisted(client):

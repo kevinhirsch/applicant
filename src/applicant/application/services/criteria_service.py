@@ -120,6 +120,14 @@ class CriteriaService:
         patch: dict = {}
         for key, value in changes.items():
             if key in _TUPLE_FIELDS:
+                # P0 (2026-08-10): a caller passing a STRING (e.g. a free-text
+                # edit box value "Scrum Master, RTE, Agile Coach") must split
+                # into individual items -- ``tuple(value)`` on a bare string
+                # shreds it into per-CHARACTER tuples ('S', 'c', 'r', ...),
+                # silently corrupting titles/locations/work_modes/keywords so
+                # scoring can never match on them again.
+                if isinstance(value, str):
+                    value = [v.strip() for v in value.split(",") if v.strip()]
                 patch[key] = tuple(value)
             elif key in ("human_readable",):
                 patch[key] = str(value)

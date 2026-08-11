@@ -1,0 +1,8 @@
+name: applicant
+title: Applicant
+description: Applicant 2.0 — autonomous job-search assistant built on Agent Zero.
+version: 1.0.0
+settings_sections:
+  - agent
+per_project_config: true
+per_agent_config: true

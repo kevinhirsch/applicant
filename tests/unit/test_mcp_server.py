@@ -36,14 +36,17 @@ class TestMCPTools:
         campaign = MagicMock()
         campaign.id = "camp-1"
         campaign.name = "Test Campaign"
-        campaign.job_title = "Engineer"
-        campaign.status = "active"
+        campaign.active = True
+        campaign.run_mode = "continuous"
+        campaign.throughput_target = 15
         storage.campaigns.list.return_value = [campaign]
 
         result = _tool_list_campaigns(storage)
         assert len(result) == 1
         assert result[0]["name"] == "Test Campaign"
-        assert result[0]["job_title"] == "Engineer"
+        assert result[0]["active"] is True
+        assert result[0]["run_mode"] == "continuous"
+        assert result[0]["throughput_target"] == 15
 
     def test_get_attributes(self):
         """get_attributes returns attribute cloud entries."""

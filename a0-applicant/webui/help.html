@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Help — Applications</title>
+  <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+  <style>
+    .ahelp { font-family: system-ui, -apple-system, sans-serif; margin: 1rem; color: #1a1a2e; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
+    .surface { border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+    .surface-header {
+      cursor: pointer; padding: 0.6rem 1rem; background: #f3f4f6;
+      font-weight: 600; font-size: 0.9rem; user-select: none;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .surface-header:hover { background: #e5e7eb; }
+    .surface-content { padding: 0.6rem 1rem; font-size: 0.85rem; line-height: 1.5; border-top: 1px solid #d1d5db; }
+    ul { margin: 0.25rem 0 0.25rem 1.2rem; padding: 0; }
+    li { margin-bottom: 0.2rem; }
+    .toggle { transition: transform 0.2s ease; }
+    .open .toggle { transform: rotate(180deg); }
+    .prereq { font-size: 0.8rem; color: #6b7280; margin-top: 0.5rem; }
+    .loading { text-align: center; padding: 2rem; color: #4b5563; }
+    .error { background: #fdecea; color: #991b1b; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .empty { text-align: center; padding: 2rem; color: #6b7280; font-size: 0.9rem; }
+  </style>
+</head>
+<div class="ahelp" x-data="ahelp()" x-cloak>
+  <h1>Help &amp; Instructions</h1>
+  <p style="margin-bottom:1rem;font-size:0.85rem;color:#4b5563;">
+    Select a surface below for quick guidance.
+  </p>
+
+  <!-- Loading state -->
+  <div x-show="loading" class="loading">
+    Loading help content...
+  </div>
+
+  <!-- Error state -->
+  <div x-show="error && !loading" class="error" x-text="error"></div>
+
+  <!-- Empty state -->
+  <div x-show="!loading && !error && surfaces.length === 0" class="empty">
+    No help content available.
+  </div>
+
+  <!-- Surfaces rendered from proxy data -->
+  <template x-for="s in surfaces" :key="s.id">
+    <div class="surface" :class="{ open: openId === s.id }">
+      <div class="surface-header" @click="toggleSurface(s.id)">
+        <span x-text="s.title"></span>
+        <span class="toggle" x-text="openId === s.id ? '▾' : '▸'"></span>
+      </div>
+      <div class="surface-content" x-show="openId === s.id">
+        <div x-show="contentLoading">
+          Loading details...
+        </div>
+        <div x-show="!contentLoading && contentError" class="error" x-text="contentError"></div>
+        <template x-if="!contentLoading && !contentError && openContent">
+          <div>
+            <p><strong>Steps:</strong></p>
+            <ul>
+              <template x-for="(step, i) in openContent.steps" :key="i">
+                <li x-text="step"></li>
+              </template>
+            </ul>
+            <p class="prereq">
+              <strong>Prerequisites:</strong> <span x-text="openContent.prerequisites"></span>
+            </p>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <script>
+  (function() {
+const _appPrefixPath = (ep) => (ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep);
+const callJsonApi = async (ep, ...a) => (await import("/js/api.js")).callJsonApi(_appPrefixPath(ep), ...a);
+
+    if (typeof window.Alpine !== 'undefined') window.Alpine.data('ahelp', () => ({
+      surfaces: [],
+      loading: false,
+      error: '',
+      openId: null,
+      openContent: null,
+      contentLoading: false,
+      contentError: '',
+
+      async init() {
+        await this.loadSurfaces();
+        // Deep-link support: auto-open surface from ?surface= query param
+        const params = new URLSearchParams(window.location.search);
+        const surfaceParam = params.get('surface');
+        if (surfaceParam) {
+          // Wait for surfaces to be loaded then toggle
+          this.toggleSurface(surfaceParam);
+        }
+      },
+
+      async loadSurfaces() {
+        this.loading = true;
+        this.error = '';
+        try {
+          const r = await callJsonApi('help', { action: 'list' });
+          if (r.ok) {
+            this.surfaces = (r.data && r.data.surfaces) || [];
+          } else {
+            this.error = r.error || 'Failed to load help content.';
+          }
+        } catch(e) {
+          this.error = 'Network error loading help content.';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      async toggleSurface(surfaceId) {
+        if (this.openId === surfaceId) {
+          this.openId = null;
+          this.openContent = null;
+          return;
+        }
+        this.openId = surfaceId;
+        this.contentLoading = true;
+        this.contentError = '';
+        this.openContent = null;
+        try {
+          const r = await callJsonApi('help', { action: 'get', surface: surfaceId });
+          if (r.ok) {
+            this.openContent = r.data || null;
+          } else {
+            this.contentError = r.error || 'Failed to load help details.';
+          }
+        } catch(e) {
+          this.contentError = 'Network error loading help details.';
+        } finally {
+          this.contentLoading = false;
+        }
+      }
+    }));
+  })();
+  </script>
+</div>
+</html>

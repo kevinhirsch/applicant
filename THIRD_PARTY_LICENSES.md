@@ -62,6 +62,7 @@ projects. Permissive components carry no copyleft obligation for self-hosted use
 | SearXNG | Exploratory discovery (Phase 1) | AGPL-3.0 |
 | browser-use / Skyvern | AI form fallback (Phase 2) | MIT / AGPL-3.0 |
 | Applicant design system (applicant / applicant forks) | Vendored UI shell | MIT |
+| Agent Zero (agent0ai/agent-zero) | Vendored framework/general-agent shell | MIT |
 
 **AGPL deps** (SearXNG and Skyvern) carry distribution/network obligations that
 are immaterial for personal self-hosted use, but matter if you publicly

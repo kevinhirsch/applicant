@@ -1,0 +1,42 @@
+# intel_escalation.yaml — Failure-based Escalation Contract (FR-INTEL-4)
+# Plane A: this file is the shipped CONTRACT; the LIVE implementation is
+# the A0 plugin `_model_escalate` (not in this repo). Reconciliation of
+# contract vs live plugin is FR-INTEL-7.
+# Enforced by test_intel_escalation.py. See docs/backlog/intel-escalation.md.
+#
+# Referential integrity: target_preset MUST exist in config/intel_tiers.yaml
+# and that preset's tier MUST equal target_tier.
+
+escalation:
+  # After threshold consecutive local struggles, escalate on call (threshold+1).
+  threshold: 2
+
+  # Key name stored on agent.loop_data.params_persistent for the struggle counter.
+  struggle_key: "_escalate_struggle"
+
+  # The escalation target model preset (must exist in intel_tiers.yaml).
+  target_preset: "DeepSeek-Pro"
+
+  # The tier of target_preset (must match intel_tiers.yaml).
+  target_tier: "cloud-pro"
+
+  # Only LOCAL agents self-escalate; already-cloud agents never double-escalate.
+  applies_to: "local-only"
+
+  # A clean tool result + progress resets the counter to 0 and reverts to local.
+  reverts_on_success: true
+
+  # Any error in the tracker leaves the agent on its default tier.
+  fail_safe: true
+
+  # An escalation event is surfaced (H1 receipt), never a silent swap.
+  observable: true
+
+  # The 3 A0 extension points the _model_escalate plugin hooks into.
+  hooks:
+    - chat_model_call_before
+    - hist_add_warning
+    - tool_execute_after
+
+  # Ordering relative to other tier-management plugins.
+  ordering: "runs before _failover and _local_concurrency"

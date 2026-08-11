@@ -416,6 +416,31 @@ async def lifespan(app: FastAPI):
         log.warning("audit_log_start_failed", error=str(exc))
         _boot_health.record("audit_log", ok=False, detail=str(exc))
 
+    # 3b2) Start the EXPLAIN service — subscribes to ViabilityScored and keeps
+    #     posting.rationale['breakdown'] (the weighted greens/reds score
+    #     explanation) fresh on every (re-)score, self-healing like the audit
+    #     log above. Mirrors the AuditLogService start block: an isolated
+    #     per-event session when session_factory is configured so the write
+    #     survives a scheduler-thread rollback.
+    try:
+        from applicant.application.services.explain_service import ExplainService
+
+        explain_session_factory = getattr(container, "session_factory", None)
+        explain_service = ExplainService(
+            storage=container.storage,
+            llm=getattr(container, "llm", None),
+            embedding=getattr(container, "embedding", None),
+            session_factory=explain_session_factory,
+        )
+        explain_service.start()
+        log.info(
+            "explain_service_started", session_isolated=explain_session_factory is not None
+        )
+        _boot_health.record("explain_service", ok=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("explain_service_start_failed", error=str(exc))
+        _boot_health.record("explain_service", ok=False, detail=str(exc))
+
     # 3c) Seed the reserved system campaign so instance-level secrets (the LLM key,
     #     sandbox tokens) can be sealed in the credential store, whose campaign_id is
     #     a non-null FK to campaigns. Only on a real DB — in-memory storage has no FK,
@@ -427,6 +452,10 @@ async def lifespan(app: FastAPI):
         if ensure_system_campaign(container.storage):
             log.info("system_campaign_seeded")
         _boot_health.record("system_campaign_seed", ok=True)
+        from applicant.app.container import ensure_default_campaign
+        if ensure_default_campaign(container.storage):
+            log.info("default_campaign_seeded")
+        _boot_health.record("default_campaign_seed", ok=True)
     except Exception as exc:  # pragma: no cover - tolerate first-boot races
         log.warning("system_campaign_seed_failed", error=str(exc))
         _boot_health.record("system_campaign_seed", ok=False, detail=str(exc))

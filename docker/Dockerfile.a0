@@ -1,0 +1,84 @@
+# Applicant V2 shell image.
+#
+# Build ON the pristine published upstream Agent Zero image (D6 / D26: the vendored
+# agent-zero/ subtree is byte-identical to the agent0ai/agent-zero v2.4 release, so
+# the image already has a fully dependency-resolved runtime). The previous stub
+# rebuilt the framework from python:3.12-slim with a naive
+#   pip install -r requirements.txt -r requirements2.txt
+# which hits a hard, deterministic conflict (requirements.txt vs requirements2.txt:
+# openai==1.99.5 / litellm ResolutionImpossible). Building FROM the release image
+# avoids re-resolving deps entirely and matches what actually runs in production.
+# Pinned by immutable DIGEST, not the mutable `v2.4` tag: upstream periodically
+# REBUILDS the v2.4 tag from their `main` (baked CACHE_DATE proves it), so the tag
+# floats. Pinning the digest makes rebuilds reproducible (factory-reset / new host /
+# post-prune / CI) instead of pulling whatever v2.4 resolves to that day. Same
+# convention as docker/updater.Dockerfile + docker/Dockerfile. Digest = the v2.4
+# published 2026-07-10 (the version live currently runs). To bump: pull the new
+# tag, read its RepoDigest, update this line.
+FROM agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b600287818ac140bc
+
+# Engine MCP registration is injected at runtime via A0_SET_MCP_SERVERS
+# (see docker/docker-compose.prod.yml, AZ0-6/#828): a0 seeds its mcp_servers default
+# from that env var, pre-registering the Applicant engine's SSE /mcp surface.
+
+# AZ0-5 build-mount: overlay the Applicant plugin bundle so the shell loads it.
+# It goes in /a0/plugins (the framework's BUILT-IN plugin root — helpers/plugins.py
+# get_plugin_roots() scans both usr/plugins and plugins/), NOT /a0/usr/plugins:
+# the a0-data:/a0/usr named volume MASKS image content under /a0/usr on first boot,
+# so a shipped plugin placed there is hidden (and would never update with a release).
+# /a0/plugins is image content, unmasked, and refreshed on every image update — the
+# right home for a shipped-immutable product plugin (per-user config still lives in
+# the /a0/usr volume). The subtree stays byte-pristine (additive overlay, D6).
+COPY a0-applicant/ /a0/plugins/applicant/
+
+# Install Applicant CORE OVERRIDES over the framework's baked /a0/api handlers.
+# These shadow specific upstream API endpoints that would otherwise break the fork
+# — e.g. self_update_schedule (upstream self-update pulls UPSTREAM agent-zero over
+# /a0 at restart). Plugin api/ handlers CANNOT shadow a core route by name
+# (helpers/api.py resolves built-in /a0/api first), so the override is copied
+# directly onto /a0/api at build time (baked /a0 is not re-synced at normal startup,
+# so this persists). Source lives in the plugin bundle for versioning.
+RUN mkdir -p /a0/api && cp -f /a0/plugins/applicant/core-overrides/api/*.py /a0/api/ && \
+    echo 'Applicant core-overrides installed:' && ls -1 /a0/api/self_update_schedule.py
+
+# EPIC STEALTH / ST-3: BAKE the residential-proxy escalation patch into the image.
+# These three files are a full-file overlay of the upstream `_browser` core plugin
+# that adds selective residential-proxy escalation (normal browsing on the default
+# VPS egress lane; on a hard block — 403/429/503 or a Cloudflare/DataDome/CAPTCHA
+# page signature — relaunch the Playwright context through the DataImpulse
+# residential forwarder, sticky per runtime, with WebRTC-leak suppression). This
+# REPLACES the old hot-patch (~/agent-zero-ops/browser-proxy-patch/deploy.sh) that
+# had to be re-`docker cp`'d after every a0 rebuild (the standing TODO): baking it
+# here means container recreation / an `applicant/a0:latest` rebuild NEVER wipes it.
+#
+# `_browser` is a BAKED core plugin from the base image at /a0/plugins/_browser
+# (NOT the applicant checkout's a0-applicant/), so this is a core-overlay onto the
+# image layer — same rationale as the core-overrides copy above. The apply-flow
+# browser uses the base image's already-baked Playwright chromium (the plugin's
+# build_browser_launch_config selects browser_mode=chromium — NOT camoufox), so no
+# extra browser binary is fetched here; Camoufox lives in the ENGINE image
+# (docker/Dockerfile), where the discovery/pre-fill automation actually runs.
+#
+# Provenance + base-digest coupling: see docker/a0-browser-patch/README.md. Because
+# these are full-file replacements pinned to the upstream `_browser` version in the
+# base digest above, a base-digest bump must re-reconcile them (re-apply patch.diff
+# onto the new base's _browser). The RUN below fails the build LOUDLY if the
+# escalation marker is missing after the COPY, so a broken overlay never silently
+# ships an un-patched browser.
+COPY docker/a0-browser-patch/helpers/config.py       /a0/plugins/_browser/helpers/config.py
+COPY docker/a0-browser-patch/helpers/runtime.py      /a0/plugins/_browser/helpers/runtime.py
+COPY docker/a0-browser-patch/default_config.yaml     /a0/plugins/_browser/default_config.yaml
+RUN rm -rf /a0/plugins/_browser/helpers/__pycache__ /a0/plugins/_browser/__pycache__ && \
+    grep -q 'get_residential_proxy_config'      /a0/plugins/_browser/helpers/config.py && \
+    grep -q '_should_escalate_to_residential'   /a0/plugins/_browser/helpers/runtime.py && \
+    grep -q 'residential_proxy_enabled'         /a0/plugins/_browser/default_config.yaml && \
+    echo 'Applicant _browser residential-escalation patch baked into /a0/plugins/_browser.'
+
+# AZ0-4/846: Apply branded a0-webui overlay at image-build time so the shipped
+# image carries the white-labeled webui (not just exercised by CI scratch-dir
+# checks). The branding script copies a0-webui/ files onto /a0/webui/ and runs
+# string substitution on .html and .json files.
+COPY scripts/apply-branding.sh /tmp/branding/scripts/apply-branding.sh
+COPY a0-webui/ /tmp/branding/a0-webui/
+COPY branding/ /tmp/branding/branding/
+RUN bash /tmp/branding/scripts/apply-branding.sh /a0 && rm -rf /tmp/branding

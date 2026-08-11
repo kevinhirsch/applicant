@@ -108,6 +108,14 @@ def get_cost_service(
     return _resolved(services, container, "cost_service")
 
 
+def get_pipeline_summary_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """Landing-page pipeline-funnel + daily-progress read model (APP-LP-1, CONC-REQ-1)."""
+    return _resolved(services, container, "pipeline_summary_service")
+
+
 def get_onboarding_service(container: Container = Depends(get_container)):
     return container.onboarding_service
 
@@ -283,6 +291,25 @@ def get_compare_service(
     from applicant.application.services.compare_service import CompareService
 
     return CompareService(get_storage(container, services))
+
+
+def get_explain_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """The EXPLAIN backend read service (per-request storage-bound, CONC-REQ-1).
+
+    Built directly from ``container.llm``/``container.embedding`` + the
+    per-request storage — no container singleton binding (``container.py`` is
+    owned/hard-do-not-touch this round), mirroring ``get_compare_service``.
+    """
+    from applicant.application.services.explain_service import ExplainService
+
+    return ExplainService(
+        get_storage(container, services),
+        llm=container.llm,
+        embedding=container.embedding,
+    )
 
 
 def get_agent_memory(container: Container = Depends(get_container)):

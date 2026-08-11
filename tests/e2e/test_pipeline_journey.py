@@ -171,14 +171,38 @@ def test_seeded_campaign_reaches_stop_boundary_with_human_review_and_no_autosubm
     # off-criteria one, so the real lexical scorer must discriminate). Discovery's
     # network fetch is the non-hermetic part; its OUTPUT (postings in storage) is what
     # the rest of the pipeline consumes, so we seed that output directly. ---
+    # NOT "Python Engineer" -- role_domain_fit's gate is now an ALLOWLIST
+    # (round 2 of the miscalibration fix): the title must plainly match an
+    # in-domain role family or scoring short-circuits to a fixed low cap
+    # before the real lexical/embedding scorer ever discriminates it from
+    # the off-criteria posting below.
     match_pid = _seed_posting(
-        storage, cid, title="Python Engineer", description="Build python fastapi services"
+        storage,
+        cid,
+        title="Delivery Manager, Python Engineer",
+        description="Build python fastapi services",
     )
-    _seed_posting(storage, cid, title="Warehouse Associate", description="Lift boxes in a depot")
+    off_pid = _seed_posting(
+        storage, cid, title="Warehouse Associate", description="Lift boxes in a depot"
+    )
     storage.commit()
 
-    # --- SCORE + DIGEST: delivering the digest over the UI endpoint runs the real
-    # scoring + digest build (FR-DIG-1/3/4). The digest is reachable HTTP surface. ---
+    # --- SCORE: DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix,
+    # commit 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline — production scores the unscored backlog in AgentLoop's background tick,
+    # BEFORE any digest is built (see AgentLoop._discover_and_digest). This test drives
+    # the digest deliver endpoint directly (the loop.tick() below only runs the later
+    # pre-fill leg), so mirror that background step here against the SAME
+    # criteria-service-loaded criteria the loop itself would use. ---
+    criteria_service = CriteriaService(storage)
+    scoring_criteria = criteria_service.get_criteria(cid)
+    _prescore = ScoringService(storage, llm=None, embedding=LocalEmbedding())
+    for pid in (match_pid, off_pid):
+        _prescore.score_viability(pid, scoring_criteria)
+
+    # --- DIGEST: delivering the digest over the UI endpoint runs the real digest
+    # build (FR-DIG-1/3/4) over the now-scored postings. The digest is reachable
+    # HTTP surface. ---
     deliver = client.post(f"/api/digest/{cid_str}/deliver")
     assert deliver.status_code == 200, deliver.text
     body = deliver.json()
@@ -188,9 +212,9 @@ def test_seeded_campaign_reaches_stop_boundary_with_human_review_and_no_autosubm
 
     scores = {p.title: p.viability_score for p in storage.postings.list_for_campaign(cid)}
     assert all(v is not None for v in scores.values()), "every discovered posting must be scored"
-    assert scores["Python Engineer"] > scores["Warehouse Associate"], (
-        "the real scorer must rank the on-criteria role above the off-criteria one"
-    )
+    assert (
+        scores["Delivery Manager, Python Engineer"] > scores["Warehouse Associate"]
+    ), "the real scorer must rank the on-criteria role above the off-criteria one"
 
     # The digest payload is readable over HTTP (the in-app updates surface).
     digest_payload = client.get(f"/api/digest/{cid_str}").json()

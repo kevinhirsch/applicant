@@ -133,3 +133,91 @@ def test_banned_phrases_set_persists_and_round_trips(client):
     again = client.get("/api/documents/banned-phrases")
     assert again.json()["phrases"] == ["circle back", "synergize"]
     assert "delve into" in again.json()["seed_phrases"]
+
+
+# Bug fix: "Documents panel shows 'No applications' despite N digested applications".
+# The panel used to list applications through the post-submission TRACKER board
+# (``GET /api/post-submission/{campaign_id}``), which only surfaces applications
+# already in/past ``TRACKER_STATES`` (submitted-or-later). Auto-draft
+# (``AgentLoop``) leaves its drafted applications sitting at ``DIGESTED`` --
+# review-gated, never auto-submitted -- so the panel showed nothing even with a
+# full digest review queue. ``GET /api/documents/applications/campaign/{id}``
+# is the fix: it reads every application for the campaign (like
+# ``AdminQueryService.application_history`` / ``DigestService`` already do),
+# excluding only the pre-materials states that have nothing to review yet.
+@pytest.mark.integration
+def test_list_applications_for_campaign_returns_digested_applications(client, seeded_application):
+    from applicant.core.entities.application import Application
+    from applicant.core.entities.job_posting import JobPosting
+    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, new_id
+    from applicant.core.state_machine import ApplicationState
+
+    cid, digested_aid = seeded_application(status=ApplicationState.DIGESTED)
+    storage = client.app.state.container.storage
+
+    # A SUBMITTED application in the SAME campaign (already visible on the
+    # post-submission tracker board today) -- the fix must ALSO include it.
+    submitted_posting_id = new_id()
+    storage.postings.add(
+        JobPosting(
+            id=JobPostingId(submitted_posting_id),
+            campaign_id=CampaignId(cid),
+            title="Submitted role",
+            company="Submitted co",
+            source_url="https://example.test/submitted",
+        )
+    )
+    submitted_aid = new_id()
+    storage.applications.add(
+        Application(
+            id=ApplicationId(submitted_aid),
+            campaign_id=CampaignId(cid),
+            posting_id=JobPostingId(submitted_posting_id),
+            status=ApplicationState.SUBMITTED_BY_USER,
+        )
+    )
+
+    # A bare DISCOVERED application -- never promoted past raw discovery, so it
+    # has no materials to review; the panel should not offer it.
+    discovered_posting_id = new_id()
+    storage.postings.add(
+        JobPosting(
+            id=JobPostingId(discovered_posting_id),
+            campaign_id=CampaignId(cid),
+            title="Discovered role",
+            company="Discovered co",
+            source_url="https://example.test/discovered",
+        )
+    )
+    discovered_aid = new_id()
+    storage.applications.add(
+        Application(
+            id=ApplicationId(discovered_aid),
+            campaign_id=CampaignId(cid),
+            posting_id=JobPostingId(discovered_posting_id),
+            status=ApplicationState.DISCOVERED,
+        )
+    )
+    storage.commit()
+
+    # Pin the bug: the OLD path (post-submission tracker board) genuinely never
+    # returns the digested application.
+    tracker = client.get(f"/api/post-submission/{cid}")
+    assert tracker.status_code == 200
+    tracker_ids = {row["application_id"] for row in tracker.json()["applications"]}
+    assert digested_aid not in tracker_ids
+
+    # The FIXED Documents-panel query returns the digested draft AND the
+    # submitted application, but not the materials-less discovered one.
+    res = client.get(f"/api/documents/applications/campaign/{cid}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["campaign_id"] == cid
+    ids = {row["application_id"] for row in body["applications"]}
+    assert digested_aid in ids
+    assert submitted_aid in ids
+    assert discovered_aid not in ids
+
+    digested_row = next(r for r in body["applications"] if r["application_id"] == digested_aid)
+    assert digested_row["status"] == "DIGESTED"
+    assert digested_row["id"] == digested_aid

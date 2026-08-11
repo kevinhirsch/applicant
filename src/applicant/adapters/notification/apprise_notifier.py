@@ -381,12 +381,6 @@ class AppriseNotifier:
     def is_configured(self) -> bool:
         return bool(self._discord or self._apprise or self._in_app or self._ntfy)
 
-    def has_discord(self) -> bool:
-        return bool(self._discord)
-
-    def has_email(self) -> bool:
-        return bool(self._apprise)
-
     def has_ntfy(self) -> bool:
         return bool(self._ntfy)
 

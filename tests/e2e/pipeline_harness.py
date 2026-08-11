@@ -227,8 +227,13 @@ def run_pipeline_to_stop_boundary() -> dict:
         # lexical scorer must discriminate (discovery's network fetch is the only
         # non-hermetic part; its OUTPUT — postings in storage — is what the rest of
         # the pipeline consumes, so we seed that output directly).
+        # NOT "Python Engineer" -- role_domain_fit's gate is now an
+        # ALLOWLIST (round 2 of the miscalibration fix): the title must
+        # plainly match an in-domain role family or scoring short-circuits
+        # to a fixed low cap before the real lexical/embedding scorer ever
+        # discriminates it from the off-criteria posting below.
         match_pid = _seed_posting(
-            storage, cid, title="Python Engineer",
+            storage, cid, title="Delivery Manager, Python Engineer",
             description="Build python fastapi services",
         )
         _seed_posting(
@@ -237,9 +242,17 @@ def run_pipeline_to_stop_boundary() -> dict:
         )
         storage.commit()
 
-        # SCORE + DIGEST: the real DigestService scores every posting via the real
-        # ScoringService and assembles the digest (only viable rows survive).
-        delivered = digest.deliver(cid, criteria.get_criteria(cid))
+        # SCORE + DIGEST: DigestService._build_scored_pairs (2026-08-10
+        # PERF/DRAFT-UNBLOCK fix, commit 005c41a57) reads an already-persisted
+        # viability_score instead of scoring inline -- production scores the
+        # unscored backlog in AgentLoop's background tick, BEFORE any digest is
+        # built (see AgentLoop._discover_and_digest). Mirror that here against the
+        # SAME criteria-service-loaded criteria the loop itself would use, then
+        # the real DigestService assembles the digest (only viable rows survive).
+        scoring_criteria = criteria.get_criteria(cid)
+        for posting in storage.postings.list_for_campaign(cid):
+            scoring.score_viability(posting.id, scoring_criteria)
+        delivered = digest.deliver(cid, scoring_criteria)
         rows = delivered.get("payload", {}).get("rows", [])
         scores = {
             p.title: p.viability_score for p in storage.postings.list_for_campaign(cid)

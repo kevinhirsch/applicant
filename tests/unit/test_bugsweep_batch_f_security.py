@@ -36,9 +36,10 @@ def test_digest_email_escapes_xss_and_neutralizes_javascript_href():
     embedding = LocalEmbedding()
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C"))
+    pid = JobPostingId(new_id())
     storage.postings.add(
         JobPosting(
-            id=JobPostingId(new_id()),
+            id=pid,
             campaign_id=cid,
             title="<script>alert(1)</script>",
             company="<img src=x onerror=alert(2)>",
@@ -50,6 +51,12 @@ def test_digest_email_escapes_xss_and_neutralizes_javascript_href():
     )
     storage.commit()
     scoring = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline -- an unscored posting is skipped from the digest entirely. Persist a
+    # score first, mirroring AgentLoop's background scoring tick, so the malicious
+    # posting actually reaches render_email's escaping path this test pins.
+    scoring.score_viability(pid)
     digest = DigestService(storage, AppriseNotifier(), scoring)
     crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
 

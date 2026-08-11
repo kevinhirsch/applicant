@@ -247,8 +247,8 @@ class AdminQueryService:
         }
 
     # --- recent structured logs (FR-LOG-3) --------------------------------
-    def logs(self, limit: int = 100) -> list[dict]:
-        return recent_logs(limit)
+    def logs(self, limit: int = 100, since_seq: int | None = None) -> list[dict]:
+        return recent_logs(limit, since_seq)
 
     # --- variant library (FR-UI-6 / FR-RESUME-6) --------------------------
     def variant_library(

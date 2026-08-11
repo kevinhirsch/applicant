@@ -315,6 +315,29 @@ class StoragePortContract:
         got = adapter.postings.list_unscored_for_campaign(cid)
         assert [p.id for p in got] == [unscored]
 
+    def test_list_unscored_for_campaign_respects_limit(self, adapter):
+        """P0 (2026-08-10): a large unscored backlog must not be fully loaded into
+        memory every tick just because the CALLER only ever consumes a small,
+        capped batch of it (``agent_loop.py``'s ``SCORING_BATCH_PER_TICK``).
+        ``limit`` bounds the query itself; ``None`` (the default, existing callers
+        unaffected) still returns everything."""
+        from applicant.core.entities.job_posting import JobPosting
+        from applicant.core.ids import JobPostingId
+
+        cid = CampaignId(new_id())
+        for i in range(5):
+            adapter.postings.add(
+                JobPosting(
+                    id=JobPostingId(f"p-unscored-{i}"), campaign_id=cid,
+                    title=f"R{i}", company="c", source_url=f"u{i}",
+                )
+            )
+        adapter.commit()
+        limited = adapter.postings.list_unscored_for_campaign(cid, limit=2)
+        assert len(limited) == 2
+        unlimited = adapter.postings.list_unscored_for_campaign(cid)
+        assert len(unlimited) == 5
+
     def test_application_get_by_posting(self, adapter):
         from applicant.core.entities.application import Application
         from applicant.core.ids import JobPostingId

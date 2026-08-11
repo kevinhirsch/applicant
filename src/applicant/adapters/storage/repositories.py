@@ -21,6 +21,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUp, FollowUpStatus, FollowUpTemplate
@@ -49,6 +50,7 @@ from applicant.core.events import event_bus
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
+    AtsBoardId,
     AttributeId,
     CampaignId,
     DetectionEventId,
@@ -114,6 +116,8 @@ def _posting_to_entity(row: m.JobPostingModel) -> JobPosting:
         source_key=row.source_key,
         easy_apply=bool(row.easy_apply),
         viability_score=row.viability_score,
+        first_seen=getattr(row, "first_seen", None),
+        date_posted=getattr(row, "date_posted", None),
         rationale=dict(row.rationale or {}),
     )
 
@@ -264,6 +268,18 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
     )
 
 
+def _discovery_board_to_entity(row: m.DiscoveryBoardModel) -> AtsBoard:
+    return AtsBoard(
+        id=AtsBoardId(row.id),
+        campaign_id=row.campaign_id,
+        provider=row.provider,
+        token=row.token,
+        source_key=row.source_key,
+        enabled=row.enabled,
+        created_at=row.created_at,
+    )
+
+
 def _screening_answer_library_to_entity(
     row: m.ScreeningAnswerLibraryModel,
 ) -> ScreeningAnswerLibraryEntry:
@@ -394,6 +410,8 @@ class JobPostingRepo:
                 easy_apply=bool(posting.easy_apply),
                 description=posting.description,
                 viability_score=posting.viability_score,
+                first_seen=getattr(posting, "first_seen", None),
+                date_posted=getattr(posting, "date_posted", None),
                 rationale=posting.rationale,
             )
         )
@@ -410,13 +428,22 @@ class JobPostingRepo:
         ).all()
         return [_posting_to_entity(r) for r in rows]
 
-    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
-        rows = self._s.scalars(
+    def list_unscored_for_campaign(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        query = (
             select(m.JobPostingModel)
             .where(m.JobPostingModel.campaign_id == campaign_id)
             .where(m.JobPostingModel.viability_score.is_(None))
             .order_by(m.JobPostingModel.id)
-        ).all()
+        )
+        # P0 (2026-08-10): bound the query itself when a caller only needs a small
+        # batch (agent_loop.py's per-tick SCORING_BATCH_PER_TICK cap) -- a campaign
+        # can carry thousands of unscored postings, and materializing all of them
+        # every tick just to use the first few was real, avoidable per-tick cost.
+        if limit is not None:
+            query = query.limit(limit)
+        rows = self._s.scalars(query).all()
         return [_posting_to_entity(r) for r in rows]
 
     def count_for_campaign(self, campaign_id: CampaignId) -> int:
@@ -433,6 +460,21 @@ class JobPostingRepo:
         result = self._s.execute(
             select(func.count()).select_from(m.JobPostingModel)
             .where(m.JobPostingModel.campaign_id == campaign_id)
+        ).scalar()
+        return result or 0
+
+    def count_scored_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Cheap ``COUNT(*)`` of scored postings (landing-page funnel, APP-LP-1).
+
+        Same shape as ``count_for_campaign`` — a single indexed count against the
+        ``ix_job_postings_campaign_viability`` index, never a full row scan.
+        """
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).select_from(m.JobPostingModel)
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+            .where(m.JobPostingModel.viability_score.isnot(None))
         ).scalar()
         return result or 0
 
@@ -509,6 +551,24 @@ class ApplicationRepo:
             .order_by(m.ApplicationModel.id)
         ).all()
         return [_application_to_entity(r) for r in rows]
+
+    def count_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Cheap ``COUNT(*)`` variant of ``list_by_status`` (landing-page pipeline
+        funnel, APP-LP-1) — a single indexed count against
+        ``ix_applications_campaign_status``, never a full row hydration.
+        """
+        if not statuses:
+            return 0
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).select_from(m.ApplicationModel)
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.ApplicationModel.status.in_([s.value for s in statuses]))
+        ).scalar()
+        return result or 0
 
 
 class ResumeVariantRepo:
@@ -777,6 +837,29 @@ class OutcomeEventRepo:
         ).first()
         return row is not None
 
+    def count_distinct_applications_for_campaign(
+        self, campaign_id: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Distinct applications with a matching outcome (landing-page funnel's
+        "interview" stage, APP-LP-1) — one indexed join+count, mirroring
+        ``list_for_campaign``'s join shape but returning only a number.
+        """
+        if not types:
+            return 0
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count(func.distinct(m.OutcomeEventModel.application_id)))
+            .select_from(m.OutcomeEventModel)
+            .join(
+                m.ApplicationModel,
+                m.OutcomeEventModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.OutcomeEventModel.type.in_(types))
+        ).scalar()
+        return result or 0
+
 
 class ApplicationScreenshotRepo:
     def __init__(self, session: Session) -> None:
@@ -962,6 +1045,52 @@ class DiscoverySourceRepo:
         return [_discovery_source_to_entity(r) for r in rows]
 
 
+class DiscoveryBoardRepo:
+    """Persisted runtime add/remove keyless ATS boards (Greenhouse/Lever)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def upsert(self, board: AtsBoard) -> None:
+        self._s.merge(
+            m.DiscoveryBoardModel(
+                id=board.id,
+                campaign_id=board.campaign_id,
+                provider=board.provider,
+                token=board.token,
+                source_key=board.source_key,
+                enabled=board.enabled,
+                created_at=board.created_at,
+            )
+        )
+
+    def get(self, source_key: str) -> AtsBoard | None:
+        row = self._s.scalars(
+            select(m.DiscoveryBoardModel).where(
+                m.DiscoveryBoardModel.source_key == source_key
+            )
+        ).first()
+        return _discovery_board_to_entity(row) if row else None
+
+    def list_all(self) -> list[AtsBoard]:
+        rows = self._s.scalars(select(m.DiscoveryBoardModel)).all()
+        return [_discovery_board_to_entity(r) for r in rows]
+
+    def delete(self, source_key: str) -> bool:
+        result = self._s.query(m.DiscoveryBoardModel).filter(
+            m.DiscoveryBoardModel.source_key == source_key
+        ).delete(synchronize_session=False)
+        return bool(result)
+
+    def delete_for_campaign(self, campaign_id: str) -> int:
+        return int(
+            self._s.query(m.DiscoveryBoardModel)
+            .filter(m.DiscoveryBoardModel.campaign_id == str(campaign_id))
+            .delete(synchronize_session=False)
+            or 0
+        )
+
+
 class ScreeningAnswerLibraryRepo:
     """Reusable, campaign-scoped screening-answer library (product-gaps #20)."""
 
@@ -969,7 +1098,17 @@ class ScreeningAnswerLibraryRepo:
         self._s = session
 
     def upsert(self, entry: ScreeningAnswerLibraryEntry) -> None:
-        self._s.merge(
+        existing = self._s.scalars(
+            select(m.ScreeningAnswerLibraryModel)
+            .where(m.ScreeningAnswerLibraryModel.campaign_id == entry.campaign_id)
+            .where(m.ScreeningAnswerLibraryModel.question_key == entry.question_key)
+        ).first()
+        if existing is not None:
+            existing.question_text = entry.question_text
+            existing.answer_text = entry.answer_text
+            existing.essay = entry.essay
+            return
+        self._s.add(
             m.ScreeningAnswerLibraryModel(
                 id=entry.id,
                 campaign_id=entry.campaign_id,
@@ -1454,6 +1593,24 @@ class ActionEventRepo:
             or 0
         )
 
+    def list_since(self, campaign_id, since, *, action: str | None = None):
+        """Events at/after ``since`` (landing-page daily-progress gadget, APP-LP-1).
+
+        A single indexed range scan on ``ix_action_events_campaign_occurred`` — the
+        window callers pass in is always small (today, or a few weeks back), so
+        this stays cheap without needing a bespoke aggregate query per derived stat.
+        """
+        stmt = (
+            select(m.ActionEventModel)
+            .where(m.ActionEventModel.campaign_id == campaign_id)
+            .where(m.ActionEventModel.occurred_at >= since)
+        )
+        if action is not None:
+            stmt = stmt.where(m.ActionEventModel.action == action)
+        stmt = stmt.order_by(m.ActionEventModel.occurred_at)
+        rows = self._s.scalars(stmt).all()
+        return [_action_event_to_entity(r) for r in rows]
+
 
 def _action_event_to_entity(row):
     from applicant.core.entities.action_event import ActionEvent as _AE
@@ -1512,6 +1669,7 @@ class SqlAlchemyStorage:
         self.pending_actions = PendingActionRepo(session)
         self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)
+        self.discovery_boards = DiscoveryBoardRepo(session)
         self.screening_answer_library = ScreeningAnswerLibraryRepo(session)
         self.agent_runs = AgentRunRepo(session)
         self.detection_events = DetectionEventRepo(session)
@@ -1634,6 +1792,7 @@ class SqlAlchemyStorage:
         counts["discovery_sources"] = _del(
             m.DiscoverySourceModel, m.DiscoverySourceModel.campaign_id == scid
         )
+        counts["discovery_boards"] = self.discovery_boards.delete_for_campaign(scid)
         counts["screening_answer_library"] = _del(
             m.ScreeningAnswerLibraryModel,
             m.ScreeningAnswerLibraryModel.campaign_id == scid,

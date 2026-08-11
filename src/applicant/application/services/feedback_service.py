@@ -20,10 +20,11 @@ from applicant.core.ids import CampaignId
 
 class FeedbackService:
     def __init__(
-        self, storage, learning, *, criteria=None, advanced_learning=None, pending_actions=None
+        self, storage, learning, *, criteria=None, advanced_learning=None, pending_actions=None, llm=None
     ) -> None:
         self._storage = storage
         self._learning = learning
+        self._llm = llm
         self._criteria = criteria
         # Optional AdvancedLearningService so a batch of parsed/observed inputs can be
         # continuously reconciled into the attribute cloud (FR-LEARN-4): auto-apply
@@ -69,6 +70,112 @@ class FeedbackService:
                 campaign_id, adjustment=criteria_delta, rationale=f"feedback: {text}"
             )
         return {"folded": True, "text": text}
+
+    def submit_posting_feedback(
+        self, campaign_id, posting_id, *, sentiment: str, text: str
+    ) -> dict:
+        """Per-posting free-text +/- feedback, LLM-parsed into learning (FR-FB-2/LEARN-3).
+
+        The LLM reads the posting + the user's words and extracts reusable preferences:
+        ``likes`` (attributes to SEEK) fold as approve-signals, ``dislikes`` (to AVOID)
+        as decline-signals, and any ``criteria_delta`` (titles/keywords/salary/work_mode)
+        applies as a transparent learned adjustment. Degrades to sentiment-only keyword
+        folding when no LLM is wired, so the loop never breaks.
+        """
+        posting = None
+        try:
+            posting = self._storage.postings.get(posting_id)
+        except Exception:  # pragma: no cover - a missing posting still records sentiment
+            posting = None
+        parsed = self._parse_feedback_with_llm(posting, sentiment, text)
+        likes = [str(x).strip() for x in (parsed.get("likes") or []) if str(x).strip()]
+        dislikes = [str(x).strip() for x in (parsed.get("dislikes") or []) if str(x).strip()]
+        raw_delta = parsed.get("criteria_delta") or {}
+        allowed = ("titles", "keywords", "salary_floor", "work_modes", "locations")
+        criteria_delta = {k: v for k, v in raw_delta.items() if k in allowed}
+        model = self._learning.load_model(campaign_id)
+        if likes:
+            model = self._learning.record_decision(
+                model, approved=True, features={f"like:{k}": k for k in likes}
+            )
+        if dislikes:
+            model = self._learning.record_decision(
+                model, approved=False, features={f"dislike:{k}": k for k in dislikes}
+            )
+        if not likes and not dislikes:
+            # No structured parse (or no LLM): fall back to the overall sentiment.
+            if str(sentiment).lower().startswith("pos"):
+                feats = {f"like:{t}": t for t in text.lower().split() if len(t) > 3}
+                model = self._learning.record_decision(model, approved=True, features=feats)
+            else:
+                model = self._learning.ingest_decline_feedback(model, feedback_text=text)
+        self._learning.persist_model(model)
+        if self._criteria is not None and criteria_delta:
+            self._criteria.apply_learned_adjustment(
+                campaign_id,
+                adjustment=criteria_delta,
+                rationale=f"posting feedback ({sentiment}): {text[:160]}",
+            )
+        return {
+            "folded": True,
+            "sentiment": sentiment,
+            "likes": likes,
+            "dislikes": dislikes,
+            "criteria_delta": criteria_delta,
+        }
+
+    def _parse_feedback_with_llm(self, posting, sentiment: str, text: str) -> dict:
+        """Turn free text about ONE posting into {likes, dislikes, criteria_delta}."""
+        if self._llm is None:
+            return {}
+        import json
+        import re
+
+        from applicant.ports.driven.llm import ChatMessage
+
+        try:
+            from applicant.core.rules.prompt_injection import neutralize_untrusted_text
+            safe = neutralize_untrusted_text(text)[:1000]
+        except Exception:
+            safe = (text or "")[:1000]
+        title = (getattr(posting, "title", "") or "") if posting else ""
+        company = (getattr(posting, "company", "") or "") if posting else ""
+        desc = ((getattr(posting, "description", "") or "") if posting else "")[:1200]
+        schema = {
+            "type": "object",
+            "properties": {
+                "likes": {"type": "array", "items": {"type": "string"}},
+                "dislikes": {"type": "array", "items": {"type": "string"}},
+                "criteria_delta": {"type": "object"},
+            },
+            "required": ["likes", "dislikes"],
+        }
+        system = ChatMessage(
+            role="system",
+            content=(
+                "You convert a job-seeker's free-text feedback about ONE job posting into "
+                "structured, REUSABLE learning signals. 'likes' = concrete attributes to seek "
+                "in future postings; 'dislikes' = attributes to avoid. Optionally 'criteria_delta' "
+                "with any of: titles (list), keywords (list to add), salary_floor (int, annual USD), "
+                "work_modes (list), locations (list). Only include what the feedback clearly implies; "
+                "be terse. Respond with JSON only."
+            ),
+        )
+        user = ChatMessage(
+            role="user",
+            content=f"POSTING: {title} at {company}\n{desc}\n\nFEEDBACK (overall: {sentiment}):\n{safe}",
+        )
+        try:
+            result = self._llm.complete(
+                [system, user], start_tier=1, json_schema=schema, max_tokens=320
+            )
+            data = getattr(result, "structured", None) or {}
+            if not data and getattr(result, "text", ""):
+                m = re.search(r"\{.*\}", result.text, re.S)
+                data = json.loads(m.group(0)) if m else {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def submit_survey(self, campaign_id: CampaignId, answers: dict[str, str]) -> dict:
         """Fold a guided survey (question->answer) into learning (FR-FB-2).

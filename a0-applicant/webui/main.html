@@ -1,0 +1,390 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ1-2 (#830) — Applicant OOBE wizard. Resumable 12-section intake driven by the
+     engine via the a0-applicant onboarding proxy (action=state|section|complete). The
+     engine is the source of truth: section completeness comes from `sections_complete`
+     and the finish screen renders the engine's `apply_ready`/`apply_missing` verbatim
+     (never client-derived, H1). Everything but the model is skippable; optional sections
+     (references, certifications) can be skipped; EEO defaults to decline (FR-ATTR-6). -->
+<style>
+  .aoobe{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text)}
+  .aoobe h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aoobe .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aoobe .bar{height:8px;border-radius:99px;background:var(--color-panel,#e9edf1);overflow:hidden;margin-bottom:.35rem}
+  .aoobe .bar>span{display:block;height:100%;background:var(--color-primary,#2d7ff9);transition:width .3s}
+  .aoobe .pct{font-size:.8rem;color:var(--color-text-secondary,#6b7683);margin-bottom:1rem}
+  .aoobe .steps{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:1.25rem}
+  .aoobe .chip{display:inline-flex;align-items:center;gap:4px;font-size:.78rem;padding:3px 9px;border-radius:99px;border:1px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);cursor:pointer}
+  .aoobe .chip.done{color:var(--color-success-text,#155724);border-color:var(--color-success-text,#155724)}
+  .aoobe .chip.active{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aoobe .card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:12px;padding:20px}
+  .aoobe .card h2{font-size:1.15rem;margin:0 0 .2rem}
+  .aoobe .hint{font-size:.85rem;color:var(--color-text-secondary,#6b7683);margin:0 0 1rem}
+  .aoobe label{display:block;font-size:.82rem;font-weight:600;margin:.75rem 0 .2rem}
+  .aoobe input,.aoobe textarea,.aoobe select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--color-border,#d8e0e6);border-radius:8px;background:var(--color-panel,#fff);color:var(--color-text);font:inherit}
+  .aoobe textarea{min-height:70px;resize:vertical}
+  .aoobe .row{display:flex;gap:12px;justify-content:space-between;align-items:center;margin-top:1.25rem}
+  .aoobe .btn{padding:9px 16px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer}
+  .aoobe .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aoobe .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aoobe .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aoobe .success-box{background:var(--color-success-bg,#d4edda);color:var(--color-success-text,#155724);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aoobe .done-box{text-align:center;padding:10px}
+  .aoobe .done-box .material-symbols-outlined{font-size:52px}
+  .aoobe .missing{text-align:left;background:var(--color-panel,#f2f5f7);border-radius:8px;padding:12px 14px;margin-top:1rem}
+  .aoobe .missing li{margin:.15rem 0}
+  .aoobe .muted{color:var(--color-text-secondary,#6b7683);font-size:.85rem}
+</style>
+
+<div class="aoobe" x-data="applicantOnboarding" x-init="init()">
+  <h1>Set up Applicant</h1>
+  <p class="sub">A few quick sections so the assistant can apply on your behalf. You can stop and come back anytime — it always resumes where you left off.</p>
+
+  <template x-if="loading"><p class="muted">Loading your setup…</p></template>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <template x-if="!loading && !fatalError">
+    <div>
+      <div class="bar"><span :style="`width:${progress}%`"></span></div>
+      <div class="pct"><span x-text="doneCount"></span> of <span x-text="SECTIONS.length"></span> sections done</div>
+
+      <!-- readiness card (P1: setup.py's GET /api/setup/status readiness/gating fields
+           had explicit "front door" UI intent in the code comments but no renderer
+           anywhere in the plugin) -->
+      <template x-if="readiness">
+        <div class="card" style="margin-bottom:1rem;padding:12px 16px">
+          <p style="margin:0;font-weight:600;font-size:.88rem" x-show="readiness.apply_ready">
+            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;color:var(--color-success-text,#155724)">check_circle</span>
+            Ready to apply — automated actions are unlocked.
+          </p>
+          <p style="margin:0;font-weight:600;font-size:.88rem" x-show="!readiness.apply_ready" x-text="readiness.apply_blocked_reason || 'Not ready to apply yet.'"></p>
+          <p class="muted" style="margin:.4rem 0 0" x-show="(readiness.suggested_attributes||[]).length" x-text="(readiness.suggested_attributes||[]).length + ' attribute suggestion(s) awaiting review.'"></p>
+        </div>
+      </template>
+
+      <div class="steps">
+        <template x-for="(s,i) in SECTIONS" :key="s.id">
+          <span class="chip" :class="{done: isDone(s.id), active: i===step && !finished}" @click="goto(i)">
+            <span class="material-symbols-outlined" style="font-size:15px" x-show="isDone(s.id)">check</span>
+            <span x-text="s.title"></span>
+          </span>
+        </template>
+      </div>
+
+      <!-- a section -->
+      <template x-if="!finished && current">
+        <div class="card">
+          <h2 x-text="current.title"></h2>
+          <p class="hint" x-text="current.hint"></p>
+
+          <template x-for="f in current.fields" :key="f.k">
+            <div>
+              <label x-text="f.label"></label>
+              <template x-if="f.type==='textarea'"><textarea x-model="form[f.k]" :placeholder="f.ph||''"></textarea></template>
+              <template x-if="f.type==='select'">
+                <select x-model="form[f.k]">
+                  <template x-for="o in f.options" :key="o"><option :value="o" x-text="o"></option></template>
+                </select>
+              </template>
+              <template x-if="!f.type || f.type==='text'"><input type="text" x-model="form[f.k]" :placeholder="f.ph||''"></template>
+            </div>
+          </template>
+
+          <template x-if="sectionError"><div class="err" x-text="sectionError"></div></template>
+
+          <div class="row">
+            <button class="btn" @click="prev()" :disabled="step===0">Back</button>
+            <div style="display:flex;gap:8px">
+              <template x-if="current.optional">
+                <button class="btn" @click="skip()" :disabled="saving">Skip</button>
+              </template>
+              <button class="btn primary" @click="save()" :disabled="saving">
+                <span x-text="saving ? 'Saving…' : 'Save & continue'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- base_resume section template -->
+      <template x-if="current && current.id === 'base_resume'">
+        <div class="card">
+          <h2 x-text="current.title"></h2>
+          <p class="hint" x-text="current.hint"></p>
+          
+          <div style="margin:1rem 0">
+            <input type="file" id="resumeFile" accept=".pdf,.docx,.doc,.txt,.md" style="display:block;margin-bottom:.5rem">
+            <button class="btn primary" @click="uploadResume()" :disabled="uploading">
+              <span x-text="uploading ? 'Parsing…' : 'Upload & parse'"></span>
+            </button>
+          </div>
+          
+          <template x-if="resumeResult">
+            <div>
+              <div :class="resumeResult.ok ? 'success-box' : 'err'">
+                <template x-if="resumeResult.ok">
+                  <p><strong>I read <span x-text="resumeResult.data.parsed_field_count"></span> details from your résumé</strong></p>
+                </template>
+                <template x-if="!resumeResult.ok">
+                  <p x-text="'Error: ' + (resumeResult.error || 'Unknown error')"></p>
+                </template>
+              </div>
+              <template x-if="resumeResult.ok && resumeResult.data.resume_health && resumeResult.data.resume_health.verdict">
+                <p class="muted">Health: <span x-text="resumeResult.data.resume_health.verdict"></span></p>
+              </template>
+              <template x-if="resumeResult.ok && resumeResult.data.conflicts && resumeResult.data.conflicts.length > 0">
+                <div style="margin-top:.75rem;padding:.5rem;background:var(--color-warning-bg,#fff3cd);border-radius:8px">
+                  <p style="font-weight:600;font-size:.85rem">Please confirm these items:</p>
+                  <template x-for="c in resumeResult.data.conflicts" :key="c.attribute">
+                    <div style="font-size:.82rem;margin:.4rem 0;padding-bottom:.4rem;border-bottom:1px solid var(--color-border,#e2c66b)">
+                      <p style="margin:0 0 .3rem" x-text="c.attribute + ': résumé says \'' + (c.parsed_value || '(blank)') + '\', you said \'' + (c.interview_value || '(blank)') + '\''"></p>
+                      <template x-if="!c._resolved">
+                        <div style="display:flex;gap:6px">
+                          <button class="btn" style="padding:5px 10px;font-size:.78rem" @click="confirmConflict(c, true)" :disabled="c._confirming">Use résumé value</button>
+                          <button class="btn" style="padding:5px 10px;font-size:.78rem" @click="confirmConflict(c, false)" :disabled="c._confirming">Keep mine</button>
+                        </div>
+                      </template>
+                      <template x-if="c._resolved">
+                        <p class="muted" style="margin:0">Saved: <span x-text="c._resolvedValue || '(blank)'"></span></p>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="row">
+            <button class="btn" @click="prev()" :disabled="step===0">Back</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn primary" @click="save()" :disabled="saving">
+                <span x-text="saving ? 'Saving…' : 'Save & continue'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ready to finish -->
+      <template x-if="!finished && !current">
+        <div class="card done-box">
+          <p>All sections filled in. Let's check you're ready to apply.</p>
+          <button class="btn primary" @click="finish()" :disabled="saving">Finish setup</button>
+        </div>
+      </template>
+
+      <!-- honest completion from the engine -->
+      <template x-if="finished">
+        <div class="card done-box">
+          <template x-if="readyState.apply_ready">
+            <div>
+              <span class="material-symbols-outlined" style="color:var(--color-success-text,#155724)">check_circle</span>
+              <h2>You're ready to apply 🎉</h2>
+              <p class="muted">The engine has everything it needs. Automated job actions are unlocked.</p>
+            </div>
+          </template>
+          <template x-if="!readyState.apply_ready">
+            <div>
+              <span class="material-symbols-outlined" style="color:var(--color-warning-text,#8a6d3b)">pending</span>
+              <h2>Almost there</h2>
+              <p class="muted">The engine still needs these before it can apply for you:</p>
+              <ul class="missing">
+                <template x-for="m in (readyState.apply_missing||[])" :key="m"><li x-text="labelFor(m)"></li></template>
+              </ul>
+              <button class="btn primary" style="margin-top:1rem" @click="resume()">Finish the rest</button>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </template>
+</div>
+
+<script>
+  (() => {
+  (() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+  const getCsrfToken = async (...a) => (await _apiP).getCsrfToken(...a);
+
+  const SECTIONS = [
+    { id:"base_resume", title:"Your Résumé", hint:"Upload your résumé and I'll parse it — you confirm what I find." },
+    { id:"identity", title:"Identity", hint:"How employers reach you. Parsed from your résumé later, but you can set it now.",
+      fields:[{k:"full_name",label:"Full legal name"},{k:"email",label:"Email"},{k:"phone",label:"Phone"}] },
+    { id:"work_authorization", title:"Work authorization", hint:"Used only to filter roles you're eligible for — never AI-answered on applications.",
+      fields:[{k:"authorized",label:"Authorized to work?",type:"select",options:["yes","no"]},{k:"sponsorship",label:"Need visa sponsorship?",type:"select",options:["no","yes"]}] },
+    { id:"location", title:"Location & work mode", hint:"Where you'll work from and how.",
+      fields:[{k:"locations",label:"Preferred locations"},{k:"work_mode",label:"Work mode",type:"select",options:["remote","hybrid","onsite","remote / hybrid"]}] },
+    { id:"target_roles", title:"Target roles", hint:"The titles you want to be matched against.",
+      fields:[{k:"roles",label:"Roles / titles (comma-separated)"}] },
+    { id:"compensation", title:"Compensation", hint:"Your minimum acceptable salary — used to screen postings.",
+      fields:[{k:"salary_floor",label:"Minimum salary"}] },
+    { id:"work_history", title:"Work history", hint:"Recent roles. A short summary is fine to start.",
+      fields:[{k:"summary",label:"Recent roles",type:"textarea",ph:"Company — Title — dates; …"}] },
+    { id:"education", title:"Education", hint:"Highest degree and where.",
+      fields:[{k:"degree",label:"Highest degree"},{k:"school",label:"School"}] },
+    { id:"references", title:"References", optional:true, hint:"Optional — skip if you'd rather add these later.",
+      fields:[{k:"references",label:"References",type:"textarea",ph:"Name — relationship — contact"}] },
+    { id:"certifications", title:"Certifications", optional:true, hint:"Optional — any licenses or certifications.",
+      fields:[{k:"certifications",label:"Certifications",type:"textarea"}] },
+    { id:"key_attributes", title:"Key skills & attributes", hint:"Skills that should surface in tailored materials.",
+      fields:[{k:"skills",label:"Key skills (comma-separated)",type:"textarea"}] },
+    { id:"eeo", title:"Voluntary EEO", hint:"Entirely optional and never AI-answered. Defaults to decline (FR-ATTR-6).",
+      fields:[
+        {k:"race_ethnicity",label:"Race / ethnicity",type:"select",options:["Decline to self-identify"]},
+        {k:"gender",label:"Gender",type:"select",options:["Decline to self-identify"]},
+        {k:"veteran_status",label:"Veteran status",type:"select",options:["Decline to self-identify"]},
+        {k:"disability_status",label:"Disability status",type:"select",options:["Decline to self-identify"]},
+      ] },
+    { id:"campaign_criteria", title:"Search criteria", hint:"Confirms the titles / locations / salary floor this campaign searches on.",
+      fields:[{k:"titles",label:"Job titles"},{k:"locations",label:"Locations"},{k:"salary_floor",label:"Salary floor"}] },
+  ];
+  const TITLES = Object.fromEntries(SECTIONS.map(s => [s.id, s.title]));
+
+  window.Alpine.data("applicantOnboarding", () => ({
+    SECTIONS,
+    loading: true, fatalError: "", sectionError: "", saving: false,
+    uploading: false, resumeResult: null,
+    state: { sections_complete: [] }, step: 0, form: {}, finished: false,
+    readyState: { apply_ready: false, apply_missing: [] },
+    readiness: null,
+
+    async init() {
+      await this.refresh();
+      // §3.1: record the wizard was displayed at least once — regardless of whether
+      // the user finishes, skips sections, or closes early. Fire-and-forget: this is
+      // an advisory flag (gates the first-run auto-popup banner only), never worth
+      // blocking the wizard's own render on.
+      if (!this.fatalError) callJsonApi("onboarding", { action: "shown" });
+      this.jumpToFirstIncomplete();
+      this.loading = false;
+    },
+    async refresh() {
+      const r = await callJsonApi("onboarding", { action: "state" });
+      if (!r || !r.ok) { this.fatalError = "Couldn't reach the setup engine. Is a model connected?"; return; }
+      this.state = r.data || { sections_complete: [] };
+      this.fatalError = "";
+      // Best-effort: the readiness card is advisory, never worth blocking the
+      // wizard's own state refresh on a status hiccup (P1, see main readiness card).
+      const rs = await callJsonApi("onboarding", { action: "status" });
+      if (rs && rs.ok) this.readiness = rs.data || null;
+    },
+    jumpToFirstIncomplete() {
+      const done = new Set(this.state.sections_complete || []);
+      const i = this.SECTIONS.findIndex(s => !done.has(s.id));
+      this.step = i < 0 ? this.SECTIONS.length : i;   // >= length => "ready to finish"
+      this.loadForm();
+    },
+    loadForm() {
+      // P1: rehydrate from the engine's saved/resume-prefilled intake so revisiting
+      // an earlier section or resuming a later one never silently shows a blank form
+      // over already-saved (or resume-parsed) data.
+      this.sectionError = "";
+      const s = this.current;
+      this.form = {};
+      if (!s) return;
+      const saved = ((this.state.intake || {})[s.id]) || {};
+      if (s.id === "eeo") {
+        for (const f of s.fields) this.form[f.k] = saved[f.k] || "Decline to self-identify";
+        return;
+      }
+      for (const f of (s.fields || [])) {
+        let v = saved[f.k];
+        // The résumé-parse prefill (onboarding_service.py's resume-first bootstrap)
+        // writes identity's full name / key-attributes' skills under alternate keys
+        // than the wizard's own form fields; fall back to those so a resume upload's
+        // prefill actually shows up once the user reaches the section.
+        if ((v === undefined || v === null || v === "") && f.k === "full_name") v = saved.full_legal_name;
+        if ((v === undefined || v === null || v === "") && f.k === "skills") v = saved.technical_skills;
+        if (v !== undefined && v !== null) this.form[f.k] = v;
+      }
+    },
+    get current() { return this.SECTIONS[this.step] || null; },
+    get doneCount() { return (this.state.sections_complete || []).length; },
+    get progress() { return Math.round(100 * this.doneCount / this.SECTIONS.length); },
+    isDone(id) { return (this.state.sections_complete || []).includes(id); },
+    labelFor(id) { return TITLES[id] || id; },
+    goto(i) { if (i >= 0 && i < this.SECTIONS.length) { this.finished = false; this.step = i; this.loadForm(); } },
+    prev() { if (this.step > 0) { this.step--; this.loadForm(); } },
+
+    async save() {
+      const s = this.current; if (!s) return;
+      // P0: the base_resume step's own "Upload & parse" button already POSTs to
+      // /api/a0-applicant/base_resume, which stores intake["base_resume"] and marks
+      // the section complete engine-side. Re-posting `this.form` here as a generic
+      // onboarding "section" would overwrite that parsed record with a client stub
+      // ({resume_parsed:true, parsed_data:...}) — this step's "Save & continue" only
+      // ever needs to advance the wizard, never to save anything itself.
+      if (s.id === "base_resume") { await this.refresh(); this.next(); return; }
+      this.saving = true; this.sectionError = "";
+      const r = await callJsonApi("onboarding", { action: "section", section: s.id, data: this.form });
+      this.saving = false;
+      if (!r || !r.ok) { this.sectionError = this._err(r) || "The engine rejected this section."; return; }
+      await this.refresh(); this.next();
+    },
+    async skip() {
+      const s = this.current; if (!s) return;
+      this.saving = true;
+      await callJsonApi("onboarding", { action: "section", section: s.id, data: {} });
+      this.saving = false; await this.refresh(); this.next();
+    },
+    next() { if (this.step < this.SECTIONS.length) this.step++; this.loadForm(); },
+
+    async uploadResume() {
+      const el = document.getElementById('resumeFile');
+      if (!el || !el.files || !el.files[0]) { this.sectionError = 'Please select a file first.'; return; }
+      this.uploading = true; this.sectionError = ''; this.resumeResult = null;
+      try {
+        const fd = new FormData();
+        fd.append('file', el.files[0]);
+        const token = await getCsrfToken();
+        const r = await fetch('/api/a0-applicant/base_resume', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'X-CSRF-Token': token },
+          body: fd,
+        });
+        const resp = await r.json();
+        if (resp && resp.ok) {
+          this.resumeResult = { ok: true, data: resp.data };
+          this.form = { resume_parsed: true, parsed_data: resp.data };
+        } else {
+          this.resumeResult = { ok: false, error: (resp && resp.error) || 'Engine rejected the file' };
+        }
+      } catch (e) {
+        this.resumeResult = { ok: false, error: e.message || 'Upload failed' };
+      } finally {
+        this.uploading = false;
+      }
+    },
+
+    async confirmConflict(c, useParsed) {
+      const value = useParsed ? c.parsed_value : c.interview_value;
+      c._confirming = true;
+      const r = await callJsonApi("onboarding", { action: "confirm_conflict", attribute: c.attribute, value });
+      c._confirming = false;
+      if (!r || !r.ok) { this.sectionError = this._err(r) || "Couldn't save that choice."; return; }
+      c._resolved = true;
+      c._resolvedValue = value;
+    },
+
+    async finish() {
+      this.saving = true;
+      const r = await callJsonApi("onboarding", { action: "complete" });
+      this.saving = false;
+      // engine truth: 200 => ready; 409 => apply_missing in the error detail
+      if (r && r.ok) { this.readyState = { apply_ready: true, apply_missing: [] }; }
+      else { this.readyState = { apply_ready: false, apply_missing: this._missing(r) }; }
+      this.finished = true;
+    },
+    resume() { this.finished = false; this.jumpToFirstIncomplete(); },
+
+    _err(r) { try { return (JSON.parse(r.error).detail?.message) || r.error; } catch { return r && r.error; } },
+    _missing(r) {
+      try { const d = JSON.parse(r.error).detail; return d.missing_sections || d.apply_missing || []; }
+      catch { return (this.SECTIONS.map(s => s.id).filter(id => !this.isDone(id))); }
+    },
+  }));
+  })();
+  })();
+</script>

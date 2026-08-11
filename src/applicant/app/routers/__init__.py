@@ -27,6 +27,7 @@ from applicant.app.routers import (
     discovery_sources,
     documents,
     easy_apply,
+    explain,
     feedback,
     fonts,
     gallery,
@@ -41,7 +42,9 @@ from applicant.app.routers import (
     realtime,
     remote,
     research,
+    review,
     setup,
+    stealth,
     ui,
     update,
 )
@@ -51,6 +54,13 @@ def register_routers(app: FastAPI) -> None:
     # setup first (the LLM gate); ui + model-endpoints are ungated (they open the gate).
     app.include_router(setup.router)
     app.include_router(model_endpoints.router)
+    # EPIC STEALTH: the dedicated Stealth settings surface (FR-STEALTH-1/-4). Ungated
+    # like setup/model-endpoints/ui — it IS a settings surface (it configures the
+    # anti-detect/egress posture), needs no LLM gate, and reuses container.settings +
+    # container.setup_service, so no new container binding is required. The a0 shell
+    # reaches it through the stealth proxy (a0-applicant/api/stealth.py) + panel
+    # (a0-applicant/webui/stealth.html), auto-discovered by basename.
+    app.include_router(stealth.router)
     app.include_router(ui.router)
     # health/capabilities (P1-3): ungated, like the trio above — an owner must be
     # able to see WHY automated work hasn't started before the gate even opens.
@@ -74,7 +84,15 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(conversion.router)
     app.include_router(attributes.router)
     app.include_router(digest.router)
+    # EXPLAIN backend: per-posting weighted greens/reds score breakdown, read-only
+    # this round (no dedicated panel yet — reached via the a0 explain proxy).
+    app.include_router(explain.router)
     app.include_router(feedback.router)
+    # EPIC REVIEW-UX (RUX-1/2/3): the Pending-Reviews decide/refine workflow. Gated
+    # behind require_llm_configured internally (like feedback/digest), so its order
+    # among the gated routers does not matter. Its UI reuses documents.html; the a0
+    # shell reaches it through the review proxy (a0-applicant/api/review.py).
+    app.include_router(review.router)
     app.include_router(documents.router)
     app.include_router(chat.router)
     app.include_router(remote.router)

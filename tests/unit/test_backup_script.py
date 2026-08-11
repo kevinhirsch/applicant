@@ -36,6 +36,7 @@ def _fake_docker(bin_dir: Path) -> Path:
         # generic exit and stages an empty (deleted) member.
         'if [[ "$*" == *"--entrypoint tar"* && "$*" == *"-C /data secrets checkpoints fonts profiles"* ]]; then printf ENGINESTATE; exit 0; fi\n'
         'if [[ "$*" == *"tar -czf -"* ]]; then printf WORKSPACEDATA; exit 0; fi\n'
+        'if [[ "$*" == *"--entrypoint tar"* && "$*" == *"-C /a0 usr"* ]]; then printf A0DATA; exit 0; fi\n'
         "exit 0\n"
     )
     fake.write_text(body, encoding="utf-8")
@@ -87,6 +88,33 @@ def test_apply_produces_one_tarball_with_expected_members(tmp_path):
         assert db_member.read().decode("utf-8").strip() == "-- fake dump body"
         ws_member = tf.extractfile([n for n in tf.getnames() if n.endswith("workspace-data.tar.gz")][0])
         assert ws_member.read() == b"WORKSPACEDATA"
+        assert "./a0-shell-data.tar.gz" in names or "a0-shell-data.tar.gz" in names
+        manifest = tf.extractfile(
+            [n for n in tf.getnames() if n.endswith("MANIFEST.txt")][0]
+        ).read().decode("utf-8")
+        assert "a0-shell-data.tar.gz (a0 user data: settings, chats, memory, skills, plugins): present" in manifest
+        a0_member = tf.extractfile([n for n in tf.getnames() if n.endswith("a0-shell-data.tar.gz")][0])
+        assert a0_member.read() == b"A0DATA"
+
+
+def test_a0_data_included_in_tarball(tmp_path):
+    """Verify a0-shell-data.tar.gz is present in the backup tarball and manifest."""
+    bin_dir = tmp_path / "bin"
+    _fake_docker(bin_dir)
+    res = _run(tmp_path, "--apply", bin_dir=bin_dir)
+    assert res.returncode == 0, res.stderr
+    backups = sorted((tmp_path / "backups").glob("applicant-full-*.tar.gz"))
+    assert len(backups) == 1, res.stdout + res.stderr
+    with tarfile.open(backups[0], "r:gz") as tf:
+        names = set(tf.getnames())
+        assert "./a0-shell-data.tar.gz" in names or "a0-shell-data.tar.gz" in names
+        assert "./MANIFEST.txt" in names or "MANIFEST.txt" in names
+        manifest = tf.extractfile(
+            [n for n in tf.getnames() if n.endswith("MANIFEST.txt")][0]
+        ).read().decode("utf-8")
+        assert "a0-shell-data.tar.gz (a0 user data: settings, chats, memory, skills, plugins): present" in manifest
+        a0_member = tf.extractfile([n for n in tf.getnames() if n.endswith("a0-shell-data.tar.gz")][0])
+        assert a0_member.read() == b"A0DATA"
 
 
 def test_apply_leaves_gitignore_in_backup_dir(tmp_path):

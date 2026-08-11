@@ -125,10 +125,87 @@ class TestNormalizeRowTagsPosting:
         assert postings[0].easy_apply is True
 
 
+# --- ATS-board assisted-apply parity (2026-08-11 product-audit fix) ----------
+# Finding: easy_apply detection was wired ONLY into the JobSpy/LinkedIn adapter,
+# so 0/5497 real postings from Greenhouse/Lever (Kevin's DOMINANT sources) were
+# ever tagged -- meaning the RUX-4 assisted-apply handoff could never fire for
+# them. Every ATS board connector's own hosted apply form is directly automatable
+# (``adapters/browser/ats.py``'s Greenhouse/Lever/Ashby/SmartRecruiters/Workday
+# ATS adapters already exist), so each mapper now sets the SAME explicit
+# ``easy_apply`` attribute ``detect_easy_apply`` already honors first.
+
+
+@pytest.mark.unit
+class TestAtsBoardSourcesTagEasyApply:
+    def test_greenhouse_source_tags_easy_apply(self):
+        from applicant.adapters.discovery.clients import FakeGreenhouseClient
+        from applicant.adapters.discovery.jobspy_searxng import GreenhouseSource
+
+        src = GreenhouseSource(client=FakeGreenhouseClient(), token="acme", key="greenhouse:acme")
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is True for p in out)
+
+    def test_lever_source_tags_easy_apply(self):
+        from applicant.adapters.discovery.clients import FakeLeverClient
+        from applicant.adapters.discovery.jobspy_searxng import LeverSource
+
+        src = LeverSource(client=FakeLeverClient(), company="acme", key="lever:acme")
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is True for p in out)
+
+    def test_ashby_source_tags_easy_apply(self):
+        from applicant.adapters.discovery.clients import FakeAshbyClient
+        from applicant.adapters.discovery.jobspy_searxng import AshbySource
+
+        src = AshbySource(client=FakeAshbyClient(), token="acme", key="ashby:acme")
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is True for p in out)
+
+    def test_smartrecruiters_source_tags_easy_apply(self):
+        from applicant.adapters.discovery.clients import FakeSmartRecruitersClient
+        from applicant.adapters.discovery.jobspy_searxng import SmartRecruitersSource
+
+        src = SmartRecruitersSource(
+            client=FakeSmartRecruitersClient(), company="acme", key="smartrecruiters:acme"
+        )
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is True for p in out)
+
+    def test_workday_source_tags_easy_apply(self):
+        from applicant.adapters.discovery.clients import FakeWorkdayClient
+        from applicant.adapters.discovery.jobspy_searxng import WorkdaySource
+
+        src = WorkdaySource(
+            client=FakeWorkdayClient(),
+            token="acme.wd1.myworkdayjobs.com|acme|External|Acme",
+            key="workday:acme",
+        )
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is True for p in out)
+
+    def test_remote_job_aggregators_never_guess_easy_apply_true(self):
+        # Aggregators (RemoteOK/Remotive/Working Nomads) typically redirect to the
+        # ORIGINAL employer's own external application page -- not a same-domain
+        # hosted form this codebase's ats.py automation targets -- so they must
+        # stay untagged (never guessed), unlike the direct ATS board connectors.
+        from applicant.adapters.discovery.clients import FakeRemoteOkClient
+        from applicant.adapters.discovery.jobspy_searxng import RemoteOkSource
+
+        src = RemoteOkSource(client=FakeRemoteOkClient())
+        out = src.fetch(CID, SearchCriteria(campaign_id=CID))
+        assert out and all(p.easy_apply is False for p in out)
+
+
 # --- digest: the channel shows per role --------------------------------------
 
 
-def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1"):
+def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1", viability_score=1.0):
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) reads an already-persisted viability_score instead of scoring
+    # inline — a posting with no score is skipped from the digest entirely. These
+    # tests exercise the digest's easy-apply tagging/rendering directly (no
+    # ScoringService is wired here), so the posting must already carry a score,
+    # mirroring what the background scoring tick would have persisted.
     return JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
@@ -139,6 +216,7 @@ def _posting(cid, *, easy_apply=False, url="https://example.test/jobs/1"):
         description="python backend",
         source_key="jobspy:linkedin",
         easy_apply=easy_apply,
+        viability_score=viability_score,
     )
 
 

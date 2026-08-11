@@ -69,8 +69,10 @@ def test_takeover_desktop_publishes_host_port():
 
 @pytest.mark.integration
 def test_ui_waits_for_engine_health():
+    # commit 931e5b40b (2026-07-18, "AZ0-2: Compose integration -- a0 service +
+    # companion demotion") renamed the front-door UI service applicant-ui -> a0.
     spec = yaml.safe_load(_COMPOSE.read_text())
-    dep = spec["services"]["applicant-ui"]["depends_on"]
+    dep = spec["services"]["a0"]["depends_on"]
     # The public UI must wait for the engine to be service_healthy (real /healthz).
-    assert "api" in dep, "applicant-ui must depend on the engine api"
+    assert "api" in dep, "a0 (front-door UI) must depend on the engine api"
     assert dep["api"]["condition"] == "service_healthy"

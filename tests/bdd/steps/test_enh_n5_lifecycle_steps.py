@@ -80,7 +80,15 @@ def _make_posting():
     return JobPosting(
         id="post-1",
         campaign_id="camp-1",
-        title="Backend Engineer",
+        # NOT "Backend Engineer" -- these #344/#345 scenarios exercise the
+        # cold-start-neutral-score / loose-JSON-parse paths in ScoringService,
+        # unrelated to the role-domain-fit gate. Under the ALLOWLIST posture
+        # (round 2 of the miscalibration fix) the deterministic gates run
+        # UNCONDITIONALLY, even with no criteria set -- so the title must
+        # plainly match an in-domain role family or the gate short-circuits
+        # before the neutral-score / loose-JSON-parse path under test is
+        # ever reached (applicant.core.rules.role_domain_fit).
+        title="Delivery Manager",
         company="Acme",
         source_url="https://example.test/jobs/1",
         description="Build and run backend services in Python.",
@@ -170,7 +178,15 @@ def score_posting(n5ctx):
 
 @then("it receives the documented neutral score of seventy-five out of one hundred")
 def neutral_seventyfive(n5ctx):
-    assert n5ctx["scoring"].score == pytest.approx(0.75)
+    # The round-3/4 deterministic RANKING multipliers apply even on the
+    # no-criteria neutral-0.75 path (they reflect inherent posting quality,
+    # independent of the user's stated criteria) -- "Delivery Manager" is a
+    # round-4 STRONG fit-tier title, see ranking_factors.fit_to_profile_multiplier.
+    from applicant.core.rules.ranking_factors import fit_to_profile_multiplier
+
+    posting = _make_posting()
+    expected = min(1.0, 0.75 * fit_to_profile_multiplier(posting.title).multiplier)
+    assert n5ctx["scoring"].score == pytest.approx(expected)
 
 
 @then("the posting is considered viable")

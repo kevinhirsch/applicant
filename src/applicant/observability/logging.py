@@ -7,6 +7,7 @@ redaction so credentials/PII never reach the logs (FR-VAULT-3, NFR-PRIV-1).
 from __future__ import annotations
 
 import logging
+import itertools
 import re
 from collections import deque
 from contextvars import ContextVar
@@ -19,10 +20,22 @@ import structlog
 #: FR-LOG-3). It is the LAST processor's input, so secrets are already redacted.
 _LOG_RING: deque[dict] = deque(maxlen=500)
 
+#: Monotonic sequence cursor for ring-buffer entries (FR-LOG-3). The engine is a
+#: single Uvicorn process (no --workers), matching the single-process assumption the
+#: ring buffer already makes; ``itertools.count`` is cheap and thread-safe enough here.
+_SEQ = itertools.count(1)
 
-def recent_logs(limit: int = 100) -> list[dict]:
-    """Return the most-recent redacted log entries, newest last (FR-LOG-3)."""
+
+def recent_logs(limit: int = 100, since_seq: int | None = None) -> list[dict]:
+    """Return the most-recent redacted log entries, newest last (FR-LOG-3).
+
+    When ``since_seq`` is given, only entries with ``seq > since_seq`` are returned,
+    so a poller can ask for everything newer than the last entry it saw. ``limit``
+    still caps the page size (a long gap cannot return an unbounded burst).
+    """
     items = list(_LOG_RING)
+    if since_seq is not None:
+        items = [e for e in items if e.get("seq", -1) > since_seq]
     return items[-limit:] if limit else items
 
 
@@ -30,8 +43,11 @@ def _capture_log(_logger: Any, _method: str, event_dict: dict) -> dict:
     """structlog processor: snapshot the (redacted) event into the ring buffer.
 
     Runs AFTER ``_redact_secrets`` so nothing sensitive is retained (NFR-PRIV-1).
+    Each snapshot gets a monotonic ``seq`` cursor before it is appended (FR-LOG-3).
     """
-    _LOG_RING.append({k: _to_jsonable(v) for k, v in event_dict.items()})
+    entry = {k: _to_jsonable(v) for k, v in event_dict.items()}
+    entry["seq"] = next(_SEQ)
+    _LOG_RING.append(entry)
     return event_dict
 
 

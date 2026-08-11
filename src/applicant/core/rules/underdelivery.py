@@ -23,9 +23,15 @@ SOURCE_OK = "ok"
 SOURCE_EMPTY = "empty"
 SOURCE_ERROR = "error"
 SOURCE_RATE_LIMITED = "rate_limited"
+#: A source tripped its circuit breaker (N consecutive non-ok outcomes) and was
+#: skipped this run without even attempting ``fetch()`` (discovery resilience —
+#: see ``SourceCircuitBreaker`` in ``adapters.discovery.jobspy_searxng``).
+SOURCE_COOLDOWN = "cooldown"
 
 #: Statuses that constitute an underdelivery worth a per-item statement.
-SHORTFALL_STATUSES = frozenset({SOURCE_EMPTY, SOURCE_ERROR, SOURCE_RATE_LIMITED})
+SHORTFALL_STATUSES = frozenset(
+    {SOURCE_EMPTY, SOURCE_ERROR, SOURCE_RATE_LIMITED, SOURCE_COOLDOWN}
+)
 
 #: Cap on how many field labels one shortfall summary names inline (the full
 #: list still travels in the structured record).
@@ -71,6 +77,11 @@ def source_shortfall_message(
         return f"{label} could not be searched on the last check{detail}."
     if status == SOURCE_RATE_LIMITED:
         return f"{label} was skipped on the last check to avoid over-asking — it will be retried."
+    if status == SOURCE_COOLDOWN:
+        return (
+            f"{label} has been failing repeatedly and is paused for a cooldown "
+            "period — it will be retried automatically once it recovers."
+        )
     return None
 
 

@@ -117,3 +117,24 @@ def test_waiting_states_classified():
 @pytest.mark.unit
 def test_all_19_states_present():
     assert len(list(ApplicationState)) == 25
+
+
+@pytest.mark.unit
+def test_transition_with_none_from_raises():
+    """None frm must raise IllegalStateTransition."""
+    with pytest.raises(IllegalStateTransition):
+        transition(None, S.DISCOVERED)
+
+
+@pytest.mark.unit
+def test_transition_with_none_to_raises():
+    """None to must raise IllegalStateTransition."""
+    with pytest.raises(IllegalStateTransition):
+        transition(S.DISCOVERED, None)
+
+
+@pytest.mark.unit
+def test_transition_with_both_none_raises():
+    """Both None must raise IllegalStateTransition."""
+    with pytest.raises(IllegalStateTransition):
+        transition(None, None)

@@ -1,0 +1,432 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#840) Criteria — match criteria + learned converting signature per campaign. -->
+<style>
+  .acriteria{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .acriteria h1{font-size:1.5rem;margin:0 0 .25rem}
+  .acriteria .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .acriteria .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .acriteria .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .acriteria .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .acriteria .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .acriteria .btn:disabled{opacity:.5;cursor:not-allowed}
+  .acriteria .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:acriteria-spin .6s linear infinite}
+  @keyframes acriteria-spin{to{transform:rotate(360deg)}}
+  .acriteria .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .acriteria .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .acriteria .section{margin-bottom:1.5rem}
+  .acriteria .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .acriteria .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .acriteria .item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:10px;overflow:hidden}
+  .acriteria .item .preview{font-size:.78rem;color:var(--color-text-secondary,#6b7683);word-break:break-all}
+  .acriteria .item .title{font-weight:600;font-size:.85rem;margin-bottom:4px;word-break:break-word}
+  .acriteria .item .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .acriteria table{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem}
+  .acriteria table th{text-align:left;font-weight:600;padding:6px 8px;border-bottom:2px solid var(--color-border,#d8e0e6);color:var(--color-text-secondary,#6b7683);font-size:.8rem}
+  .acriteria table td{padding:6px 8px;border-bottom:1px solid var(--color-border,#d8e0e6)}
+  .acriteria .hr-text{font-size:.82rem;line-height:1.5;margin-bottom:.75rem;color:var(--color-text)}
+  .acriteria textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;resize:vertical;min-height:60px;box-sizing:border-box}
+  .acriteria input[type="text"],.acriteria input[type="number"]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.82rem;box-sizing:border-box}
+  .acriteria .field-group{margin-bottom:.75rem}
+  .acriteria .field-group label{display:block;font-weight:600;font-size:.82rem;margin-bottom:4px;color:var(--color-text-secondary,#6b7683)}
+  .acriteria .signature-facet{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:10px}
+  .acriteria .signature-facet h3{font-size:.95rem;margin:0 0 4px;display:flex;align-items:center;gap:6px}
+  .acriteria .signature-facet .meta{font-size:.78rem;color:var(--color-text-secondary,#6b7683)}
+</style>
+
+<div class="acriteria" x-data="criteriaPanel()">
+  <h1>🎯 Criteria <button class="help-btn" onclick="window.openModal('/plugins/applicant/webui/help.html?surface=criteria')" title="Help for criteria">?</button></h1>
+  <div class="sub">Match criteria + learned converting signature</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <div class="picker">
+      <select x-model="selectedCampaignId" @change="loadCriteriaAndSignature()">
+        <option value="">Select a campaign…</option>
+        <template x-for="(c, ci) in campaigns" :key="c.id || c.name || ci">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+      <button class="btn" @click="loadCriteriaAndSignature()" :disabled="!selectedCampaignId">↻ Refresh</button>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <!-- Section 1: Criteria -->
+      <div class="section">
+        <h2>📋 Criteria
+          <button class="btn" @click="startEditCriteria()" x-show="criteriaData && !editingCriteria" style="margin-left:auto;font-size:.78rem;padding:4px 10px">✏️ Edit</button>
+        </h2>
+
+        <div x-show="!criteriaData">
+          <div class="empty">
+            <p>No criteria configured for this campaign.</p>
+          </div>
+        </div>
+
+        <!-- Edit form: pre-filled from criteriaData, comma-separated for list fields. -->
+        <div x-show="criteriaData && editingCriteria">
+          <div class="field-group">
+            <label for="edit-titles-input">📌 Job Titles (comma-separated)</label>
+            <input type="text" id="edit-titles-input" x-model="editForm.titles" placeholder="e.g. Scrum Master, RTE, Agile Coach" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-workmodes-input">💼 Work Modes (comma-separated)</label>
+            <input type="text" id="edit-workmodes-input" x-model="editForm.work_modes" placeholder="e.g. remote, hybrid" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-locations-input">📍 Locations (comma-separated)</label>
+            <input type="text" id="edit-locations-input" x-model="editForm.locations" placeholder="e.g. Remote, Austin TX" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-salary-input">💰 Salary Floor</label>
+            <input type="number" id="edit-salary-input" x-model="editForm.salary_floor" step="1000" min="0" placeholder="e.g. 120000" :disabled="savingCriteria">
+          </div>
+          <div class="field-group">
+            <label for="edit-keywords-input">🔑 Keywords (comma-separated)</label>
+            <input type="text" id="edit-keywords-input" x-model="editForm.keywords" placeholder="e.g. python, agile, scrum" :disabled="savingCriteria">
+          </div>
+
+          <div class="err" x-show="criteriaSaveError" x-text="criteriaSaveError"></div>
+
+          <div class="toolbar">
+            <button class="btn primary" @click="saveCriteria()" :disabled="savingCriteria">
+              <span x-show="!savingCriteria">💾 Save</span>
+              <span x-show="savingCriteria">Saving…</span>
+            </button>
+            <button class="btn" @click="cancelEditCriteria()" :disabled="savingCriteria">Cancel</button>
+          </div>
+        </div>
+
+        <div x-show="criteriaData && !editingCriteria">
+          <div class="hr-text" x-show="criteriaData?.human_readable" x-text="criteriaData?.human_readable || ''"></div>
+
+          <div x-show="criteriaData.titles && criteriaData.titles.length > 0">
+            <h2>📌 Job Titles <span class="count" x-text="'(' + criteriaData.titles.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Title</th></tr></thead>
+              <tbody>
+                <template x-for="(t, ti) in criteriaData.titles" :key="ti">
+                  <tr><td x-text="t"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.locations && criteriaData.locations.length > 0">
+            <h2>📍 Locations <span class="count" x-text="'(' + criteriaData.locations.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Location</th></tr></thead>
+              <tbody>
+                <template x-for="(loc, li) in criteriaData.locations" :key="li">
+                  <tr><td x-text="loc"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.work_modes && criteriaData.work_modes.length > 0">
+            <h2>💼 Work Modes <span class="count" x-text="'(' + criteriaData.work_modes.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Mode</th></tr></thead>
+              <tbody>
+                <template x-for="(wm, wi) in criteriaData.work_modes" :key="wi">
+                  <tr><td x-text="wm"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.keywords && criteriaData.keywords.length > 0">
+            <h2>🔑 Keywords <span class="count" x-text="'(' + criteriaData.keywords.length + ')'"></span></h2>
+            <table>
+              <thead><tr><th>Keyword</th></tr></thead>
+              <tbody>
+                <template x-for="(kw, ki) in criteriaData.keywords" :key="ki">
+                  <tr><td x-text="kw"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div x-show="criteriaData.salary_floor !== undefined && criteriaData.salary_floor !== null">
+            <h2>💰 Salary Floor</h2>
+            <p class="hr-text" x-text="criteriaData.salary_floor"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Learned Signature -->
+      <div class="section">
+        <h2>🖊️ Learned Signature</h2>
+
+        <div class="empty" x-show="!signatureData || !signatureData.signature || Object.keys(signatureData.signature).length === 0">
+          <p>No converting-role signature data yet.</p>
+        </div>
+
+        <div x-show="signatureData && signatureData.signature && Object.keys(signatureData.signature).length > 0">
+          <template x-for="(values, facetName) in signatureData.signature" :key="facetName">
+            <div class="signature-facet">
+              <h3 x-text="facetName"></h3>
+              <div class="hr-text" x-text="(values || []).join(', ')"></div>
+            </div>
+          </template>
+          <div class="meta" style="margin-top:8px">
+            <span x-show="signatureData.samples !== undefined">📄 Learned from <span x-text="signatureData.samples"></span> converting application<span x-text="signatureData.samples === 1 ? '' : 's'"></span></span>
+          </div>
+        </div>
+
+        <div class="field-group" style="margin-top:12px" x-show="signatureData && signatureData.exploration_budget !== undefined && signatureData.exploration_budget !== null">
+          <label for="exploration-budget-input">🔬 Exploration budget (explore/exploit mix, 0–1)</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="range" id="exploration-budget-input" min="0" max="1" step="0.05" x-model.number="explorationBudgetInput" style="flex:1" :disabled="savingBudget">
+            <span class="meta" x-text="Number(explorationBudgetInput).toFixed(2)" style="min-width:2.5em"></span>
+            <button class="btn" @click="setExplorationBudget()" :disabled="savingBudget || explorationBudgetInput === signatureData.exploration_budget">
+              <span x-show="!savingBudget">Save</span>
+              <span x-show="savingBudget">Saving…</span>
+            </button>
+          </div>
+          <div class="meta">Fraction of effort reserved for under-sampled/new sources — higher explores more, lower exploits what already converts.</div>
+        </div>
+      </div>
+
+      <!-- Section 3: Apply Learned Adjustment -->
+      <div class="section">
+        <h2>🧪 Apply Learned Adjustment</h2>
+        <div class="field-group">
+          <label for="adjustment-input">Adjustment (JSON dict)</label>
+          <textarea id="adjustment-input" x-model="adjustment" placeholder='e.g. {"keywords": ["python", "rust"], "salary_floor": 120000}'></textarea>
+        </div>
+        <div class="field-group">
+          <label for="rationale-input">Rationale</label>
+          <input type="text" id="rationale-input" x-model="rationale" placeholder="Why this adjustment?">
+        </div>
+        <button class="btn primary" @click="applyLearnedAdjustment()" :disabled="adjusting || !adjustment.trim()">
+          <span x-show="!adjusting">Submit Adjustment</span>
+          <span x-show="adjusting">Applying…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+  (() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+
+  window.Alpine.data("criteriaPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    criteriaData: { titles: [], locations: [], work_modes: [], keywords: [] },
+    signatureData: { signature: {}, samples: 0, exploration_budget: null },
+    loading: true,
+    fatalError: "",
+    adjusting: false,
+    adjustment: "",
+    rationale: "",
+    explorationBudgetInput: 0,
+    savingBudget: false,
+    editingCriteria: false,
+    editForm: { titles: "", locations: "", work_modes: "", keywords: "", salary_floor: "" },
+    savingCriteria: false,
+    criteriaSaveError: "",
+
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+        } else {
+          this.selectedCampaignId = "__system__";
+        }
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadCriteriaAndSignature();
+      }
+    },
+
+    async loadCriteriaAndSignature() {
+      this.loading = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+
+      const [criteriaRes, sigRes] = await Promise.all([
+        callJsonApi("criteria", { action: "view", campaign_id: cid }),
+        callJsonApi("criteria", { action: "signature", campaign_id: cid })
+      ]);
+
+      if (!criteriaRes || !criteriaRes.ok) {
+        this.fatalError = (criteriaRes && criteriaRes.error) || "Couldn't reach the criteria engine.";
+        this.criteriaData = {};
+      } else {
+        this.criteriaData = (criteriaRes && criteriaRes.data) || {};
+        const d = this.criteriaData;
+        d.titles = d.titles || [];
+        d.locations = d.locations || [];
+        d.work_modes = d.work_modes || [];
+        d.keywords = d.keywords || [];
+      }
+
+      if (sigRes && sigRes.ok) {
+        this.signatureData = (sigRes && sigRes.data) || {};
+        const sd = this.signatureData;
+        sd.signature = sd.signature || {};
+        sd.samples = sd.samples || 0;
+        this.explorationBudgetInput = sd.exploration_budget === undefined || sd.exploration_budget === null
+          ? 0
+          : Number(sd.exploration_budget);
+      } else {
+        this.signatureData = { signature: {}, samples: 0, exploration_budget: null };
+      }
+
+      this.loading = false;
+    },
+
+    async setExplorationBudget() {
+      this.savingBudget = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      const r = await callJsonApi("criteria", {
+        action: "set_exploration_budget",
+        campaign_id: cid,
+        exploration_budget: Number(this.explorationBudgetInput)
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to set exploration budget.";
+      } else {
+        this.signatureData.exploration_budget = Number(this.explorationBudgetInput);
+      }
+      this.savingBudget = false;
+    },
+
+    startEditCriteria() {
+      const d = this.criteriaData || {};
+      this.editForm = {
+        titles: (d.titles || []).join(", "),
+        locations: (d.locations || []).join(", "),
+        work_modes: (d.work_modes || []).join(", "),
+        keywords: (d.keywords || []).join(", "),
+        salary_floor: (d.salary_floor === undefined || d.salary_floor === null) ? "" : d.salary_floor
+      };
+      this.criteriaSaveError = "";
+      this.editingCriteria = true;
+    },
+
+    cancelEditCriteria() {
+      this.editingCriteria = false;
+      this.criteriaSaveError = "";
+    },
+
+    // Diffs editForm against the last-loaded criteriaData and sends ONLY the fields
+    // that actually changed, so an edit that only touches keywords doesn't also
+    // re-send (and re-trigger the integral confirm gate for) titles/locations.
+    async saveCriteria(confirmChange) {
+      this.savingCriteria = true;
+      this.criteriaSaveError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      const d = this.criteriaData || {};
+
+      const toList = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const sameList = (a, b) => JSON.stringify(a) === JSON.stringify(b || []);
+
+      const newTitles = toList(this.editForm.titles);
+      const newLocations = toList(this.editForm.locations);
+      const newWorkModes = toList(this.editForm.work_modes);
+      const newKeywords = toList(this.editForm.keywords);
+      const salaryRaw = this.editForm.salary_floor;
+      const newSalaryFloor = (salaryRaw === "" || salaryRaw === null || salaryRaw === undefined)
+        ? null
+        : Number(salaryRaw);
+
+      const body = { action: "update", campaign_id: cid };
+      if (!sameList(newTitles, d.titles)) body.titles = newTitles;
+      if (!sameList(newLocations, d.locations)) body.locations = newLocations;
+      if (!sameList(newWorkModes, d.work_modes)) body.work_modes = newWorkModes;
+      if (!sameList(newKeywords, d.keywords)) body.keywords = newKeywords;
+      if (newSalaryFloor !== null && newSalaryFloor !== d.salary_floor) {
+        body.salary_floor = newSalaryFloor;
+      }
+
+      const hasChanges = Object.keys(body).some((k) => k !== "action" && k !== "campaign_id");
+      if (!hasChanges) {
+        this.savingCriteria = false;
+        this.editingCriteria = false;
+        return;
+      }
+
+      if (confirmChange) body.confirm = true;
+
+      const r = await callJsonApi("criteria", body);
+      if (!r || !r.ok) {
+        // Integral fields (titles/locations/salary_floor) need confirmation (HTTP 409);
+        // re-ask, then retry — same pattern as the attributes panel.
+        if (r && r.status === 409 && !confirmChange) {
+          this.savingCriteria = false;
+          if (window.confirm("This changes an integral criterion (titles, locations, or salary floor). Save this change?")) {
+            await this.saveCriteria(true);
+          } else {
+            this.criteriaSaveError = "Change not confirmed — nothing was saved.";
+          }
+          return;
+        }
+        this.criteriaSaveError = (r && r.error) || "Failed to save criteria.";
+        this.savingCriteria = false;
+        return;
+      }
+
+      this.editingCriteria = false;
+      this.savingCriteria = false;
+      await this.loadCriteriaAndSignature();
+    },
+
+    async applyLearnedAdjustment() {
+      this.adjusting = true;
+      this.fatalError = "";
+      const cid = this.selectedCampaignId || "__system__";
+      let adjDict;
+      try {
+        adjDict = JSON.parse(this.adjustment);
+      } catch (e) {
+        this.fatalError = "Invalid JSON in adjustment field.";
+        this.adjusting = false;
+        return;
+      }
+      const r = await callJsonApi("criteria", {
+        action: "apply_learned",
+        campaign_id: cid,
+        adjustment: adjDict,
+        rationale: this.rationale
+      });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Failed to apply adjustment.";
+      } else {
+        this.adjustment = "";
+        this.rationale = "";
+        await this.loadCriteriaAndSignature();
+      }
+      this.adjusting = false;
+    }
+  }));
+  })();
+  })();
+</script>

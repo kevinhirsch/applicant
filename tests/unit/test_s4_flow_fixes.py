@@ -192,6 +192,16 @@ def test_material_review_flow_completes_end_to_end(tmp_path):
     # Approve the variant (the HTTP approve_variant path).
     material.approve_variant(variants[0].id)
 
+    # _review_approved() (agent_loop) requires EVERY generated document approved too,
+    # not just the variant — and FR-AUTO (2026-08-06) auto-drafts a cover letter
+    # alongside the resume by default, so one is sitting here unapproved. Approve it
+    # the same way the review UI does: open the redline (view-before-approve gate,
+    # material_service.approve()) then approve — mirrors a real reviewer clearing
+    # every material item, not just the resume, before the flow may submit.
+    for doc in storage.documents.list_for_application(app.id):
+        material.open_revision(doc.id)
+        material.approve(doc.id)
+
     # Deliver the final-approval decision to the durable gate, then re-drive.
     orch.send(f"application:{app.id}", "final_approval", {"decision": "finished_by_engine"})
     loop.run_once(cid, now=now)
@@ -575,15 +585,18 @@ def test_redline_link_targets_served_review_surface():
 
 # ============================================================ #8 viable count criteria
 @pytest.mark.unit
-def test_viable_count_scores_with_campaign_criteria(tmp_path):
-    """#8 (FR-AGENT-2): _viable_count's fallback score_posting receives the campaign
-    criteria, not None.
-
-    FAIL-BEFORE: score_posting(posting) was called with no criteria, scoring against
-    empty defaults.
+def test_viable_count_never_falls_back_to_live_scoring(tmp_path):
+    """#8 (FR-AGENT-2), UPDATED for the P0 fix (2026-08-10):
+    ``_viable_count`` used to fall back to a live ``score_posting`` call (threaded
+    with the campaign criteria) for any UNSCORED posting -- this test originally
+    proved that threading worked. That whole fallback branch is now GONE: on a
+    campaign with a large unscored backlog, it meant an O(n) LLM-backed call EVERY
+    tick that never even persisted (only ``score_viability`` does) — confirmed live
+    as the root cause of a tick that streamed thousands of wasted LLM calls and
+    never reached scoring/digest/auto-draft at all. ``_viable_count`` now reads the
+    PERSISTED ``viability_score`` only; an unscored posting is simply not counted
+    (yet) and the scorer is never called from here.
     """
-    from applicant.core.entities.search_criteria import SearchCriteria
-
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _make_campaign(storage, run_mode=RunMode.UNTIL_N_VIABLE)
@@ -591,23 +604,16 @@ def test_viable_count_scores_with_campaign_criteria(tmp_path):
         JobPosting(id=JobPostingId(new_id()), campaign_id=cid, title="R", company="A", source_url="u")
     )
 
-    crit = SearchCriteria(campaign_id=cid, titles=("engineer",))
-
-    class _Criteria:
-        def get_criteria(self, campaign_id):
-            return crit
-
     scoring = _FakeScoring()
     loop = AgentLoop(
         storage=storage,
         agent_run_service=AgentRunService(storage),
         scoring_service=scoring,
-        criteria_service=_Criteria(),
         orchestrator=orch,
     )
     n = loop._viable_count(cid)
-    assert n == 1
-    assert crit in scoring.criteria_seen  # criteria was threaded into scoring
+    assert n == 0, "an unscored posting is not counted -- never live-scored"
+    assert scoring.criteria_seen == [], "_viable_count must never call score_posting at all"
 
 
 # ============================================================ #9 record_acted ordering
@@ -810,9 +816,9 @@ def test_admin_logs_negative_limit_is_floored_to_zero():
         captured: dict = {}
         real = app.state.container.admin_query_service.logs
 
-        def _spy(limit):
+        def _spy(limit, since_seq=None):
             captured["limit"] = limit
-            return real(limit)
+            return real(limit, since_seq)
 
         app.state.container.admin_query_service.logs = _spy
         r = client.get("/api/admin/logs?limit=-7")
@@ -848,8 +854,18 @@ def test_build_digest_no_scoring_emits_numeric_zero_score():
     storage = InMemoryStorage()
     cid = _make_campaign(storage)
     pid = JobPostingId(new_id())
+    # DigestService._build_scored_pairs (2026-08-10 PERF/DRAFT-UNBLOCK fix, commit
+    # 005c41a57) skips a posting with NO persisted score at all, before the
+    # no-scoring-service fallback below is ever reached -- give it a placeholder
+    # score (any non-None value, mirroring a posting scored by a PRIOR scoring
+    # pass) so this test can reach and pin that fallback: with no scoring SERVICE
+    # wired, the row's score is always coerced to a flat numeric 0.0 regardless of
+    # whatever was persisted.
     storage.postings.add(
-        JobPosting(id=pid, campaign_id=cid, title="R", company="A", source_url="http://x")
+        JobPosting(
+            id=pid, campaign_id=cid, title="R", company="A", source_url="http://x",
+            viability_score=0.5,
+        )
     )
     digest = DigestService(storage, _SpyNotifier(), scoring=None)
     rows = digest.build_digest(cid)

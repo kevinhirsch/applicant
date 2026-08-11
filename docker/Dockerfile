@@ -180,7 +180,7 @@ RUN uv run --no-sync patchright install chromium
 # of the already-installed deps. A code change busts only this fast layer — no apt,
 # no dependency reinstall, no camoufox re-fetch.
 COPY --chown=applicant:applicant src ./src
-RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
+RUN uv sync --no-dev --extra browser --extra mcp --frozen || uv sync --no-dev --extra browser --extra mcp
 
 # App code + workspace static + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).

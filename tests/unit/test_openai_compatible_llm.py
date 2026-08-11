@@ -400,6 +400,123 @@ def test_ollama_structured_output():
     assert res.structured == {"score": 9}
 
 
+# --- P0 (2026-08-10): a provider that 400s on response_format:json_schema --
+# DeepSeek (the configured tier-2 fallback, model "deepseek-v4-flash") only
+# accepts {"type": "json_object"}/{"type": "text"} and 400s outright on the
+# native {"type": "json_schema"} shape scoring sends — BEFORE any text is
+# returned, so the pre-existing "native parse failed -> prompt fallback" path
+# was never reached (the 400 wasn't a context-overflow signal either, so it
+# just failed the whole tier). This left scoring with no WORKING fallback
+# whenever the local tier hiccuped, exhausting the ladder on every call.
+def test_structured_output_falls_back_when_provider_400s_on_json_schema():
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        body = json.loads(request.content)
+        if state["calls"] == 1:
+            assert body.get("response_format", {}).get("type") == "json_schema"
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Invalid parameter: 'response_format' of type "
+                            "'json_schema' is not supported."
+                        ),
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        # Retry on the SAME tier: no native json_schema -- json_object +
+        # schema-in-prompt (FR-LLM-4a).
+        assert body.get("response_format", {}).get("type") == "json_object"
+        assert any("JSON schema" in m["content"] for m in body["messages"])
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": '{"score": 5}'}}]}
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://api.deepseek.com/v1",
+        model="deepseek-v4-flash", transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="rate")], json_schema=_SCHEMA)
+    assert res.structured == {"score": 5}
+    assert res.tier == 1, "must succeed on the SAME tier via the fallback, not climb"
+    assert state["calls"] == 2
+
+
+def test_response_format_fallback_still_climbs_the_ladder_if_it_also_fails():
+    """If EVEN the json_object fallback 400s (an ultra-minimal provider), that
+    must surface as an ordinary tier failure and climb to the next configured
+    tier — never crash the completion outright."""
+    def always_400(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"error": {"message": "response_format is not supported at all"}}
+        )
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"score": 4}'}}]})
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if "tierone" in str(request.url):
+            return always_400(request)
+        return ok(request)
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://tierone.test/v1", model="small", context_window=8192),
+            TierConfig(provider="openai", base_url="https://tiertwo.test/v1", model="big", context_window=8192),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    res = llm.complete([ChatMessage(role="user", content="rate")], json_schema=_SCHEMA)
+    assert res.structured == {"score": 4}
+    assert res.tier == 2, "tier 1 must have exhausted (native 400 + fallback 400) and climbed"
+
+
+def test_plain_400_without_json_schema_is_an_ordinary_tier_failure():
+    """A 400 on a request that never asked for json_schema at all must NOT be
+    treated as a response-format problem — it is an ordinary tier failure
+    (the ladder exhausts / climbs exactly as before)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(LLMLadderExhausted):
+        llm.complete([ChatMessage(role="user", content="hi")])
+
+
+def test_context_overflow_still_takes_priority_over_response_format_fallback():
+    """A genuine context-overflow 400 on a json_schema request must still climb
+    to a larger tier (existing FR-LLM-4a behavior) rather than being
+    misclassified as a response-format-unsupported retry."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["model"] == "small":
+            return httpx.Response(
+                400, json={"error": {"message": "maximum context length exceeded"}}
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"score": 6}'}}]})
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="small", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://a/v1", model="big", context_window=100_000),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    res = llm.complete([ChatMessage(role="user", content="q")], json_schema=_SCHEMA)
+    assert res.tier == 2
+    assert res.structured == {"score": 6}
+
+
 # --- FR-UI-5: gate --------------------------------------------------------
 def test_is_configured():
     assert OpenAICompatibleLLM().is_configured() is False

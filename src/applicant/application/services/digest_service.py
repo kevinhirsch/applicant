@@ -27,8 +27,9 @@ from datetime import UTC, date, datetime, timedelta
 from applicant.core.entities.application import Application
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
-from applicant.core.errors import InvalidInput, NotFound
+from applicant.core.errors import IllegalStateTransition, InvalidInput, NotFound
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, JobPostingId, new_id
+from applicant.core.rules.freshness import posting_freshness
 from applicant.core.rules.jd_match import compute_jd_match
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
@@ -259,6 +260,29 @@ class DigestService:
         except Exception:
             return None
 
+    @staticmethod
+    def _recency_bonus(posting) -> float:
+        """Freshness boost (points on the 0-100 fit scale) so fresh high-fit roles rank
+        UP — the fix for 'I find the right jobs at the wrong time'. +15 if <2d, +10 <7d,
+        +5 <14d, else 0. Uses date_posted, else first_seen; None -> 0 (legacy rows)."""
+        import datetime as _dt
+        ref = getattr(posting, "date_posted", None) or getattr(posting, "first_seen", None)
+        if ref is None:
+            return 0.0
+        try:
+            if ref.tzinfo is None:
+                ref = ref.replace(tzinfo=_dt.timezone.utc)
+            age_days = (_dt.datetime.now(_dt.timezone.utc) - ref).total_seconds() / 86400.0
+        except Exception:
+            return 0.0
+        if age_days < 2:
+            return 15.0
+        if age_days < 7:
+            return 10.0
+        if age_days < 14:
+            return 5.0
+        return 0.0
+
     def build_digest(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> list[dict]:
@@ -278,6 +302,13 @@ class DigestService:
         "no warning" verdict could hide a real one for the rest of the day.
         """
         criteria = self._resolve_criteria(campaign_id, criteria)
+        # PERF (2026-08-10): load the campaign-wide collections ONCE, not per row. The
+        # per-row _presubmit_warnings duplicate + volume-cap checks EACH did a full
+        # list_for_campaign (ALL postings) on EVERY row -> 133 rows x 2 = 266 full
+        # scans (~1.4M ORM hydrations, ~167s) -> the digest GET timed out and the
+        # scheduler's auto-draft tick was starved. Hoisting makes it ~2 loads total.
+        _postings_by_id = {p.id: p for p in self._storage.postings.list_for_campaign(campaign_id)}
+        _applications = self._storage.applications.list_for_campaign(campaign_id)
         rows: list[dict] = []
         for posting, row in self._scored_pairs(campaign_id, criteria):
             row = dict(row)
@@ -288,8 +319,15 @@ class DigestService:
             # to inform the decision: surface the SAME checks here, read-only, so the
             # digest row itself carries a plain-language warning BEFORE approval. A
             # warning never excludes a row from the digest (unlike the pipeline block).
-            row["warnings"] = self._presubmit_warnings(campaign_id, posting)
+            row["warnings"] = self._presubmit_warnings(
+                campaign_id, posting, postings_by_id=_postings_by_id, applications=_applications
+            )
+            row["_recency"] = self._recency_bonus(posting)
             rows.append(row)
+        # Recency-aware rank-stacking (FR-DISC): best FIT first, lifted by a freshness
+        # boost so newly-appeared high-fit roles float to the very top. Fit dominates;
+        # freshness breaks ties and surfaces recent roles early ('not late').
+        rows.sort(key=lambda r: (r.get("viability_score") or 0) + r.get("_recency", 0.0), reverse=True)
         return rows
 
     def _scored_pairs(
@@ -339,6 +377,16 @@ class DigestService:
             # viability threshold — the user asked for it explicitly, so the digest
             # keeps it and says (honestly) how it scored instead.
             user_added = (posting.source_key or "") == USER_ADDED_SOURCE_KEY
+            # PERF / DRAFT-UNBLOCK (2026-08-10): never LLM-re-score the unscored
+            # backlog synchronously in the digest hot path. build_digest ran
+            # score_for_digest on EVERY posting (5k+), fresh-scoring the ~4k unscored
+            # ones on each cache-miss rebuild -> the digest GET timed out (>40s) AND
+            # the scheduler's auto-draft (which calls build_digest) never finished
+            # within its tick, so ZERO applications were ever drafted. The background
+            # scoring pass scores postings over time; the digest only READS
+            # already-scored ones. User-added postings are always kept (FR-DIG).
+            if getattr(posting, "viability_score", None) is None and not user_added:
+                continue
             row = {
                 "posting_id": posting.id,
                 "title": posting.title,
@@ -353,23 +401,49 @@ class DigestService:
                 # set at discovery time; never drives automation by itself).
                 "easy_apply": bool(getattr(posting, "easy_apply", False)),
             }
+            # Product ask (2026-08-10): a fresh row's fit score alone doesn't say
+            # whether the role is still worth chasing — a great-fit posting from a
+            # month ago is likely already filled. Surface WHEN it was posted (or,
+            # honestly, when discovery first saw it if the board never gave a real
+            # post date) plus a relative-age string and a staleness flag, so a
+            # stale-but-high-fit row visibly reads as lower-value. Omitted keys
+            # entirely when neither timestamp is on the posting (legacy rows) —
+            # the frontend must degrade gracefully, never render "Invalid Date".
+            freshness = posting_freshness(
+                getattr(posting, "date_posted", None), getattr(posting, "first_seen", None)
+            )
+            if freshness:
+                row.update(freshness)
             if self._scoring is not None:
-                # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
-                # digest GETs); fall back to plain score_posting for lightweight doubles.
-                score_fn = getattr(self._scoring, "score_for_digest", None) or self._scoring.score_posting
-                scoring = score_fn(posting, criteria)
+                # RESILIENT (2026-08-10): read the STORED viability score; NEVER call
+                # score_for_digest in this hot path. That scorer LLM-re-scores whenever
+                # a posting's criteria_sig/learning_sig differs from the persisted one,
+                # so every cache-miss digest rebuild re-scored the whole scored set ->
+                # the digest GET timed out (>45s) and auto-draft (which calls
+                # build_digest) never finished its tick -> ZERO applications drafted.
+                # The background scoring pass owns fresh scoring; the digest only READS.
+                # A stale-but-present score is fine (the next background pass refreshes).
+                from applicant.core.entities.viability_scoring import ViabilityScoring
+                persisted = getattr(posting, "viability_score", None)
+                _rat = getattr(posting, "rationale", None)
+                rationale_text = (
+                    str(_rat.get("text")) if isinstance(_rat, dict) and _rat.get("text") else ""
+                )
+                scoring = ViabilityScoring(
+                    posting_id=posting.id, score=persisted or 0.0, rationale=rationale_text
+                )
                 if not self._scoring.is_viable(scoring):
                     if not user_added:
                         continue  # below threshold; excluded from the digest (FR-AGENT-3)
                     row["viability_score"] = round(scoring.score * 100)
                     row["why_suggested"] = (
-                        f"{scoring.rationale} Kept in your digest because you added "
+                        f"{rationale_text} Kept in your digest because you added "
                         "this role yourself, even though it scored below your threshold."
                     )
                     pairs.append((posting, row))
                     continue
                 row["viability_score"] = round(scoring.score * 100)
-                row["why_suggested"] = scoring.rationale
+                row["why_suggested"] = rationale_text
             else:
                 # ROBUST: ``JobPostingModel.viability_score`` is nullable and the
                 # no-scoring branch has no score yet. Emit a numeric 0.0 (not None) so
@@ -448,7 +522,9 @@ class DigestService:
         row["keyword_matched"] = matched
         row["keyword_missing"] = missing
 
-    def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
+    def _presubmit_warnings(
+        self, campaign_id: CampaignId, posting, *, postings_by_id=None, applications=None
+    ) -> list[dict]:
         """Human-readable presubmit-safety warnings for one digest row.
 
         Reuses ALL FOUR ``presubmit_safety`` checks unchanged (same reasons/
@@ -489,6 +565,8 @@ class DigestService:
                 posting,
                 self._storage,
                 cooldown_days=params.get("duplicate_cooldown_days", 30),
+                postings_by_id=postings_by_id,
+                applications=applications,
             )
         except PresubmitBlock as exc:
             warnings.append({"check": exc.check, "message": exc.reason})
@@ -500,6 +578,8 @@ class DigestService:
                 posting,
                 self._storage,
                 max_per_day=params.get("max_apps_per_company_per_day", 3),
+                postings_by_id=postings_by_id,
+                applications=applications,
             )
         except PresubmitBlock as exc:
             warnings.append({"check": exc.check, "message": exc.reason})
@@ -818,6 +898,24 @@ class DigestService:
         }
 
     # --- decisions (FR-DIG-3/5, FR-FB-1) ----------------------------------
+    def _advance_if_legal(self, app, status: ApplicationState) -> None:
+        """Advance an existing application to ``status`` when the §7 state machine allows.
+
+        Auto-draft (FR-AUTO) creates DIGESTED applications. A later human
+        approve/decline must advance them (DIGESTED -> APPROVED/DECLINED) or
+        AgentLoop._process_approvals keeps skipping them forever (it only acts on
+        APPROVED apps). Illegal transitions are ignored so the legal new-row path
+        still applies for postings that never became applications.
+        """
+        if app.status is status:
+            return
+        try:
+            updated = app.with_status(status)
+        except IllegalStateTransition:
+            return
+        self._storage.applications.update(updated)
+        self._storage.commit()
+
     def _application_for(self, target_id, *, status: ApplicationState) -> ApplicationId:
         """Resolve a digest target to a real application row (FR-DIG-3).
 
@@ -826,17 +924,21 @@ class DigestService:
         (its FK), so a not-yet-pursued posting must be promoted to an application
         first — otherwise the decision insert hits a foreign-key violation (-> 500).
         If ``target_id`` is already an application, it is returned unchanged (status
-        untouched). If it is a posting, find-or-create its application at ``status``
-        (APPROVED so the loop pursues it, or DECLINED for a terminal decline),
-        mirroring AgentLoop._ensure_application. Unknown id -> NotFound (404).
+        advanced via the legal §7 transition). If it is a posting, find-or-create
+        its application at ``status`` (APPROVED so the loop pursues it, or DECLINED
+        for a terminal decline), mirroring AgentLoop._ensure_application. Unknown id
+        -> NotFound (404).
         """
-        if self._storage.applications.get(target_id) is not None:
+        existing_app = self._storage.applications.get(target_id)
+        if existing_app is not None:
+            self._advance_if_legal(existing_app, status)
             return target_id  # already an application
         posting = self._storage.postings.get(JobPostingId(str(target_id)))
         if posting is None:
             raise NotFound(f"No posting or application for id '{target_id}'.")
         existing = self._storage.applications.get_by_posting(posting.campaign_id, posting.id)
         if existing is not None:
+            self._advance_if_legal(existing, status)
             return existing.id
         app = Application(
             id=ApplicationId(new_id()),

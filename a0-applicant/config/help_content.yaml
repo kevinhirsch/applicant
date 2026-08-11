@@ -1,0 +1,300 @@
+# Per-surface help content — single source of truth for the help panel and chat responses.
+# Keyed by surface id. Copy must be plain-language, name real prerequisites, avoid spec jargon.
+
+today:
+  title: Today
+  steps:
+    - Check the daily dashboard for upcoming deadlines and overdue items.
+    - Review recent activity from your active applications.
+    - Use quick-action shortcuts for common tasks like sending follow-ups.
+    - Click any card to open the related surface for more detail.
+  prerequisites: "A valid account with at least one active campaign"
+
+digest:
+  title: Digest
+  steps:
+    - Open the digest to see a curated summary of updates across your surfaces.
+    - Filter the digest by surface or time period to narrow what you see.
+    - Mark items as read or actionable to track what needs attention.
+    - Use the recap action to get a condensed overview of recent changes.
+  prerequisites: "At least one application or campaign with recent activity"
+
+documents:
+  title: Documents
+  steps:
+    - Upload application-related documents (resumes, cover letters, references).
+    - Preview and download files directly from the documents list.
+    - Organise documents by category using the folder structure.
+    - Search within document contents to find specific information.
+  prerequisites: "A base resume or cover letter uploaded in your profile"
+
+activity:
+  title: Activity
+  steps:
+    - Check the activity feed for agent runs, scheduler events, and session history.
+    - Filter by status (running, paused, completed) to narrow results.
+    - Review current intent and recent runs for context.
+    - Use the run/pause/resume controls to manage agent execution.
+  prerequisites: "At least one agent session or scheduled task"
+
+automation:
+  title: Automation
+  steps:
+    - Adjust approval timeouts and wait periods to control how long pending actions remain active.
+    - Configure the scheduler interval to set how often the engine checks for new tasks and updates.
+    - Set the ATS match rate floor to filter applications below a minimum suitability score.
+    - Manage memory and skills write approval to control which data the agent can persist automatically.
+    - Configure browser engine, egress mode, and relay settings for automated browsing sessions.
+    - Toggle LLM smart routing preference to favor local models or route to cloud endpoints.
+  prerequisites: "A valid account with at least one active campaign"
+
+campaigns:
+  title: Campaigns
+  steps:
+    - Create a new campaign by giving it a name and selecting a template.
+    - Add recipient lists or configure job-boards to source candidates.
+    - Monitor campaign performance through the activity feed and analytics.
+    - Clone an existing campaign to reuse its configuration for a new run.
+  prerequisites: "At least one connected job board account or recipient list"
+
+tracker:
+  title: Tracker
+  steps:
+    - Open the tracker to see a pipeline view of all your applications.
+    - Filter by stage, campaign, or date range to focus on specific items.
+    - Drag applications between stages to update their progress.
+    - Click any application row to open its full detail view.
+  prerequisites: "At least one application in flight"
+
+takeover:
+  title: Live Takeover
+  steps:
+    - Review the live session dashboard to see active takeovers.
+    - Select a session to monitor its real-time progress.
+    - Use operator controls to intervene or guide the session as needed.
+    - End the session when the takeover is complete.
+  prerequisites: "An active session with a connected agent or operator"
+
+discovery:
+  title: Discovery
+  steps:
+    - Open discovery to find new job postings from connected sources.
+    - Toggle source keys on or off to control which job boards are searched.
+    - Review discovered listings and decide which to pursue.
+    - Send promising listings to your campaign for automated application.
+  prerequisites: "At least one connected job board with an active API key"
+
+demo:
+  title: Demo Data
+  steps:
+    - Check whether demo mode is enabled (requires DEMO_MODE=1 environment variable).
+    - Load demo data to populate sample campaigns, postings, and applications for testing.
+    - Clear demo data to remove the demo dataset and return to an empty state.
+    - Note that demo data is separate from real data and does not affect production workflows.
+  prerequisites: "DEMO_MODE=1 environment variable set on the engine service"
+
+criteria:
+  title: Criteria
+  steps:
+    - Define screening criteria for each campaign (skills, experience, location).
+    - Set weight or priority for each criterion to control ranking.
+    - Review how applicants score against your criteria.
+    - Adjust criteria thresholds as needed to refine your candidate pool.
+  prerequisites: "An active campaign with at least one incoming application"
+
+screening:
+  title: Screening
+  steps:
+    - Review each applicant's profile against your campaign criteria.
+    - Accept or reject candidates based on screening results.
+    - View detailed explanation of why a candidate passed or failed screening.
+    - Shortlisted candidates proceed to the next stage for review.
+  prerequisites: "Completed criteria setup on the campaign"
+
+vault:
+  title: Vault
+  steps:
+    - Store sensitive credentials, API keys, and tokens securely in the vault.
+    - Access stored secrets when configuring integrations or job boards.
+    - Rotate or revoke credentials from the vault at any time.
+    - Audit access logs to see which surfaces used each credential.
+  prerequisites: "At least one external integration that requires credentials"
+
+savejob:
+  title: Save a Job
+  steps:
+    - Paste a job posting URL into the URL field.
+    - Select the target campaign from the dropdown.
+    - Click "Save job" to intake the posting.
+    - Verify the confirmation message appears.
+  prerequisites: "A job posting URL and at least one active campaign"
+
+easy_apply:
+  title: Easy Apply
+  steps:
+    - Enable easy-apply mode to auto-fill application forms from your profile.
+    - Verify the filled fields before submission to catch any mismatches.
+    - Set default answers for common questions to speed up the process.
+    - Review submission logs to confirm which applications were sent.
+  prerequisites: "A completed base resume and at least one job listing targeted"
+
+gallery:
+  title: Gallery
+  steps:
+    - Open the gallery to view screenshots and materials for a campaign.
+    - Browse generated cover letters, resumes, and other collateral.
+    - Approve or flag materials for revision before they are used.
+    - Download approved materials for offline use or manual submission.
+  prerequisites: "A campaign with at least one generated document or screenshot"
+
+compare:
+  title: Compare
+  steps:
+    - Select two or more applications or candidates to compare side by side.
+    - Review key fields side by side: skills, experience, match score.
+    - Use the comparison to decide which candidate to advance.
+    - Export the comparison report for your records.
+  prerequisites: "At least two applications in screening or review stage"
+
+mind:
+  title: Mind
+  steps:
+    - Open the mind surface to see a visual map of your application ecosystem.
+    - Explore relationships between campaigns, applications, and outcomes.
+    - Filter the map by time period or surface type.
+    - Click any node to navigate directly to that surface.
+  prerequisites: "At least two active campaigns or a campaign with multiple applications"
+
+notifications:
+  title: Notifications
+  steps:
+    - Check notifications for updates on application status and new opportunities.
+    - Configure which events trigger notifications (email, in-app, or both).
+    - Mark notifications as read to clear your queue.
+    - Click a notification to jump directly to the relevant surface.
+  prerequisites: "A configured notification channel (email or in-app)"
+
+health:
+  title: Health
+  steps:
+    - Open the health panel to view system status and diagnostics.
+    - Check API connectivity to confirm your integrations are working.
+    - Review recent errors and warnings for any surfaces that need attention.
+    - Monitor performance metrics such as response times and resource usage.
+  prerequisites: "none"
+
+ops:
+  title: Ops
+  steps:
+    - Open the ops panel to manage system operations and maintenance tasks.
+    - View scheduled jobs and their execution status.
+    - Trigger manual operations like cache clearing or data reindexing.
+    - Review operation logs for troubleshooting.
+  prerequisites: "Administrator or operator role on the account"
+
+connections:
+  title: Integrations
+  steps:
+    - Connect your email account using IMAP/SMTP credentials.
+    - For Gmail, generate an app password at myaccount.google.com/apppasswords (your regular password fails with 2FA).
+    - Use imap.gmail.com:993 for IMAP and smtp.gmail.com:465 for SMTP.
+    - Connect a CalDAV calendar by providing the URL, username, and app password.
+    - This panel connects the mailbox and calendar the ENGINE (job-search) reads/writes. It is SEPARATE from Settings -> Connections (the ASSISTANT's own MCP integrations).
+  prerequisites: "A Gmail account with 2FA enabled (to generate an app password), IMAP/SMTP host:port, CalDAV URL, or other compatible email/calendar provider credentials"
+
+fonts:
+  title: Fonts
+  steps:
+    - Open the fonts panel to see which fonts are installed for resume rendering.
+    - Detect missing fonts by uploading a resume or document.
+    - Install new fonts from a file to expand rendering options.
+    - Refresh the font cache after installation to apply changes.
+  prerequisites: "A resume document in .docx or .tex format"
+
+model_endpoints:
+  title: Model Endpoints
+  steps:
+    - Configure AI model endpoints by providing a base URL and API key.
+    - Select the provider (OpenAI, Anthropic, Ollama, etc.) and model name.
+    - Test the endpoint to confirm connectivity before saving.
+    - Switch between endpoints to compare output quality or performance.
+  prerequisites: "A valid API key for at least one supported AI provider"
+
+feedback:
+  title: Feedback
+  steps:
+    - Submit feedback about the system directly through this surface.
+    - Include details about what worked well or what could improve.
+    - Attach screenshots or logs if reporting an issue.
+    - Track the status of your submitted feedback.
+  prerequisites: "none"
+
+chat:
+  title: Chat
+  steps:
+    - Ask questions about your applications, documents, or campaigns.
+    - Request document generation or summarisation through the chat interface.
+    - Issue commands to automate workflows or trigger actions.
+    - Review chat history to revisit past answers and decisions.
+  prerequisites: "A configured AI model endpoint"
+
+channels:
+  title: Channels
+  steps:
+    - Configure a Discord webhook URL to receive notifications in your server.
+    - Set up an email (SMTP) channel using an Apprise-style mailto:// URL with your SMTP credentials.
+    - Add an ntfy channel by specifying your ntfy topic URL (e.g. https://ntfy.sh/YourTopic).
+    - Save your channel configuration and use the send-test button to verify connectivity.
+  prerequisites: "A Discord webhook URL, an ntfy topic, or SMTP credentials (host, port, user, password)"
+
+privacy:
+  title: Privacy & Sandbox
+  steps:
+    - Telemetry data collection is off by default; enable it only if you want to share anonymous usage data.
+    - Configure a telemetry endpoint to send data to your own analytics service.
+    - Set up the sandbox connection with your Proxmox API URL, node, and template VM ID.
+    - Enter the CDP host and port for browser automation connectivity.
+    - Enter an RDP username for remote desktop access to sandbox VMs.
+  prerequisites: "none"
+
+tiers:
+  title: Model tiers
+  steps:
+    - View the current model-escalation ladder showing which models are used for each agent tier.
+    - Edit a tier by clicking its row and selecting a different model from the dropdown.
+    - Add or remove tiers from the escalation ladder using the add/remove controls.
+    - Drag tiers to reorder the escalation priority.
+    - Save the ladder to persist your changes.
+  prerequisites: "none (uses the configured model endpoints)"
+
+interview_prep:
+  title: Interview Prep
+  steps:
+    - Select a campaign from the campaign picker to see its applications.
+    - Select an application to generate an interview-preparation brief.
+    - Review the brief for key skills, talking points, and questions to ask.
+    - The brief is engine-generated and requires a configured LLM to produce content.
+  prerequisites: "A campaign with at least one application that has reached interview-invited stage"
+
+shortcuts:
+  title: Keyboard Shortcuts
+  steps:
+    - Press Esc to close any open modal or panel.
+    - Use Ctrl+S (or Cmd+S on macOS) to save or approve a pending action.
+    - Navigate between panels by clicking sidebar buttons.
+    - Use the shortcut reference panel (Shortcuts in the sidebar) for a full list.
+  prerequisites: "none"
+
+config:
+  title: Settings
+  steps:
+    - Use the Settings hub to navigate to the configuration surface you need.
+    - Click a card to open the corresponding settings sub-panel.
+    - Channels: configure Discord/email/ntfy notification channels and send a test.
+    - Model Tiers: manage the model-escalation ladder.
+    - Privacy & Sandbox: set telemetry preferences and Proxmox sandbox connection.
+    - Automation: adjust approval timeouts, scheduling, eligibility, and engine preferences.
+    - Fonts: manage installed fonts for r&eacute;sum&eacute; rendering.
+    - Model Endpoints: configure AI provider base URLs, API keys, and model names.
+    - Notifications: review in-app notification history and preferences.
+  prerequisites: "none"

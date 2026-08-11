@@ -1,0 +1,332 @@
+/* a0-applicant default visual identity — calm, professional palette */
+/* CSP-safe: system font stack only, no @import or external fonts */
+
+:root {
+  /* Primary accent */
+  --ap-color-primary: var(--color-primary, #4361ee);
+  --color-primary-hover: #3a56d4;
+  /* UIKIT-STANDARDS.md contrast fix (dark default): white .btn.primary label
+     text on the shared slate --color-primary-dark (#737a81) measures 4.35:1,
+     an AA fail for normal text. This darkens the same slate tone just enough
+     to clear 4.5:1 (measured ~5.0:1) without changing its hue. Light mode
+     already passes at ~9.7:1 via --ap-color-primary → --color-primary-light,
+     so it's reused unchanged below in .light-mode — see the leak-trap note
+     on the .light-mode block for why that reuse is safe here. */
+  --ap-btn-primary-bg: #697076;
+
+  /* Neutrals (slightly warm greys) */
+  --ap-color-text: var(--color-text, #2c2c2c);
+  /* UIKIT-STANDARDS.md contrast fix: this was a single literal (#5a5a5a)
+     shared by both themes, measuring only 2.7:1 on the dark background
+     (AA fail) since dark mode never got its own value. Split into an
+     explicit -dark/-light pair, re-resolved under .light-mode below, same
+     pattern as the --ap-color-* aliases' APP-LP-1 fix. */
+  --color-text-secondary-dark: #9aa0a6;
+  --color-text-secondary-light: #5a5a5a;
+  --color-text-secondary: var(--color-text-secondary-dark);
+  --ap-color-background: var(--color-background, #f5f7fa);
+  --ap-color-panel: var(--color-panel, #e8ecf1);
+  --ap-color-border: var(--color-border, #d4d9e0);
+
+  /* Semantic */
+  --color-success: #2ecc71;
+  --color-success-bg: #e8f8ef;
+  --color-success-text: #1a7a3a;
+  --color-warning: #f39c12;
+  --color-warning-bg: #fef5e6;
+  --color-warning-border: #f0d9a0;
+  --color-warning-text: #8a6d1a;
+  --color-danger: #e74c3c;
+  --color-danger-bg: #fdecea;
+  --color-danger-border: #e8a0a0;
+  --color-danger-text: #9b1c1c;
+
+  /* Input / card surface. UIKIT-STANDARDS.md §1 "live gap": this was a
+     single literal (#ffffff) shared by both themes, so .card/.item/.surface
+     and every text input rendered a WHITE background even in dark mode —
+     combined with --ap-color-text resolving to white in dark mode, that's
+     white text on a white surface (1:1, unreadable) anywhere a panel didn't
+     locally override the background (confirmed real, not just theoretical —
+     see help.html's .surface, and every <input>/<textarea>/<select> in the
+     app, which style directly off this token). Split into an explicit
+     -dark/-light pair; light keeps the original #ffffff (already correct
+     there), dark gets a near-black "raised surface" tone that keeps white
+     text at ~16.7:1. */
+  --color-input-bg-dark: #1e1e1e;
+  --color-input-bg-light: #ffffff;
+  --color-input-bg: var(--color-input-bg-dark);
+  --color-hover-bg: #eef1f3;
+
+  /* Typography */
+  --font-sm: 0.82rem;
+  --font-base: 0.92rem;
+  --font-lg: 1.15rem;
+  --font-xl: 1.5rem;
+  --font-h1: 1.5rem;
+  --font-h2: 1.1rem;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 14px;
+  --space-lg: 20px;
+
+  /* Radii */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+}
+
+/* APP-LP-1 fix: the five --ap-color-* aliases above resolve var(--color-*, ...)
+   AT :root — a CSS custom property's value is fixed once, at the element that
+   declares it, then simply inherits unchanged to descendants. index.css's own
+   light/dark switch works by re-declaring --color-panel/--color-border/etc. on
+   `.light-mode` (added to <body>, not <html>), which sits BELOW :root in the
+   tree. Without this block, --ap-color-* keeps whatever --color-* equalled at
+   :root (always the dark default, since :root itself never carries
+   `.light-mode`) no matter what <body> overrides — every panel that styles
+   itself via .btn/.badge/.card/etc (all of them) rendered dark chips/borders
+   even with light mode on. Mirroring index.css's own :root + .light-mode
+   two-block pattern here re-resolves the aliases wherever `.light-mode` is
+   actually applied, fixing it at the root cause for every consumer at once.
+   Dark mode is untouched (this block only matches once .light-mode is set). */
+.light-mode {
+  --ap-color-primary: var(--color-primary, #4361ee);
+  --ap-color-text: var(--color-text, #2c2c2c);
+  --ap-color-background: var(--color-background, #f5f7fa);
+  --ap-color-panel: var(--color-panel, #e8ecf1);
+  --ap-color-border: var(--color-border, #d4d9e0);
+  /* UIKIT-STANDARDS.md contrast fixes — same re-declare-under-.light-mode
+     pattern as the five aliases above, applied to the three tokens flagged
+     in the audit as single-literal/no-.light-mode-counterpart:
+     --color-text-secondary, --color-input-bg, --ap-btn-primary-bg. */
+  --color-text-secondary: var(--color-text-secondary-light);
+  --color-input-bg: var(--color-input-bg-light);
+  /* Reusing --ap-color-primary (not a new literal) is safe here specifically
+     because this declaration lives on the SAME .light-mode selector/element
+     as the --ap-color-primary override two lines up — by the time this var()
+     resolves, --ap-color-primary is already light's value on this element,
+     not :root's frozen dark one. That's the same reasoning the file-level
+     APP-LP-1 comment above documents; it would NOT be safe to reference
+     --ap-color-primary from :root, only from within .light-mode itself. */
+  --ap-btn-primary-bg: var(--ap-color-primary);
+}
+
+/* ── Global reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ── Headings ── */
+h1 { font-size: var(--font-h1); font-weight: 700; margin: var(--space-md) 0 var(--space-sm); }
+h2 { font-size: var(--font-h2); font-weight: 600; margin: var(--space-md) 0 var(--space-xs); }
+h3 { font-size: var(--font-lg); font-weight: 600; margin: var(--space-sm) 0 var(--space-xs); }
+
+/* ── Buttons ── */
+.btn, .sidebar-action {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: inherit; font-size: var(--font-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--ap-color-border);
+  border-radius: var(--radius-sm);
+  background: var(--ap-color-panel);
+  color: var(--ap-color-text);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.btn:hover, .sidebar-action:hover, button:hover {
+  background: var(--color-hover-bg);
+  border-color: var(--ap-color-primary);
+}
+.btn.primary, .btn-primary, .sidebar-action.primary {
+  /* UIKIT-STANDARDS.md contrast fix: white label text needs the theme-scoped
+     --ap-btn-primary-bg (§ :root/.light-mode above), not the shared
+     --ap-color-primary directly — see the fix comment on --ap-btn-primary-bg
+     for why (dark-mode --ap-color-primary alone was only 4.35:1). */
+  background: var(--ap-btn-primary-bg);
+  color: #fff;
+  border-color: var(--ap-btn-primary-bg);
+}
+.btn.primary:hover, .btn-primary:hover, .sidebar-action.primary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.btn:disabled, button:disabled {
+  opacity: 0.55; cursor: default;
+}
+
+/* ── Inputs / selects ── */
+input[type="text"], input[type="email"], input[type="password"],
+input[type="number"], input[type="search"], input[type="date"],
+textarea, select {
+  font-family: inherit; font-size: var(--font-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--ap-color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--ap-color-text);
+  outline: none;
+  transition: border-color 0.15s;
+  min-width: 0;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--ap-color-primary);
+}
+
+/* ── Cards / surfaces ── */
+.card, .item, .surface {
+  border: 1px solid var(--ap-color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-input-bg);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+.surface-header {
+  cursor: pointer; padding: var(--space-xs) var(--space-md);
+  background: var(--ap-color-panel); font-weight: 600;
+  font-size: var(--font-sm); user-select: none;
+  display: flex; justify-content: space-between; align-items: center;
+  border-radius: var(--radius-md) var(--radius-md) 0 var(--radius-md);
+}
+.surface-header:hover { background: var(--color-hover-bg); }
+.surface-content {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-sm); line-height: 1.5;
+  border-top: 1px solid var(--ap-color-border);
+}
+
+/* ── Empty state ── */
+.empty {
+  text-align: center; padding: var(--space-lg) var(--space-md);
+  color: var(--color-text-secondary);
+}
+.empty .icon { font-size: var(--font-xl); margin-bottom: var(--space-xs); }
+.empty .title { font-weight: 600; font-size: var(--font-base); margin-bottom: var(--space-xs); }
+.empty .subtitle { font-size: var(--font-sm); }
+
+/* ── Error line ── */
+.err {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-sm);
+}
+
+/* ── Spinner / loading ── */
+.spinner {
+  display: inline-block;
+  width: 24px; height: 24px;
+  border: 3px solid var(--ap-color-border);
+  border-top-color: var(--ap-color-primary);
+  border-radius: 50%;
+  animation: border-bounce 0.6s linear infinite;
+}
+@keyframes border-bounce { to { transform: rotate(360deg); } }
+.loading { text-align: center; padding: var(--space-lg); color: var(--color-text-secondary); }
+
+/* ── Badge / tag ── */
+.badge, .tag {
+  font-size: 0.72rem; padding: 2px 7px;
+  border-radius: 10px; background: var(--ap-color-panel);
+  display: inline-block; color: var(--color-text-secondary);
+}
+.badge.sensitive, .tag.sensitive {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  font-weight: 600;
+}
+.badge.success, .tag.success {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+.badge.warning, .tag.warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+/* ── Panel base containers (all share the same pattern) ── */
+.aattrs, .aoobe, .adigest, .atoday, .acriteria, .aactivity,
+.aaudit, .acampaigns, .achat, .acompare, .aconversion, .adoc,
+.adormant, .aeasy-apply, .afeedback, .afonts, .agallery,
+.ahealth, .amind, .amodel-endpoints, .anotifications, .aops,
+.aresearch, .ascreening, .atakeover, .aupdate, .avault,
+.surface {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--space-sm) var(--space-xs);
+  color: var(--ap-color-text);
+}
+
+/* ── Main panel (wider) ── */
+.main-panel, .a-main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-md) var(--space-sm);
+  color: var(--ap-color-text);
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  padding: var(--space-sm);
+  border-right: 1px solid var(--ap-color-border);
+  background: var(--ap-color-panel);
+}
+.sidebar-action {
+  width: 100%; justify-content: flex-start;
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: 2px;
+}
+.sidebar-action.active {
+  /* Same white-on-primary contrast fix as .btn.primary above. */
+  background: var(--ap-btn-primary-bg);
+  color: #fff;
+  border-color: var(--ap-btn-primary-bg);
+}
+
+/* ── Table helpers ── */
+table { border-collapse: collapse; width: 100%; font-size: var(--font-sm); }
+th, td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--ap-color-border); text-align: left; }
+th { font-weight: 600; background: var(--ap-color-panel); }
+
+/* ── Flex layout helpers ── */
+.flex-row { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }
+.flex-col { display: flex; flex-direction: column; gap: var(--space-xs); }
+.gap-sm { gap: var(--space-sm); }
+.gap-md { gap: var(--space-md); }
+.mt-sm { margin-top: var(--space-sm); }
+.mt-md { margin-top: var(--space-md); }
+.mb-sm { margin-bottom: var(--space-sm); }
+.mb-md { margin-bottom: var(--space-md); }
+.p-sm { padding: var(--space-sm); }
+.p-md { padding: var(--space-md); }
+
+/* ── Help affordance: per-surface '?' button inside h1 ── */
+.help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--ap-color-border);
+  background: var(--ap-color-panel);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  vertical-align: middle;
+  margin-left: 6px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.help-btn:hover {
+  /* Same white-on-primary contrast fix as .btn.primary above. */
+  background: var(--ap-btn-primary-bg);
+  color: #fff;
+  border-color: var(--ap-btn-primary-bg);
+}

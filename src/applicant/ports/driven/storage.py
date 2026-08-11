@@ -22,6 +22,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
 from applicant.core.entities.detection_event import DetectionEvent
+from applicant.core.entities.discovery_board import AtsBoard
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUp
@@ -74,8 +75,21 @@ class JobPostingRepository(Protocol):
     def add(self, posting: JobPosting) -> None: ...
     def get(self, posting_id: JobPostingId) -> JobPosting | None: ...
     def list_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]: ...
-    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
-        """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring)."""
+    def list_unscored_for_campaign(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[JobPosting]:
+        """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring).
+
+        ``limit`` (P0 2026-08-10) bounds the query itself so a caller that only ever
+        consumes a small capped batch per call (``agent_loop.py``'s per-tick scoring
+        loop) never loads the ENTIRE unscored backlog into memory just to use the
+        first few rows. ``None`` (default) is unbounded, unchanged behavior.
+        """
+        ...
+
+    def count_scored_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Cheap ``COUNT(*)`` of postings with a stored ``viability_score`` (landing-page
+        pipeline funnel, APP-LP-1) — a single indexed count, never a full row scan."""
         ...
 
 
@@ -95,6 +109,14 @@ class ApplicationRepository(Protocol):
         self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
     ) -> list[Application]:
         """Applications in ``campaign_id`` whose status is in ``statuses``."""
+        ...
+
+    def count_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> int:
+        """Cheap ``COUNT(*)`` of applications in ``campaign_id`` whose status is in
+        ``statuses`` (landing-page pipeline funnel, APP-LP-1) — a single indexed
+        count, never a full row hydration."""
         ...
 
 
@@ -156,6 +178,14 @@ class OutcomeEventRepository(Protocol):
     ) -> list[OutcomeEvent]: ...
     def exists_terminal_for_application(self, application_id: ApplicationId) -> bool:
         """True if a terminal (submitted/converted) outcome exists (idempotent submit)."""
+        ...
+
+    def count_distinct_applications_for_campaign(
+        self, campaign_id: CampaignId, types: tuple[str, ...]
+    ) -> int:
+        """Distinct applications in ``campaign_id`` with at least one outcome event
+        whose ``type`` is in ``types`` (landing-page pipeline funnel's "interview"
+        stage, APP-LP-1) — one indexed join+count, never a per-row scan."""
         ...
 
 
@@ -247,6 +277,17 @@ class ActionEventRepository(Protocol):
     #: residual audit rows). Returns the count deleted.
     def delete_for_campaign(self, campaign_id: CampaignId) -> int: ...
 
+    def list_since(
+        self, campaign_id: CampaignId, since: datetime, *, action: str | None = None
+    ) -> list[ActionEvent]:
+        """Events for ``campaign_id`` at/after ``since`` (landing-page daily-progress
+        gadget, APP-LP-1): a single indexed range scan on ``(campaign_id,
+        occurred_at)``, optionally narrowed to one ``action`` value. The window is
+        always small (a day or a few weeks of one campaign's activity), so callers
+        may filter the small returned set in Python instead of a bespoke query per
+        derived stat."""
+        ...
+
 
 class OnboardingProfileRepository(Protocol):
     """Resumable onboarding intake + completion record (FR-ONBOARD-2)."""
@@ -286,6 +327,17 @@ class DiscoverySourceRepository(Protocol):
     def upsert(self, source: DiscoverySource) -> None: ...
     def get(self, campaign_id: CampaignId, source_key: str) -> DiscoverySource | None: ...
     def list_for_campaign(self, campaign_id: CampaignId) -> list[DiscoverySource]: ...
+
+
+@runtime_checkable
+class DiscoveryBoardRepository(Protocol):
+    """Persisted runtime add/remove keyless ATS boards (Greenhouse/Lever)."""
+
+    def upsert(self, board: AtsBoard) -> None: ...
+    def get(self, source_key: str) -> AtsBoard | None: ...
+    def list_all(self) -> list[AtsBoard]: ...
+    def delete(self, source_key: str) -> bool: ...
+    def delete_for_campaign(self, campaign_id: str) -> int: ...
 
 
 @runtime_checkable
@@ -389,6 +441,7 @@ class StoragePort(Protocol):
     pending_actions: PendingActionRepository
     field_mappings: FieldMappingRepository
     discovery_sources: DiscoverySourceRepository
+    discovery_boards: DiscoveryBoardRepository
     screening_answer_library: ScreeningAnswerLibraryRepository
     agent_runs: AgentRunRepository
     detection_events: DetectionEventRepository

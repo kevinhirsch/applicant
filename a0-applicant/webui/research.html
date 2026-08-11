@@ -1,0 +1,294 @@
+<link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
+<!-- AZ3 (#842) Research — run company/role research, view cached results + budget. -->
+<style>
+  .aresearch{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
+  .aresearch h1{font-size:1.5rem;margin:0 0 .25rem}
+  .aresearch .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
+  .aresearch .err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:8px 12px;font-size:.85rem;margin-top:.75rem}
+  .aresearch .empty{text-align:center;padding:30px 10px;color:var(--color-text-secondary,#6b7683)}
+  .aresearch .empty h2{font-size:1.2rem;margin:0 0 .3rem;color:var(--color-text)}
+  .aresearch .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aresearch .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-panel,#f2f5f7);color:var(--color-text);font:inherit;font-weight:600;cursor:pointer;font-size:.82rem}
+  .aresearch .btn.primary{background:var(--color-primary,#2d7ff9);color:#fff;border-color:var(--color-primary,#2d7ff9)}
+  .aresearch .btn:disabled{opacity:.5;cursor:not-allowed}
+  .aresearch .loading{text-align:center;padding:30px;color:var(--color-text-secondary,#6b7683)}
+  .aresearch .spinner{display:inline-block;width:24px;height:24px;border:3px solid var(--color-border,#d8e0e6);border-top-color:var(--color-primary,#2d7ff9);border-radius:50%;animation:aresearch-spin .6s linear infinite}
+  @keyframes aresearch-spin{to{transform:rotate(360deg)}}
+  .aresearch .picker{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+  .aresearch .picker select{flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem;max-width:100%}
+  .aresearch .section{margin-bottom:1.5rem}
+  .aresearch .section h2{font-size:1.15rem;margin:0 0 .5rem;display:flex;align-items:center;gap:8px}
+  .aresearch .section h2 .count{font-size:.8rem;font-weight:400;color:var(--color-text-secondary,#6b7683)}
+  .aresearch .field{display:flex;flex-direction:column;gap:6px;margin-bottom:.75rem}
+  .aresearch .field label{font-weight:600;font-size:.82rem;color:var(--color-text-secondary,#6b7683)}
+  .aresearch .field input,.aresearch .field textarea{padding:7px 12px;border-radius:8px;border:1px solid var(--color-border,#d8e0e6);background:var(--color-background,#fff);color:var(--color-text);font:inherit;font-size:.85rem}
+  .aresearch .field textarea{min-height:60px;resize:vertical}
+  .aresearch .run-box{background:var(--color-panel,#f2f5f7);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:1.25rem}
+  .aresearch .run-box h3{margin:0 0 .75rem;font-size:.95rem}
+  .aresearch .result-card{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:10px;padding:12px;margin-bottom:.75rem;overflow:hidden}
+  .aresearch .result-card .title{font-weight:600;font-size:.9rem;margin-bottom:4px;word-break:break-word}
+  .aresearch .result-card .meta{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .aresearch .result-card .body{font-size:.82rem;margin-top:6px;line-height:1.4}
+  .aresearch .budget-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:.75rem}
+  .aresearch .budget-item{background:var(--color-background,#fff);border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:10px;text-align:center}
+  .aresearch .budget-item .value{font-size:1.3rem;font-weight:700}
+  .aresearch .budget-item .label{font-size:.72rem;color:var(--color-text-secondary,#6b7683);margin-top:2px}
+  .aresearch .budget-item .ok{color:var(--color-success,#1a8a3f)}
+  .aresearch .budget-item .empty-state{color:var(--color-text-secondary,#6b7683)}
+  .aresearch .section-err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:8px;padding:6px 10px;font-size:.8rem;margin-bottom:.5rem}
+  .aresearch .result-card .findings{margin:6px 0 0;padding-left:18px;font-size:.82rem;line-height:1.4}
+  .aresearch .result-card .sources{margin-top:6px;font-size:.78rem;display:flex;flex-direction:column;gap:2px}
+  .aresearch .result-card .sources a{color:var(--color-primary,#2d7ff9)}
+</style>
+
+<div class="aresearch" x-data="researchPanel()">
+  <h1>🔬 Research</h1>
+  <div class="sub">Run company/role research, view cached results + budget per campaign</div>
+
+  <div class="loading" x-show="loading"><div class="spinner"></div><br>Loading…</div>
+
+  <div class="err" x-show="fatalError" x-text="fatalError"></div>
+
+  <div x-show="!loading && !fatalError">
+    <div class="picker">
+      <select x-model="selectedCampaignId" @change="loadResearch()">
+        <option value="">Select a campaign…</option>
+        <template x-for="c in campaigns" :key="c.id || c.name">
+          <option x-bind:value="c.id || c.name" x-text="c.name || c.id || c"></option>
+        </template>
+      </select>
+      <button class="btn" @click="loadResearch()" :disabled="!selectedCampaignId">↻ Refresh</button>
+    </div>
+
+    <div class="empty" x-show="campaigns.length === 0">
+      <h2>No campaigns</h2>
+      <p>No campaigns available.</p>
+    </div>
+
+    <div x-show="selectedCampaignId">
+      <!-- Run research form -->
+      <div class="run-box">
+        <h3>🚀 Run Research</h3>
+        <div class="field">
+          <label>Research query</label>
+          <input type="text" x-model="runQuery" placeholder="e.g. AI trends in fintech" @keydown.enter="runResearch()">
+        </div>
+        <div class="field">
+          <label>Company (optional)</label>
+          <input type="text" x-model="runCompany" placeholder="Target company">
+        </div>
+        <div class="field">
+          <label>Role (optional)</label>
+          <input type="text" x-model="runRole" placeholder="Target role">
+        </div>
+        <div class="field">
+          <label>Context (optional)</label>
+          <textarea x-model="runContext" placeholder="Additional context for the research"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:.82rem;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" x-model="runForce"> Force re-run (spends budget)
+          </label>
+          <button class="btn primary" @click="runResearch()" :disabled="running || !runQuery.trim()">
+            <span x-show="!running">▶ Run</span>
+            <span x-show="running">⏳ Running…</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Results (cache hits + fresh runs looked up this session — the engine has
+           no "list all cached for campaign" endpoint, only lookup-by-exact-query,
+           so this is a session-local history rather than a server-fetched list) -->
+      <div class="section">
+        <h2>📄 Results</h2>
+        <div class="err section-err" x-show="runError" x-text="runError"></div>
+        <div class="empty" x-show="cachedResults.length === 0 && !cachedLoading">
+          <h2>No cached results</h2>
+          <p>Run a query above to see its brief here.</p>
+        </div>
+        <div x-show="cachedLoading" class="loading" style="padding:10px"><div class="spinner"></div></div>
+        <template x-for="result in cachedResults" :key="result.query">
+          <div class="result-card">
+            <div class="title" x-text="result.query || 'Research result'"></div>
+            <div class="meta" x-text="result.cached ? 'cached' : 'fresh'"></div>
+            <div class="body" x-show="result.unavailable" x-text="'Unavailable: ' + (result.reason || 'unknown reason')"></div>
+            <template x-if="!result.unavailable">
+              <div>
+                <div class="body" x-show="result.summary" x-text="result.summary"></div>
+                <ul class="findings" x-show="(result.key_findings || []).length">
+                  <template x-for="f in (result.key_findings || [])" :key="f">
+                    <li x-text="f"></li>
+                  </template>
+                </ul>
+                <div class="sources" x-show="(result.sources || []).length">
+                  <template x-for="s in (result.sources || [])" :key="s.url || s.link || s.title">
+                    <a x-bind:href="s.url || s.link || '#'" target="_blank" rel="noopener noreferrer" x-text="s.title || s.name || s.url || s.link"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Budget / Usage -->
+      <div class="section">
+        <h2>💰 Budget & Usage</h2>
+        <div class="err section-err" x-show="budgetError" x-text="budgetError"></div>
+        <div class="budget-grid" x-show="budgetData && !budgetLoading">
+          <div class="budget-item">
+            <div class="value" x-bind:class="{ ok: budgetData?.available, 'empty-state': !budgetData?.available }" x-text="budgetData?.available ? '✓' : '✗'"></div>
+            <div class="label">Available</div>
+          </div>
+          <div class="budget-item">
+            <div class="value" x-text="budgetData?.calls_made != null ? budgetData.calls_made : '—'"></div>
+            <div class="label">Calls made</div>
+          </div>
+          <div class="budget-item">
+            <div class="value" x-text="budgetData?.budget_remaining != null ? budgetData.budget_remaining : '—'"></div>
+            <div class="label">Budget remaining</div>
+          </div>
+        </div>
+        <div x-show="budgetLoading" class="loading" style="padding:10px"><div class="spinner"></div></div>
+        <div class="empty" x-show="!budgetData && !budgetLoading && !budgetError">
+          <p>No budget data available.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+  (() => {
+  const _apiP = import("/js/api.js");
+  const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
+
+  window.Alpine.data("researchPanel", () => ({
+    campaigns: [],
+    selectedCampaignId: "",
+    // Session-local results the user has actually looked up (cache hits + fresh
+    // runs) — the engine only exposes lookup-by-exact-query, not "list all cached
+    // for this campaign", so there is nothing to blind-fetch on load.
+    cachedResults: [],
+    cachedLoading: false,
+    budgetData: null,
+    budgetLoading: false,
+    budgetError: "",
+    loading: true,
+    // Reserved for the one truly fatal case (can't even load the campaign list) —
+    // section-level failures (budget, a single research run) use their own error
+    // fields below so one bad request never blanks the whole panel.
+    fatalError: "",
+    runError: "",
+    running: false,
+    runQuery: "",
+    runCompany: "",
+    runRole: "",
+    runContext: "",
+    runForce: false,
+
+    async init() {
+      this.loading = true;
+      this.fatalError = "";
+      const r = await callJsonApi("campaigns", { action: "list" });
+      if (!r || !r.ok) {
+        this.fatalError = (r && r.error) || "Couldn't reach the campaigns engine.";
+        this.campaigns = [];
+      } else {
+        const items = (r.data && r.data.campaigns) || [];
+        this.campaigns = items;
+        if (items.length > 0) {
+          this.selectedCampaignId = items[0].id || items[0].name || "__system__";
+        } else {
+          this.selectedCampaignId = "__system__";
+        }
+      }
+      this.loading = false;
+      if (this.selectedCampaignId) {
+        await this.loadBudget();
+      }
+    },
+
+    async loadBudget() {
+      this.budgetError = "";
+      this.budgetLoading = true;
+      this.budgetData = null;
+      const cid = this.selectedCampaignId || "__system__";
+      const budgetR = await callJsonApi("research", { action: "budget", campaign_id: cid });
+      if (!budgetR || !budgetR.ok) {
+        this.budgetData = null;
+        this.budgetError = (budgetR && budgetR.error) || "Couldn't reach the research engine for budget info.";
+      } else {
+        this.budgetData = budgetR.data || {};
+      }
+      this.budgetLoading = false;
+    },
+
+    // Switching/refreshing a campaign only re-checks its budget — cached results
+    // are keyed by query, not fetchable in bulk, so switching campaigns clears the
+    // session-local results list (it would otherwise mix results from two campaigns).
+    async loadResearch() {
+      this.cachedResults = [];
+      this.runError = "";
+      await this.loadBudget();
+    },
+
+    _upsertResult(report) {
+      const q = report && report.query;
+      if (!q) return;
+      const idx = this.cachedResults.findIndex((r) => r.query === q);
+      if (idx >= 0) this.cachedResults.splice(idx, 1, report);
+      else this.cachedResults.unshift(report);
+    },
+
+    async runResearch() {
+      const query = this.runQuery.trim();
+      if (!query || !this.selectedCampaignId) return;
+      this.running = true;
+      this.runError = "";
+      const cid = this.selectedCampaignId;
+
+      try {
+        // Peek the cache for this EXACT query first (free, no budget spent) unless
+        // the user asked to force a fresh run — mirrors the workspace's
+        // cached/run lookup pattern instead of blind-listing "all cached" (which
+        // the engine has no endpoint for).
+        let report = null;
+        if (!this.runForce) {
+          const cachedR = await callJsonApi("research", { action: "cached", campaign_id: cid, query });
+          if (cachedR && cachedR.ok) {
+            report = cachedR.data;
+          } else if (cachedR && cachedR.status !== 404) {
+            // A real error (not just "nothing cached yet") — surface it, but keep
+            // trying the fresh run below rather than giving up.
+            this.runError = cachedR.error || "Couldn't check the research cache.";
+          }
+        }
+
+        if (!report) {
+          const payload = { action: "run", campaign_id: cid, query };
+          if (this.runCompany.trim()) payload.company = this.runCompany.trim();
+          if (this.runRole.trim()) payload.role = this.runRole.trim();
+          if (this.runContext.trim()) payload.context = this.runContext.trim();
+          if (this.runForce) payload.force = true;
+
+          const runR = await callJsonApi("research", payload);
+          if (!runR || !runR.ok) {
+            this.runError = (runR && runR.error) || "Research run failed.";
+          } else {
+            report = runR.data;
+            this.runError = "";
+          }
+        }
+
+        if (report) this._upsertResult(report);
+      } finally {
+        this.running = false;
+      }
+      await this.loadBudget();
+    }
+  }));
+  })();
+  })();
+</script>

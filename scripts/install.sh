@@ -85,6 +85,15 @@ REPO_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
 ENV_FILE="${REPO_ROOT}/.env"
 
+# EPIC STEALTH: shared stealth preflight (WireGuard client, VPS egress, residential
+# proxy, camoufox). Sourced here; called in the preflight + post-build phases below.
+# Only defines functions on source (UI delegation resolves at call-time), so it is
+# safe to load before the TUI helpers are defined. Guarded for a partial checkout.
+if [[ -f "${REPO_ROOT}/scripts/lib/stealth-preflight.sh" ]]; then
+  # shellcheck source=lib/stealth-preflight.sh
+  source "${REPO_ROOT}/scripts/lib/stealth-preflight.sh"
+fi
+
 # ============================================================================
 #  UI: dependency-free ANSI/ASCII TUI with a plain-text fallback
 # ============================================================================
@@ -254,11 +263,12 @@ EOF
 done
 
 # Overall progress denominator per mode (an update adds a source-sync phase; the
-# single-shot modes are just one phase).
+# single-shot modes are just one phase). Counts include the EPIC STEALTH preflight
+# phase (Phase 1b) added between the docker preflight and the compose validation.
 case "${MODE}" in
-  update)                 STEPS_TOTAL=7 ;;
+  update)                 STEPS_TOTAL=8 ;;
   doctor|uninstall|purge) STEPS_TOTAL=1 ;;
-  *)                      STEPS_TOTAL=6 ;;
+  *)                      STEPS_TOTAL=7 ;;
 esac
 
 # ============================================================================
@@ -706,6 +716,11 @@ mode_doctor() {
   else
     ui_warn "front door        not answering on :${APP_PORT}"
   fi
+  # EPIC STEALTH: read-only egress/leak self-check (never installs or aborts here —
+  # doctor is diagnostic). Surfaces a home-IP leak or a missing residential lane.
+  if declare -F stealth_preflight >/dev/null 2>&1; then
+    stealth_preflight 0 || true
+  fi
   # Overall verdict from the same criteria the installer waits on.
   local pr ok total; pr="$(_health_progress "$(_service_health_lines)")"; ok="${pr%% *}"; total="${pr##* }"
   echo
@@ -791,6 +806,15 @@ if [[ "${APPLY}" -eq 1 ]]; then
   fi
 fi
 
+# --- Phase 1b: stealth prerequisites (EPIC STEALTH) -------------------------
+# Ship/verify the no-home-IP-leak prereqs (WireGuard client, VPS egress routing,
+# residential proxy) BEFORE we build/start anything that could egress. Fails the
+# install only when APPLICANT_STEALTH_STRICT=true and a HARD prereq is missing;
+# otherwise it warns loudly (see scripts/lib/stealth-preflight.sh).
+if declare -F stealth_preflight >/dev/null 2>&1; then
+  stealth_preflight "${APPLY}" || exit 1
+fi
+
 # --- Update-only phase: sync the source checkout ----------------------------
 # `--update` fast-forwards the checkout so the rebuild below picks up new code, then
 # flows through the SAME idempotent build → migrate → up → health path as install.
@@ -832,18 +856,32 @@ if [[ "${APPLY}" -eq 1 && ! -f "${ENV_FILE}" ]]; then
 fi
 
 # --- Phase 3: build the images ----------------------------------------------
-# Build BOTH locally-built images (neither is published to a registry): the
-# front-door UI (built from ../workspace) and the engine api. Output streams
-# verbosely (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
-phase "Building the local images (front-door UI + engine api)"
+# Build ALL THREE locally-built images (none is published to a registry): the a0
+# shell (Applicant plugin + branded webui), the companion front-door (built from
+# ../workspace), and the engine api. Output streams verbosely
+# (BUILDKIT_PROGRESS=plain); retried with backoff on transient failures.
+phase "Building the local images (a0 shell + companion + engine api)"
 ui_step "Streaming build output below (this is the long part — texlive + browsers)…"
-run_retry "Image build" dc -f "${COMPOSE_FILE}" build applicant-ui api
+# Build ONE image at a time (never `build a0 companion api` in a single call):
+# docker compose builds multiple services in PARALLEL, and concurrent builds of
+# a0 + companion + api spiked RAM enough to OOM-kill a 15GB host mid-install
+# (2026-08-07). Sequential caps peak memory to a single image build.
+for _bsvc in a0 companion api; do
+  run_retry "Image build ($_bsvc)" dc -f "${COMPOSE_FILE}" build "$_bsvc"
+done
+
+# Post-build: confirm the DEFAULT anti-detect browser (Camoufox) actually baked into
+# the engine image so live automation launches offline instead of degrading (best-
+# effort; never fatal — see stealth-preflight.sh).
+if declare -F stealth_verify_image >/dev/null 2>&1; then
+  stealth_verify_image "${APPLY}" || true
+fi
 
 # --- Phase 4: migrate the schema BEFORE the api serves ----------------------
 # The engine queries app_config AS IT BOOTS, so the schema must exist first. Bring
 # up only Postgres, then run alembic in a throwaway api container (env.py imports
 # model metadata only). A full `up -d` here would crash-loop the api on the missing
-# table and, because applicant-ui depends_on api: service_healthy, abort the up.
+# table and, because a0 depends_on api: service_healthy, abort the up.
 phase "Migrating the schema (alembic upgrade head) BEFORE the api serves"
 run dc -f "${COMPOSE_FILE}" up -d postgres
 # Snapshot the DB into the pgbackups volume BEFORE migrating so a bad migration is
@@ -879,7 +917,7 @@ if [[ "${APPLY}" -eq 1 ]]; then
     ui_warn "Stack not green yet — attempting self-heal (repair /data volume ownership)…"
     dc -f "${COMPOSE_FILE}" run --rm --user 0:0 --no-deps --entrypoint sh api \
         -c 'chown -R 10001:10001 /data /control 2>/dev/null || true' >/dev/null 2>&1 || true
-    dc -f "${COMPOSE_FILE}" up -d --force-recreate api applicant-ui >/dev/null 2>&1 || true
+    dc -f "${COMPOSE_FILE}" up -d --force-recreate api a0 >/dev/null 2>&1 || true
     if monitor_health "${APP_PORT}"; then
       ui_ok "Self-heal succeeded — the stack is green."
     else

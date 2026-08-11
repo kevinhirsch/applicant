@@ -123,6 +123,133 @@ class TestLiveSourcesOffline:
         src = JobSpySource(site="indeed", client=Boom())
         assert src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id)) == []
 
+    def test_greenhouse_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeGreenhouseClient
+        from applicant.adapters.discovery.jobspy_searxng import GreenhouseSource
+
+        src = GreenhouseSource(client=FakeGreenhouseClient(), token="acme", key="greenhouse:acme")
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "greenhouse:acme"
+        assert posting.title == "Senior Backend Engineer"
+        assert posting.company == "acme"  # configured token is the display name
+        assert posting.source_url == "https://boards.greenhouse.test/acme/senior-backend"
+        assert posting.location == "Remote (US)"
+        assert posting.date_posted is not None
+        assert posting.work_mode is None  # Greenhouse payload has no work-mode signal
+
+    def test_lever_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeLeverClient
+        from applicant.adapters.discovery.jobspy_searxng import LeverSource
+
+        src = LeverSource(client=FakeLeverClient(), company="acme", key="lever:acme")
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "lever:acme"
+        assert posting.title == "Senior Product Engineer"
+        assert posting.company == "acme"  # configured slug is the display name
+        assert posting.source_url == "https://jobs.lever.co/acme/1"
+        assert posting.location == "San Francisco, CA"
+        assert posting.work_mode == "hybrid"  # workplaceType normalized
+        # Lever createdAt is epoch milliseconds: 1700000000000 ms -> 2023-11-14.
+        assert posting.date_posted is not None
+        assert posting.date_posted.year == 2023
+        assert posting.date_posted.month == 11
+        assert posting.date_posted.day == 14
+
+    def test_ashby_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeAshbyClient
+        from applicant.adapters.discovery.jobspy_searxng import AshbySource
+
+        src = AshbySource(client=FakeAshbyClient(), token="acme", key="ashby:acme")
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "ashby:acme"
+        assert posting.title == "Technical Program Manager"
+        assert posting.company == "acme"  # configured token is the display name
+        assert posting.source_url == "https://jobs.ashbyhq.com/acme/1"
+        assert posting.work_mode == "remote"  # normalize_row lowercases work_mode
+        assert posting.date_posted is not None
+
+    def test_smartrecruiters_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeSmartRecruitersClient
+        from applicant.adapters.discovery.jobspy_searxng import SmartRecruitersSource
+
+        src = SmartRecruitersSource(
+            client=FakeSmartRecruitersClient(), company="acme", key="smartrecruiters:acme"
+        )
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "smartrecruiters:acme"
+        assert posting.title == "Delivery Manager"
+        assert posting.company == "Acme Corp"  # from the row's company.name
+        # Synthesized listing URL: https://jobs.smartrecruiters.com/{company}/{id}
+        assert posting.source_url == "https://jobs.smartrecruiters.com/acme/1001"
+        assert posting.location == "Austin, TX, United States"
+
+        remote_posting = out[1]
+        assert remote_posting.work_mode == "remote"
+
+    def test_workday_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeWorkdayClient
+        from applicant.adapters.discovery.jobspy_searxng import WorkdaySource
+
+        src = WorkdaySource(
+            client=FakeWorkdayClient(),
+            token="acme.wd1.myworkdayjobs.com|acme|External|Acme Co",
+            key="workday:acme",
+        )
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "workday:acme"
+        assert posting.title == "Scrum Master, Enterprise Delivery"
+        assert posting.company == "Acme Co"  # 4th pipe segment = display name
+        assert (
+            posting.source_url
+            == "https://acme.wd1.myworkdayjobs.com/en-US/External"
+            "/job/Remote/Scrum-Master--Enterprise-Delivery_R0001"
+        )
+        assert posting.location == "Remote - US"
+
+    def test_remoteok_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeRemoteOkClient
+        from applicant.adapters.discovery.jobspy_searxng import RemoteOkSource
+
+        src = RemoteOkSource(client=FakeRemoteOkClient())
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "remoteok"
+        assert posting.title == "Delivery Manager"
+        assert posting.work_mode == "remote"
+
+    def test_remotive_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeRemotiveClient
+        from applicant.adapters.discovery.jobspy_searxng import RemotiveSource
+
+        src = RemotiveSource(client=FakeRemotiveClient())
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "remotive"
+        assert posting.title == "Technical Program Manager"
+
+    def test_workingnomads_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeWorkingNomadsClient
+        from applicant.adapters.discovery.jobspy_searxng import WorkingNomadsSource
+
+        src = WorkingNomadsSource(client=FakeWorkingNomadsClient())
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out
+        posting = out[0]
+        assert posting.source_key == "workingnomads"
+        assert posting.title == "Agile Program Manager"
+
     def test_proxy_hook_threads_through(self, campaign_id):
         # FR-DISC-6: a configured proxy is passed to the client; default is none.
         from applicant.adapters.discovery.jobspy_searxng import JobSpySource, ProxyConfig

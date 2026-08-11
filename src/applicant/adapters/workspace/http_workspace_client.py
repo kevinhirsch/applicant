@@ -93,6 +93,7 @@ class HttpWorkspaceClient:
         *,
         base_url: str = DEFAULT_WORKSPACE_URL,
         token: str = "",
+        default_owner: str = "",
         timeout: float = _DEFAULT_TIMEOUT,
         research_timeout: float | None = None,
         transport: httpx.BaseTransport | None = None,
@@ -103,6 +104,12 @@ class HttpWorkspaceClient:
         # Strip a trailing slash so path joins are predictable.
         self._base_url = (base_url or DEFAULT_WORKSPACE_URL).rstrip("/")
         self._token = (token or "").strip()
+        # RESILIENT (2026-08-10): the companion requires a non-empty X-Applicant-Owner
+        # on every owner-scoped lane (research/calendar/emails/memory). All engine call
+        # sites pass owner=None, so without a default the companion 400s
+        # ("Owner attribution required") before it reads the body. Fall back to this
+        # single-user default so those lanes work out of the box.
+        self._default_owner = (default_owner or "").strip()
         self._timeout = timeout
         # Research gets its own (longer) transport ceiling; the snappy callbacks
         # keep the short default so a down workspace is detected quickly. When the
@@ -129,7 +136,7 @@ class HttpWorkspaceClient:
     # --- internal request helper -----------------------------------------
     def _headers(self, owner: str | None) -> dict[str, str]:
         headers = {INTERNAL_TOKEN_HEADER: self._token}
-        owner = (owner or "").strip()
+        owner = (owner or "").strip() or self._default_owner
         if owner:
             headers[INTERNAL_OWNER_HEADER] = owner
         return headers

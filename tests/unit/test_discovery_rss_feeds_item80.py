@@ -117,6 +117,24 @@ def test_the_container_threads_the_configured_feed_into_discovery(monkeypatch):
     assert "rss:custom-1" in container.discovery.available_sources()
 
 
-def test_settings_default_discovery_rss_feeds_is_empty_string():
-    get_settings.cache_clear()
-    assert get_settings().discovery_rss_feeds == ""
+def test_settings_default_discovery_rss_feeds_is_empty_string(monkeypatch):
+    """Pins the Settings FIELD default (``Field(default="", ...)``), not whatever
+    happens to be configured in this repo's actual ``.env`` right now.
+
+    ``get_settings()``/``Settings()`` read the repo-root ``.env`` -- and since the
+    2026-08-11 EPIC BREADTH widening, this repo's own ``.env`` deliberately seeds
+    ``DISCOVERY_RSS_FEEDS`` with two real We Work Remotely category feeds (see
+    ``docs/discovery-source-reliability.md``). That's correct, live, intentional
+    configuration for this checkout, not a stale/broken default -- so it must not
+    leak into an unrelated Settings instance built here (mirrors
+    ``test_discovery_greenhouse_lever.py``'s
+    ``test_settings_default_ats_sources_are_empty_strings``, which hit the exact
+    same issue when the ATS board seeds landed). ``_env_file=None`` bypasses the
+    .env file entirely; the explicit ``delenv`` also covers a real OS-level env var
+    of the same name (independent of ``_env_file``) that a concurrent xdist worker
+    might have set for the duration of ITS OWN test.
+    """
+    from applicant.app.config import Settings
+
+    monkeypatch.delenv("DISCOVERY_RSS_FEEDS", raising=False)
+    assert Settings(_env_file=None).discovery_rss_feeds == ""

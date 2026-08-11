@@ -1,0 +1,196 @@
+- name: Default
+  chat:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    ctx_history: 0.7
+    vision: false
+    max_embeds: 10
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.25
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 0.3
+      chat_template_kwargs:
+        enable_thinking: false
+      response_format:
+        type: json_schema
+        json_schema:
+          name: a0_tool_call
+          schema:
+            type: object
+            properties:
+              thoughts:
+                type: array
+                items:
+                  type: string
+              headline:
+                type: string
+              tool_name:
+                type: string
+              tool_args:
+                type: object
+            required:
+            - thoughts
+            - tool_name
+            - tool_args
+            additionalProperties: false
+      extra_body:
+        guided_decoding_backend: guidance
+  utility:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    ctx_input: 0.7
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: false
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ''
+    rl_requests: 0
+    rl_input: 0
+    kwargs: {}
+- name: DeepSeek-Flash
+  chat:
+    provider: other
+    name: deepseek-v4-flash
+    api_base: https://api.deepseek.com/v1
+    ctx_length: 1000000
+    ctx_history: 0.7
+    vision: false
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.6
+      top_p: 0.95
+      stream_options:
+        include_usage: true
+      a0_retry_attempts: 5
+      a0_retry_delay_seconds: 3
+  utility:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    kwargs:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: false
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ''
+- name: DeepSeek-Chat
+  chat:
+    provider: other
+    name: deepseek-v4-flash
+    api_base: https://api.deepseek.com/v1
+    ctx_length: 100000
+    ctx_history: 0.6
+    vision: false
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.6
+      top_p: 0.95
+      stream_options:
+        include_usage: true
+      a0_retry_attempts: 5
+      a0_retry_delay_seconds: 3
+  utility:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    kwargs:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: false
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ''
+- name: DeepSeek-Pro
+  chat:
+    provider: other
+    name: deepseek-v4-pro
+    api_base: https://api.deepseek.com/v1
+    ctx_length: 1000000
+    ctx_history: 0.7
+    vision: false
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.6
+      top_p: 0.95
+      stream_options:
+        include_usage: true
+      a0_retry_attempts: 5
+      a0_retry_delay_seconds: 3
+  utility:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    kwargs:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: false
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ''
+- name: Project project_1
+  chat:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+    ctx_history: 0.7
+    vision: false
+    max_embeds: 10
+    rl_requests: 0
+    rl_input: 0
+    rl_output: 0
+    kwargs:
+      temperature: 0.4
+      top_p: 0.8
+      top_k: 20
+      presence_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: false
+  utility:
+    provider: other
+    name: qwen3.6:27b
+    api_base: http://10.0.1.225:8000/v1
+    ctx_length: 96000
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ''

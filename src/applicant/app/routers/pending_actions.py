@@ -17,13 +17,15 @@ from applicant.app.deps import (
     get_attribute_cloud_service,
     get_notification_service,
     get_pending_actions_service,
+    get_storage,
     require_llm_configured,
 )
 from applicant.application.services.pending_actions_service import (
     KIND_INTEGRAL_CHANGE,
     RESOLVE_ALREADY_RESOLVED,
 )
-from applicant.core.ids import PendingActionId
+from applicant.core.ids import ApplicationId, PendingActionId
+from applicant.core.rules.freshness import posting_freshness
 
 router = APIRouter(
     prefix="/api/pending-actions",
@@ -85,12 +87,77 @@ def _ladder_status_for(payload: dict | None, notifications) -> dict | None:
         return None
 
 
+def _application_brief(application_id, storage, cache: dict) -> dict | None:
+    """Best-effort ``{job_title, company, viability_score}`` for one item's
+    ``application_id`` (APP-LP-1 — the landing-page "Pending Reviews" gadget
+    groups by role and shows the SAME fit score the Digest/Top-New-Matches
+    surface reads from ``posting.viability_score`` — one field, one source of
+    truth, no separate scoring path).
+
+    Two indexed PK lookups (application, then its posting) per DISTINCT
+    application id — memoized in ``cache`` across the request since a role's
+    resume/cover-letter/screening items all share one application_id. The
+    pending-actions list is inherently small (things awaiting a human), so
+    this stays cheap; never raises — a lookup failure degrades to ``None``
+    fields rather than breaking the list (same posture as ``_ladder_status_for``).
+
+    Also carries the posting's freshness cue (``posted_date``/``posted_label``/
+    ``posted_relative``/``posted_stale`` — see ``core.rules.freshness``): the
+    same score-first-fit-scan for Pending Reviews is misleading on its own for
+    a role posted weeks ago (product ask, 2026-08-10), so every key present in
+    ``posting_freshness``'s result is folded into the brief. Omitted entirely
+    (not fabricated) when the posting carries neither timestamp.
+    """
+    if not application_id:
+        return None
+    key = str(application_id)
+    if key in cache:
+        return cache[key]
+    brief: dict | None = None
+    try:
+        app = storage.applications.get(ApplicationId(key))
+        if app is not None:
+            title = app.job_title or app.role_name
+            company = None
+            viability_score = None
+            freshness = None
+            # Carried so the landing page can exclude this posting from "Top
+            # New Matches" (APP-LP-1) — a role already this far into review
+            # has a draft in hand and showing it as an undrafted "new match"
+            # too is confusing/redundant, not a second useful signal.
+            posting_id = str(app.posting_id) if app.posting_id else None
+            if app.posting_id:
+                posting = storage.postings.get(app.posting_id)
+                if posting is not None:
+                    company = posting.company or None
+                    title = title or posting.title
+                    if posting.viability_score is not None:
+                        viability_score = round(posting.viability_score * 100)
+                    freshness = posting_freshness(
+                        getattr(posting, "date_posted", None),
+                        getattr(posting, "first_seen", None),
+                    )
+            brief = {
+                "job_title": title,
+                "company": company,
+                "viability_score": viability_score,
+                "posting_id": posting_id,
+            }
+            if freshness:
+                brief.update(freshness)
+    except Exception:  # pragma: no cover - defensive: read-only, never break the page
+        brief = None
+    cache[key] = brief
+    return brief
+
+
 @router.get("/{campaign_id}")
 def list_pending(
     campaign_id: str,
     include_snoozed: bool = False,
     pending_actions=Depends(get_pending_actions_service),
     notifications=Depends(get_notification_service),
+    storage=Depends(get_storage),
 ) -> dict:
     """List open pending actions for the campaign (FR-UI-3) — the 24/7 home base.
 
@@ -103,6 +170,7 @@ def list_pending(
     paired = pending_actions.list_with_metadata(  # type: ignore[arg-type]
         campaign_id, include_snoozed=include_snoozed
     )
+    brief_cache: dict = {}
     return {
         "campaign_id": campaign_id,
         "count": len(paired),
@@ -125,6 +193,11 @@ def list_pending(
                 # notify via an immediate/CRITICAL ping with no ladder to hold) or
                 # nothing is currently active for it.
                 "notification_ladder": _ladder_status_for(a.payload, notifications),
+                # APP-LP-1: role/company so the landing page can group per-role
+                # instead of showing bare "Resume variant ready for review" rows.
+                "application_brief": _application_brief(
+                    a.application_id, storage, brief_cache
+                ),
             }
             for a, meta in paired
         ],
