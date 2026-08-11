@@ -2558,6 +2558,43 @@ class MaterialService:
         self._storage.commit()
         return doc
 
+    def set_section_content(
+        self, document_id: GeneratedDocumentId, content: str
+    ) -> GeneratedDocument:
+        """Persist a human's inline edit to a section's content, review-gated (RUX-3).
+
+        A literal manual content replacement — the review UI's "Save edit". The human
+        is the author here, not the LLM, so the fabrication guardrail (which guards
+        against AI *invention*) does not gate a hand-written edit; the deterministic
+        em-dash + banned-phrase post-filter still runs so a manual edit reaches storage
+        on the same terms as every generated pass (FR-RESUME-5). The edit is stored
+        UNAPPROVED — an edit is unreviewed and must never be treated as approved — and
+        the durable revision session is opened, since editing IS a review touch (so the
+        later "view-before-approve" gate is satisfied and the edit is resumable). Never
+        submits anything (NFR-TRUTH-1 / review gate).
+        """
+        doc = self._storage.documents.get(document_id)
+        if doc is None:
+            raise NotFound(f"no such document {document_id}")
+        cleaned = self.apply_post_filter(content or "").text
+        updated = GeneratedDocument(
+            id=doc.id,
+            campaign_id=doc.campaign_id,
+            application_id=doc.application_id,
+            type=doc.type,
+            content=cleaned,
+            storage_path=doc.storage_path,
+            # An edit invalidates any prior approval — back to review-gated.
+            approved=False,
+            provenance=doc.provenance,
+        )
+        self._storage.documents.add(updated)
+        self._storage.commit()
+        # Editing a section is itself a review action — ensure the durable session
+        # exists so approve()'s view-before-approve guard can pass afterwards.
+        self.open_revision(document_id)
+        return updated
+
     def _persist_content(self, doc: GeneratedDocument, content: str) -> None:
         updated = GeneratedDocument(
             id=doc.id,

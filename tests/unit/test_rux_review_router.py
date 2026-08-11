@@ -352,3 +352,181 @@ def test_rux3_regenerate_whole_app_regenerates_every_section_review_gated(
     assert {"resume", "cover_letter", "screening_answer"} <= sections
     # Nothing is approved by a regenerate.
     assert all(s.get("approved") is False for s in body["regenerated"])
+
+
+# === RUX-3 (fix A): the sections endpoint — this is what unblocks the panel ===
+@pytest.mark.unit
+def test_rux3_sections_endpoint_returns_generated_documents(client, storage, material):
+    cid, app, _ = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    r = client.get(f"/api/review/{app.id}/sections")
+    assert r.status_code == 200
+    sections = r.json()["sections"]
+    assert len(sections) == 1
+    s = sections[0]
+    # The shape the panel's x-for + textarea bind against.
+    assert s["section_id"] == str(doc.id)
+    assert s["label"]  # human-friendly label, not the raw enum value
+    assert s["content"] == doc.content
+    assert s["status"] == "pending"  # unapproved draft
+    assert s["kind"] == "cover_letter"
+
+
+@pytest.mark.unit
+def test_rux3_sections_endpoint_empty_for_app_with_no_drafts(client, storage):
+    _, app, _ = _seed(storage)
+    r = client.get(f"/api/review/{app.id}/sections")
+    assert r.status_code == 200
+    assert r.json()["sections"] == []
+
+
+@pytest.mark.unit
+def test_rux1_source_also_carries_sections_and_rendered_html(client, storage, material):
+    cid, app, posting = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    body = client.get(f"/api/review/{app.id}/source").json()
+    # RUX-1 fix C: top-level freshness + title/company + a rendered snapshot html.
+    assert body["title"] == "Staff Engineer"
+    assert body["company"] == "Acme"
+    assert body["snapshot_available"] is True
+    assert "posted_relative" in body and "posted_stale" in body
+    assert isinstance(body["html"], str) and "Acme" in body["html"]
+    # RUX-3 fix A: loadReview()'s single get() call now carries the sections too.
+    ids = [s["section_id"] for s in body["sections"]]
+    assert str(doc.id) in ids
+
+
+# === RUX-1 (fix C): posting-keyed cached snapshot (the Digest snapshot button) ===
+@pytest.mark.unit
+def test_rux1_posting_snapshot_returns_rendered_html(client, storage):
+    _, _, posting = _seed(storage)
+    r = client.get(f"/api/review/posting/{posting.id}/snapshot")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["html"], str)
+    assert "Staff Engineer" in body["html"] and "Acme" in body["html"]
+    assert body["snapshot"]["title"] == "Staff Engineer"
+
+
+@pytest.mark.unit
+def test_rux1_posting_snapshot_404_for_unknown_posting(client):
+    r = client.get(f"/api/review/posting/{new_id()}/snapshot")
+    assert r.status_code == 404
+
+
+# === RUX-3 (fix B.1): regenerate one section by id, in place, review-gated ======
+@pytest.mark.unit
+def test_rux3_regenerate_section_by_id_stays_in_place_and_review_gated(
+    client, storage, material
+):
+    cid, app, _ = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    r = client.post(
+        f"/api/review/{app.id}/regenerate/section",
+        json={"campaign_id": str(cid), "section_id": str(doc.id), "instruction": "tighten it"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["review_gated"] is True
+    # Consistent singular {section_id, content, status} shape the panel merges.
+    assert body["section"]["section_id"] == str(doc.id)  # same id — edited in place
+    assert "content" in body["section"] and "status" in body["section"]
+    # A regenerate never approves.
+    assert storage.documents.get(doc.id).approved is False
+
+
+@pytest.mark.unit
+def test_rux3_regenerate_section_by_id_404_for_unknown_section(client, storage):
+    cid, app, _ = _seed(storage)
+    r = client.post(
+        f"/api/review/{app.id}/regenerate/section",
+        json={"campaign_id": str(cid), "section_id": new_id()},
+    )
+    assert r.status_code == 404
+
+
+# === RUX-3 (fix B.3): apply-instruction items carry section_id + label =========
+@pytest.mark.unit
+def test_rux3_apply_instruction_items_carry_section_id_and_label(
+    client, storage, material
+):
+    cid, app, _ = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    r = client.post(
+        f"/api/review/{app.id}/apply-instruction",
+        json={"campaign_id": str(cid), "instruction": "make it more concise"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    for s in body["sections"]:
+        # x-for :key="section.section_id" needs section_id; the header needs label.
+        assert s["section_id"]
+        assert s["label"]
+        assert "content" in s and "status" in s
+        assert s["turns"] >= 1  # kept for the existing turn-recorded assertion
+
+
+# === RUX-3 (fix B.2): whole-app regenerate with empty feedback (panel mode) ====
+@pytest.mark.unit
+def test_rux3_regenerate_whole_panel_mode_refreshes_in_place_no_feedback(
+    client, storage, material
+):
+    cid, app, _ = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    # No posting_id / questions / true_source and empty instruction — the "Regenerate
+    # whole app" button with no typed feedback used to 400; now it refreshes in place.
+    r = client.post(
+        f"/api/review/{app.id}/regenerate/whole",
+        json={"campaign_id": str(cid), "instruction": ""},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["review_gated"] is True
+    ids = [s["section_id"] for s in body["sections"]]
+    assert str(doc.id) in ids  # the existing section is returned, same id
+    assert storage.documents.get(doc.id).approved is False  # never approved
+
+
+# === RUX-3 (fix B.4): inline edit persists a manual section edit, review-gated ==
+@pytest.mark.unit
+def test_rux3_edit_section_persists_manual_edit_unapproved(client, storage, material):
+    cid, app, _ = _seed(storage)
+    doc = material.generate_cover_letter(
+        cid, app.id, TRUE_SOURCE, ["Python"], role_requires=True
+    )
+    assert doc is not None
+    r = client.post(
+        f"/api/review/{app.id}/edit-section",
+        json={"section_id": str(doc.id), "content": "My own edited cover letter text."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["section"]["section_id"] == str(doc.id)
+    stored = storage.documents.get(doc.id)
+    assert stored.content == "My own edited cover letter text."
+    assert stored.approved is False  # an edit is unreviewed — never auto-approved
+
+
+@pytest.mark.unit
+def test_rux3_edit_section_404_for_unknown_section(client, storage):
+    _, app, _ = _seed(storage)
+    r = client.post(
+        f"/api/review/{app.id}/edit-section",
+        json={"section_id": new_id(), "content": "x"},
+    )
+    assert r.status_code == 404

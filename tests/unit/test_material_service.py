@@ -562,6 +562,40 @@ def _store_doc(storage, cid, content, *, dtype=None, application_id=None):
 
 
 @pytest.mark.unit
+def test_set_section_content_persists_manual_edit_unapproved(svc, storage):
+    """RUX-3 inline edit: a human's manual content replacement persists on the same
+    document, stays unapproved (an edit is unreviewed), and opens the durable review
+    session so the later 'view-before-approve' gate is satisfied."""
+    cid = CampaignId(new_id())
+    doc = _store_doc(storage, cid, "original draft")
+    updated = svc.set_section_content(doc.id, "the human's own replacement text")
+    assert updated.id == doc.id  # same document — edited in place
+    assert storage.documents.get(doc.id).content == "the human's own replacement text"
+    assert storage.documents.get(doc.id).approved is False
+    # An inline edit is itself a review touch — the durable session now exists.
+    assert storage.revisions.get_for_material(doc.id) is not None
+
+
+@pytest.mark.unit
+def test_set_section_content_strips_em_dashes(svc, storage):
+    """The deterministic post-filter still runs on a manual edit (em-dash cleanup),
+    matching every other path that reaches storage (FR-RESUME-5)."""
+    cid = CampaignId(new_id())
+    doc = _store_doc(storage, cid, "x")
+    updated = svc.set_section_content(doc.id, "led the team — shipped it")
+    assert "—" not in (updated.content or "")
+
+
+@pytest.mark.unit
+def test_set_section_content_unknown_document_raises_not_found(svc):
+    from applicant.core.errors import NotFound
+    from applicant.core.ids import GeneratedDocumentId
+
+    with pytest.raises(NotFound):
+        svc.set_section_content(GeneratedDocumentId(new_id()), "x")
+
+
+@pytest.mark.unit
 def test_flagged_facts_surfaces_unsupported_and_omits_supported(svc, storage):
     """The read-only surfacing recomputes the fact-class tokens a stored draft
     uses that aren't in the profile — invented specifics are flagged while the
