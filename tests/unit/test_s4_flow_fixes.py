@@ -192,6 +192,16 @@ def test_material_review_flow_completes_end_to_end(tmp_path):
     # Approve the variant (the HTTP approve_variant path).
     material.approve_variant(variants[0].id)
 
+    # _review_approved() (agent_loop) requires EVERY generated document approved too,
+    # not just the variant — and FR-AUTO (2026-08-06) auto-drafts a cover letter
+    # alongside the resume by default, so one is sitting here unapproved. Approve it
+    # the same way the review UI does: open the redline (view-before-approve gate,
+    # material_service.approve()) then approve — mirrors a real reviewer clearing
+    # every material item, not just the resume, before the flow may submit.
+    for doc in storage.documents.list_for_application(app.id):
+        material.open_revision(doc.id)
+        material.approve(doc.id)
+
     # Deliver the final-approval decision to the durable gate, then re-drive.
     orch.send(f"application:{app.id}", "final_approval", {"decision": "finished_by_engine"})
     loop.run_once(cid, now=now)
