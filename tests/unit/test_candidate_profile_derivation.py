@@ -29,7 +29,10 @@ _KEVIN_EDUCATION = {
     "education:7": "Homeschool (2011 - 2014)",
 }
 _KEVIN_ATTRS = {
-    "roles": "Scrum Master, Release Train Engineer, Agile Coach",
+    # Kevin's REAL roles attribute -- a TARGET/search list that INCLUDES TPM (a role
+    # he is open to but has never held + can't clear the degree gate for). The
+    # derivation must NOT treat a targeted degree-gated role as strong-held.
+    "roles": "Scrum Master, Release Train Engineer, Agile Coach, Delivery Manager, Technical Program Manager",
     "certifications": "CSP-SM, A-CSM, CSM; SAFe 6 SSM; KMP",
     "skill:Large Scale Scrum (LeSS)": "Large Scale Scrum (LeSS)",
     "skill:Servant Leadership": "Servant Leadership",
@@ -63,6 +66,18 @@ class TestKevinDerivation:
     def test_technical_program_manager_is_a_reach_no_title_no_degree(self):
         p = self._p()
         assert p.band_for("technical_program_manager") == "reach"
+
+    def test_targeted_tpm_stays_a_reach_not_strong(self):
+        # REGRESSION (2026-08-11): TPM in the TARGET roles list + no degree must be a
+        # REACH, not strong -- else every TPM req floats to the top of the queue.
+        p = self._p()
+        assert p.band_for("technical_program_manager") == "reach"
+        assert "technical_program_manager" not in {b.family for b in p.strong_fit_families}
+
+    def test_a_real_held_role_from_the_target_list_is_strong(self):
+        # Delivery Manager IS in Kevin's roles and is squarely his lane -> strong.
+        p = self._p()
+        assert p.band_for("delivery_manager") == "strong"
 
     def test_credentials_and_skills_populated(self):
         p = self._p()
