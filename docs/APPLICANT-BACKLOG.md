@@ -13,7 +13,7 @@
 **STANDING PRINCIPLE — reuse-first, no redundancy (ONGOING):** Never build a component, service, or endpoint that duplicates one that already exists — reuse it. A new UI view is a THIN layer over existing data/actions (e.g. landing-page gadgets read the same scored Digest data + reuse the same review actions; they do not re-derive them). Any new endpoint/service must justify why an existing one didn't suffice. Check for redundancy in EVERY review (use `/simplify`) — a component that re-implements or re-derives what another already provides is a defect, and features silently drift/drop between the copies (e.g. the match-score badge lost when Pending Reviews forked from the Digest).
 Env: prod `10.0.1.11:8000` · model vLLM `10.0.1.225:8000` (qwen3.6:27b) · branch `claude/refactor-agent-zero-applicant-xn7xoc`.
 
-_Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-0011..0014)._
+_Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-0011..0014; EPIC DISCOVERY + ADR-0015 verified-source wide-net discovery; EPIC MATERIAL-QUALITY (#44); SELF-HEAL/AGENTS/MIND-DURABLE decomposed into full story ladders; SCHEDULER campaign-pickup bug (SH-1) added)._
 
 ---
 
@@ -31,6 +31,59 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
   - *No-human-required:* **Given** any failure class covered by a detector, **When** it occurs unattended overnight, **Then** the product returns to a healthy state with no human intervention, evidenced by the audit trail.
 - **DoD:** deterministic detectors for the known failure classes emit typed events; an agentic remediator consumes them and applies bounded, audited corrective actions via available tools; remote LLM can repair the local LLM; all guardrails enforced; **TDD unit + BDD scenario coverage green**; verified on 10.0.1.11 by **fault injection** (e.g. kill vLLM → system self-recovers, drafting resumes, zero human action); resilient across a fresh install. Delivered in slices, each independently meeting DoR/AC/DoD.
 - **First slices (candidates):** S1 remote-repairs-local LLM (compose w/ MODEL-RESILIENCY fallback tier already in flight); S2 detector bus + audit store; S3 scorer-degrade self-heal (re-score poisoned postings automatically); S4 panel-error self-heal; S5 stuck-queue / idle-txn self-heal.
+
+**Story ladder (current state → fully implemented; decomposes the "First slices" list above into shippable, DoR/AC/DoD-bearing stories):**
+
+- **SH-1 — Scheduler autonomously drives active-campaign discovery/scoring (P0, live bug).**
+  - **DoR:** root-caused to `Scheduler.tick()` → `_active_campaigns(storage)` (`scheduler.py` L1025-1027, `[c for c in store.campaigns.list() if getattr(c, "active", True)]`) returning zero campaigns even with an active campaign configured, so `AgentLoop.tick` (which DOES drive discovery via `_run_discovery` at L788/854-859) is never invoked autonomously — discovery/scoring only ran via an explicit run trigger, not the 24/7 tick. `campaigns=len(ticked)` (L388/395) reports 0 as the live symptom.
+  - **AC:**
+    - *Given* an active campaign exists in storage, *When* a scheduler tick fires, *Then* `_active_campaigns` returns it, `AgentLoop.tick` runs for it, and the tick's `campaigns` count is >= 1.
+    - *Given* the per-tick session factory is configured (CONC-2 isolation), *When* a tick runs, *Then* `_active_campaigns(storage)` reads the SAME committed campaign row the request path wrote (no stale/isolated-session mismatch).
+    - *Given* a tick where campaigns>=1, *Then* discovery + scoring advance at least one step (verified via `ticked` + a scored-posting-count delta across ticks), not just an incremented counter.
+  - **DoD:** root cause fixed in `scheduler.py`/`_active_campaigns` (or its storage/session wiring); regression test asserting a tick against a real active campaign yields `campaigns>=1` and posting/score counts advance; committed; verified live on 10.0.1.11 (a scheduled tick against the real campaign moves the queue with zero manual trigger).
+  - **Reuse:** `Scheduler.tick`/`_active_campaigns`, `AgentLoop.tick`/`_run_discovery` — fix the wiring, do not add a second autonomy loop.
+
+- **SH-2 — Local-LLM-wedge detection + remediation signal.** ✅ (`52b3f6c2a`)
+  - **DoR:** detector #3 (local vLLM wedged/unreachable) catalogued; `RemediationRequested` defined as the escalation signal.
+  - **AC:** *Given* the local LLM is wedged/unreachable, *When* detected, *Then* `LocalLlmWedgeDetected` and `RemediationRequested` land on `DomainEventBus` and are audited (`detector_fired`/`remediation_requested` in `audit_log_service._ACTION_MAP`).
+  - **DoD:** `llm_wedge_detector.py` emits both events; `_ACTION_MAP` extended; committed. **Known gap (tracked as SH-3, not a regression):** `RemediationRequested` is emitted but has no consumer yet — nothing restarts the local service automatically.
+  - **Reuse:** `core/events.py`, `audit_log_service.py` — the precedent every later SELF-HEAL/AGENTS event type follows.
+
+- **SH-3 — Scoped single-service-restart control-plane (remote-repairs-local, consumes `RemediationRequested`).**
+  - **DoR:** SH-2's `RemediationRequested` is emitted but unconsumed (grounded gap, `core/events.py` L157-166: "a separate vLLM-host watchdog is the intended consumer"); `scripts/updater-daemon.sh`'s request/`status.json` control-plane pattern identified as the shape to narrow, not duplicate.
+  - **AC:**
+    - *Given* `RemediationRequested` fires for a wedged local LLM, *When* the (remote-tier, since local is down) remediator consumes it, *Then* it issues a bounded restart/reload/reconfigure action against the local model service through a new, narrow sibling of the updater sidecar's control-plane handshake.
+    - *Given* the action succeeds, *Then* the local LLM comes back online and an audit entry records detection→action→outcome.
+    - *Given* N bounded retries are exhausted, *Then* it fails safe to `NotificationService.notify_error` (the existing fail-safe path), never loops infinitely.
+  - **DoD:** new narrow control-plane channel (request/status handshake, scoped to one service restart, not the full-stack `update.sh --apply`); consumes `RemediationRequested`; bounded + audited; TDD+BDD; verified by fault injection (kill local vLLM → auto-recovers, zero human action) on 10.0.1.11.
+  - **Reuse:** `scripts/updater-daemon.sh`'s control-plane *pattern* (new, narrower implementation — this is a genuine new build per ADR-0008 Consequences, not reuse of the sidecar itself).
+
+- **SH-4 — Scorer-degrade bounded-retry guard (never persist a poisoned embedding score).** ✅
+  - **DoR:** SCORE-P0 incident root-caused (a transient LLM failure degraded scoring to embedding similarity, which then persisted below-viable permanently).
+  - **AC:** *Given* a transient LLM failure during scoring, *When* an LLM tier IS configured, *Then* the posting is left UNSCORED/retryable (never persists the degraded embedding score) up to `DEFAULT_MAX_TRANSIENT_RETRIES`/`SCORING_MAX_TRANSIENT_RETRIES`; *Given* retries are exhausted, *Then* it degrades explicitly (`scoring.degraded=True`), never silently.
+  - **DoD:** `ScoringService._persist_or_defer`/`_bump_transient_failures`/`_transient_failure_count` (`scoring_service.py`) shipped; committed. **Open (tracked separately, ADR-0009 S3 relation):** an AI-diagnosed remediation for a *systemic* pattern (vs. this deterministic per-posting retry) is deferred to EPIC AGENTS/AE if RC's effectiveness assessment ever surfaces one.
+  - **Reuse:** `scoring_service.py` (the deterministic bounded-retry cure; no AI remediator needed to close THIS loop).
+
+- **SH-5 — Detector bus extended: idle-in-transaction probe + live migration-failure signal + monkey-crawl as a runtime detector.**
+  - **DoR:** three grounded gaps from ADR-0008's detector table: #9 (idle-in-transaction DB sessions — no existing probe, grepped `idle_in_transaction`/`statement_timeout`/`pool_timeout` across `src/`, no hits), #6 (migration failure is install/update-script-time only, no live post-boot signal), #10 (`scripts/monkey_crawl.py` is a manually-invoked offline QA tool, not wired into a runtime detector).
+  - **AC:**
+    - *Given* a DB session sits idle-in-transaction past an age threshold, *When* a scheduled probe runs, *Then* it emits a typed detector event (new `DomainEvent` subclass) onto the bus.
+    - *Given* the engine boots with the DB schema behind `alembic heads`, *When* a live post-boot check runs, *Then* it emits a detector event instead of staying silent until a query fails.
+    - *Given* `monkey_crawl.py` is invocable non-interactively against a disposable instance (already true per `HANDOFF.md` §5.4), *When* scheduled periodically, *Then* its findings (console errors/failed requests) land on the bus as detector events, not only a manual report.
+  - **DoD:** three new detector event types + emission sites; each audited via the existing `_ACTION_MAP` pattern; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `DomainEventBus`/`AuditLogService` (SH-2's precedent); `scripts/monkey_crawl.py` (scheduled invocation, no rewrite).
+
+- **SH-6 — Panel-error detect + safe-mitigate + alert.**
+  - **DoR:** scope explicitly bounded by ADR-0008 Gap 5 ("remediating a code-level bug is out of scope for this epic... a future 'AI writes the patch, updater sidecar redeploys it' loop... is explicitly not part of this epic" — that loop is EPIC AGENTS/AE, not this story).
+  - **AC:** *Given* a panel JS/Alpine error is detected (via the SH-5 runtime monkey-crawl wiring), *When* it is a KNOWN safe-mitigate pattern (e.g. disable the broken gadget), *Then* the mitigation applies automatically and Kevin is alerted; *Given* it is NOT a known-safe pattern, *Then* it only alerts (never guesses a code fix — that is AE's job, not this detector's).
+  - **DoD:** detect (SH-5) → classify (known-safe-mitigate vs. alert-only) → apply-or-alert, audited; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** SH-5's monkey-crawl detector event; `NotificationService.notify_error`.
+
+- **SH-7 — Stuck-queue / idle-txn bounded remediation (beyond notify-only cap).**
+  - **DoR:** detector #8 (stuck/starved auto-draft queue, `agent_loop.py` `_record_approval_start_failure`/`_record_resume_failure`) and SH-5's new idle-txn probe both currently cap out at `notify_error`, not remediation.
+  - **AC:** *Given* a stuck approval/resume streak or an idle-in-transaction session past threshold, *When* the bounded-retry cap is reached, *Then* an operational remediation attempts first (release-and-retry a sandbox slot, terminate the idle session) BEFORE falling through to the human-notify floor.
+  - **DoD:** bounded remediation action wired ahead of the existing notify-only cap in both call sites; guardrail-4 discipline preserved (bounded, audited, fail-safe); TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `agent_loop.py`'s existing `_APPROVAL_START_FAILURE_CAP`/`_RESUME_FAILURE_CAP` counters (add a remediation step before the existing notify call, don't replace the cap discipline).
 
 ### EPIC REVIEW-UX — the Pending-Reviews decision + refinement workflow (Kevin, 2026-08-10)
 **Principle:** The review queue is where Kevin actually works. The flow: open the **source posting** → decide **Continue / Save-for-later / Discard** → (if Continue) review + refine generated answers → **prefill** the real form → **submit**. Plus freeform feedback that **teaches the profile** (global, transparent, reversible) and a **campaign chat**. **REUSE-FIRST:** Review/Approve/Snooze actions, `CriteriaService.edit_criteria`/`apply_learned_adjustment` (+ FR-CRIT/FR-LEARN transparency), `MaterialService.generate_cover_letter`/`generate_screening_answer` (per-section regen), the camoufox prefill/`easy_apply`/computer-use pipeline, and the a0 `chat_service` ALL exist — these stories are THIN UX + wiring over them, not new engines. Each story: DoR + BDD AC + DoD (TDD+BDD, verified on 10.0.1.11, fresh-install resilient).
@@ -66,6 +119,68 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
 - **Runtime (Q9):** **COPY the Agent-Zero coding stack (coder/reviewer/debugger + orchestration) INTO Applicant** so it is **entirely independent of the external Agent-Zero install**, running on **Applicant's own local+DeepSeek ladder**. (Reuse the proven A0 agent machinery, vendored in.) ⚠️ *Capability checkpoint: autonomous production coding on qwen-27B + deepseek-flash is weaker than a Claude-class coder — validate quality on real tasks before granting full auto-deploy; consider a stronger coding tier for the Engineer if quality is insufficient.*
 - **Responsible gate on "parallel now" (Q10):** start building both immediately, BUT the Automation Engineer's **autonomous-DEPLOY authority stays OFF** until (a) the core pipeline is stably producing a full + relevant queue, and (b) the AE safety harness (Q6) is built + verified. Until then the AE builds + canaries + proposes; auto-promote flips on after that checkpoint. (Don't let a self-deploying agent loose on an unstable base.)
 - **Relation to SELF-HEAL:** AE subsumes/extends EPIC SELF-HEAL (S1–S5 remediation become AE capabilities); RC is the strategic layer above it. Reconcile the two epics during design (no duplicate detectors/remediators).
+
+**Story ladder (current state → fully implemented; ADR-0009 is Proposed — no RC/AE code exists yet: `grep -rl "automation_engineer\|reflection_coach" src/` returns only the EPIC MODEL-CONFIG use-case registry entry, `core/model_config.py` L137/146, not an implementation):**
+
+- **RC-1 — Reflection Coach service: scheduled sibling of `CurationService`.**
+  - **DoR:** `Scheduler.tick`'s daily-cadence idiom + `CurationService`'s "propose, stage, review" shape studied as the pattern to mirror; the event-driven trigger points (rejection, velocity stall, N-apps-sent, fit-trend-shift) identified in the existing `ApplicationStateChanged`/`OutcomeRecorded` handlers.
+  - **AC:**
+    - *Given* the daily cadence, *When* `Scheduler.tick` fires once per campaign per UTC day, *Then* RC runs an effectiveness pass over response/interview rate, velocity + time-in-stage, fit-score trend, and funnel progress vs. deadline.
+    - *Given* an event-driven trigger (a rejection, a stall, N apps sent, a fit-trend shift), *Then* RC also evaluates off-cycle, consuming the same event bus every other detector uses.
+    - *Given* the evaluation, *Then* it is a semantic LLM judgment over the aggregated signals ("is this getting the right job, faster"), not a threshold rule.
+  - **DoD:** `ReflectionCoachService` (new, sibling of `CurationService`/the SELF-HEAL remediator — not a new agent runtime); daily + event-driven cadence wired through `Scheduler`; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `scheduler.py`'s daily-cadence idiom, `curation_service.py`'s propose/stage shape, `core/events.py`/`DomainEventBus`.
+
+- **RC-2 — Auto-apply reversible criteria/strategy tweaks.**
+  - **DoR:** RC-1 ships (effectiveness assessment produces a recommendation); `CriteriaService.apply_learned_adjustment`/`edit_criteria(confirm=...)` identified as the existing mutation seam.
+  - **AC:** *Given* RC's assessment recommends a non-integral tweak, *When* applied, *Then* it goes through `apply_learned_adjustment` (auto-applied, transparent via `learned_adjustments`, one-click revert via `clear_learned`); *Given* it touches an integral field (`titles`/`locations`/`salary_floor`), *Then* it stages via `edit_criteria`'s confirmation gate like any other caller — RC never bypasses it.
+  - **DoD:** RC calls the existing `CriteriaService` seam exclusively (no parallel mutation path); every applied tweak carries a human-readable summary + is revertible; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `criteria_service.py` (`apply_learned_adjustment`/`edit_criteria`) — RC is a new CALLER, not a new mutation mechanism.
+
+- **RC-3 — Programmatic-need handoff to the Automation Engineer.**
+  - **DoR:** RC-1/RC-2 ship; the "shared backlog queue" (routine) vs. "direct handoff" (urgent) split (Q4) scoped against `CurationService`'s `MemoryProposal`/`SkillProposal` staged-proposal shape as the pattern to mirror.
+  - **AC:** *Given* RC surfaces a programmatic need (e.g. "a source keeps 403ing, needs a new connector"), *When* it is routine, *Then* it lands on a durable shared backlog table AE polls; *When* urgent, *Then* it directly invokes AE's task intake (mirrors `notify_error`'s IMMEDIATE-urgency bypass).
+  - **DoD:** `ProgrammaticNeedRaised` domain event + shared backlog table; routine/urgent routing; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `curation_service.py`'s staged-proposal pattern; `NotificationService`'s urgency-routing precedent.
+
+- **AE-1 — AE↔`a0-applicant` bridge service.**
+  - **DoR:** the `a0-applicant/agents/{agent0,coder,coder-cloud,explorer,explorer-cloud,reviewer,security-auditor,debugger,test-engineer}` roster + `config/intel_tiers.yaml`/`intel_orchestration.yaml` confirmed already-vendored and contract-tested (grounded, ADR-0009 Context); confirmed by absence that nothing under `src/applicant/` calls this roster programmatically today.
+  - **AC:** *Given* a task (from the user, RC, or self-detection), *When* AE hands it to the `agent0` overseer profile via the same `call_subordinate`/`orchestrate`/`subagent` shape a human operator uses today, *Then* AE gets back a result it can gate/canary/promote — no new model plane, routed through the existing Plane A tier topology.
+  - **DoD:** a new, narrow bridge service in `src/applicant` (genuine new build, no existing seam); TDD+BDD; verified by a real task round-tripped through it.
+  - **Reuse:** the already-vendored `a0-applicant/agents/*` roster + `config/intel_tiers.yaml`/`intel_orchestration.yaml` — no second coding stack.
+
+- **AE-2 — Deploy safety harness: canary (build → disposable → full suite + monkey-crawl).**
+  - **DoR:** AE-1 ships; the `applicant-e2e` disposable-instance recipe (`HANDOFF.md` §5.2) + `journey_via_sidebar.py`/`scripts/monkey_crawl.py` confirmed already-working manual tools.
+  - **AC:** *Given* AE builds a change, *When* it canaries, *Then* it runs the `applicant-e2e` build→run-disposable→wait-for-200 sequence, then the full test suite + `journey_via_sidebar.py` + `monkey_crawl.py` against it; *Given* either fails, *Then* promotion is blocked.
+  - **DoD:** the canary sequence is scripted/AE-driven (not human-typed); hard TDD/BDD gate enforced (no promotion without the change's own tests + BDD scenarios green); TDD+BDD; verified end-to-end.
+  - **Reuse:** `applicant-e2e` recipe, `journey_via_sidebar.py`, `scripts/monkey_crawl.py` — a human-run recipe, automated, not reinvented.
+
+- **AE-3 — Deploy safety harness: snapshot + auto-rollback on failed health.**
+  - **DoR:** AE-2 ships; `/healthz`/`/api/health/capabilities` identified as the existing post-deploy signal; `scripts/install.sh`'s pre-migration snapshot step identified as the pattern to extend.
+  - **AC:** *Given* AE promotes a build, *When* it does, *Then* a snapshot (image tag + DB/schema snapshot) precedes the promotion; *Given* a post-promote health check fails within the window, *Then* an automatic rollback to the snapshot fires with zero human action.
+  - **DoD:** snapshot-before-promote + health-gated auto-rollback, a new narrow sibling of the updater sidecar's control-plane pattern (promote/health-check/rollback, not restart); a forced-failure drill proves rollback actually fires; TDD+BDD; verified on the e2e instance.
+  - **Reuse:** `scripts/updater-daemon.sh`'s control-plane *pattern* (new implementation, scoped differently — genuine new build per ADR-0009 Consequences).
+
+- **AE-4 — Proactive comms: every new capability communicated as it's built.**
+  - **DoR:** AE-1 ships; `NotificationService`'s existing notification-kind pattern (`notify_error`/`notify_digest_ready`) identified as the channel to extend.
+  - **AC:** *Given* AE starts building a new capability, *When* it does, *Then* Kevin is notified PROACTIVELY (as it's being built, not after) through a new `NotificationService` kind.
+  - **DoD:** new notification kind (learned-tweak-applied / feature-shipped / remediation-outcome) reusing the existing escalation ladder; TDD+BDD; verified live.
+  - **Reuse:** `notification_service.py` — new kind, not a new channel.
+
+- **AE-5 — Global kill switch + per-action veto + revert buttons on the audit surface.**
+  - **DoR:** the automated-work gate's "0 is the kill switch" convention (`agent_loop.py` L457, `scheduler.py`) identified as the shape to model, broadened; the audit panel (`app/routers/audit.py`) confirmed currently read-only.
+  - **AC:**
+    - *Given* the global kill switch is on, *When* checked at the top of RC's evaluation and every AE pipeline stage (build/canary/promote), *Then* all RC/AE activity halts.
+    - *Given* a single proposed action (shared backlog queue, activity feed), *When* vetoed, *Then* only that item is blocked, not the whole system.
+    - *Given* an audited RC action, *When* "revert" is clicked, *Then* `CriteriaService.edit_criteria(clear_learned=True)` runs (already the revert operation); *Given* an audited AE promotion, *When* "revert" is clicked, *Then* AE-3's snapshot-restore path runs.
+  - **DoD:** kill switch + per-action veto wired at every RC/AE checkpoint; revert-button endpoints added to the audit surface (new UI/API wiring over existing-or-AE-3's-new reversal primitive); TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** the automated-work gate's convention; `AuditLogService`/`ActionEvent`; `CriteriaService.clear_learned`; AE-3's snapshot-restore.
+
+- **AE-6 — Responsible gate (Q10): propose-only until the harness is independently verified.**
+  - **DoR:** AE-2/AE-3 ship; the two-condition gate scoped ((a) core pipeline stably produces a full/relevant queue, (b) the harness is built AND independently verified via a forced-failure drill).
+  - **AC:** *Given* the gate conditions are NOT both met, *When* AE completes a build+canary, *Then* it PROPOSES the promotion and a human approves it manually; *Given* both conditions are met and independently verified, *Then* the config flag flips and AE promotes autonomously with no redesign required.
+  - **DoD:** a config flag on the AE-1 bridge service gates auto-promote vs. propose-only; both states tested; committed. **Stays OFF by default per Q10 — flipping it is a Kevin decision, not an agent decision.**
+  - **Reuse:** AE-1's bridge service (a flag on existing logic, not a structural fork).
 
 ### EPIC MODEL-CONFIG — every model/endpoint choice is user-configurable in Settings (Kevin, 2026-08-10, STANDING)
 **Principle:** There must be NO hardcoded model/endpoint decision. For **every use case** — scoring, drafting (cover letter / screening answers / résumé variant), research/enrichment, the campaign chat, the Reflection Coach, the Automation Engineer, embeddings, summarization, and any future LLM use — Kevin can choose **local or remote**, point at **any OpenAI-compatible endpoint** (arbitrary base_url + api_key + model name), and pick the model, all from the **Settings UI**. Every preference we've set (local qwen scoring · deepseek-v4-flash drafting · DeepSeek fallback tier · local+DeepSeek ladder · router/prefer-local) is a **DEFAULT preset in Settings, changeable by Kevin later** — never a fixed decision.
@@ -106,6 +221,85 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
 - **ST-6 (P2) — coverage + detection:** extend the `egress-reputation-watchdog` to include 10.0.1.11 (alert if it ever egresses home-IP); wire capsolver key + CAPTCHA strategy; API-first preference (reconcile w/ DISCOVERY-BREADTH — prefer keyless ATS/APIs over scraping wherever possible); use the existing `detection_events` table to log + react to blocks.
 **DoR:** current-state assessed (above); VPS + DataImpulse + patch infra exist. **DoD:** live Applicant NEVER egresses home-IP; hard targets via residential + matched fingerprint + pacing; no IPv6/DNS/WebRTC leaks; residential IP score conserved (sticky/selective/paced); browser patch image-baked; verified by egress-IP checks + a Cloudflare/challenge canary + fault injection; watchdog covers 10.0.1.11; TDD+BDD; fresh-install resilient. See [[VPS Egress Node]] · [[Camoufox Install]].
 
+### EPIC DISCOVERY — verified-source, wide-net job-posting ingestion (Kevin, 2026-08-11) · see ADR-0015
+**Principle (Kevin, verbatim):** "We only scrape jobs from verified sources… the only entity we receive is a job posting." "Throw the net as wide as you possibly can… prioritize aggregators but direct connections are useful… we can't limit ourselves to specific industries." Breadth of SOURCE, never looseness of SHAPE: cast the widest possible net, industry-agnostic, but every row that reaches `job_postings` must first prove it is a real, verifiable posting. This was the single biggest known gap (no ADR existed) despite being the top of the funnel everything else depends on. **REUSE-FIRST:** `adapters/discovery/validate.py` (`validate_provider_rows`/`validate_postings_shape`) is the ONE real-postings gate, reused at both the runtime `DiscoveryService.add_board` write path and the offline `scripts/validate_discovery_boards.py` check; the keyless connector roster (`clients.py`/`factory.py`: Greenhouse/Lever/Ashby/SmartRecruiters/Workday direct + RemoteOk/Remotive/WorkingNomads aggregators + jobspy/SearXNG/RSS) and the circuit-breaker/pacing layer (`jobspy_searxng.py`'s `SourceCircuitBreaker`/`PerBoardRateLimiter`) already exist. Do NOT build a second validation gate or a second connector framework.
+
+- **DISC-1 — Real-posting-shape validation gate at ingestion.** ✅
+  - **DoR:** provider response shapes catalogued (title-field + identity/URL-field per provider, `PROVIDER_SHAPES`); `add_board` identified as the runtime write path to gate.
+  - **AC:**
+    - *Given* a candidate board's fetched response, *When* it is empty, a 404-turned-`[]`, or has no row with both a title and an identity/URL field, *Then* `validate_provider_rows` returns `ok=False` and the board is NEVER persisted/registered.
+    - *Given* a response with real postings mixed with malformed rows, *When* validated, *Then* `posting_count` reports only the rows that passed shape-validation, never the raw row count.
+    - *Given* an unrecognized provider key, *Then* the gate fails closed (`unknown provider`), never silently passing.
+  - **DoD:** `adapters/discovery/validate.py` + `DiscoveryService.add_board` (L211-266) enforce the gate; committed, unit-tested, verified live (board add rejects a dead slug).
+  - **Reuse:** `adapters/discovery/validate.py` — the one enforcement point for both callers below.
+
+- **DISC-2 — Keyless direct-ATS connector roster.** ✅
+  - **DoR:** target ATS platforms identified (Greenhouse/Lever/Ashby/SmartRecruiters/Workday), each with a public keyless listing API.
+  - **AC:**
+    - *Given* `DISCOVERY_LIVE=true` and a configured `DISCOVERY_{GREENHOUSE,LEVER,ASHBY,SMARTRECRUITERS,WORKDAY}_*` token list, *When* discovery runs, *Then* each live client fetches real postings with zero API key / zero login.
+    - *Given* the test lane, *Then* every connector has a `Fake*` counterpart so tests run with zero network.
+  - **DoD:** `Live{Greenhouse,Lever,Workday,Ashby,SmartRecruiters}Client` + `Fake*` siblings in `adapters/discovery/clients.py`; wired in `factory.py`; `PROVIDER_SHAPES` covers all five; committed + deployed (seed companies ingesting live per [[Applicant — ATS Discovery Connectors]]).
+  - **Reuse:** `adapters/discovery/clients.py`/`factory.py` — new ATS platforms extend this roster, never a parallel client layer.
+
+- **DISC-3 — Aggregator connectors (breadth-per-integration).** ✅
+  - **DoR:** aggregator sources identified that publish many companies' postings behind one feed (RemoteOk, Remotive, WorkingNomads) alongside the existing jobspy/SearXNG/RSS aggregators.
+  - **AC:**
+    - *Given* an aggregator connector, *When* discovery runs, *Then* postings from many companies are ingested through ONE connector, keyless, industry-agnostic (no title/role/industry allowlist at this layer).
+    - *Given* an RSS feed URL, *Then* `LiveRssClient` ingests it the same way as any other source (arbitrary direct-connection breadth beyond the named aggregators).
+  - **DoD:** `Live{RemoteOk,Remotive,WorkingNomads}Client` + `LiveRssClient`/`LiveSearxngClient`/`LiveJobSpyClient` in `clients.py`; `PROVIDER_SHAPES` covers the three named aggregators; committed + live.
+  - **Reuse:** same `clients.py`/`factory.py` roster as DISC-2; aggregators and direct connections share one framework.
+
+- **DISC-4 — Board-validation as a CI gate (not just an operator tool).**
+  - **DoR:** `scripts/validate_discovery_boards.py` exists and runs standalone; no CI workflow currently invokes it (grepped `.github/**/*.yml` for `validate_discovery_boards` — no hits).
+  - **AC:**
+    - *Given* a scheduled/CI job, *When* it runs `validate_discovery_boards.py` against every `DISCOVERY_*`-configured board, *Then* a board that has gone dead (renamed slug, ATS migration, taken down) fails the job loudly instead of silently degrading discovery.
+    - *Given* every configured board still validates, *Then* the job is a no-op green check.
+  - **DoD:** a CI workflow (or scheduled task) invokes `scripts/validate_discovery_boards.py` on a cadence + on deploy; a forced-dead-board drill proves it fails loudly; committed.
+  - **Reuse:** `scripts/validate_discovery_boards.py` + `validate.py` — only new invocation, no new validation logic.
+
+- **DISC-5 — Source-reliability tiers cover every shipped connector.**
+  - **DoR:** `core/rules/source_reliability.py`'s `SOURCE_TIERS` audited against `clients.py`'s actual roster — gap confirmed: `ashby`/`smartrecruiters`/`workday`/`remoteok`/`remotive`/`workingnomads` are missing (fall through to the conservative "unknown → medium" default) while `greenhouse`/`lever` already get `high`.
+  - **AC:** *Given* a posting sourced from any of the six missing connectors, *When* reliability is scored, *Then* it uses that connector's real tier (`high` for direct public ATS APIs, matching greenhouse/lever; an aggregator-appropriate tier for remoteok/remotive/workingnomads), not the generic default.
+  - **DoD:** `SOURCE_TIERS` extended for all six; unit test asserting every key in `clients.py`'s live-client roster has a `SOURCE_TIERS` entry (regression guard against future drift); committed.
+  - **Reuse:** `core/rules/source_reliability.py` — data-only change, no new module.
+
+- **DISC-6 — `easy_apply` tagging parity across the connector roster.** ✅
+  - **DoR:** assisted-apply parity identified as a cross-connector requirement (quick-apply prioritization downstream needs a consistent signal).
+  - **AC:** *Given* a posting from Greenhouse/Lever/Ashby/SmartRecruiters/Workday, *Then* `easy_apply=True` is set (assisted-apply parity); *Given* LinkedIn/other sources with a native quick-apply attribute, *Then* `detect_easy_apply` honors the source's own explicit flag first.
+  - **DoD:** `detect_easy_apply` + per-provider mappers in `jobspy_searxng.py`; committed + live.
+  - **Reuse:** `jobspy_searxng.py`'s existing mappers.
+
+- **DISC-7 — No-industry-filter invariant, enforced by test.**
+  - **DoR:** the "can't limit ourselves to specific industries" requirement is currently true by construction (no connector carries an industry allowlist) but unenforced — nothing stops a future connector from adding one to "clean up" its feed.
+  - **AC:** *Given* every discovery connector in `clients.py`, *Then* a regression test asserts none filters rows by industry/title/role — that narrowing happens exclusively in `core/rules/role_domain_fit.py`, downstream, at scoring.
+  - **DoD:** a contract-style test (mirrors `test_intel_tier_topology.py`'s "assert the roster shape" pattern) fails if a connector introduces industry filtering; committed.
+  - **Reuse:** existing connector roster; test-only addition, no new runtime code.
+
+### EPIC MATERIAL-QUALITY — degraded résumé variants + malformed screening targets never reach review (#44)
+**Principle:** A drafted application that reaches Kevin's review queue must be genuinely tailored — never a silently-degraded fallback résumé variant, never a screening answer written against the wrong/malformed question. **REUSE-FIRST:** `MaterialService` already tracks its own degradation (`last_generation_degraded`, `_degraded_marker`, `_note_silent_degradation`, `emit_degradation_diagnostic`) and screening-answer generation (`generate_screening_answer`, `generate_for_deferred_question`) — this epic makes those existing signals BLOCKING/visible instead of silent, and adds a target-integrity check to screening answers. Do NOT build a second material-generation pipeline.
+
+- **MAT-1 — Degraded résumé variant never reaches review silently.**
+  - **DoR:** `MaterialService.last_generation_degraded`/`_note_silent_degradation` identified as the existing (currently internal-only) degradation signal; the review-queue surfacing point (Pending Reviews / RUX flow) identified.
+  - **AC:**
+    - *Given* a résumé variant generation that fell back to degraded output (LLM failure, empty tailoring), *When* it would enter the review queue, *Then* the item is flagged as degraded (visible badge/marker), never presented as a normal tailored draft.
+    - *Given* `emit_degradation_diagnostic` fires past its threshold, *Then* it is surfaced to the operator/self-heal surface (ties EPIC SELF-HEAL), not only logged.
+  - **DoD:** degraded variants carry a visible, honest marker through to the review UI; diagnostic threshold wired to an existing notification/audit surface; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `MaterialService._degraded_marker`/`_with_degraded_marker`/`emit_degradation_diagnostic` (extend visibility, don't rebuild the detector).
+
+- **MAT-2 — Screening-answer target integrity (never answer the wrong question).**
+  - **DoR:** `generate_screening_answer`/`generate_for_deferred_question` identified as the generation seam; the failure mode (a generated answer that doesn't address the actual asked question — a malformed/mismatched target) scoped.
+  - **AC:**
+    - *Given* a screening question extracted from a posting, *When* an answer is generated, *Then* the answer is checked against the question it claims to answer (a lightweight relevance/target check) before it is offered for review.
+    - *Given* the check fails (answer doesn't address the question), *Then* the item is flagged for regeneration/human review rather than silently shipped as a normal answer.
+  - **DoD:** a target-integrity check wraps `generate_screening_answer`/`generate_for_deferred_question`'s output; flagged mismatches surfaced in review; TDD+BDD; verified on 10.0.1.11.
+  - **Reuse:** `MaterialService.generate_screening_answer`/`generate_for_deferred_question` (wrap, don't duplicate).
+
+- **MAT-3 — Regression coverage: degraded-fallback fixtures never silently pass quality checks.**
+  - **DoR:** the existing "New-draft quality re-check (P1)" DONE item (backlog, verified real LLM-tailored content 2026-08-10) identified as the last manual spot-check; no standing automated regression exists.
+  - **AC:** *Given* a fixture that simulates a degraded/fallback generation, *When* the quality-check suite runs, *Then* it is caught (not silently graded as normal tailored content) — closing the gap the manual 2026-08-10 check covered once, ongoing.
+  - **DoD:** an automated test fixture + assertion added alongside the existing material-generation test suite; committed.
+  - **Reuse:** existing material-generation test suite (extend, don't fork).
+
 ## ✅ DONE + verified this cycle (P0/P1)
 
 - **B1 Digest reads stored scores** — build_digest no longer LLM-re-scores in the hot path. Committed + baked. (Part of the perf story below.)
@@ -129,7 +323,7 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
 - **APP-LP-2 — posting date + freshness on Pending Reviews / role cards.** Kevin: a high-fit role posted a month ago is probably filled; the posted date is decision-critical. **DoR:** job_postings has a date field to surface. **DoD:** posted date + relative-freshness cue on every scored Pending Review row + Digest/Top-Matches cards, both themes, stale roles visually de-emphasized, reuses existing payload (no redundant endpoint), graceful when unknown; committed (`e298110dd`) + DEPLOYED + live. **DONE.**
 - **APP-UIKIT-1 — design-system / UIKit standard (P2, "nice to have").** Kevin wants codified color/contrast/HIG standards for future UI consistency. **DoD:** `docs/UIKIT-STANDARDS.md` derived from real source (theme tokens light+dark, `.light-mode` leak trap, typography/spacing, component patterns, WCAG/HIG targets + do/don'ts, recipes + pre-ship checklist), file-cited; committed. *(Agent running.)*
 
-- **DISCOVERY-BREADTH (P1, CRITICAL-TO-QUALITY) — maximize job-posting reach across the internet.** Kevin: "widen the net to as full a reach as I possibly can get — the most postings possible gives me the most edge." Baseline today = jobspy (US-remote) + 25 Greenhouse boards + 10 Lever companies. **DoR:** current discovery architecture mapped (sources, connector framework, dedup, circuit breaker, scheduling); candidate sources cataloged with feasibility (keyless vs keyed/API, anti-bot difficulty, cost); prioritized expansion plan w/ BDD AC. **AC (BDD):** (a) *Given* the expanded source set enabled, *When* a discovery cycle runs, *Then* unique postings ingested increases materially vs baseline (target Nx) from many more sources; (b) *Given* multiple sources return the same role, *Then* it is deduped (no double drafts); (c) *Given* a source is down/rate-limited/anti-bot-blocked, *Then* the circuit breaker isolates it and others continue (ties to SELF-HEAL); (d) *Given* a new source type, *Then* it plugs into the EXISTING connector framework (no bespoke one-off, reuse-first). **DoD:** expanded sources live + ingesting on 10.0.1.11; unique-posting count materially up; dedup + circuit-breaker resilience verified; TDD+BDD green; source config in repo/compose (fresh-install resilient). *(Scoping agent running; build in the post-P0 wave.)* See [[Applicant — ATS Discovery Connectors]].
+- **DISCOVERY-BREADTH (P1, CRITICAL-TO-QUALITY) — maximize job-posting reach across the internet.** Kevin: "widen the net to as full a reach as I possibly can get — the most postings possible gives me the most edge." **Superseded/formalized by EPIC DISCOVERY · ADR-0015** (above) — the connector roster this item scoped (jobspy + Greenhouse/Lever/Ashby/SmartRecruiters/Workday + RemoteOk/Remotive/WorkingNomads aggregators) now has its own ADR + decomposed DISC-1..7 story ladder, with DISC-1/2/3/6 already ✅ shipped and DISC-4/5/7 tracking the remaining CI-gate/reliability-tier/industry-invariant gaps. This entry stays only as the original P1 scoping request pointer — see EPIC DISCOVERY for current AC/DoD. See [[Applicant — ATS Discovery Connectors]].
 - **Tech-Debt burn-down (PARALLEL, overseer)** — audit DONE → `docs/TECH-DEBT-REGISTER.md` (128 items: 21 UNEXPOSED / 18 PARTIAL / 7 DUP / 7 UNWIRED; 4 P0). Now: parallel per-domain FIX agents (isolated worktrees, commit only) → coordinator cherry-picks + ONE batched rebuild/deploy → verify. Covers the 4 P0s (base-résumé overwrite, easy-apply consent, model-endpoint JSON/Form=B7, ops-allowlist recovery) + P1 UNEXPOSED/PARTIAL + DUP. Deferred to a later serial wave: the 18-file `_engine_client` consolidation (conflicts with everyone).
 
 ### Landing page (APP-LP-1 shipped) — open follow-ups
@@ -156,18 +350,44 @@ _Last updated: 2026-08-11 (Fit Engine + Companion epics + story ladders, ADR-001
 ## 🧠 EPIC MIND-DURABLE — curated agent-memory survives an engine restart (#286, FR-MIND-1/2/3, FR-DUR-3) · see ADR-0010
 **Principle (Kevin):** *A "remembers you" product cannot lose what it learned on a restart.* The deployed engine ran `MIND_BACKEND=in_memory`, so the curated-memory / skills / recall trio was in-process and EPHEMERAL — every restart/rebuild wiped it. The prior durable option (`bridge`→companion) was disabled for stalling the digest read path ~45s, so durability must NOT add a network/companion dependency to the read path. **REUSE-FIRST:** the SQLAlchemy models/session/alembic stack, the pure `core/rules/agent_memory` bounds policy, the `session_factory` the container already builds, and the `pg_credential_store` short-lived-session idiom ALL exist — this is a new durable adapter over them, not a new framework.
 
-- **MIND-DUR-1 New `sql` agent-memory backend, Postgres-backed, restart-surviving (P0).** *A durable trio behaviorally identical to `in_memory`, persisted to the shared stack, read locally + single-query (no network).*
-  - **DoR:** ports (`MemoryStore`/`SkillStore`/`RecallIndex`) + `in_memory` reference behavior + storage/alembic idioms studied; the `session_factory` is available at the `build_agent_memory` call site (container.py); failing TDD/BDD written first.
-  - **AC (BDD):**
-    - *Given* a durable `sql` agent-memory backend on a fresh database, *When* the agent remembers a stated user preference *And* the engine restarts and rebuilds the trio on the same database, *Then* the rebuilt agent still recalls that preference as a user preference. *(restart-survival — the headline)*
-    - *Given* a campaign-scoped lesson, *When* the engine restarts, *Then* the rebuilt agent recalls it ONLY under its campaign.
-    - *Given* the SQL trio, *Then* it passes the SAME add / replace(first substring match) / remove(all substring matches, returns count) / snapshot(scope+campaign filtering, kind split, char-bounds + `truncated`) behavior as `in_memory` (parametrized contract over BOTH adapters).
-    - *Given* concurrent `add()`s from many sessions, *Then* none are lost and none deadlock.
-    - *Given* a populated table, *When* `snapshot()` runs, *Then* it is a SINGLE indexed query returning under a tight budget (<50ms on the test DB) — the guard against re-introducing the bridge's hot-path stall.
-    - *Given* many writes, *Then* the table + snapshot stay bounded (oldest rows pruned beyond a per-(scope,campaign) cap — the `cap_feature_stats` philosophy).
-    - *Given* `alembic upgrade head`, *Then* the `memory_entries`/`skills`/`recall_entries` tables + indexes are created; *And* `downgrade` cleanly drops them.
-    - *Given* a note that CLAIMS authority persisted across a restart, *Then* it is still advisory-only and confers no permission (FR-MIND-11 unchanged — the write-approval gate + `claims_authority` filtering live ABOVE the store).
-  - **DoD:** `SqlMemoryStore`/`SqlSkillStore`/`SqlRecallIndex` in `adapters/memory/sql_backend.py` (short-lived session per op); 3 SQLAlchemy models + indexes (`memory_entries` INTEGER-PK for insertion order, `skills` name-PK, `recall_entries` run_id-PK) registered with `Base.metadata`; alembic `0015_agent_memory` (up+down tested); `MIND_BACKEND_SQL` + a `sql` branch in `build_agent_memory` (signature extended with keyword-only `session_factory`, backward-compatible, falls back to `in_memory` with no DB); container threads the existing `session_factory` in; config keeps `in_memory` default (test lane) with `sql` documented; prod compose default set to `sql`; `alembic upgrade head` already runs in install.sh/update.sh (verified — new revision auto-applied). Works on SQLite (tests) + Postgres (prod). TDD unit + parametrized contract + migration + BDD green. **Overseer (parent) deploys, migrates on the server, restart-verifies, seeds.** Portable across a fresh install. *(Built + tested + committed on branch; NOT yet deployed to 10.0.1.11.)*
+**Story ladder (current state → fully implemented; decomposes the durable-memory build into DoR/AC/DoD-bearing stories — the first four are BUILT + TESTED + COMMITTED on this branch, grounded by file: `adapters/memory/sql_backend.py` (15.9KB), `adapters/storage/alembic/versions/0015_agent_memory.py`, and `tests/{unit/test_agent_memory_sql_backend.py, contract/test_agent_memory_contract.py, migrations/test_agent_memory_migration.py}` all exist on disk; ONLY the final deploy/restart-verify step remains):**
+
+- **MEM-1 — Schema + migration: `memory_entries`/`skills`/`recall_entries`.** ✅
+  - **DoR:** ports (`MemoryStore`/`SkillStore`/`RecallIndex`) + `in_memory` reference behavior + storage/alembic idioms studied.
+  - **AC:** *Given* `alembic upgrade head`, *Then* the three tables + indexes (`ix_memory_entries_scope_campaign_kind`, `ix_skills_scope_campaign`, recall's `campaign_id` index) are created; *And* `downgrade` cleanly drops them.
+  - **DoD:** 3 SQLAlchemy models registered with `Base.metadata` (`memory_entries` INTEGER-PK for insertion order, `skills` name-PK, `recall_entries` run_id-PK); `alembic/versions/0015_agent_memory.py` (up+down tested, `tests/migrations/test_agent_memory_migration.py`); committed.
+  - **Reuse:** the existing SQLAlchemy models/session/alembic stack — no new schema framework.
+
+- **MEM-2 — `SqlMemoryStore`/`SqlSkillStore`/`SqlRecallIndex` adapters, behaviorally identical to `in_memory`.** ✅
+  - **DoR:** MEM-1 ships; `in_memory.py`'s add/replace/remove/snapshot semantics studied as the contract to match exactly.
+  - **AC:**
+    - *Given* the SQL trio, *Then* it passes the SAME add / replace(first substring match) / remove(all substring matches, returns count) / snapshot(scope+campaign filtering, kind split, char-bounds + `truncated`) behavior as `in_memory` (parametrized contract over BOTH adapters, `tests/contract/test_agent_memory_contract.py`).
+    - *Given* concurrent `add()`s from many sessions, *Then* none are lost and none deadlock (short-lived session per op, never the per-tick isolated Session).
+    - *Given* a populated table, *When* `snapshot()` runs, *Then* it is a SINGLE indexed query returning under a tight budget (<50ms on the test DB) — the guard against re-introducing the disabled `bridge` backend's ~45s hot-path stall.
+  - **DoD:** `adapters/memory/sql_backend.py`'s `SqlMemoryStore`/`SqlSkillStore`/`SqlRecallIndex`; `snapshot()` enforces the same char bounds as `InMemoryMemoryStore` via `core/rules/agent_memory.enforce_bounds`; `recall.search()` reuses `in_memory._tokenize`, local, no network; committed.
+  - **Reuse:** `core/rules/agent_memory.enforce_bounds` (the pure bounds policy, shared with `in_memory` — one policy, two adapters).
+
+- **MEM-3 — Bounded growth (per-(scope,campaign) row cap).** ✅
+  - **DoR:** MEM-2 ships; `learning_service.cap_feature_stats`'s "cap it so a rewritten blob can't grow unbounded" philosophy identified as the pattern to mirror.
+  - **AC:** *Given* many writes past the cap (default 500), *Then* `add()` prunes the oldest rows beyond the per-(scope,campaign) cap, keeping the table — and the snapshot query — bounded over a 24/7 lifetime.
+  - **DoD:** pruning logic in `sql_backend.py`'s `add()`; unit-tested; committed.
+  - **Reuse:** `learning_service.cap_feature_stats`'s capping philosophy (same rule, new table).
+
+- **MEM-4 — Wiring: `build_agent_memory` `sql` branch + container `session_factory` + config defaults.** ✅
+  - **DoR:** MEM-1/MEM-2 ship; `container.py`'s existing `session_factory` construction site identified.
+  - **AC:**
+    - *Given* `MIND_BACKEND=sql` with a reachable DB, *When* `build_agent_memory` runs, *Then* it returns the SQL trio; *Given* `sql` with NO reachable DB, *Then* it falls back to `in_memory` so boot and the hermetic test lane stay safe.
+    - *Given* a fresh install with no override, *Then* the test lane still defaults to `in_memory` (fast, isolated) while `docker-compose.prod.yml` defaults to `sql` (confirmed: `MIND_BACKEND: ${MIND_BACKEND:-sql}`).
+  - **DoD:** `build_agent_memory` gains a keyword-only `session_factory` (backward-compatible — existing 2-arg callers unchanged); container threads its existing `session_factory` in; `app/config.py`'s `mind_backend` field default stays `in_memory` (test-safe), prod compose sets `sql`; committed.
+  - **Reuse:** the container's already-built `session_factory` (the `pg_credential_store` short-lived-session idiom) — no new session management.
+
+- **MEM-5 — Deploy + restart-verify on 10.0.1.11.**
+  - **DoR:** MEM-1..MEM-4 built + tested + committed on branch (confirmed above); `alembic upgrade head` already runs in `install.sh`/`update.sh` before the api serves.
+  - **AC:**
+    - *Given* the live 10.0.1.11 engine, *When* deployed with this branch + `alembic upgrade head` run, *Then* the three new tables exist in the production database.
+    - *Given* a stated user preference recorded post-deploy, *When* the engine restarts/rebuilds, *Then* the rebuilt agent still recalls that preference — the restart-survival headline, proved live, not just in the test lane.
+  - **DoD:** deployed to 10.0.1.11; migration applied; a live restart-and-recall smoke test passes; **Overseer (parent) deploys, migrates on the server, restart-verifies, seeds** — this is the one remaining open item for EPIC MIND-DURABLE.
+  - **Reuse:** `scripts/install.sh`/`update.sh`'s existing `alembic upgrade head` step — no new deploy mechanism.
 
 ---
 
