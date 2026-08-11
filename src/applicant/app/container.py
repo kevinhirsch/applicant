@@ -1052,14 +1052,41 @@ def build_container(settings: Settings | None = None) -> Container:
     # settings); when residential is disabled/unconfigured the policy DOWNGRADES to
     # the free VPS network-layer exit, so discovery stays byte-identical to before
     # this epic for a config that opts out.
+    # EPIC STEALTH (persisted prefs GOVERN runtime): the effective posture folds the
+    # operator's persisted Settings > Stealth prefs (``automation.prefs`` +
+    # ``stealth.prefs``) OVER the env ``Settings`` — so the panel is no longer
+    # write-only. Read through a LIVE callable (mirrors ``_effective_smart_routing`` /
+    # ``_LivePresubmitSafetyParams``): the container is a boot singleton, so re-reading
+    # the posture at flow time lets a save govern the browser/discovery egress WITHOUT
+    # a restart. SAFETY: this SELECTS app-level egress/proxy/residential posture only;
+    # it never touches the host wg0/VPS route that protects the home IP (out of app).
+    from applicant.adapters.browser.stealth import EgressPolicy
+    from applicant.app.routers.stealth import resolve_effective_posture
     from applicant.core import stealth_policy
 
-    stealth_config = settings.build_stealth_config()
+    def _resolve_posture():
+        try:
+            return resolve_effective_posture(settings, setup_service)
+        except Exception:  # pragma: no cover - never break boot/flow; env-only fallback
+            return stealth_policy.resolve_stealth_posture(settings, {}, {})
+
+    def _egress_from_posture(posture) -> EgressPolicy:
+        # FR-STEALTH-4: a configured residential proxy is threaded into the launch;
+        # residential-proxy mode without an attested proxy still refuses to launch.
+        return EgressPolicy.from_settings(
+            mode=posture.egress_mode,
+            proxy_url=posture.egress_proxy_url,
+            residential=posture.egress_residential,
+            suppress_webrtc=posture.suppress_webrtc,
+        )
+
+    posture = _resolve_posture()
+    stealth_config = posture.stealth_config
     # One sticky DataImpulse session per process boot so a whole discovery flow shares
-    # ONE residential IP for the forwarder's ~30-min hold; a restart rotates it. (A
-    # per-campaign/per-run sessid is the live-reread follow-up noted in the WIRING
-    # trail — the aggregator is built once here, not per campaign.)
-    discovery_flow_sessid = stealth_policy.new_sessid()
+    # ONE residential IP for the forwarder's ~30-min hold. When the operator PINNED a
+    # sticky sessid in Settings > Stealth it seeds (and thus pins) the id across boots;
+    # otherwise a restart rotates it.
+    discovery_flow_sessid = stealth_policy.new_sessid(seed=posture.sticky_sessid)
     discovery = build_default_discovery(
         live=settings.discovery_live,
         searxng_url=settings.searxng_url,
@@ -1068,6 +1095,8 @@ def build_container(settings: Settings | None = None) -> Container:
         greenhouse_boards=discovery_greenhouse_boards,
         lever_companies=discovery_lever_companies,
         stealth=stealth_config,
+        # Live seam: a rebuild of the aggregator re-resolves the saved posture.
+        stealth_provider=lambda: _resolve_posture().stealth_config,
         flow_sessid=discovery_flow_sessid,
     )
     # Runtime add/remove ATS boards: persisted user-added boards are registered
@@ -1094,7 +1123,9 @@ def build_container(settings: Settings | None = None) -> Container:
     # proxy. Falls back to the operator ``discovery_proxies`` when residential use is
     # disabled/unconfigured (escalation_pool is then empty), preserving prior behavior.
     intake_proxies = (
-        stealth_config.escalation_pool(stealth_policy.new_sessid("url-intake"))
+        stealth_config.escalation_pool(
+            stealth_policy.new_sessid("url-intake", seed=posture.sticky_sessid)
+        )
         or discovery_proxies
     )
     url_posting_fetcher = (
@@ -1105,16 +1136,16 @@ def build_container(settings: Settings | None = None) -> Container:
     embedding = LocalEmbedding()
     # FR-STEALTH-4: residential egress is enforced up front — a configured proxy is
     # threaded into the real browser launch; residential-proxy mode without a proxy
-    # (or a self-flagged datacenter exit) refuses to launch.
-    from applicant.adapters.browser.stealth import EgressPolicy
-
-    egress = EgressPolicy.from_settings(
-        mode=settings.egress_mode,
-        proxy_url=settings.egress_proxy_url,
-        residential=settings.egress_residential,
-    )
+    # (or a self-flagged datacenter exit) refuses to launch. Built from the RESOLVED
+    # posture (persisted prefs over env), not raw ``settings.*``.
+    egress = _egress_from_posture(posture)
     browser = PatchrightBrowser(
         egress=egress,
+        # Live re-read: re-resolve the effective EgressPolicy at flow time so a saved
+        # egress/residential/WebRTC posture governs the apply-flow browser WITHOUT a
+        # restart (the container/browser are boot singletons). Selects the app-level
+        # proxy only — never the host wg0/VPS route protecting the home IP.
+        egress_provider=lambda: _egress_from_posture(_resolve_posture()),
         # Drive a real Chrome/Chromium for pre-fill in the deploy (BROWSER_REAL=true);
         # tests/CI leave it off and use the hermetic in-memory FakePageSource. Without
         # this the engine only ever SIMULATES pre-fill (FR-PREFILL-1/2).
@@ -1127,8 +1158,13 @@ def build_container(settings: Settings | None = None) -> Container:
         profiles_dir=settings.browser_profiles_dir,
         # The browser engine all outbound automation traffic routes through
         # (FR-STEALTH-1): ``camoufox`` (default) or the patchright/Chrome ``chromium``
-        # path. ``channel`` only matters when the chromium engine is selected.
-        engine=settings.browser_engine,
+        # path — from the resolved posture. ``channel`` only matters for chromium.
+        engine=posture.browser_engine,
+        # ST-3/ST-5: WebRTC/DNS-leak suppression from the resolved posture, threaded
+        # into the launch init script (a browser fingerprint concern, never a host
+        # routing change) so no local-IP leak reveals the real IP behind the proxy.
+        suppress_webrtc=posture.suppress_webrtc,
+        suppress_dns_leak=posture.suppress_dns_leak,
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,

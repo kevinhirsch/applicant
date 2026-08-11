@@ -461,6 +461,11 @@ class EgressPolicy:
     residential: bool = True
     #: Explicit egress mode (FR-STEALTH-4): ``direct`` | ``residential-proxy``.
     mode: str = EGRESS_DIRECT
+    #: ST-3/ST-5: suppress the browser's WebRTC-leak so the real local IP behind a
+    #: residential proxy is never revealed past the exit. The operator-configurable
+    #: ``webrtc_suppression`` pref (Settings > Stealth) is threaded here and applied
+    #: in the launch init script; ON by default (a leak is a hard legitimacy tell).
+    suppress_webrtc: bool = True
 
     def validate(self) -> None:
         """Refuse a non-residential / under-configured egress (FR-STEALTH-4).
@@ -507,7 +512,12 @@ class EgressPolicy:
 
     @classmethod
     def from_settings(
-        cls, *, mode: str, proxy_url: str, residential: bool = False
+        cls,
+        *,
+        mode: str,
+        proxy_url: str,
+        residential: bool = False,
+        suppress_webrtc: bool = True,
     ) -> EgressPolicy:
         """Build a policy from app settings (FR-STEALTH-4).
 
@@ -516,6 +526,11 @@ class EgressPolicy:
         proxy is configured but NOT attested residential, :meth:`validate` refuses to
         launch — so the datacenter-egress refusal is reachable through prod wiring.
         The ``direct`` mode (the host's own connection) is residential by definition.
+
+        ``suppress_webrtc`` (ST-3/ST-5) is the operator's ``webrtc_suppression`` pref,
+        carried onto the policy and threaded into the browser launch. It is a browser
+        fingerprint concern (never a host-routing change), so it applies in every mode
+        — including ``direct``, where the host route (wg0/VPS) still protects the IP.
         """
         mode_norm = (mode or EGRESS_DIRECT).strip() or EGRESS_DIRECT
         url = (proxy_url or "").strip() or None
@@ -526,6 +541,16 @@ class EgressPolicy:
         # exit. In direct mode there is no proxy: url=None, residential by the
         # definition of the home node.
         if mode_norm == EGRESS_DIRECT:
-            return cls(proxy_url=None, residential=True, mode=mode_norm)
+            return cls(
+                proxy_url=None,
+                residential=True,
+                mode=mode_norm,
+                suppress_webrtc=bool(suppress_webrtc),
+            )
         # A proxied exit is residential only when the operator explicitly attests it.
-        return cls(proxy_url=url, residential=bool(residential), mode=mode_norm)
+        return cls(
+            proxy_url=url,
+            residential=bool(residential),
+            mode=mode_norm,
+            suppress_webrtc=bool(suppress_webrtc),
+        )

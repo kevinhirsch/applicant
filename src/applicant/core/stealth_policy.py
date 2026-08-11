@@ -112,35 +112,73 @@ def is_block_prone(source_key: str) -> bool:
     return any(key.startswith(p) for p in BLOCK_PRONE_SOURCE_PREFIXES)
 
 
-def is_block_error(error: object) -> bool:
+def is_block_error(
+    error: object, status_codes: frozenset[int] | set[int] | None = None
+) -> bool:
     """Classify an exception / status as a bot-block (400/403/429/503 + markers).
 
     Best-effort and dependency-free: reads a numeric ``status``/``status_code``
     (directly or off a ``.response``) when present, else scans the string form
     for a block status code or a known anti-bot vendor marker. Used to decide
     whether a failed block-prone fetch should escalate to the residential proxy.
+
+    ``status_codes`` is the set of HTTP codes treated as a block; it defaults to
+    :data:`BLOCK_STATUS_CODES` so every existing caller is byte-identical, but a
+    :class:`StealthConfig` (whose ``block_status_codes`` is operator-configurable
+    via the Settings > Stealth panel) passes its own set through
+    :meth:`StealthConfig.is_block_error`.
     """
+    codes = BLOCK_STATUS_CODES if status_codes is None else status_codes
     if error is None:
         return False
     # 1) an explicit int status code.
     if isinstance(error, bool):  # guard: bool is an int subclass
         return False
     if isinstance(error, int):
-        return error in BLOCK_STATUS_CODES
+        return error in codes
     # 2) a status attribute on the exception (httpx.HTTPStatusError.response, or
     #    a plain ``.status_code`` on some client errors).
     for attr in ("status_code", "status"):
         code = getattr(error, attr, None)
-        if isinstance(code, int) and not isinstance(code, bool) and code in BLOCK_STATUS_CODES:
+        if isinstance(code, int) and not isinstance(code, bool) and code in codes:
             return True
     response = getattr(error, "response", None)
     if response is not None:
         code = getattr(response, "status_code", None)
-        if isinstance(code, int) and not isinstance(code, bool) and code in BLOCK_STATUS_CODES:
+        if isinstance(code, int) and not isinstance(code, bool) and code in codes:
             return True
     # 3) fall back to a marker scan of the string form.
     text = str(error).lower()
     return any(marker in text for marker in _BLOCK_MARKERS)
+
+
+def parse_block_statuses(value: object) -> frozenset[int]:
+    """Parse an operator ``block_detect_statuses`` value into a code set.
+
+    Accepts the panel's comma-separated string (``"403,429,503"``) or an iterable
+    of ints. Whitespace is stripped and non-integer chunks are skipped (the router
+    already validates on save, so this is defensive — it never raises). An empty /
+    unset value falls back to :data:`BLOCK_STATUS_CODES` so block-detection is
+    never silently disabled to nothing.
+    """
+    if value is None:
+        return BLOCK_STATUS_CODES
+    if isinstance(value, (set, frozenset, tuple, list)):
+        codes = {int(v) for v in value if isinstance(v, int) and not isinstance(v, bool)}
+        return frozenset(codes) if codes else BLOCK_STATUS_CODES
+    raw = str(value).strip()
+    if not raw:
+        return BLOCK_STATUS_CODES
+    codes: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            codes.add(int(part))
+        except ValueError:
+            continue
+    return frozenset(codes) if codes else BLOCK_STATUS_CODES
 
 
 def parse_source_proxy_policy(value: object) -> dict[str, str]:
@@ -185,13 +223,21 @@ def parse_source_proxy_policy(value: object) -> dict[str, str]:
     return out
 
 
-def new_sessid(flow_key: str | None = None) -> str:
+def new_sessid(flow_key: str | None = None, *, seed: str | None = None) -> str:
     """A sticky-session id for one flow (DataImpulse ``sessid`` label body).
 
-    A deterministic short id derived from ``flow_key`` when given (so the SAME
-    flow — a discovery run, or browse→apply — reuses the SAME residential IP for
-    the forwarder's ~30-min hold), else a fresh random id. Hex, 12 chars.
+    ``seed`` is the OPERATOR-pinned sticky id (``residential_sticky_sessid`` from
+    the Settings > Stealth panel): when a non-blank seed is supplied it WINS over
+    ``flow_key`` so every flow shares the ONE operator-chosen residential identity
+    (ST-5: "browse→apply = one identity", pinned across restarts). With no seed,
+    the id is a deterministic short id derived from ``flow_key`` when given (so the
+    SAME flow reuses the SAME residential IP for the forwarder's ~30-min hold),
+    else a fresh random id. Hex, 12 chars (or the seed verbatim when pinned).
     """
+    if seed:
+        pinned = str(seed).strip()
+        if pinned:
+            return pinned
     if flow_key:
         return hashlib.sha1(flow_key.encode("utf-8")).hexdigest()[:12]  # noqa: S324 - label id, not security
     return secrets.token_hex(6)
@@ -264,8 +310,22 @@ class StealthConfig:
     backoff_multiplier: float = 2.0
     backoff_max_seconds: float = 60.0
     block_max_retries: int = 1
+    #: HTTP status codes treated as a bot-block (the operator-configurable
+    #: ``block_detect_statuses`` from Settings > Stealth). Defaults to the module
+    #: :data:`BLOCK_STATUS_CODES` so an unconfigured config behaves as before;
+    #: :meth:`is_block_error` consults THIS set, not the module-level constant.
+    block_status_codes: frozenset[int] = BLOCK_STATUS_CODES
 
     # -- resolution ----------------------------------------------------------
+    def is_block_error(self, error: object) -> bool:
+        """Classify ``error`` as a bot-block using THIS config's status set.
+
+        Threads :attr:`block_status_codes` (the saved ``block_detect_statuses``)
+        into the pure module classifier so the operator's chosen block-detect set
+        actually governs the residential-escalation decision (ST-6).
+        """
+        return is_block_error(error, self.block_status_codes)
+
     def policy_for(self, source_key: str) -> str:
         """The effective proxy policy for ``source_key``.
 
@@ -363,6 +423,7 @@ def build_stealth_config(
     backoff_multiplier: float = 2.0,
     backoff_max_seconds: float = 60.0,
     block_max_retries: int = 1,
+    block_status_codes: frozenset[int] | set[int] | None = None,
 ) -> StealthConfig:
     """Build a :class:`StealthConfig` from plain values (the wiring seam).
 
@@ -401,4 +462,180 @@ def build_stealth_config(
         backoff_multiplier=backoff_multiplier,
         backoff_max_seconds=backoff_max_seconds,
         block_max_retries=block_max_retries,
+        block_status_codes=(
+            BLOCK_STATUS_CODES if block_status_codes is None else frozenset(block_status_codes)
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Effective-posture RESOLVER — persisted Settings-UI prefs GOVERN runtime.
+# ---------------------------------------------------------------------------
+#
+# The Settings > Stealth panel persists two records — ``automation.prefs`` (the
+# existing engine egress/browser fields) and ``stealth.prefs`` (the new
+# stealth-only fields). They were WRITE-ONLY: nothing at runtime read them; the
+# EgressPolicy/StealthConfig/PatchrightBrowser were built once at boot from
+# ``settings.*`` (env) only. This resolver folds the persisted prefs OVER the env
+# defaults into one effective posture, using the SAME precedence
+# ``routers/stealth.py:build_stealth_view`` uses for the panel display — so what
+# the panel SHOWS is what the runtime actually USES.
+#
+# It is PURE and dependency-free (reads a duck-typed settings object + two dicts),
+# lives in ``core`` and imports nothing from ``adapters``/``app`` (NFR-ARCH-1), and
+# returns primitives for the browser egress (the app layer builds ``EgressPolicy``
+# from them, since that type lives in ``adapters``) plus a ready ``StealthConfig``.
+#
+# HARD SAFETY INVARIANT: this SELECTS app-level egress/proxy/residential posture
+# ONLY. It never touches — and must never be used to touch — the HOST-level
+# WireGuard/VPS source-routing that protects the home IP (configured OUTSIDE this
+# app). An app pref of "home"/"direct" still egresses through the host route; the
+# resolver merely picks proxies, never host networking.
+
+#: Settings > Stealth per-source residential policy (the panel's 3-way). Distinct
+#: from :data:`PROXY_POLICIES` (the ``StealthConfig`` vocab direct/vps/residential)
+#: — these are the higher-level OPERATOR intents the resolver maps onto it.
+PER_SOURCE_SELECTIVE = "selective"
+PER_SOURCE_ALWAYS = "always"
+PER_SOURCE_NEVER = "never"
+PER_SOURCE_POLICIES = (PER_SOURCE_SELECTIVE, PER_SOURCE_ALWAYS, PER_SOURCE_NEVER)
+
+#: Preset DEFAULTS for the stealth-only panel fields — the values the resolver
+#: falls back to when nothing is persisted, so runtime matches the panel display.
+#: ``routers/stealth.py:STEALTH_PREFS_DEFAULTS`` is built ON TOP of this (adding the
+#: display-only ``egress_route``) so there is ONE source of truth for the presets.
+STEALTH_RUNTIME_DEFAULTS: dict[str, object] = {
+    "residential_enabled": True,
+    "residential_sticky_sessid": "",
+    "per_source_proxy_policy": PER_SOURCE_SELECTIVE,
+    "webrtc_suppression": True,
+    "request_pacing_ms": 1500,
+    "request_rate_per_min": 20,
+    "block_detect_threshold": 2,
+    "block_detect_statuses": "403,429,503",
+}
+
+
+def _map_per_source_policy(policy: object) -> tuple[str, str, bool]:
+    """Map a panel per-source intent onto ``(block_prone, default, residential_off)``.
+
+    * ``always``   — route block-prone sources residentially UP FRONT.
+    * ``selective`` — baseline the free VPS/network exit; reserve residential for
+      block-detect escalation only (conserve residential GB/reputation, ST-5).
+    * ``never``    — never use residential at all (baseline VPS; residential OFF).
+
+    ``default`` (every other source) is always ``direct`` — keyless ATS / SearXNG /
+    RSS egress cleanly and must never burn residential GB. ``residential_off`` folds
+    into the master switch so ``never`` disables the escalation pool too.
+    """
+    p = str(policy or "").strip().lower()
+    if p == PER_SOURCE_ALWAYS:
+        return (PROXY_POLICY_RESIDENTIAL, PROXY_POLICY_DIRECT, False)
+    if p == PER_SOURCE_NEVER:
+        return (PROXY_POLICY_VPS, PROXY_POLICY_DIRECT, True)
+    # selective (and any unknown -> the safe conserving default).
+    return (PROXY_POLICY_VPS, PROXY_POLICY_DIRECT, False)
+
+
+@dataclass(frozen=True)
+class StealthPosture:
+    """The effective runtime stealth posture (persisted prefs folded over env).
+
+    Browser-egress fields are PRIMITIVES (``core`` cannot import the adapter's
+    ``EgressPolicy``); the app layer builds ``EgressPolicy.from_settings(...)`` from
+    them. ``stealth_config`` is the ready per-source discovery policy. ``sticky_sessid``
+    is the operator-pinned residential session seed ("" = auto-mint per flow).
+    """
+
+    egress_mode: str
+    egress_proxy_url: str
+    egress_residential: bool
+    suppress_webrtc: bool
+    suppress_dns_leak: bool
+    browser_engine: str
+    sticky_sessid: str
+    stealth_config: StealthConfig
+
+
+def resolve_stealth_posture(
+    settings: object,
+    automation_prefs: Mapping[str, object] | None = None,
+    stealth_prefs: Mapping[str, object] | None = None,
+) -> StealthPosture:
+    """Fold persisted Settings > Stealth prefs OVER the env ``Settings`` -> posture.
+
+    Precedence mirrors ``routers/stealth.py:build_stealth_view``:
+
+    * the EXISTING engine fields (egress mode/proxy/attestation, browser engine)
+      prefer a persisted ``automation.prefs`` override, else the env ``Settings``;
+    * the NEW stealth-only fields prefer a persisted ``stealth.prefs`` override,
+      else the panel PRESET (:data:`STEALTH_RUNTIME_DEFAULTS`);
+    * the discovery knobs with NO panel field (residential/VPS URLs, sticky-label,
+      backoff, source overrides) come from env ``Settings`` as before.
+
+    Reads ``settings`` duck-typed (``getattr`` with env-default fallbacks) so it is
+    unit-testable with a ``SimpleNamespace`` and never imports the app-config layer.
+    """
+    auto = dict(automation_prefs or {})
+    prefs = dict(stealth_prefs or {})
+
+    def _s(name: str, default: object) -> object:
+        return getattr(settings, name, default)
+
+    def _pref(key: str) -> object:
+        return prefs.get(key, STEALTH_RUNTIME_DEFAULTS[key])
+
+    # --- existing engine fields: automation.prefs override, else env -----------
+    egress_mode = auto.get("egress_mode", _s("egress_mode", "direct")) or "direct"
+    egress_proxy_url = auto.get("egress_proxy_url", _s("egress_proxy_url", "")) or ""
+    egress_residential = bool(auto.get("egress_residential", _s("egress_residential", False)))
+    browser_engine = auto.get("browser_engine", _s("browser_engine", "camoufox")) or "camoufox"
+
+    # --- stealth-only fields: stealth.prefs override, else panel preset --------
+    residential_enabled = bool(_pref("residential_enabled"))
+    sticky_sessid = str(_pref("residential_sticky_sessid") or "")
+    per_source = _pref("per_source_proxy_policy")
+    suppress_webrtc = bool(_pref("webrtc_suppression"))
+    pacing_ms = int(_pref("request_pacing_ms"))
+    rate_per_min = int(_pref("request_rate_per_min"))
+    block_threshold = int(_pref("block_detect_threshold"))
+    block_status_codes = parse_block_statuses(_pref("block_detect_statuses"))
+
+    block_prone_policy, default_policy, residential_off = _map_per_source_policy(per_source)
+    residential_enabled_eff = residential_enabled and not residential_off
+
+    # --- non-panel discovery knobs: env only (unchanged) ----------------------
+    extra = tuple(
+        p.strip() for p in str(_s("discovery_proxies", "") or "").split(",") if p.strip()
+    )
+
+    stealth_config = build_stealth_config(
+        residential_proxy_url=str(_s("residential_proxy_url", "") or ""),
+        residential_proxy_enabled=residential_enabled_eff,
+        vps_proxy_url=str(_s("vps_proxy_url", "") or ""),
+        block_prone_policy=block_prone_policy,
+        default_policy=default_policy,
+        source_proxy_policy=_s("discovery_source_proxy_policy", "") or "",
+        extra_residential_proxies=extra,
+        sticky_sessions=bool(_s("residential_sticky_sessions", True)),
+        sessid_label=str(_s("residential_sessid_label", DEFAULT_SESSID_LABEL) or DEFAULT_SESSID_LABEL),
+        rate_max_calls=rate_per_min,
+        rate_period_seconds=60.0,
+        min_request_interval_seconds=pacing_ms / 1000.0,
+        backoff_base_seconds=float(_s("discovery_backoff_base_seconds", 2.0)),
+        backoff_multiplier=float(_s("discovery_backoff_multiplier", 2.0)),
+        backoff_max_seconds=float(_s("discovery_backoff_max_seconds", 60.0)),
+        block_max_retries=block_threshold,
+        block_status_codes=block_status_codes,
+    )
+
+    return StealthPosture(
+        egress_mode=str(egress_mode),
+        egress_proxy_url=str(egress_proxy_url),
+        egress_residential=egress_residential,
+        suppress_webrtc=suppress_webrtc,
+        suppress_dns_leak=bool(_s("browser_suppress_dns_leak", True)),
+        browser_engine=str(browser_engine),
+        sticky_sessid=sticky_sessid,
+        stealth_config=stealth_config,
     )

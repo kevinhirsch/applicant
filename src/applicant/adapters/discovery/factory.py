@@ -14,6 +14,8 @@ Either way the registry shape (source keys, toggles) is identical, so persisted
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from applicant.adapters.discovery.clients import (
     FakeGreenhouseClient,
     FakeJobSpyClient,
@@ -91,6 +93,7 @@ def build_default_discovery(
     greenhouse_boards: tuple[str, ...] | None = None,
     lever_companies: tuple[str, ...] | None = None,
     stealth: StealthConfig | None = None,
+    stealth_provider: Callable[[], StealthConfig | None] | None = None,
     flow_sessid: str | None = None,
 ) -> JobSpySearxngDiscovery:
     """Build the default master-aggregator discovery adapter.
@@ -123,29 +126,50 @@ def build_default_discovery(
     session label so a whole flow shares ONE residential IP. When ``stealth`` is
     ``None`` (the default, and every existing caller/test) the legacy single-proxy
     path is used and behavior is byte-identical to before this epic.
+
+    ``stealth_provider`` (EPIC STEALTH live re-read): a callable that RE-RESOLVES the
+    effective ``StealthConfig`` from the persisted Settings > Stealth posture. When
+    supplied it WINS over the static ``stealth`` at resolution time, so a rebuild of
+    the aggregator (or a future per-flow resolution) picks up a saved posture WITHOUT
+    a restart. ``None`` keeps the static ``stealth`` (byte-identical to before).
     """
     proxy = ProxyConfig(proxies=proxies, enabled=bool(proxies))
+
+    def _current_stealth() -> StealthConfig | None:
+        # Live posture wins when a provider is wired; else the static config. A
+        # provider failure degrades to the static config so a store read never
+        # breaks discovery wiring.
+        if stealth_provider is not None:
+            try:
+                live = stealth_provider()
+            except Exception:  # pragma: no cover - defensive: never break wiring
+                live = None
+            if live is not None:
+                return live
+        return stealth
 
     def _proxy_for(source_key: str) -> ProxyConfig:
         # Per-source egress resolution (ST-2): the stealth policy decides whether
         # this source uses the residential pool, a VPS proxy, or direct egress.
         # Absent a stealth policy, fall back to the shared legacy proxy so the
         # existing FR-DISC-6 behavior is preserved byte-identical.
-        if stealth is None:
+        current = _current_stealth()
+        if current is None:
             return proxy
-        urls = stealth.proxy_urls_for(source_key, sessid=flow_sessid)
+        urls = current.proxy_urls_for(source_key, sessid=flow_sessid)
         return ProxyConfig(proxies=tuple(urls), enabled=bool(urls))
 
     def _escalation_for(source_key: str) -> ProxyConfig | None:
         # On block-detect (400/403/429/503) a block-prone source retries once
         # through the residential pool -- unless it is already using it, in which
         # case there is nothing to escalate to.
-        if stealth is None:
+        current = _current_stealth()
+        if current is None:
             return None
-        pool = stealth.escalation_pool(flow_sessid)
+        pool = current.escalation_pool(flow_sessid)
         if not pool:
             return None
-        if tuple(pool) == tuple(stealth.proxy_urls_for(source_key, sessid=flow_sessid)):
+        if tuple(pool) == tuple(current.proxy_urls_for(source_key, sessid=flow_sessid)):
             return None
         return ProxyConfig(proxies=tuple(pool), enabled=True)
 
@@ -165,6 +189,7 @@ def build_default_discovery(
     sources = []
     if include_sample:
         sources.append(SampleSource())
+    _resolved_stealth = _current_stealth()
     for site in JOBSPY_SITES:
         site_key = f"jobspy:{site}"
         sources.append(
@@ -174,7 +199,9 @@ def build_default_discovery(
                 proxy=_proxy_for(site_key),
                 escalation_proxy=_escalation_for(site_key),
                 escalation_max_retries=(
-                    stealth.block_max_retries if stealth is not None else 1
+                    _resolved_stealth.block_max_retries
+                    if _resolved_stealth is not None
+                    else 1
                 ),
             )
         )
@@ -231,10 +258,10 @@ def build_default_discovery(
     # reputation. Build the aggregator's rate limiter from the stealth pacing
     # knobs when a policy is supplied; otherwise use the aggregator's own default.
     rate_limiter = None
-    if stealth is not None:
+    if _resolved_stealth is not None:
         rate_limiter = PerBoardRateLimiter(
-            max_calls=stealth.rate_max_calls,
-            period_seconds=stealth.rate_period_seconds,
+            max_calls=_resolved_stealth.rate_max_calls,
+            period_seconds=_resolved_stealth.rate_period_seconds,
         )
 
     return JobSpySearxngDiscovery(

@@ -52,6 +52,11 @@ from applicant.adapters.storage.app_config_store import (
     InMemoryAppConfigStore,
 )
 from applicant.app.deps import get_container
+from applicant.core.stealth_policy import (
+    STEALTH_RUNTIME_DEFAULTS,
+    StealthPosture,
+    resolve_stealth_posture,
+)
 
 router = APIRouter(prefix="/api/setup/stealth", tags=["setup", "stealth"])
 
@@ -105,17 +110,13 @@ _MAX_SESSID_LEN = 64
 
 #: Preset DEFAULTS for the NEW stealth-only fields. Every value is a CHANGEABLE
 #: default (EPIC STEALTH principle) — merged in by ``build_stealth_view`` so a
-#: fresh install (nothing saved) shows the recommended posture.
+#: fresh install (nothing saved) shows the recommended posture. The stealth-only
+#: subset lives in ``core.stealth_policy.STEALTH_RUNTIME_DEFAULTS`` (the SAME presets
+#: the runtime resolver falls back to, so the panel display == runtime); this adds
+#: only the display-only ``egress_route``.
 STEALTH_PREFS_DEFAULTS: dict[str, Any] = {
     "egress_route": EGRESS_ROUTE_VPS,
-    "residential_enabled": True,
-    "residential_sticky_sessid": "",
-    "per_source_proxy_policy": PROXY_POLICY_SELECTIVE,
-    "webrtc_suppression": True,
-    "request_pacing_ms": 1500,
-    "request_rate_per_min": 20,
-    "block_detect_threshold": 2,
-    "block_detect_statuses": "403,429,503",
+    **STEALTH_RUNTIME_DEFAULTS,
 }
 
 
@@ -198,6 +199,26 @@ def _stealth_prefs_store(setup_service: Any) -> StealthPrefsStore:
     if store is None:
         store = InMemoryAppConfigStore()
     return StealthPrefsStore(store)
+
+
+def resolve_effective_posture(settings: Any, setup_service: Any) -> StealthPosture:
+    """Resolve the effective runtime stealth posture from the persisted prefs.
+
+    The glue that lets the runtime (container.py wiring + the live re-read callables)
+    fold the persisted Settings > Stealth prefs OVER the env ``Settings`` the SAME way
+    the panel view does: it reads ``automation.prefs`` via ``SetupService`` and the
+    ``stealth.prefs`` record via :class:`StealthPrefsStore` (the SAME config store —
+    NO second store) and hands both to the pure core resolver
+    (``core.stealth_policy.resolve_stealth_posture``).
+
+    Read fresh each call so a panel save governs the browser/discovery egress WITHOUT
+    an engine restart (mirrors ``container._effective_smart_routing`` /
+    ``_LivePresubmitSafetyParams``). SAFETY: selects app-level egress/proxy posture
+    only — never the host wg0/VPS route that protects the home IP.
+    """
+    automation_prefs = setup_service.get_automation_prefs()
+    stealth_prefs = _stealth_prefs_store(setup_service).get_raw()
+    return resolve_stealth_posture(settings, automation_prefs, stealth_prefs)
 
 
 # ---------------------------------------------------------------------------
