@@ -28,6 +28,34 @@ from applicant.core.model_config import (
     llm_use_case_keys,
 )
 
+# EPIC STEALTH: the per-source proxy-policy vocabulary lives in
+# ``core.stealth_policy`` (a pure, adapter-free layer both the discovery adapters
+# and this config layer import). Re-exported below so the Settings validators + the
+# router/UI keep one ``config`` import site for the policy names.
+from applicant.core.stealth_policy import (
+    PROXY_POLICIES,
+    PROXY_POLICY_DIRECT,
+    PROXY_POLICY_RESIDENTIAL,
+    PROXY_POLICY_VPS,
+    StealthConfig,
+    parse_source_proxy_policy,
+)
+from applicant.core.stealth_policy import (
+    build_stealth_config as _build_stealth_config,
+)
+
+# Re-exported so router/UI + downstream ``from applicant.app.config import ...``
+# sites keep one import site for the stealth proxy-policy vocabulary (mirrors the
+# ``_MODEL_CONFIG_REEXPORTS`` pattern above).
+_STEALTH_CONFIG_REEXPORTS = (
+    PROXY_POLICIES,
+    PROXY_POLICY_DIRECT,
+    PROXY_POLICY_RESIDENTIAL,
+    PROXY_POLICY_VPS,
+    StealthConfig,
+    parse_source_proxy_policy,
+)
+
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
 #: The takeover desktop is a containerized, web-streamed Ubuntu desktop (the DE is
 #: an image/arg swap). Default Cinnamon; Xfce, GNOME, Pantheon also selectable.
@@ -534,6 +562,113 @@ class Settings(BaseSettings):
     # config). Set True only when the operator vouches the proxy is residential.
     egress_residential: bool = Field(default=False, alias="EGRESS_RESIDENTIAL")
 
+    # --- EPIC STEALTH: residential proxy + per-source proxy policy (ST-2/ST-5) --
+    # Principle (Kevin): "We cannot be detected at all. Our residential IP score
+    # MUST be protected." Automation NEVER egresses from the home IP; block-prone
+    # scrape sources go through an attested RESIDENTIAL proxy with a matched
+    # fingerprint + human-like pacing, keyless ATS / structured APIs stay DIRECT
+    # (they egress cleanly on the free network-layer VPS WireGuard exit, ST-1), and
+    # residential bandwidth is conserved (sticky per flow, selective, paced). Every
+    # value here is a PRESET DEFAULT that is CHANGEABLE in the Settings UI.
+    #
+    # The residential exit: DataImpulse (sticky-US) reached through the VPS tunnel
+    # forwarder ``http://10.8.0.1:8880`` (see [[VPS Egress Node]] / EPIC STEALTH).
+    # A preset default so a fresh install already routes hard targets residentially;
+    # override or blank it in Settings. It is applied SELECTIVELY (block-prone
+    # sources + on block-detect), never to easy/keyless targets, so GB is not burned.
+    residential_proxy_url: str = Field(
+        default="http://10.8.0.1:8880", alias="RESIDENTIAL_PROXY_URL"
+    )
+    # Master toggle for residential-proxy use (ST-5 conservation knob). When False,
+    # a ``residential`` policy DOWNGRADES to ``vps`` (the free network-layer exit) —
+    # so turning residential off never silently forces the home/datacenter IP into a
+    # hard target; it just stops spending residential GB.
+    residential_proxy_enabled: bool = Field(
+        default=True, alias="RESIDENTIAL_PROXY_ENABLED"
+    )
+    # Optional explicit VPS-side HTTP proxy URL for the ``vps`` policy. Normally
+    # EMPTY: the VPS WireGuard exit already covers egress at the NETWORK layer
+    # (ST-1), so ``vps`` == ``direct`` at the HTTP-proxy level. Set this only if the
+    # VPS also exposes an HTTP forward proxy you want threaded per-request.
+    vps_proxy_url: str = Field(default="", alias="VPS_PROXY_URL")
+    # Default proxy policy for BLOCK-PRONE scrape sources (python-jobspy:
+    # linkedin/indeed/glassdoor/zip_recruiter/google). ``residential`` (default)
+    # avoids the datacenter/home-IP block outright — the top principle is "never get
+    # blocked". Flip to ``vps`` to conserve residential GB and rely on the
+    # block-detect escalation leg instead, or ``direct``. One of PROXY_POLICIES.
+    block_prone_proxy_policy: str = Field(
+        default=PROXY_POLICY_RESIDENTIAL, alias="BLOCK_PRONE_PROXY_POLICY"
+    )
+    # Default proxy policy for EVERY OTHER source (keyless Greenhouse/Lever, custom
+    # RSS, your own SearXNG, the offline sample). ``direct`` (default) — these
+    # egress cleanly and must never burn residential GB. One of PROXY_POLICIES.
+    default_proxy_policy: str = Field(
+        default=PROXY_POLICY_DIRECT, alias="DEFAULT_PROXY_POLICY"
+    )
+    # Per-source policy OVERRIDES: comma-separated ``source_key=policy`` pairs
+    # (e.g. ``jobspy:glassdoor=residential,searxng=vps``). Same comma-shape as
+    # ``discovery_proxies``/``discovery_rss_feeds``. Empty (default) ⇒ the two
+    # defaults above govern every source. A typo'd policy is rejected at load.
+    discovery_source_proxy_policy: str = Field(
+        default="", alias="DISCOVERY_SOURCE_PROXY_POLICY"
+    )
+    # Sticky residential session (ST-5: "browse→apply = one identity"). When True
+    # the forwarder proxy URL is decorated with a per-flow DataImpulse ``sessid``
+    # label so a whole flow shares ONE residential IP (reads as one human, ~30-min
+    # hold) instead of hopping IPs mid-flow (a detection tell + reputation churn).
+    residential_sticky_sessions: bool = Field(
+        default=True, alias="RESIDENTIAL_STICKY_SESSIONS"
+    )
+    # The DataImpulse sticky-session label injected into the proxy username
+    # (``user-sessid-<id>``). ``{sessid}`` is substituted per flow. Change only if
+    # your forwarder expects a different label convention.
+    residential_sessid_label: str = Field(
+        default="sessid-{sessid}", alias="RESIDENTIAL_SESSID_LABEL"
+    )
+
+    # --- EPIC STEALTH: scraper pacing / rate-limit / backoff (ST-5) -------------
+    # Human-like pacing conserves residential reputation (never hammer a board).
+    # Per-source (per-board) sliding-window rate limit — threaded into the discovery
+    # aggregator's ``PerBoardRateLimiter`` so one aggressive board never hogs a run.
+    discovery_rate_max_calls: int = Field(
+        default=5, ge=1, alias="DISCOVERY_RATE_MAX_CALLS"
+    )
+    discovery_rate_period_seconds: float = Field(
+        default=60.0, gt=0, alias="DISCOVERY_RATE_PERIOD_SECONDS"
+    )
+    # Minimum human-like delay (seconds) between paced scrape requests within a run.
+    discovery_min_request_interval_seconds: float = Field(
+        default=2.0, ge=0, alias="DISCOVERY_MIN_REQUEST_INTERVAL_SECONDS"
+    )
+    # Exponential backoff on block-detect (400/403/429/503): base * multiplier**n,
+    # clamped to the max; ``discovery_block_max_retries`` bounds the residential
+    # escalation retries before a source is given up for the run.
+    discovery_backoff_base_seconds: float = Field(
+        default=2.0, ge=0, alias="DISCOVERY_BACKOFF_BASE_SECONDS"
+    )
+    discovery_backoff_multiplier: float = Field(
+        default=2.0, ge=1.0, alias="DISCOVERY_BACKOFF_MULTIPLIER"
+    )
+    discovery_backoff_max_seconds: float = Field(
+        default=60.0, ge=0, alias="DISCOVERY_BACKOFF_MAX_SECONDS"
+    )
+    discovery_block_max_retries: int = Field(
+        default=1, ge=0, alias="DISCOVERY_BLOCK_MAX_RETRIES"
+    )
+
+    # --- EPIC STEALTH: browser stealth flags surfaced (ST-3/ST-4) --------------
+    # These are preset DEFAULTS surfaced here + threaded into the browser launch by
+    # the browser adapter (Integrate wiring). ``browser_engine`` (camoufox) and the
+    # residential fields above are reused by the apply-flow browser; the two flags
+    # below suppress the WebRTC/DNS leaks that would reveal the real IP behind a
+    # residential proxy (ST-5: no IPv6/DNS/WebRTC leaks).
+    browser_suppress_webrtc: bool = Field(
+        default=True, alias="BROWSER_SUPPRESS_WEBRTC"
+    )
+    browser_suppress_dns_leak: bool = Field(
+        default=True, alias="BROWSER_SUPPRESS_DNS_LEAK"
+    )
+
     # Browser engine the agent drives for all pre-fill / ATS automation — every
     # outbound browser request routes through it (FR-STEALTH-1, FR-PREFILL-1).
     # ``camoufox`` (default) is the Firefox-based anti-detect browser; ``chromium``
@@ -857,6 +992,29 @@ class Settings(BaseSettings):
             )
         return norm
 
+    @field_validator("block_prone_proxy_policy", "default_proxy_policy")
+    @classmethod
+    def _validate_proxy_policy(cls, v: str) -> str:
+        # EPIC STEALTH (ST-2): reject a typo'd policy at load rather than silently
+        # coercing — a wrong value must not change which egress a source uses.
+        norm = (v or "").strip().lower()
+        if norm not in PROXY_POLICIES:
+            raise ValueError(
+                f"proxy policy {v!r} is invalid; choose one of {PROXY_POLICIES} "
+                "(default 'residential' for block-prone, 'direct' otherwise)."
+            )
+        return norm
+
+    @field_validator("discovery_source_proxy_policy")
+    @classmethod
+    def _validate_source_proxy_policy(cls, v: str) -> str:
+        # EPIC STEALTH (ST-2): validate the ``source_key=policy,...`` override
+        # shape at load — a malformed entry or an unknown policy raises here (via
+        # ``parse_source_proxy_policy``) instead of being silently dropped at wiring.
+        # The raw string is stored unchanged; the container parses it into a dict.
+        parse_source_proxy_policy(v)
+        return v
+
     @field_validator("captcha_strategy")
     @classmethod
     def _validate_captcha_strategy(cls, v: str) -> str:
@@ -979,6 +1137,42 @@ class Settings(BaseSettings):
     def llm_configured(self) -> bool:
         """True once enough LLM settings exist to satisfy the OOBE gate (FR-UI-5)."""
         return bool(self.llm_provider and self.llm_model)
+
+    def build_stealth_config(self) -> StealthConfig:
+        """Materialize the EPIC STEALTH per-source proxy policy (ST-2/ST-5).
+
+        The one-liner the container passes into ``build_default_discovery`` so the
+        residential forwarder is applied SELECTIVELY (block-prone scrape sources +
+        on block-detect) while keyless ATS / APIs stay direct. Folds an
+        operator-supplied ``discovery_proxies`` pool in as ADDITIONAL residential
+        exits (they share the block-prone concept). Pure — reads only settings.
+
+        # WIRING: the Integrate step should call ``settings.build_stealth_config()``
+        # and thread the result into ``build_default_discovery(stealth=..., flow_sessid=
+        # new_sessid(<campaign/flow key>))`` in container.py, and reuse
+        # ``residential_proxy_*`` / ``browser_suppress_*`` for the browser launch.
+        """
+        extra = tuple(
+            p.strip() for p in (self.discovery_proxies or "").split(",") if p.strip()
+        )
+        return _build_stealth_config(
+            residential_proxy_url=self.residential_proxy_url,
+            residential_proxy_enabled=self.residential_proxy_enabled,
+            vps_proxy_url=self.vps_proxy_url,
+            block_prone_policy=self.block_prone_proxy_policy,
+            default_policy=self.default_proxy_policy,
+            source_proxy_policy=self.discovery_source_proxy_policy,
+            extra_residential_proxies=extra,
+            sticky_sessions=self.residential_sticky_sessions,
+            sessid_label=self.residential_sessid_label,
+            rate_max_calls=self.discovery_rate_max_calls,
+            rate_period_seconds=self.discovery_rate_period_seconds,
+            min_request_interval_seconds=self.discovery_min_request_interval_seconds,
+            backoff_base_seconds=self.discovery_backoff_base_seconds,
+            backoff_multiplier=self.discovery_backoff_multiplier,
+            backoff_max_seconds=self.discovery_backoff_max_seconds,
+            block_max_retries=self.discovery_block_max_retries,
+        )
 
 
 @lru_cache

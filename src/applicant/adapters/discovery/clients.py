@@ -17,6 +17,7 @@ import logging
 from contextlib import contextmanager
 from typing import Protocol
 
+from applicant.core.stealth_policy import is_block_error
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -42,16 +43,19 @@ _JOBSPY_LOGGER_NAMES: dict[str, str] = {
 
 
 class _CapturingHandler(logging.Handler):
-    """Collect ERROR-level log records mentioning an HTTP 403 (discovery resilience).
+    """Collect ERROR-level log records that look like a bot-BLOCK (resilience).
 
-    python-jobspy swallows a hard HTTP 403 block INSIDE its own scraper: it
-    catches the exception, logs it via its own named logger, and returns an
-    empty result with no exception raised. Left alone, ``LiveJobSpyClient``
-    would report that as a plain empty scrape, and the caller (``JobSpySource``)
-    would miscount a hard block as ``SOURCE_EMPTY`` instead of ``SOURCE_ERROR`` --
-    understating the failure to the source-yield learning system. This handler
-    recovers the swallowed signal by listening on the board's own logger for the
-    duration of one scrape call.
+    python-jobspy swallows a hard block (Glassdoor 400 / ZipRecruiter 403 / a
+    429 rate-limit / a 503) INSIDE its own scraper: it catches the exception,
+    logs it via its own named logger, and returns an empty result with no
+    exception raised. Left alone, ``LiveJobSpyClient`` would report that as a
+    plain empty scrape, and the caller (``JobSpySource``) would miscount a hard
+    block as ``SOURCE_EMPTY`` instead of ``SOURCE_ERROR`` -- understating the
+    failure to the source-yield learning system AND skipping the residential
+    escalation (EPIC STEALTH ST-2). This handler recovers the swallowed signal by
+    listening on the board's own logger for the duration of one scrape call. The
+    block classification (400/403/429/503 + anti-bot markers) is shared with the
+    escalation decision via ``core.stealth_policy.is_block_error``.
     """
 
     def __init__(self) -> None:
@@ -63,7 +67,7 @@ class _CapturingHandler(logging.Handler):
             message = record.getMessage()
         except Exception:  # a malformed record must never break the scrape
             return
-        if "403" in message:
+        if is_block_error(message):
             self.messages.append(message)
 
 
@@ -151,12 +155,14 @@ class LiveJobSpyClient:
                 hours_old=hours_old,
             )
         if (df is None or len(df) == 0) and blocked_messages:
-            # 403-miscount fix: python-jobspy swallowed the block internally and
+            # Block-miscount fix: python-jobspy swallowed the block internally and
             # returned nothing with no exception -- raise so the caller
-            # (``JobSpySource.fetch``) records this as SOURCE_ERROR, never the
-            # SOURCE_EMPTY a genuinely quiet board would report.
+            # (``JobSpySource.fetch``) records this as SOURCE_ERROR (never the
+            # SOURCE_EMPTY a genuinely quiet board would report) AND can escalate to
+            # the residential proxy on block-detect (EPIC STEALTH ST-2). The
+            # captured message carries the actual code (400/403/429/503).
             raise RuntimeError(
-                f"{site} blocked the request (HTTP 403): {blocked_messages[0]}"
+                f"{site} blocked the request (bot-block): {blocked_messages[0]}"
             )
         if df is None or len(df) == 0:
             return []

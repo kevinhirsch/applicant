@@ -31,11 +31,13 @@ from applicant.adapters.discovery.jobspy_searxng import (
     JobSpySearxngDiscovery,
     JobSpySource,
     LeverSource,
+    PerBoardRateLimiter,
     ProxyConfig,
     RssSource,
     SampleSource,
     SearxngSource,
 )
+from applicant.core.stealth_policy import StealthConfig
 
 #: The easy boards python-jobspy supports (FR-DISC-2 wave-one master aggregator).
 JOBSPY_SITES = ("linkedin", "indeed", "glassdoor", "google", "zip_recruiter")
@@ -88,6 +90,8 @@ def build_default_discovery(
     rss_feeds: tuple[str, ...] | None = None,
     greenhouse_boards: tuple[str, ...] | None = None,
     lever_companies: tuple[str, ...] | None = None,
+    stealth: StealthConfig | None = None,
+    flow_sessid: str | None = None,
 ) -> JobSpySearxngDiscovery:
     """Build the default master-aggregator discovery adapter.
 
@@ -109,8 +113,41 @@ def build_default_discovery(
     with key ``lever:{company}``. They are APPENDED to the registry alongside the
     hardcoded defaults -- never replacing them -- so empty/unset values reproduce
     today's registry byte-identical.
+
+    ``stealth`` (EPIC STEALTH, ST-2/ST-5): the resolved per-source proxy policy
+    (``core.stealth_policy.StealthConfig``). When supplied, each source's egress is
+    resolved SELECTIVELY -- block-prone python-jobspy boards get the residential
+    forwarder (and escalate to it on block-detect), keyless ATS / your own SearXNG /
+    RSS stay direct -- and the per-board rate limiter is built from its pacing knobs.
+    The ``flow_sessid`` decorates the residential proxy with a sticky DataImpulse
+    session label so a whole flow shares ONE residential IP. When ``stealth`` is
+    ``None`` (the default, and every existing caller/test) the legacy single-proxy
+    path is used and behavior is byte-identical to before this epic.
     """
     proxy = ProxyConfig(proxies=proxies, enabled=bool(proxies))
+
+    def _proxy_for(source_key: str) -> ProxyConfig:
+        # Per-source egress resolution (ST-2): the stealth policy decides whether
+        # this source uses the residential pool, a VPS proxy, or direct egress.
+        # Absent a stealth policy, fall back to the shared legacy proxy so the
+        # existing FR-DISC-6 behavior is preserved byte-identical.
+        if stealth is None:
+            return proxy
+        urls = stealth.proxy_urls_for(source_key, sessid=flow_sessid)
+        return ProxyConfig(proxies=tuple(urls), enabled=bool(urls))
+
+    def _escalation_for(source_key: str) -> ProxyConfig | None:
+        # On block-detect (400/403/429/503) a block-prone source retries once
+        # through the residential pool -- unless it is already using it, in which
+        # case there is nothing to escalate to.
+        if stealth is None:
+            return None
+        pool = stealth.escalation_pool(flow_sessid)
+        if not pool:
+            return None
+        if tuple(pool) == tuple(stealth.proxy_urls_for(source_key, sessid=flow_sessid)):
+            return None
+        return ProxyConfig(proxies=tuple(pool), enabled=True)
 
     if live:
         jobspy_client = LiveJobSpyClient()
@@ -129,22 +166,41 @@ def build_default_discovery(
     if include_sample:
         sources.append(SampleSource())
     for site in JOBSPY_SITES:
-        sources.append(JobSpySource(site=site, client=jobspy_client, proxy=proxy))
+        site_key = f"jobspy:{site}"
+        sources.append(
+            JobSpySource(
+                site=site,
+                client=jobspy_client,
+                proxy=_proxy_for(site_key),
+                escalation_proxy=_escalation_for(site_key),
+                escalation_max_retries=(
+                    stealth.block_max_retries if stealth is not None else 1
+                ),
+            )
+        )
     if searxng_client is not None:
-        sources.append(SearxngSource(client=searxng_client, proxy=proxy))
+        sources.append(
+            SearxngSource(client=searxng_client, proxy=_proxy_for("searxng"))
+        )
     if include_rss:
         for key, feed_url in RSS_FEEDS.items():
-            sources.append(
-                RssSource(client=rss_client, feed_url=feed_url, proxy=proxy, key=key)
-            )
-        configured_feeds = rss_feeds or ()
-        for idx, feed_url in enumerate(configured_feeds, start=1):
             sources.append(
                 RssSource(
                     client=rss_client,
                     feed_url=feed_url,
-                    proxy=proxy,
-                    key=f"{CUSTOM_RSS_KEY_PREFIX}-{idx}",
+                    proxy=_proxy_for(key),
+                    key=key,
+                )
+            )
+        configured_feeds = rss_feeds or ()
+        for idx, feed_url in enumerate(configured_feeds, start=1):
+            custom_key = f"{CUSTOM_RSS_KEY_PREFIX}-{idx}"
+            sources.append(
+                RssSource(
+                    client=rss_client,
+                    feed_url=feed_url,
+                    proxy=_proxy_for(custom_key),
+                    key=custom_key,
                 )
             )
 
@@ -171,7 +227,19 @@ def build_default_discovery(
             )
         )
 
-    return JobSpySearxngDiscovery(sources=sources, proxy=proxy)
+    # EPIC STEALTH (ST-5): human-like per-board pacing conserves residential
+    # reputation. Build the aggregator's rate limiter from the stealth pacing
+    # knobs when a policy is supplied; otherwise use the aggregator's own default.
+    rate_limiter = None
+    if stealth is not None:
+        rate_limiter = PerBoardRateLimiter(
+            max_calls=stealth.rate_max_calls,
+            period_seconds=stealth.rate_period_seconds,
+        )
+
+    return JobSpySearxngDiscovery(
+        sources=sources, proxy=proxy, rate_limiter=rate_limiter
+    )
 
 
 def register_persisted_ats_boards(

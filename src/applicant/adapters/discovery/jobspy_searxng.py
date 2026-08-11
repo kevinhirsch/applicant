@@ -30,6 +30,7 @@ from applicant.adapters.discovery.clients import GreenhouseClient, LeverClient
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.core.stealth_policy import is_block_error
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -378,12 +379,24 @@ class JobSpySource:
         client: JobSpyClient,
         proxy: ProxyConfig | None = None,
         results_wanted: int = 100,
+        escalation_proxy: ProxyConfig | None = None,
+        escalation_max_retries: int = 1,
     ) -> None:
         self.site = site
         self.key = f"jobspy:{site}"
         self._client = client
         self._proxy = proxy or ProxyConfig()
         self._results_wanted = results_wanted
+        # EPIC STEALTH (ST-2): the residential pool to retry through on block-detect
+        # (400/403/429/503). ``None`` => no escalation (byte-identical to before).
+        self._escalation_proxy = escalation_proxy
+        # How many residential retries to attempt on a bot-block before giving up
+        # (``discovery_block_max_retries``). >1 is meaningful when the residential
+        # exit rotates its IP per attempt (non-sticky). ge 1 when escalation fires.
+        self._escalation_max_retries = max(1, escalation_max_retries)
+        #: Set True on the fetch when a block-detect escalation actually fired, so a
+        #: caller/test can observe that the residential exit was used.
+        self.used_escalation = False
 
     def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
         location = criteria.locations[0] if criteria.locations else None
@@ -428,12 +441,23 @@ class JobSpySource:
         for key, value in extra_kwargs.items():
             if accepts_all_kwargs or key in sig_params:
                 scrape_kwargs[key] = value
+        self.used_escalation = False
         try:
             rows = self._client.scrape(**scrape_kwargs)
         except Exception as exc:  # a flaky board must never crash the whole run
-            log.warning("discovery_source_failed", source=self.key, error=str(exc))
-            self.last_error = str(exc)
-            return []
+            # EPIC STEALTH (ST-2): on a bot-BLOCK (400/403/429/503) retry ONCE
+            # through the residential escalation pool, if configured and not already
+            # in use -- so a datacenter/home-IP block on a block-prone board
+            # (Glassdoor 400 / ZipRecruiter 403) recovers via the residential exit
+            # instead of just reporting SOURCE_ERROR. A non-block error (or no
+            # escalation pool) falls through to the existing swallow-and-report path.
+            escalated = self._maybe_escalate(exc, scrape_kwargs)
+            if escalated is not None:
+                rows = escalated
+            else:
+                log.warning("discovery_source_failed", source=self.key, error=str(exc))
+                self.last_error = str(exc)
+                return []
         out: list[JobPosting] = []
         for raw in rows:
             posting = normalize_row(raw, campaign_id, self.key)
@@ -443,6 +467,50 @@ class JobSpySource:
                 continue
             out.append(posting)
         return out
+
+    def _maybe_escalate(self, exc: Exception, scrape_kwargs: dict) -> list[dict] | None:
+        """Retry the scrape through the residential pool on a bot-block (ST-2).
+
+        Returns the retried rows on a successful escalation, or ``None`` to signal
+        "not escalated" (no pool, a non-block error, or the escalation itself
+        failed) so the caller runs its normal swallow-and-report path. A failed
+        escalation records ``last_error`` from the RETRY (the residential attempt
+        is the meaningful outcome once we've decided the direct exit is blocked).
+        """
+        if self._escalation_proxy is None or not is_block_error(exc):
+            return None
+        escalation_list = self._escalation_proxy.as_list()
+        if not escalation_list:
+            return None
+        retry_kwargs = dict(scrape_kwargs, proxies=escalation_list)
+        last_retry_error: Exception | None = None
+        for attempt in range(self._escalation_max_retries):
+            try:
+                rows = self._client.scrape(**retry_kwargs)
+            except Exception as retry_exc:  # residential exit also failed
+                last_retry_error = retry_exc
+                # Only keep retrying while it's still a block (a hard non-block
+                # failure won't be cured by another residential attempt).
+                if not is_block_error(retry_exc):
+                    break
+                continue
+            self.used_escalation = True
+            log.info(
+                "discovery_escalated_to_residential",
+                source=self.key,
+                reason=str(exc),
+                attempt=attempt + 1,
+            )
+            return rows
+        # Every residential attempt failed -> return None so the caller records the
+        # original block as last_error and reports SOURCE_ERROR; log for observability.
+        log.warning(
+            "discovery_escalation_failed",
+            source=self.key,
+            error=str(last_retry_error),
+            attempts=self._escalation_max_retries,
+        )
+        return None
 
 
 class SearxngSource:
