@@ -228,6 +228,22 @@ class TestTitlePatterns:
         )
         assert verdict.is_posting is True
 
+    def test_bare_role_jobs_category_title_is_non_posting(self) -> None:
+        # A searxng/aggregator CATEGORY-index page ("<role> Jobs") captured as a
+        # title -- plural "jobs" as the trailing word, no company / specific role.
+        # Live-queue false positive: re-scored 0.94 before this fix.
+        for title in ("Scrum Master Jobs", "Remote Agile Coach Jobs", "Project Manager Jobs"):
+            verdict = check_posting_quality(title, "https://example.org/listing")
+            assert verdict.is_posting is False, title
+            assert verdict.signal == "title_pattern", title
+
+    def test_jobs_not_trailing_word_is_not_flagged(self) -> None:
+        # "jobs" mid-title (not the final word) is a real posting -- must pass.
+        verdict = check_posting_quality(
+            "Jobs Platform Engineer", "https://example.org/x"
+        )
+        assert verdict.is_posting is True
+
 
 @pytest.mark.unit
 class TestHiringAnnouncementTitles:
