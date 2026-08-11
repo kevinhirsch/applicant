@@ -13,7 +13,7 @@
 **STANDING PRINCIPLE — reuse-first, no redundancy (ONGOING):** Never build a component, service, or endpoint that duplicates one that already exists — reuse it. A new UI view is a THIN layer over existing data/actions (e.g. landing-page gadgets read the same scored Digest data + reuse the same review actions; they do not re-derive them). Any new endpoint/service must justify why an existing one didn't suffice. Check for redundancy in EVERY review (use `/simplify`) — a component that re-implements or re-derives what another already provides is a defect, and features silently drift/drop between the copies (e.g. the match-score badge lost when Pending Reviews forked from the Digest).
 Env: prod `10.0.1.11:8000` · model vLLM `10.0.1.225:8000` (qwen3.6:27b) · branch `claude/refactor-agent-zero-applicant-xn7xoc`.
 
-_Last updated: 2026-08-10 (midday)_
+_Last updated: 2026-08-11 (Fit Engine + Companion epics added from ADR-0011..0014)._
 
 ---
 
@@ -168,3 +168,49 @@ _Last updated: 2026-08-10 (midday)_
     - *Given* `alembic upgrade head`, *Then* the `memory_entries`/`skills`/`recall_entries` tables + indexes are created; *And* `downgrade` cleanly drops them.
     - *Given* a note that CLAIMS authority persisted across a restart, *Then* it is still advisory-only and confers no permission (FR-MIND-11 unchanged — the write-approval gate + `claims_authority` filtering live ABOVE the store).
   - **DoD:** `SqlMemoryStore`/`SqlSkillStore`/`SqlRecallIndex` in `adapters/memory/sql_backend.py` (short-lived session per op); 3 SQLAlchemy models + indexes (`memory_entries` INTEGER-PK for insertion order, `skills` name-PK, `recall_entries` run_id-PK) registered with `Base.metadata`; alembic `0015_agent_memory` (up+down tested); `MIND_BACKEND_SQL` + a `sql` branch in `build_agent_memory` (signature extended with keyword-only `session_factory`, backward-compatible, falls back to `in_memory` with no DB); container threads the existing `session_factory` in; config keeps `in_memory` default (test lane) with `sql` documented; prod compose default set to `sql`; `alembic upgrade head` already runs in install.sh/update.sh (verified — new revision auto-applied). Works on SQLite (tests) + Postgres (prod). TDD unit + parametrized contract + migration + BDD green. **Overseer (parent) deploys, migrates on the server, restart-verifies, seeds.** Portable across a fresh install. *(Built + tested + committed on branch; NOT yet deployed to 10.0.1.11.)*
+
+---
+
+## 🎯 EPICS — Fit Engine + Companion (Kevin, 2026-08-11; from ADR-0011/0012/0013/0014)
+
+### EPIC FIT-MODEL — Candidate competitiveness model, not flat attributes · see ADR-0011
+**Principle:** Model the candidate's real COMPETITIVENESS from the résumé — the substrate for judging "would this candidate get a *call*?" — not just parse facts. **REUSE-FIRST:** derive OVER the existing attribute cloud (`AttributeCloudService`) + `onboarding.base_resume` (raw + parsed) with the wired LLM tier + local embeddings; persist per-campaign via the existing storage pattern. Do NOT build a second résumé parser.
+- **DoR:** ADR-0011 accepted; the parsed résumé + attribute cloud expose enough to derive title-history/level/certs/degree/industries/skills-with-evidence/wins/tech-depth; a per-campaign persistence slot exists (additive).
+- **AC (BDD):**
+  - *Given* a completed résumé, *When* the fit model derives, *Then* it captures title/role history (roles held + level + primary-vs-stretch), typed certs, **degree presence** (explicit), industries (depth/recency), skills (evidence strength), quantified wins, and true technical depth — as structured fields, not free text.
+  - *Given* the model, *Then* it derives `strong_fit` / `viable_stretch` role families **with a rationale each**, computed from the candidate (never hand-authored — this is what generalizes it; ties to #46).
+  - *Given* a résumé change, *Then* the model re-derives (cached; only on change); *And* a sparse résumé degrades gracefully to today's attribute-only behavior.
+- **DoD:** `CandidateProfile` entity + `CandidateProfileService`; strong-fit/stretch bands derived + explainable; persisted per campaign; TDD+BDD; verified on 10.0.1.11; fresh-install resilient.
+
+### EPIC FIT-SCORING — Score "would they get a call?", not "is it in-domain?" · see ADR-0012 (supersedes the hardcoded allowlist; folds in #46)
+**Principle:** Scoring becomes a FIT judgment over the Candidate Fit Model × the posting — the reach-vs-strong-fit call Claude makes by hand, systematized. **REUSE-FIRST:** extend `core/rules/role_domain_fit.py` to DERIVE its allowlist from the fit model (generalizing #46); keep the deterministic gates (`posting_quality`, US-remote) + the ranking factors already specified; the LLM assists on nuance, never as the primary discriminator (banked lesson). Do NOT build a second scorer.
+- **DoR:** ADR-0011 shipped (fit model available); ADR-0012 accepted; `role_domain_fit`/`scoring_service` are extensible with a profile-derived tier + competitiveness signals; postings expose location/salary/description to parse degree/level/industry.
+- **AC (BDD):**
+  - *Given* a posting + the fit model, *When* scored, *Then* it passes the hard gates (real posting, **US-remote** inferred when `work_mode` is null) or is gated out; *And* it is placed in a fit tier **derived from the model**, not a hardcoded list.
+  - *Given* two equally-fresh viable roles, *When* one matches the candidate's actual title history and the other is a stretch, *Then* the strong-fit role scores higher (a Scrum Master / Agile Coach out-ranks an equivalent big-tech TPM for THIS candidate).
+  - *Given* a posting that HARD-REQUIRES a degree the candidate lacks, *Then* it is penalized; "preferred"/unstated = neutral.
+  - *Given* the same engine + a DIFFERENT candidate/target role, *Then* the fit tiers re-derive from THAT profile — no code change (generalizes; #46).
+  - *Given* any score, *Then* it carries an explainable fit rationale (feeds EXPLAIN).
+- **DoD:** `role_domain_fit.derive_from_profile()` + competitiveness signals (title-match, degree gate, level, industry) layered into scoring, deterministic-first; the hardcoded Agile list remains ONLY as the derived default until derivation ships (no regression); TDD+BDD; verified on 10.0.1.11 that a strong-fit role out-ranks a reach; fresh-install resilient.
+
+### EPIC OUTCOME-LEARN — Learn from application outcomes to beat a one-shot read · see ADR-0013
+**Principle:** The product's edge over a human advisor is learning from OUTCOMES continuously — which applications get replies/screens/interviews/offers vs. ghost — feeding that back into the fit model + scoring + Reflection Coach. **REUSE-FIRST:** extend `LearningService`'s existing `converting_role_signature` (centroid of roles that convert) + `feature_stats`/`taste_bias`, and `PostSubmissionService` + the `applications` state machine; the Reflection Coach (EPIC AGENTS/ADR-0009) consumes the effectiveness signal. Do NOT build a parallel learning store.
+- **DoR:** ADR-0011/0012/0013 accepted; the applications state machine + post-submission/inbox-match plumbing can carry an outcome funnel; the learning model + `apply_learned_adjustment` seam are the reuse targets.
+- **AC (BDD):**
+  - *Given* a submitted application, *When* its outcome advances (responded / screen / interview / offer / rejected / ghosted), *Then* it is captured (user one-tap · inbox/email-match · status scrape where supported); *And* "unknown" is a valid state (never fabricated).
+  - *Given* outcomes accrue, *Then* role families/companies/levels that draw responses strengthen the candidate's derived strong-fit signal and those that ghost down-weight (extend `converting_role_signature`); *And* fit-scoring weights tune toward what converts for THIS candidate.
+  - *Given* the Reflection Coach's cadence, *Then* it grades effectiveness on the real KPI — *calls/interviews earned, faster* — not volume — and applies transparent, reversible tweaks (`apply_learned_adjustment` / `clear_learned` revert).
+  - *Given* any learned adjustment, *Then* it carries a human-readable summary and is reversible; the loop NEVER silently narrows the search away from the user's intent.
+- **DoD:** outcome funnel captured (cheapest-first) + fed to fit model + scoring weights + RC; reuses the converting-role signature + post-submission tracking; transparent + reversible; TDD+BDD; verified on 10.0.1.11; fresh-install resilient.
+
+### EPIC COMPANION — The main chat is a companion, not a command line · see ADR-0014
+**Principle (Kevin):** "there's been benefit in sharing feedback and catharsis with you, who would eventually become the main Applicant agent I could speak with through the main chat." The main chat is the RELATIONSHIP layer — it KNOWS the user (fit model + memory, not just résumé facts), REMEMBERS across every conversation, is HONEST about fit, can ACT (gated, never auto-submit), and is a place to think + be heard. **REUSE-FIRST:** rebuild over `ChatService.converse` + `ChatToolbox`/`chat_tools.py` (gated actions) + the durable curated memory (ADR-0010) + the fit model (ADR-0011). Do NOT build a new chat engine. **First: fix the audited chat P0s** (dead-on-load, wrong send field, no-op Confirm).
+- **DoR:** ADR-0014 accepted; chat P0 fixes landed; `ChatService` can be grounded in the fit model + durable memory + campaign context; the gated tool surface exists.
+- **AC (BDD):**
+  - *Given* the main chat, *When* I converse, *Then* the agent grounds every turn in my fit model + criteria + durable memory + queue state — it speaks to MY situation, not a generic applicant.
+  - *Given* a new conversation later, *Then* it remembers me (preferences, history, prior context) via the durable curated memory — continuity is the feature.
+  - *Given* I ask about fit, *Then* it gives the honest reach-vs-strong-fit read (reuse fit-scoring), never flattering a reach into a strong fit.
+  - *Given* I ask it to act (tune criteria, re-score, draft, discard, explain), *Then* it does so via the gated tool surface — confirm-gate for integral changes, transparent + reversible, and **NEVER auto-submits an application.**
+  - *Given* the conversation moves from job-frustration toward genuine distress, *Then* the agent responds with warmth and without judgment, surfaces real human/crisis support, and never positions itself as a substitute for human connection or clinical help (care boundary).
+  - *Given* a high-stakes/nuanced turn, *Then* it may escalate to a stronger model tier (the local/DeepSeek ladder carries these qualities deliberately, not by assumption).
+- **DoD:** chat rebuilt on fit-model + memory grounding with gated, transparent, reversible actions; care-boundary guardrails (distress recognition + resource surfacing) first-class; model-escalation path wired; TDD+BDD; verified on 10.0.1.11; fresh-install resilient. **Guardrails: never auto-submit; never substitute for human/professional support.**

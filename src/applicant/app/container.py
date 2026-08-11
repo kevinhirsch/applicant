@@ -1044,6 +1044,19 @@ def build_container(settings: Settings | None = None) -> Container:
     discovery_lever_companies = tuple(
         c.strip() for c in settings.discovery_lever_companies.split(",") if c.strip()
     )
+    # EPIC BREADTH (NFR-EXT-1): same parse shape, widened to Ashby/SmartRecruiters/
+    # Workday (see ``config.py``'s field comments for the per-provider token shape).
+    discovery_ashby_orgs = tuple(
+        o.strip() for o in settings.discovery_ashby_orgs.split(",") if o.strip()
+    )
+    discovery_smartrecruiters_companies = tuple(
+        c.strip()
+        for c in settings.discovery_smartrecruiters_companies.split(",")
+        if c.strip()
+    )
+    discovery_workday_boards = tuple(
+        b.strip() for b in settings.discovery_workday_boards.split(",") if b.strip()
+    )
     # EPIC STEALTH (ST-2/ST-5): resolve the per-source residential-proxy policy once
     # and thread it into the aggregator so block-prone python-jobspy boards egress
     # through the residential forwarder (and escalate to it on block-detect) while
@@ -1094,6 +1107,9 @@ def build_container(settings: Settings | None = None) -> Container:
         rss_feeds=discovery_rss_feeds,
         greenhouse_boards=discovery_greenhouse_boards,
         lever_companies=discovery_lever_companies,
+        ashby_orgs=discovery_ashby_orgs,
+        smartrecruiters_companies=discovery_smartrecruiters_companies,
+        workday_boards=discovery_workday_boards,
         stealth=stealth_config,
         # Live re-read (gap-close): threaded into every block-prone JobSpySource so
         # per_source_proxy_policy / residential_enabled / residential_sticky_sessid /

@@ -38,6 +38,14 @@ one of two ways, and each row/section says which:
 | `searxng` | `SearxngSource` | operator's own SearXNG instance, `?format=json` | yes |
 | `rss:hn-hiring` | `RssSource` | hardcoded feed, `https://hnrss.org/jobs` | yes |
 | `rss:custom-N` | `RssSource` | operator-configured feed URL(s), `DISCOVERY_RSS_FEEDS` | yes |
+| `greenhouse:{token}` | `GreenhouseSource` | Greenhouse public board API, `DISCOVERY_GREENHOUSE_BOARDS` | yes |
+| `lever:{company}` | `LeverSource` | Lever public postings API, `DISCOVERY_LEVER_COMPANIES` | yes |
+| `ashby:{org}` | `AshbySource` | Ashby public job-board API, `DISCOVERY_ASHBY_ORGS` | yes |
+| `smartrecruiters:{company}` | `SmartRecruitersSource` | SmartRecruiters public postings API, `DISCOVERY_SMARTRECRUITERS_COMPANIES` | yes |
+| `workday:{tenant}` | `WorkdaySource` | Workday public CXS job-search API, `DISCOVERY_WORKDAY_BOARDS` | yes |
+| `remoteok` | `RemoteOkSource` | RemoteOK public jobs API (global aggregator, keyless) | yes |
+| `remotive` | `RemotiveSource` | Remotive public jobs API (global aggregator, keyless) | yes |
+| `workingnomads` | `WorkingNomadsSource` | Working Nomads public jobs API (global aggregator, keyless) | yes |
 
 All of the above are registered by `adapters/discovery/factory.py::build_default_discovery`
 and share ONE aggregator (`JobSpySearxngDiscovery`) and ONE per-source outcome pipeline
@@ -127,6 +135,100 @@ honesty rule that an unfetched field is left absent rather than guessed.
 - **Degradation behavior:** identical outcome pipeline — empty/error/rate-limited,
   never silently absent.
 
+### `greenhouse:*` / `lever:*` / `ashby:*` / `smartrecruiters:*` / `workday:*` (keyless ATS boards, EPIC BREADTH 2026-08-11)
+
+- **What it is:** five keyless, public per-company ATS APIs. Greenhouse
+  (`boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever
+  (`api.lever.co/v0/postings/{company}`), Ashby
+  (`api.ashbyhq.com/posting-api/job-board/{org}`), and SmartRecruiters
+  (`api.smartrecruiters.com/v1/companies/{company}/postings`) each need one plain
+  slug per board; Workday (`{host}/wday/cxs/{tenant}/{site}/jobs`, the exact
+  request its own embeddable career-site widget issues) needs three coordinates
+  per board, so its token is the compound `"host|tenant|site[|Display Name]"`
+  string documented in `clients.LiveWorkdayClient`. **LIVE-VERIFIED, not just
+  hermetic** (unlike most of this doc's other rows): every one of the 171 boards
+  currently configured (87 Greenhouse + 20 Lever + 42 Ashby + 7 SmartRecruiters +
+  15 Workday) was individually test-fetched against the real API and confirmed to
+  return real, non-empty, correctly-shaped postings — `scripts/
+  validate_discovery_boards.py` (no args) reproduces that full run and is the
+  standing pre-deploy/periodic gate (Kevin's rule: verified sources only,
+  enforced in code via `adapters/discovery/validate.py`).
+- **Industry coverage (why Workday matters):** Greenhouse/Lever/Ashby skew
+  tech/startup — validated employers there return mostly SWE/PM/TPM roles, not
+  Scrum Master/RTE/Agile Coach. Workday is what large **financial services,
+  healthcare, insurance, and consulting** employers run almost exclusively;
+  the 15 configured Workday boards (Capital One, Wells Fargo, Fidelity, Cigna,
+  Nationwide, Travelers, USAA, PayPal, Vanguard, Humana, CVS Health, Banner
+  Health, Accenture, Booz Allen Hamilton, Prudential Financial) were chosen
+  specifically to reach those industries — e.g. Cigna's live board carries an
+  actual "Scrum Master - Cigna HealthCare - Remote" posting at the time this was
+  written.
+- **Rejected candidates (tested, no keyless public board found):** American
+  Express, Charles Schwab (uses iCIMS), USAA ✅ (Workday — succeeded), Discover
+  Financial (its Workday board now 401s — folded into Capital One post-
+  acquisition), State Farm, Vanguard ✅ (succeeded), Ally Financial (uses
+  Avature), UnitedHealth Group/Optum, Progressive, Liberty Mutual (uses
+  Eightfold), Deloitte (US arm not confirmed on Workday), Slalom, Cotiviti,
+  MetLife, and Amazon. These enterprises use Workday tenants this session
+  couldn't locate, a different ATS entirely, or (Discover) decommissioned their
+  board — none were added; see the ATS Discovery Connectors memory note for the
+  full reject list with reasons.
+- **Failure modes:** identical `except Exception` → `[]` + `last_error` pattern as
+  every other source (`GreenhouseSource.fetch` / `LeverSource.fetch` / etc.). A
+  malformed Workday token (missing pipe segments) raises inside the client and is
+  caught the same way — never crashes the run.
+- **Rate limits:** same per-source-key `PerBoardRateLimiter` bucket. Workday's own
+  page size caps at 20/page server-side (a larger `limit` 400s); `LiveWorkdayClient`
+  pages up to 5 requests (100 postings) per fetch and stops early on a short page.
+  SmartRecruiters' list endpoint caps a single page at 100 regardless of `limit=`;
+  `LiveSmartRecruitersClient` fetches one page (documented, not silently truncated).
+- **Assisted-apply (easy_apply) parity (2026-08-11 product-audit fix):** every
+  posting from these five connectors is tagged `easy_apply=True` — each one's
+  `job_url` is the ATS's OWN hosted apply form (never an external redirect), and
+  `adapters/browser/ats.py` already ships a matching automation adapter
+  (`GreenhouseAts`/`LeverAts`/`AshbyAts`/`SmartRecruitersAts`/`WorkdayAts`) for
+  every one of them. Before this fix, `easy_apply` detection was wired ONLY into
+  the JobSpy/LinkedIn adapter, so 0 of Kevin's ~5,497 real Greenhouse/Lever
+  postings (his dominant sources) were ever tagged — meaning the RUX-4
+  assisted-apply handoff could never fire for them.
+- **Degradation behavior:** identical outcome pipeline to every other source.
+
+### `remoteok` / `remotive` / `workingnomads` (remote-job aggregators, EPIC BREADTH 2026-08-11)
+
+- **What it is:** three keyless, global job-search AGGREGATORS — RemoteOK
+  (`remoteok.com/api`), Remotive (`remotive.com/api/remote-jobs`), and Working
+  Nomads (`workingnomads.com/api/exposed_jobs/`). Unlike every ATS source above
+  (one source PER COMPANY, so reach is bounded by which companies were
+  enumerated), each of these is ONE global feed that already indexes postings
+  across many companies/industries without any enumeration — Kevin's explicit
+  ask: "throw the net as wide as you possibly can... prioritize aggregators...
+  we can't limit ourselves to specific industries." All three are singleton
+  sources (`include_remoteok`/`include_remotive`/`include_workingnomads`,
+  default on) rather than a per-company registry loop.
+- **Live-verified, with an honest limitation:** all three return real, non-empty,
+  correctly-shaped postings today. None supports a working server-side search/
+  category filter on free/anonymous access — verified live: Remotive's `search=`
+  and Working Nomads' `category=` params return the IDENTICAL result set
+  regardless of value (confirmed by direct probe, not assumed). So, exactly like
+  `RssSource`, each fetches its current batch (RemoteOK ~100 rows, Remotive/
+  Working Nomads capped near 20-45) and relies on the SAME post-fetch `_matches`
+  criteria filter every other source uses — there is no way to ask any of the
+  three for "just Agile/Scrum roles" server-side today.
+- **Assisted-apply:** never tagged `easy_apply` (stays `False`) — their listed
+  URL is typically an external redirect back to the ORIGINAL employer's own
+  application page, not a same-domain hosted form `adapters/browser/ats.py`
+  targets, so it is never guessed true (same honesty rule as every LinkedIn
+  posting whose detail page was never fetched).
+- **Failure modes / rate limits / degradation:** identical pattern to every
+  other source (`except Exception` → `[]` + `last_error`; same per-source-key
+  rate bucket).
+
+**We Work Remotely** is NOT a new connector — it reuses the EXISTING `rss:*`
+mechanism (`DISCOVERY_RSS_FEEDS`) unchanged: its category RSS feeds
+(`weworkremotely.com/categories/remote-management-and-finance-jobs.rss`,
+`.../remote-product-jobs.rss`) are plain RSS/Atom, live-verified (37 and 65 real
+items respectively) and configured exactly like any other operator-added feed.
+
 ### `sample`
 
 - **What it is:** the always-on offline fixture (`example.test` URLs, clearly
@@ -215,3 +317,31 @@ at the top of this doc, and `tests/integration/test_discovery_live.py`).
 - SearXNG's real regional/category reach is entirely a function of the operator's own
   engine configuration and is not something this codebase can characterize in the
   abstract.
+- **`jobspy:google` stays DISABLED (live-tested 2026-08-11, confirmed non-functional
+  right now, not just assumed):** `uv run python -c "from jobspy import scrape_jobs;
+  ..."` against `site_name=['google']` for multiple broad queries ("scrum master
+  remote", "project manager", "software engineer") returned **0 rows every time**,
+  despite the underlying request reaching `google.com/search?...&udm=8` and getting a
+  real `200`. `python-jobspy`'s HTML parser for Google's jobs vertical isn't
+  extracting results from the current page structure — a scraper break, not a
+  source-type problem — so it fails the real-postings gate today. Re-validate with
+  the same live probe before ever re-enabling; do NOT re-enable on assumption alone.
+  This is separate from generic `searxng` web search (proven live to return
+  articles/search-result pages, not postings) and the campaign-level `sample`/
+  `rss:hn-hiring` toggles Kevin disabled for other reasons — none of those are
+  touched by this fix; all three stay off.
+- **Deferred aggregator connectors (needs an API key/account signup — out of scope
+  to build without one; flagged for Kevin to decide, not silently skipped):**
+  Adzuna (`api.adzuna.com`, confirmed live: 401 without a registered `app_id`/
+  `app_key`), Careerjet (needs a registered affiliate id), and USAJobs
+  (`data.usajobs.gov`, confirmed live: 403 without a registered `Authorization-Key`
+  + a `User-Agent` email header). All three would otherwise be feasible keyless-
+  shaped JSON APIs; the connector code would be a small, mechanical addition
+  matching the existing pattern once credentials exist.
+- **Workable, deferred (tested, unreliable):** its keyless widget endpoint
+  (`apply.workable.com/api/v1/widget/accounts/{account}`) exists, but roughly 30
+  guessed real-company account names either returned an empty `jobs: []` or a
+  Cloudflare "Security challenge" HTML page instead of JSON — inconsistent enough
+  (vs. Greenhouse/Lever/Ashby/SmartRecruiters/Workday, which were reliable for
+  every validated company) that it wasn't worth a connector for zero confirmed
+  live boards. Revisit if a specific Workable-hosted target company is identified.

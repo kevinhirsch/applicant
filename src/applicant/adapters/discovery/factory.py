@@ -17,27 +17,45 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from applicant.adapters.discovery.clients import (
+    FakeAshbyClient,
     FakeGreenhouseClient,
     FakeJobSpyClient,
     FakeLeverClient,
+    FakeRemoteOkClient,
+    FakeRemotiveClient,
     FakeRssClient,
     FakeSearxngClient,
+    FakeSmartRecruitersClient,
+    FakeWorkdayClient,
+    FakeWorkingNomadsClient,
+    LiveAshbyClient,
     LiveGreenhouseClient,
     LiveJobSpyClient,
     LiveLeverClient,
+    LiveRemoteOkClient,
+    LiveRemotiveClient,
     LiveRssClient,
     LiveSearxngClient,
+    LiveSmartRecruitersClient,
+    LiveWorkdayClient,
+    LiveWorkingNomadsClient,
 )
 from applicant.adapters.discovery.jobspy_searxng import (
+    AshbySource,
     GreenhouseSource,
     JobSpySearxngDiscovery,
     JobSpySource,
     LeverSource,
     PerBoardRateLimiter,
     ProxyConfig,
+    RemoteOkSource,
+    RemotiveSource,
     RssSource,
     SampleSource,
     SearxngSource,
+    SmartRecruitersSource,
+    WorkdaySource,
+    WorkingNomadsSource,
 )
 from applicant.core.stealth_policy import StealthConfig
 
@@ -65,6 +83,26 @@ GREENHOUSE_BOARD_TOKENS: dict[str, str] = {}
 #: ``DISCOVERY_LEVER_COMPANIES`` registers zero Lever sources.
 LEVER_COMPANIES: dict[str, str] = {}
 
+#: Default Ashby org slugs (keyless ATS source shape, NFR-EXT-1). Keyed like
+#: ``GREENHOUSE_BOARD_TOKENS`` (source key -> org slug). Empty by default; an
+#: unset ``DISCOVERY_ASHBY_ORGS`` registers zero Ashby sources.
+ASHBY_ORGS: dict[str, str] = {}
+
+#: Default SmartRecruiters company identifiers (keyless ATS source shape,
+#: NFR-EXT-1). Keyed like ``LEVER_COMPANIES`` (source key -> company id). Empty by
+#: default; an unset ``DISCOVERY_SMARTRECRUITERS_COMPANIES`` registers zero
+#: SmartRecruiters sources.
+SMARTRECRUITERS_COMPANIES: dict[str, str] = {}
+
+#: Default Workday tenant/site boards (keyless ATS source shape, NFR-EXT-1). Keyed
+#: like every other ATS registry (source key -> compound
+#: ``"host|tenant|site[|Display Name]"`` token, see ``clients.LiveWorkdayClient``).
+#: Empty by default; an unset ``DISCOVERY_WORKDAY_BOARDS`` registers zero Workday
+#: sources. Workday is the connector that reaches Kevin's PRIMARY target
+#: industries (financial services, healthcare, insurance, consulting) -- those
+#: enterprises run Workday almost exclusively, not Greenhouse/Lever/Ashby.
+WORKDAY_BOARDS: dict[str, str] = {}
+
 
 def _parse_feed_list(value: str) -> tuple[str, ...]:
     """Split a comma-separated feed-URL string (``DISCOVERY_RSS_FEEDS`` shape)
@@ -82,6 +120,27 @@ def _parse_lever_companies(value: str) -> tuple[str, ...]:
     return tuple(c.strip() for c in (value or "").split(",") if c.strip())
 
 
+def _parse_ashby_orgs(value: str) -> tuple[str, ...]:
+    """Split a comma-separated Ashby org-slug string."""
+    return tuple(o.strip() for o in (value or "").split(",") if o.strip())
+
+
+def _parse_smartrecruiters_companies(value: str) -> tuple[str, ...]:
+    """Split a comma-separated SmartRecruiters company-id string."""
+    return tuple(c.strip() for c in (value or "").split(",") if c.strip())
+
+
+def _parse_workday_boards(value: str) -> tuple[str, ...]:
+    """Split a comma-separated Workday board-token string.
+
+    Each item is itself a pipe-delimited ``"host|tenant|site[|Display Name]"``
+    compound token (see ``clients.LiveWorkdayClient``) -- the outer split is by
+    comma (one board per item), exactly like every other ATS list here; the pipe
+    delimiter never collides with a comma so this stays a plain single-level split.
+    """
+    return tuple(b.strip() for b in (value or "").split(",") if b.strip())
+
+
 def build_default_discovery(
     *,
     live: bool = False,
@@ -89,9 +148,15 @@ def build_default_discovery(
     proxies: tuple[str, ...] = (),
     include_sample: bool = True,
     include_rss: bool = True,
+    include_remoteok: bool = True,
+    include_remotive: bool = True,
+    include_workingnomads: bool = True,
     rss_feeds: tuple[str, ...] | None = None,
     greenhouse_boards: tuple[str, ...] | None = None,
     lever_companies: tuple[str, ...] | None = None,
+    ashby_orgs: tuple[str, ...] | None = None,
+    smartrecruiters_companies: tuple[str, ...] | None = None,
+    workday_boards: tuple[str, ...] | None = None,
     stealth: StealthConfig | None = None,
     stealth_provider: Callable[[], StealthConfig | None] | None = None,
     sessid_provider: Callable[[], str | None] | None = None,
@@ -111,12 +176,25 @@ def build_default_discovery(
     app/config layer itself (hexagonal layering, NFR-ARCH-1); a ``None``/omitted value
     simply means "no operator feeds", exactly like an empty ``proxies`` tuple.
 
-    ``greenhouse_boards`` / ``lever_companies``: additive keyless ATS sources
-    (NFR-EXT-1). Each configured Greenhouse board token becomes one source with key
-    ``greenhouse:{token}``; each configured Lever company slug becomes one source
-    with key ``lever:{company}``. They are APPENDED to the registry alongside the
+    ``greenhouse_boards`` / ``lever_companies`` / ``ashby_orgs`` /
+    ``smartrecruiters_companies`` / ``workday_boards``: additive keyless ATS
+    sources (NFR-EXT-1). Each configured Greenhouse board token becomes one source
+    with key ``greenhouse:{token}``; each Lever company slug -> ``lever:{company}``;
+    each Ashby org slug -> ``ashby:{org}``; each SmartRecruiters company id ->
+    ``smartrecruiters:{company}``; each Workday board token -> ``workday:{tenant}``
+    (Workday's token is the compound ``"host|tenant|site[|Display Name]"`` string
+    ``LiveWorkdayClient`` needs -- the registry key uses just the tenant segment so
+    it stays short and readable). They are APPENDED to the registry alongside the
     hardcoded defaults -- never replacing them -- so empty/unset values reproduce
     today's registry byte-identical.
+
+    ``include_remoteok`` / ``include_remotive`` / ``include_workingnomads`` (EPIC
+    BREADTH, NFR-EXT-1): the keyless remote-job AGGREGATORS -- each ONE global
+    feed (not a per-company registry loop like the ATS sources above) that already
+    indexes postings across many companies/industries, so reach is not bounded by
+    which companies were explicitly enumerated. All default ``True`` (on) since
+    they were live-verified to return real postings; set ``False`` to turn one off
+    without touching the per-campaign toggle.
 
     ``stealth`` (EPIC STEALTH, ST-2/ST-5): the resolved per-source proxy policy
     (``core.stealth_policy.StealthConfig``). When supplied, each source's egress is
@@ -193,12 +271,24 @@ def build_default_discovery(
         rss_client = LiveRssClient()
         greenhouse_client = LiveGreenhouseClient()
         lever_client = LiveLeverClient()
+        ashby_client = LiveAshbyClient()
+        smartrecruiters_client = LiveSmartRecruitersClient()
+        workday_client = LiveWorkdayClient()
+        remoteok_client = LiveRemoteOkClient()
+        remotive_client = LiveRemotiveClient()
+        workingnomads_client = LiveWorkingNomadsClient()
     else:
         jobspy_client = FakeJobSpyClient()
         searxng_client = FakeSearxngClient()
         rss_client = FakeRssClient()
         greenhouse_client = FakeGreenhouseClient()
         lever_client = FakeLeverClient()
+        ashby_client = FakeAshbyClient()
+        smartrecruiters_client = FakeSmartRecruitersClient()
+        workday_client = FakeWorkdayClient()
+        remoteok_client = FakeRemoteOkClient()
+        remotive_client = FakeRemotiveClient()
+        workingnomads_client = FakeWorkingNomadsClient()
 
     sources = []
     if include_sample:
@@ -275,6 +365,47 @@ def build_default_discovery(
                 key=f"lever:{company}",
             )
         )
+    for key, org in ASHBY_ORGS.items():
+        sources.append(AshbySource(client=ashby_client, token=org, key=key))
+    for org in (ashby_orgs or ()):
+        sources.append(
+            AshbySource(client=ashby_client, token=org, key=f"ashby:{org}")
+        )
+    for key, company in SMARTRECRUITERS_COMPANIES.items():
+        sources.append(
+            SmartRecruitersSource(client=smartrecruiters_client, company=company, key=key)
+        )
+    for company in (smartrecruiters_companies or ()):
+        sources.append(
+            SmartRecruitersSource(
+                client=smartrecruiters_client,
+                company=company,
+                key=f"smartrecruiters:{company}",
+            )
+        )
+    for key, token in WORKDAY_BOARDS.items():
+        sources.append(WorkdaySource(client=workday_client, token=token, key=key))
+    for token in (workday_boards or ()):
+        tenant = token.split("|")[1].strip() if "|" in token else token
+        sources.append(
+            WorkdaySource(
+                client=workday_client,
+                token=token,
+                key=f"workday:{tenant or token}",
+            )
+        )
+
+    # EPIC BREADTH: keyless remote-job aggregators (NFR-EXT-1) -- one singleton
+    # source each, not a per-company registry loop; see the module-level "include_
+    # remoteok/remotive/workingnomads" docstring above.
+    if include_remoteok:
+        sources.append(RemoteOkSource(client=remoteok_client, key="remoteok"))
+    if include_remotive:
+        sources.append(RemotiveSource(client=remotive_client, key="remotive"))
+    if include_workingnomads:
+        sources.append(
+            WorkingNomadsSource(client=workingnomads_client, key="workingnomads")
+        )
 
     # EPIC STEALTH (ST-5): human-like per-board pacing conserves residential
     # reputation. Build the aggregator's rate limiter from the stealth pacing
@@ -312,15 +443,39 @@ def register_persisted_ats_boards(
     if live:
         greenhouse_client = LiveGreenhouseClient()
         lever_client = LiveLeverClient()
+        ashby_client = LiveAshbyClient()
+        smartrecruiters_client = LiveSmartRecruitersClient()
+        workday_client = LiveWorkdayClient()
     else:
         greenhouse_client = FakeGreenhouseClient()
         lever_client = FakeLeverClient()
+        ashby_client = FakeAshbyClient()
+        smartrecruiters_client = FakeSmartRecruitersClient()
+        workday_client = FakeWorkdayClient()
     for board in boards:
         if board.source_key in aggregator.available_sources():
             continue
         if board.provider == "greenhouse":
             source = GreenhouseSource(
                 client=greenhouse_client,
+                token=board.token,
+                key=board.source_key,
+            )
+        elif board.provider == "ashby":
+            source = AshbySource(
+                client=ashby_client,
+                token=board.token,
+                key=board.source_key,
+            )
+        elif board.provider == "smartrecruiters":
+            source = SmartRecruitersSource(
+                client=smartrecruiters_client,
+                company=board.token,
+                key=board.source_key,
+            )
+        elif board.provider == "workday":
+            source = WorkdaySource(
+                client=workday_client,
                 token=board.token,
                 key=board.source_key,
             )

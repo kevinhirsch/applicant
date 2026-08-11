@@ -27,7 +27,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from applicant.adapters.discovery.clients import GreenhouseClient, LeverClient
+from applicant.adapters.discovery.clients import (
+    AshbyClient,
+    GreenhouseClient,
+    LeverClient,
+    RemoteOkClient,
+    RemotiveClient,
+    SmartRecruitersClient,
+    WorkdayClient,
+    WorkingNomadsClient,
+)
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
@@ -767,7 +776,18 @@ def _map_greenhouse_job(raw: dict, token: str) -> dict:
     ``normalize_row`` does ``str(raw.get("location"))`` with no dict-unwrapping, so
     the nested Greenhouse location object is resolved to its ``name`` here. The board
     payload has no company field, so the configured board token is used as the
-    company/display name. Salary/easy-apply are left absent (False default).
+    company/display name. Salary is left absent (no signal in this payload).
+
+    ``easy_apply: True`` (assisted-apply parity fix): every Greenhouse posting's
+    ``absolute_url`` IS its own hosted apply form (``boards.greenhouse.io/<token>``)
+    -- never an external redirect -- and ``adapters/browser/ats.py``'s
+    ``GreenhouseAts`` already knows how to fill it. This is the same class of signal
+    ``detect_easy_apply`` uses for LinkedIn's own quick-apply (a same-domain,
+    no-external-redirect apply flow), just KNOWN deterministically for every row
+    this connector returns rather than inferred per-row. Set via the explicit
+    ``easy_apply`` attribute ``detect_easy_apply`` already honors first (never
+    guessed -- see its docstring), so the RUX-4 assisted-apply handoff can fire for
+    Greenhouse postings exactly like it does for LinkedIn's.
     """
     location = raw.get("location") or {}
     return {
@@ -775,6 +795,7 @@ def _map_greenhouse_job(raw: dict, token: str) -> dict:
         "company": token,
         "job_url": raw.get("absolute_url"),
         "location": location.get("name") if isinstance(location, dict) else location,
+        "easy_apply": True,
         "description": raw.get("content", ""),
         "date_posted": raw.get("updated_at"),
     }
@@ -826,6 +847,13 @@ def _map_lever_posting(raw: dict, company: str) -> dict:
     ISO/datetime but not bare ints, so convert to a tz-aware UTC datetime before
     ``normalize_row``. The posting payload has no company field, so the configured
     company slug is used as the company/display name.
+
+    ``easy_apply: True`` (assisted-apply parity fix): ``hostedUrl``/``applyUrl`` is
+    Lever's own hosted apply form (``jobs.lever.co/<company>``) -- never an external
+    redirect -- and ``adapters/browser/ats.py``'s ``LeverAts`` already knows how to
+    fill it. See ``_map_greenhouse_job`` for the full rationale (same signal class
+    as LinkedIn's own quick-apply, known deterministically here rather than
+    per-row-inferred); set via the explicit attribute ``detect_easy_apply`` honors.
     """
     created_ms = raw.get("createdAt")
     date_posted = None
@@ -845,8 +873,397 @@ def _map_lever_posting(raw: dict, company: str) -> dict:
         "job_url": raw.get("hostedUrl") or raw.get("applyUrl"),
         "location": categories.get("location") if isinstance(categories, dict) else categories,
         "work_mode": raw.get("workplaceType"),
+        "easy_apply": True,
         "description": raw.get("descriptionPlain") or raw.get("description", ""),
         "date_posted": date_posted,
+    }
+
+
+class AshbySource:
+    """Keyless Ashby job-board discovery source (NFR-EXT-1).
+
+    Fetches every live job from one Ashby org's public job board via the
+    ``AshbyClient`` seam and normalizes rows to ``JobPosting``. Criteria are used
+    ONLY for the post-fetch ``_matches`` filter, never to build the request (fixed
+    per-org endpoint, exactly like ``GreenhouseSource``/``LeverSource``).
+    """
+
+    def __init__(
+        self,
+        *,
+        client: AshbyClient,
+        token: str,
+        key: str = "ashby",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._token = token
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(token=self._token, proxies=None)
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_ashby_job(raw, self._token)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_ashby_job(raw: dict, token: str) -> dict:
+    """Flatten an Ashby job-board API job dict to the ``normalize_row`` shape.
+
+    The board payload has no company field, so the configured org token is used as
+    the company/display name (same convention as Greenhouse/Lever). ``jobUrl`` is
+    the human-facing listing page; ``applyUrl`` is the fallback. ``workplaceType``
+    ("Remote"/"Hybrid"/"On-site", when present) wins over the boolean ``isRemote``.
+
+    ``easy_apply: True`` (assisted-apply parity, matches Greenhouse/Lever): both
+    ``jobUrl``/``applyUrl`` are Ashby's own hosted apply form
+    (``jobs.ashbyhq.com/<org>``) and ``adapters/browser/ats.py``'s ``AshbyAts``
+    already knows how to fill it -- see ``_map_greenhouse_job`` for the full
+    rationale.
+    """
+    work_mode = raw.get("workplaceType") or ("Remote" if raw.get("isRemote") else None)
+    return {
+        "title": raw.get("title"),
+        "company": token,
+        "job_url": raw.get("jobUrl") or raw.get("applyUrl"),
+        "location": raw.get("location"),
+        "work_mode": work_mode,
+        "easy_apply": True,
+        "description": raw.get("descriptionPlain") or "",
+        "date_posted": raw.get("publishedAt"),
+    }
+
+
+class SmartRecruitersSource:
+    """Keyless SmartRecruiters company discovery source (NFR-EXT-1).
+
+    Fetches every live posting for one SmartRecruiters company via the
+    ``SmartRecruitersClient`` seam and normalizes rows to ``JobPosting``. Criteria
+    are used ONLY for the post-fetch ``_matches`` filter, never to build the
+    request (fixed per-company endpoint, exactly like ``LeverSource``).
+    """
+
+    def __init__(
+        self,
+        *,
+        client: SmartRecruitersClient,
+        company: str,
+        key: str = "smartrecruiters",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._company = company
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_postings(company=self._company, proxies=None)
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_smartrecruiters_posting(raw, self._company)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_smartrecruiters_posting(raw: dict, company: str) -> dict:
+    """Flatten a SmartRecruiters postings-list API dict to the ``normalize_row`` shape.
+
+    HONESTY NOTE: the postings-LIST endpoint (unlike Greenhouse/Lever) does not
+    include a full description or a direct public URL -- only a posting ``id``. The
+    public listing page follows SmartRecruiters' own stable URL convention
+    (``https://jobs.smartrecruiters.com/{company}/{id}``), verified live for every
+    company this connector was validated against; the description is left absent
+    (never guessed) rather than issuing a second per-posting request.
+
+    ``easy_apply: True`` (assisted-apply parity, matches Greenhouse/Lever/Ashby):
+    the synthesized ``job_url`` IS SmartRecruiters' own hosted apply form and
+    ``adapters/browser/ats.py``'s ``SmartRecruitersAts`` already knows how to fill
+    it -- see ``_map_greenhouse_job`` for the full rationale.
+    """
+    posting_id = raw.get("id")
+    location = raw.get("location") or {}
+    company_name = None
+    if isinstance(raw.get("company"), dict):
+        company_name = raw["company"].get("name")
+    work_mode = None
+    if isinstance(location, dict):
+        if location.get("remote"):
+            work_mode = "remote"
+        elif location.get("hybrid"):
+            work_mode = "hybrid"
+    return {
+        "title": raw.get("name"),
+        "company": company_name or company,
+        "job_url": (
+            f"https://jobs.smartrecruiters.com/{company}/{posting_id}"
+            if posting_id
+            else None
+        ),
+        "location": location.get("fullLocation") if isinstance(location, dict) else None,
+        "work_mode": work_mode,
+        "easy_apply": True,
+        "description": "",
+        "date_posted": raw.get("releasedDate"),
+    }
+
+
+class WorkdaySource:
+    """Keyless Workday CXS job-search discovery source (NFR-EXT-1).
+
+    Fetches every live job from one Workday tenant/site board via the
+    ``WorkdayClient`` seam and normalizes rows to ``JobPosting``. Criteria are used
+    ONLY for the post-fetch ``_matches`` filter, never to build the request (fixed
+    per-board endpoint, exactly like ``GreenhouseSource``/``LeverSource``/
+    ``AshbySource``/``SmartRecruitersSource``). ``token`` is the compound
+    ``"host|tenant|site[|Display Name]"`` string ``WorkdayClient`` needs (see its
+    docstring) -- Kevin's target industries (financial services, healthcare,
+    insurance, consulting) run Workday almost exclusively, unlike Greenhouse/
+    Lever/Ashby which skew tech/startup.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: WorkdayClient,
+        token: str,
+        key: str = "workday",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._token = token
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(token=self._token, proxies=None)
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_workday_job(raw, self._token)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_workday_job(raw: dict, token: str) -> dict:
+    """Flatten a Workday CXS job-search API dict to the ``normalize_row`` shape.
+
+    ``token`` is ``"host|tenant|site[|Display Name]"``; the public listing page
+    follows Workday's own stable convention
+    (``https://{host}/en-US/{site}{externalPath}``), verified live for every board
+    this connector was validated against. The 4th pipe segment (when present) is
+    the human company display name; it falls back to the tenant id.
+
+    HONESTY NOTE: Workday's list endpoint gives only a human date BUCKET
+    (``postedOn``: "Posted Today" / "Posted 30+ Days Ago"), never a parseable
+    timestamp, and no remote/hybrid signal -- both are left absent rather than
+    guessed (``_parse_posted_date``/``_normalize_work_mode`` degrade a missing
+    value to ``None`` exactly like every other source here).
+
+    ``easy_apply: True`` (assisted-apply parity, matches Greenhouse/Lever/Ashby/
+    SmartRecruiters): the synthesized ``job_url`` IS Workday's own hosted apply
+    form and ``adapters/browser/ats.py``'s ``WorkdayAts`` already knows how to fill
+    it -- see ``_map_greenhouse_job`` for the full rationale.
+    """
+    parts = [p.strip() for p in (token or "").split("|")]
+    host = parts[0] if len(parts) > 0 else ""
+    tenant = parts[1] if len(parts) > 1 else ""
+    site = parts[2] if len(parts) > 2 else ""
+    company = parts[3] if len(parts) > 3 and parts[3] else (tenant or token)
+    external_path = raw.get("externalPath") or ""
+    job_url = (
+        f"https://{host}/en-US/{site}{external_path}"
+        if host and site and external_path
+        else None
+    )
+    return {
+        "title": raw.get("title"),
+        "company": company,
+        "job_url": job_url,
+        "location": raw.get("locationsText"),
+        "easy_apply": True,
+        "description": "",
+        "date_posted": None,
+    }
+
+
+# --- remote-job AGGREGATOR sources (keyless; index ALL companies/industries) --
+# EPIC BREADTH (Kevin, 2026-08-11): "throw the net as wide as you possibly can...
+# prioritize aggregators... we can't limit ourselves to specific industries."
+# See ``clients.py``'s equivalent comment for the full rationale. Each of these is
+# a SINGLE global feed (one ``Source`` instance, no per-company token/registry
+# loop) -- unlike the ATS board sources above -- and, like ``RssSource``/
+# ``SearxngSource``, never sets ``easy_apply`` (their apply link is typically an
+# EXTERNAL redirect back to the original employer's own application page, not a
+# same-domain hosted form this codebase's ``adapters/browser/ats.py`` automation
+# targets -- never guessed true).
+
+
+class RemoteOkSource:
+    """Keyless RemoteOK aggregator discovery source (NFR-EXT-1, EPIC BREADTH).
+
+    Fetches RemoteOK's global feed via the ``RemoteOkClient`` seam and normalizes
+    rows to ``JobPosting``. No server-side search on the free feed -- criteria are
+    applied via the SAME post-fetch ``_matches`` filter every other source uses.
+    """
+
+    def __init__(self, *, client: RemoteOkClient, key: str = "remoteok") -> None:
+        self.key = key
+        self._client = client
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(proxies=None)
+        except Exception as exc:  # a flaky aggregator must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_remoteok_job(raw)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_remoteok_job(raw: dict) -> dict:
+    """Flatten a RemoteOK API job dict to the ``normalize_row`` shape."""
+    return {
+        "title": raw.get("position"),
+        "company": raw.get("company"),
+        "job_url": raw.get("url") or raw.get("apply_url"),
+        "location": raw.get("location") or "Remote",
+        "work_mode": "remote",  # RemoteOK is remote-only by definition
+        "description": raw.get("description") or "",
+        "date_posted": raw.get("date"),
+    }
+
+
+class RemotiveSource:
+    """Keyless Remotive aggregator discovery source (NFR-EXT-1, EPIC BREADTH).
+
+    Fetches Remotive's global feed via the ``RemotiveClient`` seam and normalizes
+    rows to ``JobPosting``. No working server-side search on the free feed
+    (verified live: ``search=`` returns the identical batch regardless of value)
+    -- criteria are applied via the SAME post-fetch ``_matches`` filter every
+    other source uses.
+    """
+
+    def __init__(self, *, client: RemotiveClient, key: str = "remotive") -> None:
+        self.key = key
+        self._client = client
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(proxies=None)
+        except Exception as exc:  # a flaky aggregator must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_remotive_job(raw)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_remotive_job(raw: dict) -> dict:
+    """Flatten a Remotive API job dict to the ``normalize_row`` shape."""
+    return {
+        "title": raw.get("title"),
+        "company": raw.get("company_name"),
+        "job_url": raw.get("url"),
+        "location": raw.get("candidate_required_location") or "Remote",
+        "work_mode": "remote",  # Remotive is remote-only by definition
+        "salary": raw.get("salary") or None,
+        "description": raw.get("description") or "",
+        "date_posted": raw.get("publication_date"),
+    }
+
+
+class WorkingNomadsSource:
+    """Keyless Working Nomads aggregator discovery source (NFR-EXT-1, EPIC
+    BREADTH).
+
+    Fetches Working Nomads' global feed via the ``WorkingNomadsClient`` seam and
+    normalizes rows to ``JobPosting``. No working server-side category filter on
+    the free feed (verified live) -- criteria are applied via the SAME post-fetch
+    ``_matches`` filter every other source uses.
+    """
+
+    def __init__(self, *, client: WorkingNomadsClient, key: str = "workingnomads") -> None:
+        self.key = key
+        self._client = client
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        self.last_error: str | None = None  # H2: see ``JobSpySource.fetch``.
+        try:
+            rows = self._client.fetch_jobs(proxies=None)
+        except Exception as exc:  # a flaky aggregator must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            self.last_error = str(exc)
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            mapped = _map_workingnomads_job(raw)
+            posting = normalize_row(mapped, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+def _map_workingnomads_job(raw: dict) -> dict:
+    """Flatten a Working Nomads API job dict to the ``normalize_row`` shape."""
+    return {
+        "title": raw.get("title"),
+        "company": raw.get("company_name"),
+        "job_url": raw.get("url"),
+        "location": raw.get("location") or "Remote",
+        "work_mode": "remote",  # Working Nomads is remote-only by definition
+        "description": raw.get("description") or "",
+        "date_posted": raw.get("pub_date"),
     }
 
 

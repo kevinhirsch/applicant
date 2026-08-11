@@ -555,6 +555,18 @@ class Settings(BaseSettings):
     # registers zero ATS sources and keeps discovery byte-identical to before.
     discovery_greenhouse_boards: str = Field(default="", alias="DISCOVERY_GREENHOUSE_BOARDS")
     discovery_lever_companies: str = Field(default="", alias="DISCOVERY_LEVER_COMPANIES")
+    # EPIC BREADTH (NFR-EXT-1, 2026-08-11): same additive/empty-default shape,
+    # widened to three more keyless ATS connector types. Ashby org slugs / Smart-
+    # Recruiters company ids are plain slugs like Greenhouse/Lever; Workday board
+    # tokens are the compound "host|tenant|site[|Display Name]" string
+    # ``LiveWorkdayClient`` needs (Kevin's PRIMARY target industries -- financial
+    # services, healthcare, insurance, consulting -- run Workday almost
+    # exclusively, unlike Greenhouse/Lever/Ashby which skew tech/startup).
+    discovery_ashby_orgs: str = Field(default="", alias="DISCOVERY_ASHBY_ORGS")
+    discovery_smartrecruiters_companies: str = Field(
+        default="", alias="DISCOVERY_SMARTRECRUITERS_COMPANIES"
+    )
+    discovery_workday_boards: str = Field(default="", alias="DISCOVERY_WORKDAY_BOARDS")
 
     # Browser egress (FR-STEALTH-4). The automation MUST egress via the user's
     # residential connection. "direct" (default) uses the host's own connection;
