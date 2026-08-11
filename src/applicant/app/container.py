@@ -1044,6 +1044,22 @@ def build_container(settings: Settings | None = None) -> Container:
     discovery_lever_companies = tuple(
         c.strip() for c in settings.discovery_lever_companies.split(",") if c.strip()
     )
+    # EPIC STEALTH (ST-2/ST-5): resolve the per-source residential-proxy policy once
+    # and thread it into the aggregator so block-prone python-jobspy boards egress
+    # through the residential forwarder (and escalate to it on block-detect) while
+    # keyless ATS / your own SearXNG / RSS stay direct — never burning residential GB
+    # on easy targets, never leaking the home IP on hard ones. Pure (reads only
+    # settings); when residential is disabled/unconfigured the policy DOWNGRADES to
+    # the free VPS network-layer exit, so discovery stays byte-identical to before
+    # this epic for a config that opts out.
+    from applicant.core import stealth_policy
+
+    stealth_config = settings.build_stealth_config()
+    # One sticky DataImpulse session per process boot so a whole discovery flow shares
+    # ONE residential IP for the forwarder's ~30-min hold; a restart rotates it. (A
+    # per-campaign/per-run sessid is the live-reread follow-up noted in the WIRING
+    # trail — the aggregator is built once here, not per campaign.)
+    discovery_flow_sessid = stealth_policy.new_sessid()
     discovery = build_default_discovery(
         live=settings.discovery_live,
         searxng_url=settings.searxng_url,
@@ -1051,6 +1067,8 @@ def build_container(settings: Settings | None = None) -> Container:
         rss_feeds=discovery_rss_feeds,
         greenhouse_boards=discovery_greenhouse_boards,
         lever_companies=discovery_lever_companies,
+        stealth=stealth_config,
+        flow_sessid=discovery_flow_sessid,
     )
     # Runtime add/remove ATS boards: persisted user-added boards are registered
     # onto the aggregator on every boot (deduped; env-configured boards win).
@@ -1070,8 +1088,17 @@ def build_container(settings: Settings | None = None) -> Container:
         LiveUrlPostingFetcher,
     )
 
+    # EPIC STEALTH (ST-2): a pasted/bookmarklet URL is almost always a block-prone
+    # target (the very boards jobspy scrapes), so the single-URL fetcher gets the
+    # residential escalation pool (sticky-labelled) rather than the shared datacenter
+    # proxy. Falls back to the operator ``discovery_proxies`` when residential use is
+    # disabled/unconfigured (escalation_pool is then empty), preserving prior behavior.
+    intake_proxies = (
+        stealth_config.escalation_pool(stealth_policy.new_sessid("url-intake"))
+        or discovery_proxies
+    )
     url_posting_fetcher = (
-        LiveUrlPostingFetcher(proxies=discovery_proxies)
+        LiveUrlPostingFetcher(proxies=intake_proxies)
         if settings.discovery_live
         else FakeUrlPostingFetcher()
     )
