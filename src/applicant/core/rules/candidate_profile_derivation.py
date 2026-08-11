@@ -129,21 +129,33 @@ def derive_candidate_profile(
     )
 
     # --- DERIVED fit bands -------------------------------------------------
-    # STRONG: families the candidate has actually HELD.
-    strong = tuple(FitBand(family=f, rationale=f"held role ({d})") for f, d in held)
-    # STRETCH: credible adjacents (program/project mgmt) the candidate has NOT held.
+    # ``roles`` is the candidate's TARGET/search list, NOT proof of having HELD the
+    # role. A DEGREE-GATED family (Technical Program Manager) that a candidate lacks
+    # the degree for is a REACH even when they list it as a target -- so it is
+    # EXCLUDED from strong and placed in reach. With a degree it stays strong.
+    _tpm_gated = "technical_program_manager" in held_keys and not has_degree
+    # STRONG: targeted/held families, minus a degree-gated reach the candidate can't clear.
+    strong = tuple(
+        FitBand(family=f, rationale=f"held/targeted role ({d})")
+        for f, d in held
+        if not (f == "technical_program_manager" and not has_degree)
+    )
+    # STRETCH: credible adjacents (program/project mgmt) not in the target list.
     stretch = tuple(
         FitBand(family=f, rationale="adjacent to held delivery/agile roles; no title history")
         for f in sorted(_ADJACENT_STRETCH_FAMILIES - held_keys)
     )
-    # REACH: a Technical Program Manager the candidate never held AND lacks the degree
-    # these reqs commonly hard-gate on -> a reach, not a stretch (big-tech leveling).
+    # REACH: TPM is degree-gated -> a reach for any no-degree candidate (whether or
+    # not they targeted it), given no TPM title history + the common hard ATS gate.
     reach: tuple[FitBand, ...] = ()
-    if "technical_program_manager" not in held_keys and not has_degree:
+    if not has_degree:
         reach = (
             FitBand(
                 family="technical_program_manager",
-                rationale="no TPM title history + no degree (common hard ATS gate) — a reach",
+                rationale=(
+                    "no degree (common hard ATS gate on TPM reqs) + no TPM title history — a reach"
+                    + (" (listed as a target role, but still a reach)" if _tpm_gated else "")
+                ),
             ),
         )
 
