@@ -201,7 +201,19 @@ def test_posting_scores_on_the_correct_side_of_the_gap(
         f"\n  title: {row['title']!r}\n  label: {label}  score: {pct}\n"
         f"  rationale: {scoring.rationale!r}\n  note: {row.get('note', '')}"
     )
-    if label == "RELEVANT":
+    # Optional per-row band (``min_pct``/``max_pct``) overrides the label's default
+    # HIGH_FLOOR/LOW_CEILING cutoff -- used by the SAFe-vs-LeSS taste-preference
+    # regression rows, which must land in a specific mid-high SUB-TOP band (viable,
+    # comfortably above the threshold, but a notch below a top-band LeSS/agnostic
+    # role) rather than just "somewhere >= 75". A row with neither key behaves
+    # exactly as before (byte-identical to the pre-existing assertion).
+    min_pct = row.get("min_pct")
+    max_pct = row.get("max_pct")
+    if min_pct is not None or max_pct is not None:
+        lo = min_pct if min_pct is not None else (_HIGH_FLOOR if label == "RELEVANT" else 0)
+        hi = max_pct if max_pct is not None else (100 if label == "RELEVANT" else _LOW_CEILING - 1)
+        assert lo <= pct <= hi, f"expected in [{lo}, {hi}], got {pct}{detail}"
+    elif label == "RELEVANT":
         assert pct >= _HIGH_FLOOR, f"expected >= {_HIGH_FLOOR}, got {pct}{detail}"
     else:
         assert pct < _LOW_CEILING, f"expected < {_LOW_CEILING}, got {pct}{detail}"

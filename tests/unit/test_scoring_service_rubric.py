@@ -128,6 +128,19 @@ class TestScoringRubricStructure:
         text = _captured_system_text()
         assert "Scaled Agile" in text
 
+    def test_safe_less_taste_preference_present(self) -> None:
+        """Regression sentinel for the SAFe-vs-LeSS taste preference (a ranking
+        nudge, never a gate): LeSS/agnostic roles rank top-band, SAFe-specific
+        roles (including plain RTE titles, which are inherently SAFe) rank a
+        notch lower but must never be floored below 70 for that reason alone."""
+        text = _captured_system_text()
+        low = text.lower()
+        assert "taste preference" in low
+        assert "less" in low and "large-scale scrum" in low
+        assert "wells fargo" in low
+        assert "never" in low and "70" in low  # the SAFe sub-top floor
+        assert "release train engineer" in low or " rte" in low
+
     def test_search_engine_company_is_not_penalized_alone(self) -> None:
         """Regression sentinel: an earlier draft over-fired GATE 1 whenever
         'Company' showed the discovery search engine (e.g. 'google cse')
