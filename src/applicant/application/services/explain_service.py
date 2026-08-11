@@ -177,6 +177,8 @@ class ExplainService:
         posting: JobPosting,
         criteria: SearchCriteria | None = None,
         viability: ViabilityScoring | None = None,
+        *,
+        with_nuance: bool = True,
     ) -> ScoreBreakdown:
         """Compute the weighted greens/reds breakdown for ``posting``.
 
@@ -185,6 +187,14 @@ class ExplainService:
         ``viability_score`` and, failing that, the deterministic factors' own
         weighted average (e.g. a posting scored for the very first time,
         before any ``ViabilityScoring`` exists at all).
+
+        ``with_nuance`` gates the OPTIONAL LLM prose line only. The user-facing
+        lazy-compute endpoint (``explain_posting``) passes ``False`` so it can
+        never block on a wedged model tier — a hung ``llm.complete`` once timed
+        the ``GET /api/explain`` proxy out at 10s, even though the try/except
+        here already swallows LLM *errors* (it can't swallow a *hang*). The
+        deterministic factors are complete on their own (offline/latency
+        parity); nuance stays a background-trigger enrichment.
         """
         raw_factors = self._deterministic_factors(posting, criteria)
         total_weight = sum(f.base_weight for f in raw_factors) or 1.0
@@ -211,7 +221,7 @@ class ExplainService:
         residual = round(target_score * 100.0 - subtotal, 2)
         factors.append(self._reconciliation_factor(residual))
 
-        nuance = self._llm_nuance(posting, criteria, target_score)
+        nuance = self._llm_nuance(posting, criteria, target_score) if with_nuance else ""
         if nuance:
             factors.append(
                 BreakdownFactor(
@@ -532,7 +542,9 @@ class ExplainService:
         cached = self._cached_breakdown(posting)
         if cached is not None:
             return cached
-        breakdown = self.build_breakdown(posting, criteria)
+        # Endpoint path: deterministic-only so a wedged LLM can never hang the
+        # GET (the nuance is a background-trigger enrichment — see build_breakdown).
+        breakdown = self.build_breakdown(posting, criteria, with_nuance=False)
         self.persist_breakdown(posting, breakdown)
         return breakdown
 
