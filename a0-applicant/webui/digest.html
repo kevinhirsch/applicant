@@ -1,6 +1,7 @@
 <link rel="stylesheet" href="/plugins/applicant/webui/applicant-theme.css">
 <!-- AZ2 Digest — daily review panel for candidate applications. Driven by the engine via the a0-applicant digest proxy (action=get|approve|decline|recap). -->
 <style>
+  .adigest [x-cloak]{display:none}
   .adigest{max-width:760px;margin:0 auto;padding:8px 4px;color:var(--color-text);font-family:inherit}
   .adigest h1{font-size:1.5rem;margin:0 0 .25rem}
   .adigest .sub{color:var(--color-text-secondary,#6b7683);margin:0 0 1rem;font-size:.95rem}
@@ -40,6 +41,26 @@
   .adigest .fb-btn{padding:3px 8px;font-size:.85rem;line-height:1}
   .adigest .feedback-err{background:var(--color-danger-bg,#fdecea);color:var(--color-danger-text,#9b1c1c);border-radius:6px;padding:4px 8px;font-size:.72rem;margin-top:4px}
   .adigest .feedback-confirm{background:var(--color-success-bg,#e8f8ef);color:var(--color-success-text,#1a7a3a);border-radius:6px;padding:4px 8px;font-size:.72rem;margin-top:4px}
+  /* EXPLAIN — inline "Why this score?" greens/reds breakdown (reads /api/explain via the explain proxy). */
+  .adigest .why-toggle{margin-left:8px;font-size:.72rem;color:var(--color-primary,#2d7ff9);cursor:pointer;background:none;border:none;padding:0;font-weight:600;text-decoration:underline}
+  .adigest .why-toggle:disabled{opacity:.55;cursor:not-allowed}
+  .adigest .why-panel{margin-top:6px;border:1px solid var(--color-border,#d8e0e6);border-radius:8px;padding:8px 10px;background:var(--color-panel,#f7f9fb)}
+  .adigest .why-panel .why-summary{font-size:.78rem;color:var(--color-text);margin-bottom:6px;line-height:1.35}
+  .adigest .why-panel .why-loading,.adigest .why-panel .why-err{font-size:.75rem;color:var(--color-text-secondary,#6b7683)}
+  .adigest .why-panel .why-err{color:var(--color-danger-text,#9b1c1c)}
+  .adigest .why-factor{display:flex;align-items:flex-start;gap:7px;font-size:.75rem;padding:4px 0;border-top:1px solid var(--color-border,#e7edf1)}
+  .adigest .why-factor:first-of-type{border-top:none;padding-top:0}
+  .adigest .why-dot{flex-shrink:0;width:9px;height:9px;border-radius:50%;margin-top:4px}
+  .adigest .why-dot.green{background:var(--color-success-text,#1a7a3a)}
+  .adigest .why-dot.red{background:var(--color-danger-text,#c0392b)}
+  .adigest .why-dot.neutral{background:var(--color-text-secondary,#9aa5ad)}
+  .adigest .why-factor .why-body{flex:1;min-width:0}
+  .adigest .why-factor .why-label{font-weight:600;color:var(--color-text)}
+  .adigest .why-factor .why-detail{color:var(--color-text-secondary,#6b7683);line-height:1.3}
+  .adigest .why-factor .why-contrib{flex-shrink:0;font-variant-numeric:tabular-nums;font-weight:700;font-size:.72rem}
+  .adigest .why-factor .why-contrib.green{color:var(--color-success-text,#1a7a3a)}
+  .adigest .why-factor .why-contrib.red{color:var(--color-danger-text,#c0392b)}
+  .adigest .why-factor .why-contrib.neutral{color:var(--color-text-secondary,#9aa5ad)}
 </style>
 
 <div class="adigest" x-data="digestPanel()">
@@ -65,9 +86,33 @@
     <div class="item">
       <div class="info">
         <div class="title" x-text="row.title"></div>
-        <div class="score" x-show="row.viability_score !== undefined && row.viability_score !== null" x-text="'Score: ' + row.viability_score"></div>
+        <span x-show="row.viability_score !== undefined && row.viability_score !== null">
+          <span class="score" x-text="'Score: ' + row.viability_score"></span>
+          <button class="why-toggle" @click="toggleWhy(row.posting_id)" :disabled="explainBusy[row.posting_id]"
+                  x-text="explainOpen[row.posting_id] ? 'Hide why' : 'Why this score?'"></button>
+        </span>
         <div class="posted" :class="{ stale: row.posted_stale }" x-show="row.posted_relative" x-text="(row.posted_label || 'Posted') + ' ' + row.posted_relative"></div>
         <div class="why" x-show="row.why_suggested" x-text="row.why_suggested"></div>
+        <!-- EXPLAIN: lazy greens/reds breakdown for this posting's score (fetched on first expand). -->
+        <div class="why-panel" x-show="explainOpen[row.posting_id]" x-cloak>
+          <div class="why-loading" x-show="explainBusy[row.posting_id]">Loading breakdown…</div>
+          <div class="why-err" x-show="explainError[row.posting_id]" x-text="explainError[row.posting_id]"></div>
+          <template x-if="explainData[row.posting_id]">
+            <div>
+              <div class="why-summary" x-text="explainData[row.posting_id]?.summary"></div>
+              <template x-for="f in (explainData[row.posting_id]?.factors || [])" :key="f.label">
+                <div class="why-factor">
+                  <span class="why-dot" :class="f.polarity"></span>
+                  <div class="why-body">
+                    <div class="why-label" x-text="f.label"></div>
+                    <div class="why-detail" x-show="f.detail" x-text="f.detail"></div>
+                  </div>
+                  <span class="why-contrib" :class="f.polarity" x-show="f.polarity !== 'neutral'" x-text="fmtContrib(f.contribution)"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
         <!-- RUX-1: the first thing to check is the posting itself. Live link (new tab,
              no opener leak) sourced from row.link (=source_url); a cached snapshot is
              offered as a fallback when the listing is pulled/unreachable. Only render a
@@ -139,6 +184,35 @@
     snapshotError: {},
     reviewBusy: {},
     reviewError: {},
+    // EXPLAIN — per-posting greens/reds breakdown, lazily fetched on first expand.
+    explainOpen: {},
+    explainBusy: {},
+    explainError: {},
+    explainData: {},
+
+    // EXPLAIN: toggle the "Why this score?" panel; fetch the breakdown once, then
+    // cache it (a re-open is instant, and an in-flight click is ignored).
+    async toggleWhy(postingId) {
+      const open = !this.explainOpen[postingId];
+      this.explainOpen = { ...this.explainOpen, [postingId]: open };
+      if (!open) return;
+      if (this.explainData[postingId] || this.explainBusy[postingId]) return;
+      this.explainBusy = { ...this.explainBusy, [postingId]: true };
+      this.explainError = { ...this.explainError, [postingId]: "" };
+      const r = await callJsonApi("explain", { action: "get", posting_id: postingId });
+      this.explainBusy = { ...this.explainBusy, [postingId]: false };
+      if (r && r.ok && r.data) {
+        this.explainData = { ...this.explainData, [postingId]: r.data };
+      } else {
+        this.explainError = { ...this.explainError, [postingId]: (r && r.error) || "Couldn't load the score breakdown." };
+      }
+    },
+
+    // EXPLAIN: contribution is already signed points on the 0..100 scale.
+    fmtContrib(c) {
+      const n = Math.round(Number(c) || 0);
+      return n > 0 ? "+" + n : String(n);
+    },
 
     // RUX-1: only ever render a real http(s) URL as a live link (defense in depth —
     // the engine already sanitizes source_url, but never trust it into an href blind).

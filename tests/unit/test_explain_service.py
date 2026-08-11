@@ -292,6 +292,47 @@ class TestPersistenceAndLazyCache:
         assert first.summary == second.summary
         assert first.score == pytest.approx(second.score)
 
+    def test_explain_posting_endpoint_path_never_calls_the_llm(self):
+        """Regression: a wedged model tier once timed the GET /api/explain proxy
+        out at 10s because the lazy-compute path called ``llm.complete``
+        synchronously and the try/except swallows LLM *errors* but not a *hang*.
+        The endpoint path must be deterministic-only — the nuance is a
+        background-trigger enrichment (see ``build_breakdown(with_nuance=...)``)."""
+        storage = InMemoryStorage()
+        llm = _FakeLLM(text="must never be reached on the endpoint path")
+        svc = ExplainService(storage, llm=llm, embedding=None)
+        posting = _posting(viability_score=0.55)
+        storage.postings.add(posting)
+        storage.commit()
+
+        breakdown = svc.explain_posting(posting.id)
+
+        assert llm.calls == 0  # the user-facing path never blocks on the LLM
+        assert breakdown is not None
+        assert not any(f.source == "llm" for f in breakdown.factors)
+        assert breakdown.summary  # still a complete, useful breakdown
+
+    def test_build_breakdown_with_nuance_false_skips_the_llm(self):
+        llm = _FakeLLM(text="skipped")
+        svc = ExplainService(InMemoryStorage(), llm=llm, embedding=None)
+        posting = _posting()
+        breakdown = svc.build_breakdown(
+            posting, _criteria(posting.campaign_id), with_nuance=False
+        )
+        assert llm.calls == 0
+        assert not any(f.source == "llm" for f in breakdown.factors)
+
+    def test_build_breakdown_default_still_includes_nuance_for_the_trigger_path(self):
+        """The background ViabilityScored trigger keeps the prose enrichment."""
+        llm = _FakeLLM(text="Strong domain fit drove this score.")
+        svc = ExplainService(InMemoryStorage(), llm=llm, embedding=None)
+        posting = _posting()
+        breakdown = svc.build_breakdown(
+            posting, _criteria(posting.campaign_id), ViabilityScoring(posting.id, 0.8)
+        )
+        assert llm.calls == 1
+        assert any(f.source == "llm" for f in breakdown.factors)
+
     def test_explain_posting_invalidates_cache_on_rescore(self):
         storage = InMemoryStorage()
         svc = ExplainService(storage, llm=None, embedding=None)
