@@ -211,11 +211,15 @@ def test_scoring_leans_toward_live_converting_signature(storage, embedding, camp
     base = LearningService(storage, embedding)
     advanced = AdvancedLearningService(base=base, storage=storage)
     # A conversion for a python/fastapi backend role writes role:/skill: features.
+    # NOT "Backend Engineer" -- this is the FR-LEARN-5 signature-alignment
+    # bias, unrelated to role-domain-fit; a real "Backend Engineer" title now
+    # short-circuits OUT_OF_DOMAIN before signature alignment ever runs
+    # (applicant.core.rules.role_domain_fit).
     _record_live_conversion(
         storage,
         advanced,
         campaign.id,
-        job_title="Backend Engineer",
+        job_title="Backend Specialist",
         description="python fastapi postgres backend services",
     )
 
@@ -223,7 +227,7 @@ def test_scoring_leans_toward_live_converting_signature(storage, embedding, camp
     matching = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=campaign.id,
-        title="Backend Engineer",
+        title="Backend Specialist",
         company="A",
         source_url="u1",
         description="python fastapi postgres backend services",
@@ -260,7 +264,7 @@ def test_scoring_unchanged_with_no_conversion_history(storage, embedding, campai
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=campaign.id,
-        title="Backend Engineer",
+        title="Backend Specialist",
         company="A",
         source_url="u1",
         description="python fastapi backend",

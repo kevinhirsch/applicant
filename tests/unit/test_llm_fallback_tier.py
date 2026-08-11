@@ -209,7 +209,12 @@ class TestEscalationToFallbackTier:
             id=JobPostingId(new_id()),
             campaign_id=cid,
             source_url="https://example.com/jobs/1",
-            title="Senior Backend Engineer",
+            # NOT "Senior Backend Engineer" -- this test pins tier-escalation
+            # fallback behavior, which requires the LLM tiers to actually be
+            # reached; a real "<discipline> Engineer" title now
+            # short-circuits OUT_OF_DOMAIN before any tier is ever called
+            # (applicant.core.rules.role_domain_fit).
+            title="Senior Backend Specialist",
             company="Acme",
             description="Build Python services.",
         )

@@ -201,8 +201,12 @@ def test_scoring_biases_toward_converting_signature(storage, embedding, campaign
     learning.persist_model(model)
 
     crit = SearchCriteria(campaign_id=campaign.id, keywords=("engineer",))
+    # NOT "Backend Engineer" -- this test pins the FR-LEARN-5
+    # signature-alignment lift, unrelated to role-domain-fit; a real
+    # "Backend Engineer" title now short-circuits OUT_OF_DOMAIN before
+    # signature alignment ever runs (applicant.core.rules.role_domain_fit).
     posting = JobPosting(
-        id=JobPostingId(new_id()), campaign_id=campaign.id, title="Backend Engineer",
+        id=JobPostingId(new_id()), campaign_id=campaign.id, title="Backend Specialist",
         company="A", source_url="u1", description="python fastapi backend postgres services",
     )
 

@@ -54,17 +54,22 @@ posting — this module is a NEGATIVE gate (denylist of known noise patterns),
 never a positive allowlist, so it never penalizes a real posting just for
 being unfamiliar.
 
-# WIRING (not yet connected — separate workstream owns discovery adapters):
+# WIRING: ``scoring_service.py``'s ``ScoringService._score`` now calls
+# ``check_posting_quality(posting.title, posting.source_url,
+# posting.description)`` directly and short-circuits to a fixed near-zero
+# score with the returned reason BEFORE the criteria default / embedding /
+# LLM pass ever runs (the catastrophic-miscalibration fix — prompt-only
+# calibration of the LLM's own non-posting judgment, GATE 1 of
+# ``ScoringService._llm_base``'s ``system_text``, was not reliable enough
+# alone against the real discovery queue). That LLM-side judgment remains as
+# a second, now-redundant line of defense rather than the only one.
+#
 # ``discovery`` (``adapters/discovery/factory.py``/``clients.py``/
-# ``jobspy_searxng.py``) and ``scoring_service.py`` should call
-# ``is_real_posting(posting.title, posting.source_url, posting.description)``
-# and either drop/flag non-postings at ingestion (preferred — never store them)
-# or short-circuit ``ScoringService`` to a 0 score with the returned reason
-# BEFORE the LLM/embedding pass, so the LLM's own non-posting judgment (see
-# ``ScoringService._llm_base``'s ``system_text``) becomes a second, redundant
-# line of defense instead of the only one. Left unwired here deliberately: a
+# ``jobspy_searxng.py``) ingestion-time filtering (drop/flag non-postings
+# before they are even stored) is a SEPARATE, still-unwired workstream — a
 # concurrent stealth-discovery workflow owns ``adapters/discovery/*`` and
-# ``app/config.py`` in this branch.
+# ``app/config.py`` in this branch, so that half is intentionally left alone
+# here.
 """
 
 from __future__ import annotations

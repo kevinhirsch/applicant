@@ -104,7 +104,11 @@ def test_viability_scoring_uses_configured_model_when_available():
     scoring = ScoringService(storage, llm=_FakeLLM(), embedding=LocalEmbedding())
     crit = CriteriaService(storage, llm=None).get_criteria(cid)
     posting = JobPosting(
-        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Backend Engineer",
+        # NOT "Senior Backend Engineer" -- this test pins that a CONFIGURED
+        # model's score reaches the caller unmodified; a real "<discipline>
+        # Engineer" title now short-circuits OUT_OF_DOMAIN before the model
+        # is ever called (applicant.core.rules.role_domain_fit).
+        id=JobPostingId(new_id()), campaign_id=cid, title="Senior Backend Specialist",
         company="A", source_url="http://x", description="python go",
     )
     result = scoring.score_posting(posting, crit)
@@ -133,7 +137,8 @@ def test_score_for_digest_reuses_persisted_until_criteria_change():
 
     scoring = ScoringService(storage, llm=_CountingLLM(), embedding=LocalEmbedding())
     pid = _add_posting(
-        storage, cid, title="Senior Backend Engineer", company="A", description="python go",
+        # NOT "Senior Backend Engineer" -- see the rename note above.
+        storage, cid, title="Senior Backend Specialist", company="A", description="python go",
     )
 
     s1 = scoring.score_for_digest(storage.postings.get(pid), crit)

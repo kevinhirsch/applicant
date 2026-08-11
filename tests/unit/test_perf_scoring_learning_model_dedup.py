@@ -82,7 +82,12 @@ def _campaign_and_posting(storage):
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
-        title="Senior Backend Engineer",
+        # NOT "Senior Backend Engineer" -- this file pins learning-model
+        # load-call counts and taste/signature rationale text, unrelated to
+        # role-domain-fit; a real "<discipline> Engineer" title now
+        # short-circuits OUT_OF_DOMAIN before either mechanism runs
+        # (applicant.core.rules.role_domain_fit).
+        title="Senior Backend Specialist",
         company="Acme Corp",
         source_url="https://acme.test/job",
         description="Python, Go, distributed systems.",

@@ -54,7 +54,11 @@ def _posting(cid):
         id=JobPostingId(new_id()),
         campaign_id=cid,
         source_url="https://example.com/jobs/1",
-        title="Senior Backend Engineer",
+        # NOT "Senior Backend Engineer" -- this file pins the LLM
+        # SYSTEM-prompt content, which requires the LLM to actually run; a
+        # real "<discipline> Engineer" title now short-circuits OUT_OF_DOMAIN
+        # before the LLM is ever called (applicant.core.rules.role_domain_fit).
+        title="Senior Backend Specialist",
         company="Acme",
         description="Build Python services.",
     )

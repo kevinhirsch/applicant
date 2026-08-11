@@ -457,7 +457,11 @@ def score_declined_posting(t05ctx):
     posting = JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=cid,
-        title="Frontend Engineer",
+        # NOT "Frontend Engineer" -- this scenario is about the #237
+        # feature-stats taste-bias signal, unrelated to role-domain-fit; a
+        # real "Frontend Engineer" title now short-circuits OUT_OF_DOMAIN
+        # before taste_bias ever runs (applicant.core.rules.role_domain_fit).
+        title="Frontend Specialist",
         company="Acme",
         source_url="https://acme.test/fe",
         work_mode="remote",

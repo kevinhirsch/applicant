@@ -13,6 +13,18 @@ signature** (FR-LEARN-5): a role that looks like what has actually converted for
 campaign gets a small, transparent boost. Discovery and scoring thus both bend toward
 the learned signature.
 
+Before any of that runs, ``_score`` applies two DETERMINISTIC, no-LLM gates (the
+catastrophic-miscalibration fix — prompt-only calibration of the LLM rubric alone was
+tried twice and failed against the real discovery queue, where nearly every posting
+scored 85-100 regardless of relevance): :func:`~applicant.core.rules.posting_quality
+.check_posting_quality` floors non-postings (search-index pages, comparison/guide
+articles, a methodology's own glossary page) to near zero, and
+:func:`~applicant.core.rules.role_domain_fit.classify_role_domain` caps plainly
+off-domain roles (IC/engineering-management software roles, product management,
+data science, sales, legal, finance, marketing, video editing, research) low —
+BEFORE the LLM ever runs, so neither can be talked back up by keyword density,
+seniority, or pay. Both are pure/no-IO and only ever suppress a score, never lift one.
+
 The viability **threshold defaults to 60** (on a 0..100 scale) and is configurable per
 campaign; ``is_viable`` gates which postings reach the digest. A digest GET re-runs on
 every view, so ``score_for_digest`` reuses a persisted score whenever the criteria are
@@ -29,7 +41,9 @@ from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
 from applicant.core.events import ViabilityScored, event_bus
 from applicant.core.ids import JobPostingId
+from applicant.core.rules.posting_quality import check_posting_quality
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
+from applicant.core.rules.role_domain_fit import classify_role_domain
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import ChatMessage
 
@@ -52,6 +66,19 @@ DEFAULT_VIABILITY_THRESHOLD = 60
 DEFAULT_NEUTRAL_SCORE = 0.75
 #: Max share of the score the converting-role signature can contribute (FR-LEARN-5).
 _SIGNATURE_WEIGHT = 0.2
+
+#: CATASTROPHIC-MISCALIBRATION FIX (live-queue incident: nearly every posting
+#: scored 85-100 regardless of relevance, including a blog article and roles
+#: like "Key Accounts Executive" / "Senior Product Security Engineer II").
+#: Prompt-only calibration of the LLM rubric failed twice against the real
+#: queue distribution, so these two DETERMINISTIC, no-LLM gates run FIRST in
+#: ``_score`` and short-circuit straight to a fixed low score — cheap (no
+#: model call) and, critically, a score the LLM can never talk back up.
+#:
+#: Comfortably under the "< 0.15" / "< 0.30" ceilings the fix requires, with
+#: headroom for future rubric/threshold tuning without re-touching these.
+_NON_POSTING_SCORE = 0.05
+_OUT_OF_DOMAIN_SCORE = 0.15
 
 #: P0 durability fix: how many CONSECUTIVE transient LLM failures a posting
 #: tolerates before the resilience valve gives up and persists the degraded
@@ -445,6 +472,36 @@ class ScoringService:
         # Honor the Scoring tool toggle at dispatch (FR-UI-4).
         if self._tools is not None:
             self._tools.ensure_enabled("scoring")
+
+        # DETERMINISTIC PRE-LLM GATES (catastrophic-miscalibration fix): run
+        # BEFORE the criteria default / embedding / LLM ever execute, so a
+        # non-posting or an off-domain role never reaches (and can never be
+        # rescued by) the LLM's own judgment. Both are pure, no-IO checks on
+        # the posting alone — independent of criteria/learning — so they run
+        # unconditionally, even when no criteria are set yet.
+        quality = check_posting_quality(
+            posting.title, posting.source_url, posting.description or ""
+        )
+        if not quality.is_posting:
+            return ViabilityScoring(
+                posting_id=posting.id,
+                score=_NON_POSTING_SCORE,
+                rationale=(
+                    "Not a specific job posting, so it scores near zero "
+                    f"regardless of keyword overlap: {quality.reason}"
+                ),
+            )
+        domain = classify_role_domain(posting.title, posting.description or "")
+        if domain.in_domain is False:
+            return ViabilityScoring(
+                posting_id=posting.id,
+                score=_OUT_OF_DOMAIN_SCORE,
+                rationale=(
+                    "Off-domain role — capped regardless of seniority, pay, "
+                    f"or remote match: {domain.reason}"
+                ),
+            )
+
         if criteria is None:
             criteria = SearchCriteria(campaign_id=posting.campaign_id)
         criteria_text = " ".join(
