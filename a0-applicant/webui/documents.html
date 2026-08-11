@@ -456,6 +456,24 @@
   const _apiP = import("/js/api.js");
   const callJsonApi = async (ep, ...a) => (await _apiP).callJsonApi((ep && String(ep).startsWith("plugins/")) ? ep : ("plugins/applicant/" + ep), ...a);
 
+  // B-review-deep-link: pull application_id/campaign_id off a component path's
+  // own query string. Pure + module-scoped (not an Alpine method) so it is
+  // testable in isolation -- mirrors the friendlyTitleFromPath() pattern used
+  // for the modal-title fix (B12, agent-zero/webui/js/modals.js).
+  function parseReviewDeepLink(path) {
+    const raw = String(path || "");
+    const qIndex = raw.indexOf("?");
+    if (qIndex < 0) return { application_id: "", campaign_id: "" };
+    let qs = raw.slice(qIndex + 1);
+    const hIndex = qs.indexOf("#");
+    if (hIndex >= 0) qs = qs.slice(0, hIndex);
+    const params = new URLSearchParams(qs);
+    return {
+      application_id: (params.get("application_id") || "").trim(),
+      campaign_id: (params.get("campaign_id") || "").trim(),
+    };
+  }
+
   window.Alpine.data("documentsPanel", () => ({
     campaigns: [],
     selectedCampaignId: "",
@@ -581,6 +599,17 @@
       this.loading = false;
       if (this.selectedCampaignId) {
         await Promise.all([this.loadApplications(), this.loadVariants(), this.loadScreeningLibrary()]);
+      }
+      // B-review-deep-link: a handed-over application (window.__applicantReview OR
+      // a ?application_id= deep link) must land the user directly on THAT
+      // application -- auto-select it in the picker (it otherwise stayed on
+      // "Select an application…") and load its documents/snapshot/JD-match, same
+      // as picking it by hand would (onApplicationSelect()). Guarded on actual
+      // membership so a mismatched/nonexistent id never fires loads for a
+      // pairing that doesn't exist.
+      if (this.rvApplicationId && this.applications.some((a) => String(a.id || a.application_id) === String(this.rvApplicationId))) {
+        this.selectedApplicationId = this.rvApplicationId;
+        await Promise.all([this.loadDocuments(), this.loadSnapshot(), this.loadJdMatch()]);
       }
       // RUX-1/2/3/5: if we were opened for a specific posting/app, load its review.
       if (this.rvApplicationId || this.rvPostingId) {
@@ -933,14 +962,38 @@
       return url.startsWith("http://") || url.startsWith("https://");
     },
 
+    // B-review-deep-link: window.__applicantReview only carries context when a
+    // caller sets it right before window.openModal() (digest.html's flow). Other
+    // entry points -- e.g. the Pending-Reviews "Review" button on the landing
+    // page (a0-webui/components/welcome/welcome-screen.html review()) -- instead
+    // deep-link with a real ?application_id=&campaign_id= query string on the
+    // panel's OWN path. That isn't window.location (the panel is fetched into a
+    // modal body, never navigated to), so read it off the modal element itself
+    // via _rvModalPath() and fall back to it whenever window.__applicantReview
+    // didn't hand over an id.
     _rvReadContext() {
       const ctx = (window.__applicantReview && typeof window.__applicantReview === "object") ? window.__applicantReview : {};
+      const deep = parseReviewDeepLink(this._rvModalPath());
       this.rvPostingId = ctx.posting_id || "";
-      this.rvApplicationId = ctx.application_id || ctx.posting_id || "";
-      this.rvCampaignId = ctx.campaign_id || "__system__";
+      this.rvApplicationId = ctx.application_id || ctx.posting_id || deep.application_id || "";
+      this.rvCampaignId = ctx.campaign_id || deep.campaign_id || "__system__";
       this.rvTitle = ctx.title || "";
       this.rvCompany = ctx.company || "";
       this.rvSourceUrl = (ctx.source_url || "").trim();  // decent first paint before get() lands
+    },
+
+    // modals.js stores the path it opened as a plain JS property (`.path`) on
+    // the ".modal" ancestor it creates (see openModal/createModalElement in
+    // agent-zero/webui/js/modals.js) -- not an HTML attribute, so it can only be
+    // read off the live element via the DOM, not from this fragment's own
+    // markup. Falls back to window.location.search for a hypothetical
+    // non-modal/full-page open of this panel.
+    _rvModalPath() {
+      try {
+        const modalEl = this.$el && this.$el.closest ? this.$el.closest(".modal") : null;
+        if (modalEl && modalEl.path) return modalEl.path;
+      } catch { /* not mounted in a modal (or $el unavailable) -- fall through */ }
+      return (window.location && window.location.search) || "";
     },
 
     async loadReview() {
