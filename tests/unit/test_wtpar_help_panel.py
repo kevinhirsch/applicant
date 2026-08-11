@@ -31,7 +31,13 @@ class TestWtparHelpPanel(unittest.TestCase):
         self.assertIn('class="surface-header"', self.content)
         self.assertIn('class="surface-content"', self.content)
         self.assertIn('x-text="s.title"', self.content)
-        self.assertIn('x-show="openId === s.id" x-collapse', self.content)
+        # commit 44c3c155b ("fix(ui): repair panel errors surfaced by a full
+        # monkey-crawl, 23->0 broken panels") deliberately dropped x-collapse
+        # here: it's an Alpine.js plugin directive that requires the separate
+        # @alpinejs/collapse plugin, which this app never loads -- x-show alone
+        # already covers the show/hide behavior (see that commit's own message).
+        self.assertIn('x-show="openId === s.id"', self.content)
+        self.assertNotIn('x-collapse', self.content)
         self.assertIn('x-text="step"', self.content)
         self.assertIn('prerequisites', self.content.lower())
 

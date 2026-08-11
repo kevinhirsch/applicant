@@ -30,7 +30,13 @@ def test_all_twelve_intake_sections_present(html):
 
 def test_eeo_defaults_to_decline(html):
     assert 's.id === "eeo"' in html
-    assert 'this.form[f.k] = "Decline to self-identify"' in html  # pre-filled decline (FR-ATTR-6)
+    # commit 19cdb135e (tech-debt burn-down) fixed a real bug: the old
+    # unconditional `this.form[f.k] = "Decline to self-identify"` reset the EEO
+    # form to the decline default EVERY time the section was (re-)entered,
+    # discarding an already-saved answer. It now prefers `saved[f.k]` and only
+    # falls back to the decline default when nothing was saved yet -- FR-ATTR-6
+    # ("defaults to decline") still holds for a first-time visit.
+    assert 'this.form[f.k] = saved[f.k] || "Decline to self-identify"' in html
 
 
 def test_optional_sections_are_skippable(html):

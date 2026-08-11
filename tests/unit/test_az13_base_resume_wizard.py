@@ -40,14 +40,21 @@ def test_uses_parsed_field_count_not_attribute_count(html):
 
 
 def test_lists_conflicts_for_confirmation(html):
-    # conflicts are surfaced for user confirmation, never silently accepted
+    # conflicts are surfaced for user confirmation, never silently accepted.
+    # commit 19cdb135e (tech-debt burn-down) reworked the conflict-confirmation
+    # UI to match the engine's real response shape (src/applicant/app/routers/
+    # onboarding.py returns "attribute"/"parsed_value"/"interview_value", not
+    # the old field/parsed/current names) and added interactive confirm buttons
+    # (confirmConflict, which reads c.parsed_value / c.interview_value).
     assert 'resumeResult.data.conflicts' in html
-    assert 'c.parsed' in html
-    assert 'c.current' in html
+    assert 'c.parsed_value' in html
+    assert 'c.interview_value' in html
 
 
 def test_shows_health_verdict(html):
-    assert 'resumeResult.data.health.verdict' in html
+    # onboarding_service.py's IntakeConflictsView carries resume_health=
+    # health.verdict (not a bare "health" key) -- see commit 19cdb135e.
+    assert 'resumeResult.data.resume_health.verdict' in html
     assert 'Health:' in html
 
 

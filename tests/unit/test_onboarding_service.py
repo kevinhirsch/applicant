@@ -324,8 +324,12 @@ def test_wizard_profile_sections_populate_gate_criteria(svc_and_storage):
     svc, storage, _store = svc_and_storage
     criteria = _wire_criteria(svc, storage)
 
-    # Exactly the shapes the front-door wizard sends (SECTION_FORMS field names).
-    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"titles": "Software Engineer, Staff Engineer"})
+    # Exactly the shapes the front-door wizard sends (INTAKE_FIELD_CATALOG field
+    # names -- TARGET_ROLES posts under "roles", per ports/driving/onboarding.py;
+    # "titles" never matched any real payload -- see onboarding_service.py's
+    # _apply_section_to_criteria for the fix + its own commentary on this exact
+    # dead-bridge bug).
+    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"roles": "Software Engineer, Staff Engineer"})
     svc.save_section(CID, IntakeSection.LOCATION, {"work_mode": "remote / hybrid", "current_location": "Austin, TX"})
     svc.save_section(CID, IntakeSection.COMPENSATION, {"salary_floor": "120000"})
     svc.save_section(CID, IntakeSection.KEY_ATTRIBUTES, {"technical_skills": "python, fastapi"})
@@ -348,7 +352,9 @@ def test_completing_required_set_flips_ready_to_apply_true(svc_and_storage, tmp_
     # Brand-new campaign: nothing is ready yet.
     assert svc.is_ready_to_apply(CID) is False
 
-    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"titles": "Software Engineer"})
+    # See test_wizard_profile_sections_populate_gate_criteria: TARGET_ROLES posts
+    # under "roles" (INTAKE_FIELD_CATALOG), not "titles".
+    svc.save_section(CID, IntakeSection.TARGET_ROLES, {"roles": "Software Engineer"})
     svc.save_section(CID, IntakeSection.LOCATION, {"work_mode": "remote", "current_location": "Remote"})
     svc.save_section(CID, IntakeSection.COMPENSATION, {"salary_floor": "120000"})
     svc.save_section(CID, IntakeSection.KEY_ATTRIBUTES, {"technical_skills": "python"})
