@@ -458,10 +458,16 @@ class Settings(BaseSettings):
 
     # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
     # Backend for the curated-memory / skills / recall stores. ``in_memory``
-    # (default) is the hermetic in-process trio (no deps; boot-/test-safe);
-    # ``bridge`` reaches the front-door substrate (workspace/services/memory/) over
-    # the engine->workspace callback channel (agent-intelligence.md §10 — recommended
-    # placement). The bridge degrades to empty behavior when that channel is OFF.
+    # (default — keeps the test lane + hermetic boot fast and isolated) is the
+    # in-process trio (no deps); ``sql`` is the DURABLE, production backend (#286):
+    # the trio persisted to the shared Postgres/SQLAlchemy stack so memory SURVIVES
+    # an engine restart, read locally + single-query (no network — unlike bridge).
+    # The PROD default is set to ``sql`` in docker-compose.prod.yml. ``bridge``
+    # reaches the front-door substrate (workspace/services/memory/) over the
+    # engine->workspace callback channel (agent-intelligence.md §10) but was disabled
+    # for stalling the read path ~45s. Valid values: MIND_BACKENDS (factory.py) —
+    # ``in_memory`` | ``sql`` | ``bridge`` | ``temporal`` | ``mem0`` | ``letta``.
+    # ``sql`` with no reachable DB falls back to ``in_memory`` so boot is always safe.
     mind_backend: str = Field(default="in_memory", alias="MIND_BACKEND")
     # Stage agent self-writes for human review by default (FR-MIND-9). Memory MAY be
     # relaxed to auto-apply non-sensitive entries; skills/identity always require

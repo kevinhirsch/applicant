@@ -215,11 +215,15 @@ services:
       # Assistant learning & memory substrate (docs/spec/agent-intelligence.md).
       # The code default (config.py) is the self-contained in-process trio, kept
       # so the hermetic test lane stays deterministic. The DEPLOYED default is
-      # `bridge` (#286): it reads the front-door memory/playbooks store over the
-      # internal callback channel (needs APPLICANT_INTERNAL_TOKEN above) so the
-      # workspace memory UI is live out-of-the-box, degrading gracefully to the
-      # in-memory trio if the callback is unset. Override with MIND_BACKEND=in_memory.
-      MIND_BACKEND: ${MIND_BACKEND:-bridge}
+      # `sql` (#286): the curated-memory / skills / recall trio is PERSISTED to this
+      # stack's Postgres so it SURVIVES an engine restart/rebuild (a "remembers you"
+      # product cannot lose it on restart). Reads are local + single-query, so this
+      # does NOT re-introduce the `bridge` backend's ~45s hot-path stall (bridge is
+      # retired as the default for that reason). The memory tables are created by
+      # `alembic upgrade head`, which install.sh/update.sh already run before serving.
+      # `sql` degrades to the in-memory trio if Postgres is unreachable, so boot is
+      # always safe. Override with MIND_BACKEND=in_memory (or =bridge).
+      MIND_BACKEND: ${MIND_BACKEND:-sql}
       MEMORY_WRITE_APPROVAL: ${MEMORY_WRITE_APPROVAL:-true}
       SKILLS_WRITE_APPROVAL: ${SKILLS_WRITE_APPROVAL:-true}
       MEMORY_MAX_CHARS: ${MEMORY_MAX_CHARS:-8000}
