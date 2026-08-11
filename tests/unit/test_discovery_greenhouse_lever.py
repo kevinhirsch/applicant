@@ -105,7 +105,7 @@ def test_the_container_threads_configured_ats_sources_into_discovery(monkeypatch
     assert "lever:widgets" in sources
 
 
-def test_settings_default_ats_sources_are_empty_strings():
+def test_settings_default_ats_sources_are_empty_strings(monkeypatch):
     """Pins the Settings FIELD default (Field(default="", ...)), not whatever
     happens to be configured in this repo's actual .env right now.
 
@@ -118,10 +118,17 @@ def test_settings_default_ats_sources_are_empty_strings():
     checkout, not a stale/broken default -- so it must not leak into an
     unrelated Settings instance built here. ``_env_file=None`` bypasses the
     .env file entirely, isolating the field's true class-level default from
-    whatever this particular checkout's .env happens to contain.
+    whatever this particular checkout's .env happens to contain; explicitly
+    clearing both OS-level env vars too covers the (confirmed) case where a
+    real environment variable of the same name -- which pydantic-settings
+    reads as a source independent of ``_env_file`` -- would otherwise still
+    win, e.g. under -n auto if some other test in the same xdist worker sets
+    either via ``monkeypatch.setenv`` for the duration of ITS OWN test.
     """
     from applicant.app.config import Settings
 
+    monkeypatch.delenv("DISCOVERY_GREENHOUSE_BOARDS", raising=False)
+    monkeypatch.delenv("DISCOVERY_LEVER_COMPANIES", raising=False)
     settings = Settings(_env_file=None)
     assert settings.discovery_greenhouse_boards == ""
     assert settings.discovery_lever_companies == ""
