@@ -64,6 +64,15 @@ if [[ -z "${APPLICANT_REPO_DIR:-}" ]]; then
 fi
 export APPLICANT_REPO_DIR
 
+# EPIC STEALTH: shared stealth preflight (WireGuard client, VPS egress, residential
+# proxy, camoufox). Sourced after .env so the proxy/WG env vars are in scope; called
+# before the rebuild/restart phases below so a rebuild never silently drops the
+# stealth prereqs. Guarded for a partial checkout.
+if [[ -f "${REPO_ROOT}/scripts/lib/stealth-preflight.sh" ]]; then
+  # shellcheck source=lib/stealth-preflight.sh
+  source "${REPO_ROOT}/scripts/lib/stealth-preflight.sh"
+fi
+
 DB_SERVICE="postgres"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
@@ -459,6 +468,15 @@ else
   log "1/5 No migration in this update — skipping the database backup (schema untouched)."
 fi
 
+# Stealth preflight (EPIC STEALTH) — verify the no-home-IP-leak prereqs BEFORE we
+# rebuild/restart, so a rebuild that would drop them (or a host that lost its VPS
+# egress) is caught here. Aborts only when APPLICANT_STEALTH_STRICT=true and a HARD
+# prereq is missing; otherwise warns loudly. Runs after the backup (1/5) so a strict
+# abort here leaves the current stack + a fresh dump intact.
+if declare -F stealth_preflight >/dev/null 2>&1; then
+  stealth_preflight "${APPLY}" || { echo "Stealth preflight failed (strict) — aborting update before rebuild." >&2; exit 1; }
+fi
+
 log "2/5 Pulling base images + rebuilding CHANGED local images from synced source"
 run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
 # Rebuild only the images whose build inputs changed (decided above). Docker layer
@@ -478,6 +496,13 @@ if [[ "${#BUILD_TARGETS[@]}" -gt 0 ]]; then
   done
 else
   log "    No image inputs changed — both local images already current, skipping build."
+fi
+
+# Post-build: confirm Camoufox baked into the engine image (best-effort, non-fatal;
+# the function only ever returns 0, and a non-zero is swallowed here so an image
+# probe can never abort the update).
+if declare -F stealth_verify_image >/dev/null 2>&1; then
+  if ! stealth_verify_image "${APPLY}"; then :; fi
 fi
 
 if [[ "${RUN_MIGRATE}" -eq 1 ]]; then

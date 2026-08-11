@@ -44,6 +44,17 @@ services:
       # server-side through the guarded review/stop-boundary services. Live seam-proof
       # (tools discovered + submit refused end-to-end) is the separate #828 go/no-go.
       A0_SET_MCP_SERVERS: '{"mcpServers": {"applicant-engine": {"url": "${ENGINE_URL:-http://api:8000}/mcp", "type": "sse", "disabled": false}}}'
+      # EPIC STEALTH / ST-3: residential-proxy escalation for the baked `_browser`
+      # patch (docker/Dockerfile.a0 overlays it onto /a0/plugins/_browser). Normal
+      # browsing stays on the default egress lane (the VPS WireGuard egress on the
+      # deployed host, ST-1); on a hard block (403/429/503, Cloudflare/DataDome/
+      # CAPTCHA) the a0 browser relaunches through the residential forwarder, sticky
+      # for the flow. These env overrides win over the plugin's default_config.yaml
+      # and are the CHANGEABLE-in-Settings presets. Default ON, pointed at the VPS
+      # tunnel forwarder to DataImpulse (sticky-US). Set _ENABLED=false to disable,
+      # or override _PROXY to repoint the endpoint.
+      A0_BROWSER_RESIDENTIAL_PROXY_ENABLED: ${A0_BROWSER_RESIDENTIAL_PROXY_ENABLED:-true}
+      A0_BROWSER_RESIDENTIAL_PROXY: ${A0_BROWSER_RESIDENTIAL_PROXY:-http://10.8.0.1:8880}
     volumes:
       # Persist Agent Zero user data (settings, chats, memory, skills, plugins).
       - a0-data:/a0/usr
