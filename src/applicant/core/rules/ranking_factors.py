@@ -427,6 +427,17 @@ _NON_US_TERMS_RE = re.compile(
     r"\b(" + "|".join(re.escape(t) for t in sorted(_NON_US_TERMS, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
 )
+#: A non-US term in a clearly LOCATIVE position -- directly after "in", a comma,
+#: a dash/pipe/@, "based in", "remote from", or "location:" -- so a title like
+#: "... in Pune, India" or "Agile Coach - Toronto, Canada" gates, but a company
+#: NAME that merely contains a city ("London Stock Exchange", "Berlin Packaging")
+#: does NOT (the term is not in a locative position). Catches searxng postings
+#: that carry the location in the TITLE while the location column is NULL.
+_LOCATIVE_NON_US_RE = re.compile(
+    r"(?:\bin\s+|,\s*|[-–—|@]\s*|\bbased\s+in\s+|\bremote\s+from\s+|\blocation:?\s*)"
+    r"(?:the\s+)?(" + "|".join(re.escape(t) for t in sorted(_NON_US_TERMS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
 #: A US signal: "United States"/"USA"/"U.S." spelled out, or "remote"
 #: immediately paired with "US"/"United States" -- deliberately NOT a bare
 #: "\bus\b" on its own (the common English pronoun "us" would false-positive
@@ -444,7 +455,7 @@ _ONSITE_WORK_MODES = {"onsite", "on-site", "in-office", "hybrid"}
 
 
 def classify_remote(
-    work_mode: str | None, location: str | None = None, description: str = ""
+    work_mode: str | None, location: str | None = None, description: str = "", title: str = ""
 ) -> RemoteVerdict:
     """Kevin's HARD requirement: FULL US-REMOTE, no exceptions for an
     otherwise-appealing role. Two-stage: first confirm remote AT ALL
@@ -455,11 +466,31 @@ def classify_remote(
     scraper gap never silently buries a genuinely good, genuinely US-remote
     role (``work_mode``/``location`` are frequently NULL even on real
     postings -- see this module's and its siblings' eval fixtures).
+
+    ``title`` is scanned too: many searxng postings carry the location in the
+    TITLE ("Senior TPM in Pune, India") while the location column is NULL, so a
+    non-US location named in a LOCATIVE position in the title gates the posting
+    even without any other signal (:data:`_LOCATIVE_NON_US_RE` -- conservative
+    so a company name that merely contains a city does not false-gate).
     """
     wm = (work_mode or "").strip().lower()
     loc = (location or "").strip().lower()
     desc = (description or "").strip().lower()
-    haystack = " ".join(x for x in (wm, loc, desc) if x)
+    ttl = (title or "").strip().lower()
+    haystack = " ".join(x for x in (wm, loc, desc, ttl) if x)
+
+    # --- structural non-US gate (location column OR a locative mention in the
+    # title), independent of remote-signal: a role explicitly located outside
+    # the US with no US qualifier anywhere is not US-remote, full stop. Scoped
+    # to structural fields (not the free-text description) so an incidental
+    # "collaborate with our London office" in a US-remote JD never false-gates.
+    struct_non_us = _NON_US_TERMS_RE.search(loc) or _LOCATIVE_NON_US_RE.search(ttl)
+    if struct_non_us and not _US_SIGNAL_RE.search(haystack):
+        return RemoteVerdict(
+            False,
+            f"non-US location ({struct_non_us.group(1) if struct_non_us.lastindex else struct_non_us.group(0)!r}) "
+            "named in the title/location with no US qualifier",
+        )
 
     # --- stage 1: remote AT ALL? ---
     if wm in _ONSITE_WORK_MODES:
@@ -488,3 +519,29 @@ def classify_remote(
     # Remote confirmed, but no country stated either way -- ambiguous,
     # per the coordinator's explicit instruction do NOT hard-gate this case.
     return RemoteVerdict(None, "remote confirmed but no US/non-US signal found -- ambiguous")
+
+
+#: Only the LOW tier (raw searxng metasearch) is demoted. High (direct ATS),
+#: medium (jobspy/rss -- real scraped postings), and unknown all stay NEUTRAL
+#: (1.0): the point is strictly to sink raw web-search hits below real postings,
+#: not to penalize any genuine job source. Unknown -> neutral (never penalize a
+#: source we cannot classify), mirroring the ambiguous-remote "don't gate" rule.
+_SOURCE_TIER_MULTIPLIER: dict[str, float] = {"high": 1.0, "medium": 1.0, "low": 0.72}
+
+
+def source_reliability_multiplier(source_key: str | None) -> RankingFactor:
+    """Rank real postings above raw-metasearch hits.
+
+    Kevin's requirement: "only verified sources ... the only entity is a job
+    posting." A direct ATS API (greenhouse / lever / ashby / smartrecruiters /
+    workday) is a ``high``-tier VERIFIED source; jobspy/rss are ``medium`` (real
+    postings, scraped/feed); raw searxng metasearch is ``low`` -- the ONLY tier
+    demoted (x0.72), so a real posting outranks a searxng web-hit of similar
+    fit, WITHOUT excluding searxng (breadth still matters). Tier comes from
+    :func:`source_reliability.reliability_tier`; unknown -> neutral.
+    """
+    from applicant.core.rules.source_reliability import reliability_tier
+
+    tier = reliability_tier(source_key or "")
+    mult = _SOURCE_TIER_MULTIPLIER.get(tier, 1.0)
+    return RankingFactor(mult, f"source {source_key or '?'!r} tier={tier} (x{mult:.2f})")

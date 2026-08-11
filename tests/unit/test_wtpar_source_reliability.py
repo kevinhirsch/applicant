@@ -40,8 +40,10 @@ class TestReliabilityTier:
     def test_jobspy_zip_recruiter_is_medium(self):
         assert reliability_tier("jobspy:zip_recruiter") == "medium"
 
-    def test_searxng_is_medium(self):
-        assert reliability_tier("searxng") == "medium"
+    def test_searxng_is_low(self):
+        # Demoted 2026-08-11: raw metasearch surfaces listing/aggregator pages,
+        # not clean single postings -- verified ATS sources must outrank it.
+        assert reliability_tier("searxng") == "low"
 
     def test_rss_hn_hiring_is_medium(self):
         assert reliability_tier("rss:hn-hiring") == "medium"
@@ -93,7 +95,8 @@ class TestReliabilityScore:
         assert reliability_score("jobspy:indeed") == 0.75
 
     def test_searxng_baseline(self):
-        assert reliability_score("searxng") == 0.75
+        # Demoted to low tier 2026-08-11 (baseline 0.5, was 0.75).
+        assert reliability_score("searxng") == 0.5
 
     def test_rss_baseline(self):
         assert reliability_score("rss:hn-hiring") == 0.75
@@ -244,7 +247,7 @@ class TestSourceTiersDict:
 
     def test_has_searxng(self):
         assert "searxng" in SOURCE_TIERS
-        assert SOURCE_TIERS["searxng"] == "medium"
+        assert SOURCE_TIERS["searxng"] == "low"
 
     def test_has_rss(self):
         assert "rss" in SOURCE_TIERS

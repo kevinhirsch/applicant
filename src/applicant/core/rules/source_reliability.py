@@ -13,17 +13,23 @@ from applicant.core.rules.underdelivery import source_shortfall_message
 #: Mapping of source-key prefix to reliability tier.
 #: sample → high (in-process, always available)
 #: jobspy:* → medium (network-backed, depends on board uptime)
-#: searxng → medium (metasearch, depends on operator config)
+#: searxng → LOW (raw metasearch — surfaces listing/aggregator index pages and
+#:   unverified web hits, NOT clean single postings; least trustworthy, so a
+#:   verified direct-ATS posting should outrank a searxng hit of similar fit)
 #: rss:* → medium (feed-backed, depends on feed availability)
-#: greenhouse:* / lever:* → high (direct public ATS API, no anti-bot 403s)
+#: greenhouse / lever / ashby / smartrecruiters / workday → high (direct public
+#:   ATS API/board — real single postings, no anti-bot 403s: VERIFIED sources)
 #: unknown → medium (conservative default)
 SOURCE_TIERS: dict[str, str] = {
     "sample": "high",
     "jobspy": "medium",
-    "searxng": "medium",
+    "searxng": "low",
     "rss": "medium",
     "greenhouse": "high",
     "lever": "high",
+    "ashby": "high",
+    "smartrecruiters": "high",
+    "workday": "high",
 }
 
 #: Tier baseline scores used when no yield_stats are available.
