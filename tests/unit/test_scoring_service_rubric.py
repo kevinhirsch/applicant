@@ -153,6 +153,31 @@ class TestScoringRubricStructure:
 
 
 @pytest.mark.unit
+class TestRemoteGateTravelAndFederal:
+    """Regression sentinels for the 2026-08-11 GATE-3 false-positives.
+
+    A remote-BASE role that requires TRAVEL, and a federal/government role that
+    explicitly offers remote, were both floored to single digits by the LLM
+    over-applying GATE 3 (CompassX Agile Transformation Coach scored 16, CGS
+    Agile Coach scored 22 — both genuine, verified US-remote-eligible roles Kevin
+    is applying to). The rubric must say travel is not onsite and must not infer
+    a clearance/onsite from 'federal' alone."""
+
+    def test_travel_is_not_an_onsite_signal(self) -> None:
+        low = _captured_system_text().lower()
+        assert "travel" in low
+        assert "still remote" in low
+        assert "the role's own work location" in low
+
+    def test_explicit_remote_wins_over_federal_or_clearance_inference(self) -> None:
+        low = _captured_system_text().lower()
+        assert "never infer" in low
+        assert "federal" in low or "government" in low
+        assert "public trust" in low
+        assert "explicit remote statement always wins" in low
+
+
+@pytest.mark.unit
 class TestScoringPromptIncludesSourceUrl:
     """GATE 1/3 both reason about the source URL, so it must reach the prompt."""
 
